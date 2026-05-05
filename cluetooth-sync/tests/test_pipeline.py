@@ -138,6 +138,19 @@ def test_prepare_scan_jsonl_bytes_nulls_unavailable_rssi() -> None:
     assert scans.select("rssi").item() is None
 
 
+def test_prepare_scan_jsonl_bytes_strips_local_name_nul_bytes() -> None:
+    payload = (
+        b'{"addr":"aa:bb:cc:dd:ee:ff","rssi":-42,'
+        b'"scanned_at":"2025-06-12T22:47:48.989Z","raw":"020106",'
+        b'"local_name":"Fo\\u0000o\\u0000","tx_power":null,"is_connectable":null,'
+        b'"lat":null,"lon":null,"accuracy":null}\n'
+    )
+
+    scans = prepare_scan_jsonl_bytes(payload, "gs://test-bucket/scans.jsonl")
+
+    assert scans.select("local_name").item() == "Foo"
+
+
 def test_prepare_legacy_scan_jsonl_bytes_trims_name_null_padding() -> None:
     payload = (
         b'{"mac":"aa:bb:cc:dd:ee:ff","rssi":-42,'

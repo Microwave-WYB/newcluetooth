@@ -60,7 +60,7 @@ def prepare_scan_jsonl_bytes(blob_bytes: bytes, gcs_blob_uri: str) -> pl.DataFra
         )
         .alias("scanned_at"),
         pl.col("raw").cast(pl.Utf8, strict=True).str.to_lowercase(),
-        pl.col("local_name").cast(pl.Utf8, strict=True),
+        pl.col("local_name").cast(pl.Utf8, strict=True).str.replace_all("\x00", ""),
         pl.col("tx_power").cast(pl.Int64, strict=True),
         pl.col("is_connectable").cast(pl.Boolean, strict=True),
         pl.col("lat").cast(pl.Float64, strict=True),
