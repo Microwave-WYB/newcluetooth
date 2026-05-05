@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import adbc_driver_postgresql.dbapi as pg_dbapi
+import polars as pl
+import pytest
 
+from cluetooth_sync.pipeline import orchestrate
 from cluetooth_sync.pipeline import (
     MirroredStorageClient,
     discover_pending_blobs,
@@ -108,3 +115,87 @@ def test_mirrored_storage_client_populates_missing_blob(tmp_path: Path) -> None:
     assert blob_bytes == b"remote"
     assert mirror_path.read_bytes() == b"remote"
     assert upstream.read_uris == [blob_uri]
+
+
+def test_run_pipeline_uses_single_db_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blob_uris = [
+        "gs://test-bucket/scans/a.jsonl.zst.encrypted",
+        "gs://test-bucket/scans/b.jsonl.zst.encrypted",
+        "gs://test-bucket/scans/c.jsonl.zst.encrypted",
+        "gs://test-bucket/scans/d.jsonl.zst.encrypted",
+    ]
+    storage_client = _StorageClient({uri: b"" for uri in blob_uris})
+
+    def discover_blobs(
+        storage_client: orchestrate.StorageClient,
+        database_url: str,
+        bucket_name: str,
+        prefix: str,
+    ) -> list[str]:
+        return blob_uris
+
+    def read_blob(
+        storage_client: orchestrate.StorageClient,
+        blob_uri: str,
+    ) -> orchestrate.BlobBytes:
+        return orchestrate.BlobBytes(uri=blob_uri, encrypted_bytes=b"encrypted")
+
+    def prepare_blob(
+        private_key: bytes,
+        blob: orchestrate.BlobBytes,
+    ) -> orchestrate.PreparedBlob:
+        time.sleep(0.01)
+        return orchestrate.PreparedBlob(
+            uri=blob.uri,
+            scans=pl.DataFrame({"blob": [blob.uri]}),
+        )
+
+    active_writes = 0
+    max_active_writes = 0
+    written_uris: list[str] = []
+    write_lock = threading.Lock()
+
+    def write_blob(
+        database_url: str,
+        blob: orchestrate.PreparedBlob,
+    ) -> None:
+        nonlocal active_writes, max_active_writes
+
+        with write_lock:
+            active_writes += 1
+            max_active_writes = max(max_active_writes, active_writes)
+
+        time.sleep(0.02)
+        written_uris.append(blob.uri)
+
+        with write_lock:
+            active_writes -= 1
+
+    monkeypatch.setattr(orchestrate, "discover_pending_blobs", discover_blobs)
+    monkeypatch.setattr(orchestrate, "_read_blob", read_blob)
+    monkeypatch.setattr(orchestrate, "_prepare_blob", prepare_blob)
+    monkeypatch.setattr(orchestrate, "_write_blob", write_blob)
+
+    with (
+        ThreadPoolExecutor(max_workers=4) as download_executor,
+        ThreadPoolExecutor(max_workers=4) as ingest_executor,
+    ):
+        asyncio.run(
+            orchestrate.run_pipeline(
+                storage_client=storage_client,
+                database_url="postgresql://example",
+                bucket_name="test-bucket",
+                prefix="scans/",
+                private_key=b"private-key",
+                download_executor=download_executor,
+                ingest_executor=ingest_executor,
+                download_workers=4,
+                ingest_workers=4,
+                queue_size=2,
+            )
+        )
+
+    assert max_active_writes == 1
+    assert sorted(written_uris) == sorted(blob_uris)

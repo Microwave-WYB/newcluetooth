@@ -4,10 +4,12 @@ from collections.abc import Iterator
 from concurrent.futures import Executor
 from dataclasses import dataclass
 
+import polars as pl
+
 from .decrypt import decrypt_blob_bytes
 from .discover import discover_pending_blobs
 from .download import read_blob_bytes
-from .ingest import ingest_scan_jsonl_bytes
+from .ingest import insert_prepared_scans, prepare_scan_jsonl_bytes
 from .storage import StorageClient
 
 
@@ -15,6 +17,12 @@ from .storage import StorageClient
 class BlobBytes:
     uri: str
     encrypted_bytes: bytes
+
+
+@dataclass(frozen=True)
+class PreparedBlob:
+    uri: str
+    scans: pl.DataFrame
 
 
 def _read_blob(
@@ -27,14 +35,21 @@ def _read_blob(
     )
 
 
-def _ingest_blob(
-    database_url: str,
+def _prepare_blob(
     private_key: bytes,
     blob: BlobBytes,
-) -> None:
+) -> PreparedBlob:
     decrypted_bytes = decrypt_blob_bytes(blob.encrypted_bytes, private_key)
     decompressed_bytes = zstd.decompress(decrypted_bytes)
-    ingest_scan_jsonl_bytes(database_url, decompressed_bytes, blob.uri)
+    scans = prepare_scan_jsonl_bytes(decompressed_bytes, blob.uri)
+    return PreparedBlob(uri=blob.uri, scans=scans)
+
+
+def _write_blob(
+    database_url: str,
+    blob: PreparedBlob,
+) -> None:
+    insert_prepared_scans(database_url, blob.scans)
 
 
 async def run_pipeline(
@@ -66,7 +81,8 @@ async def run_pipeline(
     print(f"0/{total_blobs}", flush=True)
 
     download_queue: asyncio.Queue[str] = asyncio.Queue()
-    ingest_queue: asyncio.Queue[BlobBytes] = asyncio.Queue(maxsize=queue_size)
+    prepare_queue: asyncio.Queue[BlobBytes] = asyncio.Queue(maxsize=queue_size)
+    write_queue: asyncio.Queue[PreparedBlob] = asyncio.Queue(maxsize=queue_size)
     progress_queue: asyncio.Queue[None] = asyncio.Queue()
 
     async def download_worker() -> None:
@@ -82,20 +98,34 @@ async def run_pipeline(
                 storage_client,
                 blob_uri,
             )
-            await ingest_queue.put(blob)
+            await prepare_queue.put(blob)
 
-    async def ingest_worker() -> None:
+    async def prepare_worker() -> None:
         while True:
             try:
-                blob = await ingest_queue.get()
+                blob = await prepare_queue.get()
+            except asyncio.QueueShutDown:
+                return
+
+            prepared_blob = await loop.run_in_executor(
+                ingest_executor,
+                _prepare_blob,
+                private_key,
+                blob,
+            )
+            await write_queue.put(prepared_blob)
+
+    async def write_worker() -> None:
+        while True:
+            try:
+                blob = await write_queue.get()
             except asyncio.QueueShutDown:
                 return
 
             await loop.run_in_executor(
                 ingest_executor,
-                _ingest_blob,
+                _write_blob,
                 database_url,
-                private_key,
                 blob,
             )
             await progress_queue.put(None)
@@ -110,7 +140,10 @@ async def run_pipeline(
     download_tasks = [
         asyncio.create_task(download_worker()) for _ in range(download_workers)
     ]
-    ingest_tasks = [asyncio.create_task(ingest_worker()) for _ in range(ingest_workers)]
+    prepare_tasks = [
+        asyncio.create_task(prepare_worker()) for _ in range(ingest_workers)
+    ]
+    write_task = asyncio.create_task(write_worker())
     progress_task = asyncio.create_task(progress_worker())
 
     for blob_uri in discovered_blobs:
@@ -119,6 +152,9 @@ async def run_pipeline(
     download_queue.shutdown()
     _ = await asyncio.gather(*download_tasks)
 
-    ingest_queue.shutdown()
-    _ = await asyncio.gather(*ingest_tasks)
+    prepare_queue.shutdown()
+    _ = await asyncio.gather(*prepare_tasks)
+
+    write_queue.shutdown()
+    await write_task
     await progress_task

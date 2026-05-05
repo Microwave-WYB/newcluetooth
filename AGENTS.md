@@ -154,13 +154,16 @@ Current orchestration model:
 
 - discovery is synchronous and materialized into a list for the current cycle
 - `max_blobs` optionally truncates that discovered list
-- download and ingest run as separate `asyncio` worker stages
+- download, prepare, and write run as separate `asyncio` worker stages
 - stages are connected with `asyncio.Queue`
-- encrypted blob bytes are the in-memory handoff between download and ingest
+- encrypted blob bytes are the in-memory handoff between download and prepare
+- prepared Polars DataFrames are the in-memory handoff between prepare and write
 - optional mirroring in `storage.py` can cache encrypted blobs on disk
-- ingest workers decrypt with `SealedBox`, decompress with zstd, then ingest
-  JSONL bytes
-- blocking storage and ingest work runs in caller-provided executors
+- prepare workers decrypt with `SealedBox`, decompress with zstd, and normalize
+  JSONL into Polars DataFrames
+- one write worker inserts prepared scans into Postgres, so DB writes are
+  serialized even when preparation is parallel
+- blocking storage, prepare, and write work runs in caller-provided executors
 - progress is printed to stdout as `0/N`, `1/N`, ...
 
 The Typer CLI in `cluetooth_sync.cli` builds the storage client, reads the
