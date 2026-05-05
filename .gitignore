@@ -1,0 +1,8 @@
+.codex
+.agents/
+.DS_Store
+
+# Local secrets and downloaded blob cache
+secrets/*
+!secrets/.gitignore
+downloads/
