@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://newcluetooth.local/schemas/scan.schema.json",
+  "title": "Scan",
+  "description": "Client-supplied payload for inserting a BLE scan row, excluding server-owned and computed columns. The raw advertisement payload is required; richer advertisement parsing happens later in enrichment.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "addr": {
+      "type": "string",
+      "description": "Bluetooth device MAC address.",
+      "pattern": "^(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$"
+    },
+    "rssi": {
+      "type": ["integer", "null"],
+      "description": "Received signal strength indicator.",
+      "minimum": -32768,
+      "maximum": 32767
+    },
+    "scanned_at": {
+      "type": "string",
+      "description": "Timestamp when the advertisement was observed.",
+      "format": "date-time"
+    },
+    "raw": {
+      "type": "string",
+      "description": "Canonical raw advertisement payload representation."
+    },
+    "local_name": {
+      "type": ["string", "null"],
+      "description": "Advertised local name, if present."
+    },
+    "tx_power": {
+      "type": ["integer", "null"],
+      "description": "Advertised transmit power.",
+      "minimum": -32768,
+      "maximum": 32767
+    },
+    "is_connectable": {
+      "type": ["boolean", "null"],
+      "description": "Whether the advertisement indicates a connectable device."
+    },
+    "lat": {
+      "type": ["number", "null"],
+      "description": "Latitude in WGS84.",
+      "minimum": -90,
+      "maximum": 90
+    },
+    "lon": {
+      "type": ["number", "null"],
+      "description": "Longitude in WGS84.",
+      "minimum": -180,
+      "maximum": 180
+    },
+    "accuracy": {
+      "type": ["number", "null"],
+      "description": "Estimated horizontal accuracy in meters.",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "addr",
+    "rssi",
+    "scanned_at",
+    "raw",
+    "local_name",
+    "tx_power",
+    "is_connectable",
+    "lat",
+    "lon",
+    "accuracy"
+  ],
+  "examples": [
+    {
+      "addr": "AA:BB:CC:DD:EE:FF",
+      "rssi": -68,
+      "scanned_at": "2026-04-16T22:30:00Z",
+      "raw": "0201060b09436c7565746f6f7468",
+      "local_name": "Cluetooth",
+      "tx_power": -4,
+      "is_connectable": true,
+      "lat": 37.7749,
+      "lon": -122.4194,
+      "accuracy": 12.5
+    },
+    {
+      "addr": "AA:BB:CC:DD:EE:FF",
+      "rssi": null,
+      "scanned_at": "2026-04-16T22:30:00Z",
+      "raw": "020106",
+      "local_name": null,
+      "tx_power": null,
+      "is_connectable": null,
+      "lat": null,
+      "lon": null,
+      "accuracy": null
+    }
+  ]
+}

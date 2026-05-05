@@ -1,0 +1,101 @@
+services:
+  postgres:
+    build:
+      context: ./db
+      dockerfile: Dockerfile
+    image: cluetooth-postgis:18-3.6
+    container_name: cluetooth-db
+    environment:
+      POSTGRES_DB: cluetooth
+      POSTGRES_USER: cluetooth
+      POSTGRES_PASSWORD: infra_wireless_scanning
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: ghcr.io/amacneil/dbmate:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./db/db/migrations:/db/migrations:ro
+    command:
+      - --url
+      - postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable
+      - --migrations-dir
+      - /db/migrations
+      - up
+    restart: "no"
+
+  sync:
+    profiles:
+      - manual
+    build:
+      context: ./cluetooth-sync
+      dockerfile: Dockerfile
+    image: cluetooth-sync:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      CLUETOOTH_DATABASE_URL: postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable
+      CLUETOOTH_BUCKET: ${CLUETOOTH_BUCKET:-cluetooth-1da02.firebasestorage.app}
+      CLUETOOTH_PREFIX: ${CLUETOOTH_PREFIX:-scans/}
+      CLUETOOTH_PRIVATE_KEY_PATH: /run/secrets/cluetooth-private-key
+      CLUETOOTH_MIRROR_DIR: /mirror
+      CLUETOOTH_DOWNLOAD_WORKERS: ${CLUETOOTH_DOWNLOAD_WORKERS:-4}
+      CLUETOOTH_INGEST_WORKERS: ${CLUETOOTH_INGEST_WORKERS:-2}
+      CLUETOOTH_QUEUE_SIZE: ${CLUETOOTH_QUEUE_SIZE:-0}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-service-account
+    volumes:
+      - ${CLUETOOTH_HOST_MIRROR_DIR:-./downloads}:/mirror
+    secrets:
+      - cluetooth-private-key
+      - google-service-account
+    restart: "no"
+
+  sync-continuous:
+    build:
+      context: ./cluetooth-sync
+      dockerfile: Dockerfile
+    image: cluetooth-sync:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      CLUETOOTH_DATABASE_URL: postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable
+      CLUETOOTH_BUCKET: ${CLUETOOTH_BUCKET:-cluetooth-1da02.firebasestorage.app}
+      CLUETOOTH_PREFIX: ${CLUETOOTH_PREFIX:-scans/}
+      CLUETOOTH_PRIVATE_KEY_PATH: /run/secrets/cluetooth-private-key
+      CLUETOOTH_MIRROR_DIR: /mirror
+      CLUETOOTH_DOWNLOAD_WORKERS: ${CLUETOOTH_DOWNLOAD_WORKERS:-4}
+      CLUETOOTH_INGEST_WORKERS: ${CLUETOOTH_INGEST_WORKERS:-2}
+      CLUETOOTH_QUEUE_SIZE: ${CLUETOOTH_QUEUE_SIZE:-0}
+      CLUETOOTH_POLL_INTERVAL_SECONDS: ${CLUETOOTH_POLL_INTERVAL_SECONDS:-30}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-service-account
+    volumes:
+      - ${CLUETOOTH_HOST_MIRROR_DIR:-./downloads}:/mirror
+    secrets:
+      - cluetooth-private-key
+      - google-service-account
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+
+secrets:
+  cluetooth-private-key:
+    file: ./secrets/private-key.txt
+  google-service-account:
+    file: ./secrets/service-account-key.json

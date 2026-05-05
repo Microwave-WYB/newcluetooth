@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgis/postgis:18-3.6
+    container_name: cluetooth-test-db
+    environment:
+      POSTGRES_DB: cluetooth_test
+      POSTGRES_USER: cluetooth_test
+      POSTGRES_PASSWORD: cluetooth_test
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cluetooth_test -d cluetooth_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
