@@ -8,6 +8,7 @@ import polars as pl
 
 from cluetooth_sync.pipeline import (
     ingest_scan_jsonl_bytes,
+    insert_builtin_ad_structures,
     insert_prepared_scans,
     prepare_scan_jsonl_bytes,
 )
@@ -156,6 +157,55 @@ def test_insert_prepared_scans(database_url: str) -> None:
     inserted = insert_prepared_scans(database_url, scans)
 
     assert inserted == 2
+    inserted_scans = pl.read_database_uri(
+        """
+        select
+          blob,
+          addr::text as addr,
+          local_name
+        from scans
+        order by addr::text
+        """,
+        database_url,
+        engine="adbc",
+    )
+
+    assert inserted_scans.to_dicts() == [
+        {
+            "blob": SCAN_FIXTURE_URI,
+            "addr": "2c:fe:8b:28:bb:05",
+            "local_name": "QT 8B28BB05",
+        },
+        {
+            "blob": SCAN_FIXTURE_URI,
+            "addr": "45:31:31:24:54:cb",
+            "local_name": None,
+        },
+    ]
+
+    enrichment_count = pl.read_database_uri(
+        "select count(*)::int as count from adv_enrichments",
+        database_url,
+        engine="adbc",
+    )
+    assert enrichment_count.select("count").item() == 0
+
+    blobs = pl.read_database_uri(
+        "select uri, success from blobs",
+        database_url,
+        engine="adbc",
+    )
+    assert blobs.to_dicts() == [{"uri": SCAN_FIXTURE_URI, "success": True}]
+
+
+def test_insert_builtin_ad_structures(database_url: str) -> None:
+    fixture_uri = "gs://test-bucket/enrichment-scans.jsonl"
+    scans = prepare_scan_jsonl_bytes(SCAN_FIXTURE_PATH.read_bytes(), fixture_uri)
+    inserted = insert_prepared_scans(database_url, scans)
+
+    assert inserted == 2
+
+    insert_builtin_ad_structures(database_url)
 
     inserted_scans = pl.read_database_uri(
         """
@@ -170,10 +220,12 @@ def test_insert_prepared_scans(database_url: str) -> None:
          and e.raw = s.raw
          and e.enrichment_kind = 'builtin'
          and e.enrichment_id = 'ad_structures'
+        where s.blob = $1
         order by s.addr::text
         """,
         database_url,
         engine="adbc",
+        execute_options={"parameters": [fixture_uri]},
     )
     inserted_scan_rows = inserted_scans.to_dicts()
     for row in inserted_scan_rows:
@@ -181,7 +233,7 @@ def test_insert_prepared_scans(database_url: str) -> None:
 
     assert inserted_scan_rows == [
         {
-            "blob": SCAN_FIXTURE_URI,
+            "blob": fixture_uri,
             "addr": "2c:fe:8b:28:bb:05",
             "local_name": "QT 8B28BB05",
             "adv": [
@@ -191,7 +243,7 @@ def test_insert_prepared_scans(database_url: str) -> None:
             ],
         },
         {
-            "blob": SCAN_FIXTURE_URI,
+            "blob": fixture_uri,
             "addr": "45:31:31:24:54:cb",
             "local_name": None,
             "adv": [
@@ -205,12 +257,13 @@ def test_insert_prepared_scans(database_url: str) -> None:
         },
     ]
 
-    blobs = pl.read_database_uri(
-        "select uri, success from blobs",
+    insert_builtin_ad_structures(database_url)
+    enrichment_count = pl.read_database_uri(
+        "select count(*)::int as count from adv_enrichments",
         database_url,
         engine="adbc",
     )
-    assert blobs.to_dicts() == [{"uri": SCAN_FIXTURE_URI, "success": True}]
+    assert enrichment_count.select("count").item() == 2
 
 
 def test_ingest_scan_jsonl_bytes(database_url: str) -> None:
@@ -232,6 +285,7 @@ def test_ingest_legacy_sample_to_new_db(database_url: str) -> None:
 
     assert inserted == 2
 
+    insert_builtin_ad_structures(database_url)
     _refresh_rollups(database_url)
 
     fixture_uri = LEGACY_FIXTURE_URI.replace("'", "''")

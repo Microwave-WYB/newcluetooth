@@ -187,37 +187,6 @@ create table recipe_interaction_events (
 
 create index recipe_interaction_events_event_idx on recipe_interaction_events (event);
 
--- built-in AD structure parsing: parse_ble_adv(raw), populated eagerly on scan insert.
--- statement-level so bulk inserts coalesce into one INSERT ... SELECT DISTINCT.
-create or replace function upsert_adv_structure () returns trigger as $$
-begin
-    insert into adv_enrichments (
-      addr,
-      raw,
-      enrichment_kind,
-      enrichment_id,
-      enrichment_revision,
-      data
-    )
-    select distinct
-      n.addr,
-      n.raw,
-      'builtin',
-      'ad_structures',
-      '20260416210856_init',
-      parse_ble_adv(n.raw)
-    from new_table n
-    on conflict (addr, raw, enrichment_kind, enrichment_id, enrichment_revision) do nothing;
-    return null;
-end;
-$$ language plpgsql;
-
-create trigger scans_upsert_adv_structure
-after insert on scans
-referencing new table as new_table
-for each statement
-execute function upsert_adv_structure ();
-
 create materialized view adv_observations as
 with adv_observation_groups as (
   select
@@ -364,10 +333,6 @@ drop materialized view devices;
 drop materialized view advs;
 
 drop materialized view adv_observations;
-
-drop trigger scans_upsert_adv_structure on scans;
-
-drop function upsert_adv_structure;
 
 drop table recipe_interaction_events;
 

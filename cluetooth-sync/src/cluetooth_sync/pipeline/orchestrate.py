@@ -4,6 +4,15 @@ from collections.abc import Iterator
 from concurrent.futures import Executor
 from dataclasses import dataclass
 
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
 from .decrypt import decrypt_blob_bytes
 from .discover import discover_pending_blobs
 from .download import read_blob_bytes
@@ -49,7 +58,7 @@ async def run_pipeline(
     ingest_workers: int,
     queue_size: int = 0,
     max_blobs: int | None = None,
-) -> None:
+) -> int:
     loop = asyncio.get_running_loop()
     blob_uris: Iterator[str] = discover_pending_blobs(
         storage_client=storage_client,
@@ -63,7 +72,6 @@ async def run_pipeline(
 
     total_blobs = len(discovered_blobs)
     print(f"discover {total_blobs} pending blobs", flush=True)
-    print(f"0/{total_blobs}", flush=True)
 
     download_queue: asyncio.Queue[str] = asyncio.Queue()
     ingest_queue: asyncio.Queue[BlobBytes] = asyncio.Queue(maxsize=queue_size)
@@ -102,10 +110,19 @@ async def run_pipeline(
 
     async def progress_worker() -> None:
         completed_count = 0
-        while completed_count < total_blobs:
-            await progress_queue.get()
-            completed_count += 1
-            print(f"{completed_count}/{total_blobs}", flush=True)
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+        ) as progress:
+            task_id = progress.add_task("sync blobs", total=total_blobs)
+            while completed_count < total_blobs:
+                await progress_queue.get()
+                completed_count += 1
+                progress.advance(task_id)
 
     download_tasks = [
         asyncio.create_task(download_worker()) for _ in range(download_workers)
@@ -122,3 +139,4 @@ async def run_pipeline(
     ingest_queue.shutdown()
     _ = await asyncio.gather(*ingest_tasks)
     await progress_task
+    return total_blobs

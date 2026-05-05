@@ -12,6 +12,7 @@ dependencies = [
     "google-cloud-storage>=3.10.1",
     "polars>=1.39.3",
     "pynacl>=1.6.2",
+    "rich>=15.0.0",
     "typer>=0.24.1",
 ]
 

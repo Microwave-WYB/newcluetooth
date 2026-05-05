@@ -1,6 +1,7 @@
 from .decrypt import decrypt_blob_bytes
 from .discover import discover_pending_blobs
 from .download import read_blob_bytes
+from .enrich import insert_builtin_ad_structures
 from .ingest import (
     ingest_scan_jsonl_bytes,
     insert_prepared_scans,
@@ -22,6 +23,7 @@ __all__ = [
     "discover_pending_blobs",
     "ingest_scan_jsonl_bytes",
     "insert_prepared_scans",
+    "insert_builtin_ad_structures",
     "parse_gcs_uri",
     "prepare_scan_jsonl_bytes",
     "read_blob_bytes",

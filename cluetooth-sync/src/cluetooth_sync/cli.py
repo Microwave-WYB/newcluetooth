@@ -13,6 +13,7 @@ from cluetooth_sync.pipeline import (
     GcsStorageClient,
     MirroredStorageClient,
     StorageClient,
+    insert_builtin_ad_structures,
     run_pipeline,
 )
 
@@ -162,7 +163,7 @@ def run(
         ThreadPoolExecutor(max_workers=ingest_workers) as ingest_executor,
     ):
         while True:
-            asyncio.run(
+            processed_count = asyncio.run(
                 run_pipeline(
                     storage_client=storage_client,
                     database_url=database_url,
@@ -177,6 +178,8 @@ def run(
                     max_blobs=max_blobs,
                 )
             )
+            if processed_count > 0:
+                insert_builtin_ad_structures(database_url)
 
             if poll_interval_seconds is None:
                 break

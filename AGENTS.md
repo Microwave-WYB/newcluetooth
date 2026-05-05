@@ -91,8 +91,11 @@ Important schema rules:
 
 ## Adv Parsing
 
-On scan insert, the database trigger `scans_upsert_adv_structure`
-populates `adv_enrichments` with built-in low-level AD structures.
+Scan ingest does not populate `adv_enrichments` inside the scan insert
+transaction. Built-in low-level AD structures are inserted after each sync cycle
+by `insert_builtin_ad_structures(...)`, which runs the
+`adv_enrichments/insert_builtin_ad_structures.sql` query against committed
+`scans`.
 
 `parse_ble_adv(raw)` in the init migration parses raw BLE adv bytes
 into JSON like:
@@ -115,7 +118,7 @@ Notes:
   malformed payloads.
 - Python `cluetooth_sync.ble.parse_raw` exists for lightweight local parsing,
   currently used by the legacy adapter to extract local names. The database
-  parser remains the canonical built-in ingest enrichment.
+  parser remains the canonical built-in enrichment.
 
 ## Python Sync Pipeline
 
@@ -134,6 +137,10 @@ Notes:
   - Reads one encrypted blob as bytes through an explicit `StorageClient`.
 - `decrypt.py`
   - Decrypts ciphertext bytes with PyNaCl `SealedBox` and a 32-byte private key.
+- `enrich.py`
+  - Runs post-sync built-in enrichment queries.
+  - `insert_builtin_ad_structures(...)` inserts missing low-level AD structure
+    rows into `adv_enrichments`.
 - `ingest.py`
   - Parses JSONL with a hand-written Polars schema.
   - Handles current scan payloads and legacy `0.0.1`, `0.0.2`, and `0.0.3`
@@ -168,6 +175,10 @@ private key, creates thread pools, and calls `run_pipeline(...)`. It supports
 environment variables for database URL, bucket, prefix, private key path,
 service account key, mirror dir, worker counts, queue size, polling interval,
 and max blobs.
+
+After each non-empty sync cycle, the CLI runs `insert_builtin_ad_structures(...)`
+so low-level AD structure enrichments are populated after scan transactions
+commit. This keeps raw scan ingest independent from enrichment contention.
 
 ## Ingest Rules
 
