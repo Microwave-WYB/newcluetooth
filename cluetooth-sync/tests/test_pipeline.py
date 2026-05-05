@@ -279,6 +279,56 @@ def test_insert_builtin_ad_structures(database_url: str) -> None:
     assert enrichment_count.select("count").item() == 2
 
 
+def test_advs_exposes_sig_query_fields(database_url: str) -> None:
+    fixture_uri = "gs://test-bucket/adv-query-fields.jsonl"
+    scans = prepare_scan_jsonl_bytes(SCAN_FIXTURE_PATH.read_bytes(), fixture_uri)
+    inserted = insert_prepared_scans(database_url, scans)
+
+    assert inserted == 2
+
+    _refresh_rollups(database_url)
+
+    rows = pl.read_database_uri(
+        """
+        select
+          a.addr::text as addr,
+          a.adv_types::text as adv_types,
+          a.manufacturer_ids::text as manufacturer_ids,
+          a.service_uuids::text as service_uuids,
+          a.service_data_uuids::text as service_data_uuids
+        from advs a
+        join (
+          select distinct addr, raw
+          from scans
+          where blob = $1
+        ) s
+          on s.addr = a.addr
+         and s.raw = a.raw
+        order by a.addr::text
+        """,
+        database_url,
+        engine="adbc",
+        execute_options={"parameters": [fixture_uri]},
+    ).to_dicts()
+
+    assert rows == [
+        {
+            "addr": "2c:fe:8b:28:bb:05",
+            "adv_types": "{9,1,255}",
+            "manufacturer_ids": "{13683}",
+            "service_uuids": "{}",
+            "service_data_uuids": "{}",
+        },
+        {
+            "addr": "45:31:31:24:54:cb",
+            "adv_types": "{1,255,255}",
+            "manufacturer_ids": "{117}",
+            "service_uuids": "{}",
+            "service_data_uuids": "{}",
+        },
+    ]
+
+
 def test_ingest_scan_jsonl_bytes(database_url: str) -> None:
     inserted = ingest_scan_jsonl_bytes(
         database_url=database_url,

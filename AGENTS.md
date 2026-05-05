@@ -69,6 +69,12 @@ Current important tables and materialized views:
 - `advs`
   - Materialized rollup by `addr` and `raw`.
   - Represents exact producer address plus exact adv payload identity.
+  - Primary analyst-facing adv table/view.
+  - Includes query-friendly built-in fields:
+    - `adv_types`
+    - `manufacturer_ids`
+    - `service_uuids`
+    - `service_data_uuids`
 - `devices`
   - Materialized rollup by device address.
   - Answers where/when a MAC has been observed across payload variants.
@@ -80,6 +86,9 @@ Important schema rules:
 
 - `raw` is authoritative for adv payload identity.
 - `(addr, raw)` is the stable key for exact advs.
+- `advs` should stay ergonomic for common filtering and grouping. Prefer
+  first-class typed columns there for common Bluetooth SIG keys over forcing
+  analysts to repeatedly unpack JSON.
 - Anything richer than raw payload identity belongs in:
   - a convenience field on `scans`,
   - `adv_enrichments`,
