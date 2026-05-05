@@ -27,8 +27,8 @@ def _refresh_rollups(database_url: str) -> None:
     cursor = connection.cursor()
     try:
         for view_name in (
-            "advertisement_observations",
-            "advertisements",
+            "adv_observations",
+            "advs",
             "devices",
             "payloads",
         ):
@@ -165,7 +165,7 @@ def test_insert_prepared_scans(database_url: str) -> None:
           s.local_name,
           e.data::text as adv
         from scans s
-        join advertisement_enrichments e
+        join adv_enrichments e
           on e.addr = s.addr
          and e.raw = s.raw
          and e.enrichment_kind = 'builtin'
@@ -250,7 +250,7 @@ def test_ingest_legacy_sample_to_new_db(database_url: str) -> None:
           ) as scan_count,
           (
             select count(*)::int
-            from advertisement_enrichments e
+            from adv_enrichments e
             join legacy_scans s
               on s.addr = e.addr
              and s.raw = e.raw
@@ -259,16 +259,16 @@ def test_ingest_legacy_sample_to_new_db(database_url: str) -> None:
           ) as builtin_enrichment_count,
           (
             select count(*)::int
-            from advertisement_observations
+            from adv_observations
             where blob = '{fixture_uri}'
-          ) as advertisement_observation_count,
+          ) as adv_observation_count,
           (
             select count(*)::int
-            from advertisements a
+            from advs a
             join (select distinct addr, raw from legacy_scans) s
               on s.addr = a.addr
              and s.raw = a.raw
-          ) as advertisement_count,
+          ) as adv_count,
           (
             select count(*)::int
             from devices d
@@ -290,8 +290,8 @@ def test_ingest_legacy_sample_to_new_db(database_url: str) -> None:
         {
             "scan_count": 2,
             "builtin_enrichment_count": 2,
-            "advertisement_observation_count": 2,
-            "advertisement_count": 2,
+            "adv_observation_count": 2,
+            "adv_count": 2,
             "device_count": 2,
             "payload_count": 2,
         }

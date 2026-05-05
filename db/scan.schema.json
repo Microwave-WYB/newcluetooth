@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://newcluetooth.local/schemas/scan.schema.json",
   "title": "Scan",
-  "description": "Client-supplied payload for inserting a BLE scan row, excluding server-owned and computed columns. The raw advertisement payload is required; richer advertisement parsing happens later in enrichment.",
+  "description": "Client-supplied payload for inserting a BLE scan row, excluding server-owned and computed columns. The raw adv payload is required; richer adv parsing happens later in enrichment.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -19,12 +19,12 @@
     },
     "scanned_at": {
       "type": "string",
-      "description": "Timestamp when the advertisement was observed.",
+      "description": "Timestamp when the adv was observed.",
       "format": "date-time"
     },
     "raw": {
       "type": "string",
-      "description": "Canonical raw advertisement payload representation."
+      "description": "Canonical raw adv payload representation."
     },
     "local_name": {
       "type": ["string", "null"],
@@ -38,7 +38,7 @@
     },
     "is_connectable": {
       "type": ["boolean", "null"],
-      "description": "Whether the advertisement indicates a connectable device."
+      "description": "Whether the adv indicates a connectable device."
     },
     "lat": {
       "type": ["number", "null"],

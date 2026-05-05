@@ -65,7 +65,7 @@ create table scans (
   addr macaddr not null,
   rssi smallint,
   scanned_at timestamptz not null,
-  -- advertisement
+  -- adv
   raw bytea not null,
   local_name text,
   tx_power smallint,
@@ -83,7 +83,7 @@ create table gatt_discoveries (
   -- device
   addr macaddr not null,
   discovered_at timestamptz not null,
-  raw_advertisement bytea,
+  raw_adv bytea,
   -- discovery result
   raw_profile jsonb not null,
   profile_hash text,
@@ -141,8 +141,8 @@ create index gatt_attributes_kind_uuid_idx on gatt_attributes (kind, uuid);
 
 create index gatt_attributes_uuid_idx on gatt_attributes (uuid);
 
--- passive enrichment output over aggregate advertisements, keyed on exact producer content.
-create table advertisement_enrichments (
+-- passive enrichment output over aggregate advs, keyed on exact producer content.
+create table adv_enrichments (
   addr macaddr not null,
   raw bytea not null,
   enrichment_kind text not null,
@@ -155,8 +155,8 @@ create table advertisement_enrichments (
   primary key (addr, raw, enrichment_kind, enrichment_id, enrichment_revision)
 );
 
-create index advertisement_enrichments_enrichment_idx on advertisement_enrichments (enrichment_kind, enrichment_id);
-create index advertisement_enrichments_data_idx on advertisement_enrichments using gin (data jsonb_path_ops);
+create index adv_enrichments_enrichment_idx on adv_enrichments (enrichment_kind, enrichment_id);
+create index adv_enrichments_data_idx on adv_enrichments using gin (data jsonb_path_ops);
 
 -- active recipe CLI sessions and their structured transcript/BLE logs.
 create table recipe_interaction_runs (
@@ -166,7 +166,7 @@ create table recipe_interaction_runs (
   recipe_git_commit text not null,
   recipe_path text not null,
   addr macaddr not null,
-  raw_advertisement bytea,
+  raw_adv bytea,
   started_at timestamptz not null,
   finished_at timestamptz,
   status text not null,
@@ -189,9 +189,9 @@ create index recipe_interaction_events_event_idx on recipe_interaction_events (e
 
 -- built-in AD structure parsing: parse_ble_adv(raw), populated eagerly on scan insert.
 -- statement-level so bulk inserts coalesce into one INSERT ... SELECT DISTINCT.
-create or replace function upsert_advertisement_structure () returns trigger as $$
+create or replace function upsert_adv_structure () returns trigger as $$
 begin
-    insert into advertisement_enrichments (
+    insert into adv_enrichments (
       addr,
       raw,
       enrichment_kind,
@@ -212,14 +212,14 @@ begin
 end;
 $$ language plpgsql;
 
-create trigger scans_upsert_advertisement_structure
+create trigger scans_upsert_adv_structure
 after insert on scans
 referencing new table as new_table
 for each statement
-execute function upsert_advertisement_structure ();
+execute function upsert_adv_structure ();
 
-create materialized view advertisement_observations as
-with advertisement_observation_groups as (
+create materialized view adv_observations as
+with adv_observation_groups as (
   select
     blob,
     addr,
@@ -266,12 +266,12 @@ select
   ) as radius,
   g.scan_count
 from
-  advertisement_observation_groups g;
+  adv_observation_groups g;
 
-create unique index on advertisement_observations (blob, addr, raw);
+create unique index on adv_observations (blob, addr, raw);
 
-create materialized view advertisements as
-with advertisement_groups as (
+create materialized view advs as
+with adv_groups as (
   select
     addr,
     raw,
@@ -287,7 +287,7 @@ with advertisement_groups as (
     avg(rssi_avg)::float4 as rssi_avg,
     st_centroid (st_collect (centroid)) as centroid
   from
-    advertisement_observations
+    adv_observations
   group by
     addr,
     raw
@@ -304,7 +304,7 @@ select
     select
       max(st_distance (o.centroid::geography, g.centroid::geography))::float4
     from
-      advertisement_observations o
+      adv_observations o
     where
       o.addr = g.addr
       and o.raw = g.raw
@@ -312,10 +312,10 @@ select
       and g.centroid is not null
   ) as radius
 from
-  advertisement_groups g;
+  adv_groups g;
 
-create unique index on advertisements (addr, raw);
-create index advertisements_raw_idx on advertisements (raw);
+create unique index on advs (addr, raw);
+create index advs_raw_idx on advs (raw);
 
 -- per-device rollup: "where/when has this MAC been observed"
 create materialized view devices as
@@ -334,13 +334,13 @@ select
   avg(rssi_avg)::float4 as rssi_avg,
   st_centroid (st_collect (centroid)) as centroid
 from
-  advertisements
+  advs
 group by
   addr;
 
 create unique index on devices (addr);
 
--- per-payload rollup: "where/when has this advertisement been observed"
+-- per-payload rollup: "where/when has this adv been observed"
 create materialized view payloads as
 select
   raw,
@@ -350,7 +350,7 @@ select
   avg(rssi_avg)::float4 as rssi_avg,
   st_centroid (st_collect (centroid)) as centroid
 from
-  advertisements
+  advs
 group by
   raw;
 
@@ -361,19 +361,19 @@ drop materialized view payloads;
 
 drop materialized view devices;
 
-drop materialized view advertisements;
+drop materialized view advs;
 
-drop materialized view advertisement_observations;
+drop materialized view adv_observations;
 
-drop trigger scans_upsert_advertisement_structure on scans;
+drop trigger scans_upsert_adv_structure on scans;
 
-drop function upsert_advertisement_structure;
+drop function upsert_adv_structure;
 
 drop table recipe_interaction_events;
 
 drop table recipe_interaction_runs;
 
-drop table advertisement_enrichments;
+drop table adv_enrichments;
 
 drop table gatt_attributes;
 
