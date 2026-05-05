@@ -108,7 +108,7 @@ begin
         elsif ad_type in (6, 7) then
             byte_offset := 0;
             while byte_offset + 16 <= octet_length(data) loop
-                uuid := ble_uuid128_le(substring(data from byte_offset + 1 for 16));
+                uuid := public.ble_uuid128_le(substring(data from byte_offset + 1 for 16));
                 if uuid is not null then
                     result := array_append(result, uuid);
                 end if;
@@ -147,7 +147,7 @@ begin
                 lpad(to_hex(get_byte(data, 0)), 2, '0');
             result := array_append(result, uuid);
         elsif ad_type = 33 and octet_length(data) >= 16 then
-            uuid := ble_uuid128_le(substring(data from 1 for 16));
+            uuid := public.ble_uuid128_le(substring(data from 1 for 16));
             if uuid is not null then
                 result := array_append(result, uuid);
             end if;
