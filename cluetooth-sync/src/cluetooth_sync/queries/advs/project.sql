@@ -54,6 +54,23 @@ scan_groups as (
     s.addr,
     s.raw
 ),
+location_radii as (
+  select
+    s.addr,
+    s.raw,
+    max(st_distance(s.location::geography, g.centroid::geography))::float8 as radius
+  from
+    scans s
+    join scan_groups g
+      on g.addr = s.addr
+     and g.raw = s.raw
+  where
+    s.location is not null
+    and g.centroid is not null
+  group by
+    s.addr,
+    s.raw
+),
 projected_advs as (
   select
     g.addr,
@@ -66,17 +83,7 @@ projected_advs as (
     st_y(g.centroid)::float8 as centroid_lat,
     st_x(g.centroid)::float8 as centroid_lon,
     g.location_count,
-    (
-      select
-        max(st_distance(s.location::geography, g.centroid::geography))::float8
-      from
-        scans s
-      where
-        s.addr = g.addr
-        and s.raw = g.raw
-        and s.location is not null
-        and g.centroid is not null
-    ) as radius,
+    r.radius,
     g.local_name,
     ble_adv_types(g.raw) as adv_types,
     ble_adv_manufacturer_ids(g.raw) as manufacturer_ids,
@@ -85,6 +92,9 @@ projected_advs as (
   from
     scan_groups g
     cross join target
+    left join location_radii r
+      on r.addr = g.addr
+     and r.raw = g.raw
 ),
 upserted as (
   insert into advs (

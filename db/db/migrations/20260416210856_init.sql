@@ -309,10 +309,6 @@ create index scans_addr_idx on scans (addr);
 
 create index scans_scanned_at_idx on scans (scanned_at);
 
-create index scans_addr_raw_id_idx on scans (addr, raw, id);
-
-create index scans_addr_raw_scanned_at_idx on scans (addr, raw, scanned_at);
-
 create index advs_last_seen_idx on advs (last_seen);
 
 create index advs_scans_through_id_idx on advs (scans_through_id);
