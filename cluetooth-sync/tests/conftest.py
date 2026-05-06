@@ -24,7 +24,14 @@ def _database_url(container: PostgresContainer) -> str:
 
 def _run_migrations(database_url: str) -> None:
     subprocess.run(
-        [str(DBMATE_BIN), "--url", database_url, "--migrations-dir", "db/migrations", "up"],
+        [
+            str(DBMATE_BIN),
+            "--url",
+            database_url,
+            "--migrations-dir",
+            "db/migrations",
+            "up",
+        ],
         cwd=DB_DIR,
         check=True,
     )

@@ -14,6 +14,7 @@ from cluetooth_sync.pipeline import (
     MirroredStorageClient,
     StorageClient,
     insert_builtin_ad_structures,
+    project_advs,
     run_pipeline,
 )
 
@@ -179,6 +180,8 @@ def run(
                 )
             )
             if processed_count > 0:
+                project_advs(database_url)
+                print("project advs", flush=True)
                 insert_builtin_ad_structures(database_url)
 
             if poll_interval_seconds is None:

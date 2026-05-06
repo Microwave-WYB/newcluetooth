@@ -3,10 +3,10 @@ import sys
 import time
 from uuid import uuid4
 
-import adbc_driver_postgresql.dbapi as pg_dbapi
 import polars as pl
 from polars._typing import SchemaDict
 
+import cluetooth_sync.pipeline.db as db
 from cluetooth_sync.pipeline.legacy_adapter import (
     is_legacy_scan_blob,
     read_legacy_scan_jsonl_bytes,
@@ -108,28 +108,21 @@ def _insert_prepared_scans_once(
     scans: pl.DataFrame,
     gcs_blob_uri: str,
 ) -> None:
-    connection = pg_dbapi.connect(database_url, autocommit=False)
-    cursor = connection.cursor()
     staging_table = f"scan_stage_{uuid4().hex}"
 
-    try:
-        cursor.execute(read_query("blobs/ensure_processing.sql"), [gcs_blob_uri])
+    with db.session(database_url) as session:
+        session.cursor.execute(
+            read_query("blobs/ensure_processing.sql"), [gcs_blob_uri]
+        )
         scans.write_database(
             table_name=staging_table,
-            connection=connection,
+            connection=session.connection,
             if_table_exists="replace",
             engine="adbc",
             engine_options={"temporary": True},
         )
-        cursor.execute(scan_insert_from_stage(staging_table))
-        cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        cursor.close()
-        connection.close()
+        session.cursor.execute(scan_insert_from_stage(staging_table))
+        session.cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])
 
 
 def _is_retryable_insert_error(exc: Exception) -> bool:
@@ -138,13 +131,8 @@ def _is_retryable_insert_error(exc: Exception) -> bool:
 
 
 def _mark_blob_failed(database_url: str, gcs_blob_uri: str, exc: Exception) -> None:
-    failure_connection = pg_dbapi.connect(database_url, autocommit=True)
-    failure_cursor = failure_connection.cursor()
-    try:
-        failure_cursor.execute(
+    with db.session(database_url, autocommit=True) as session:
+        session.cursor.execute(
             read_query("blobs/mark_failed.sql"),
             (gcs_blob_uri, str(exc)),
         )
-    finally:
-        failure_cursor.close()
-        failure_connection.close()

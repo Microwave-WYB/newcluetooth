@@ -8,6 +8,7 @@ from .ingest import (
     prepare_scan_jsonl_bytes,
 )
 from .orchestrate import run_pipeline
+from .project import project_advs
 from .storage import (
     GcsStorageClient,
     MirroredStorageClient,
@@ -26,6 +27,7 @@ __all__ = [
     "insert_builtin_ad_structures",
     "parse_gcs_uri",
     "prepare_scan_jsonl_bytes",
+    "project_advs",
     "read_blob_bytes",
     "run_pipeline",
 ]
