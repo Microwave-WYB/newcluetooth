@@ -712,8 +712,17 @@ def test_project_advs_location_and_local_name_rollup(database_url: str) -> None:
           rssi_min,
           centroid_lat,
           centroid_lon,
+          st_y(centroid) as centroid_lat_from_geom,
+          st_x(centroid) as centroid_lon_from_geom,
           location_count,
-          radius,
+          min_lat,
+          max_lat,
+          min_lon,
+          max_lon,
+          st_ymin(box3d(bbox)) as min_lat_from_bbox,
+          st_ymax(box3d(bbox)) as max_lat_from_bbox,
+          st_xmin(box3d(bbox)) as min_lon_from_bbox,
+          st_xmax(box3d(bbox)) as max_lon_from_bbox,
           local_name
         from advs
         where addr = cast($1 as macaddr)
@@ -728,9 +737,34 @@ def test_project_advs_location_and_local_name_rollup(database_url: str) -> None:
     assert row["rssi_min"] == -60
     assert row["centroid_lat"] == pytest.approx(0.0)
     assert row["centroid_lon"] == pytest.approx(0.001)
+    assert row["centroid_lat_from_geom"] == pytest.approx(row["centroid_lat"])
+    assert row["centroid_lon_from_geom"] == pytest.approx(row["centroid_lon"])
     assert row["location_count"] == 2
-    assert row["radius"] == pytest.approx(111.32, rel=0.02)
+    assert row["min_lat"] == pytest.approx(0.0)
+    assert row["max_lat"] == pytest.approx(0.0)
+    assert row["min_lon"] == pytest.approx(0.0)
+    assert row["max_lon"] == pytest.approx(0.002)
+    assert row["min_lat_from_bbox"] == pytest.approx(row["min_lat"])
+    assert row["max_lat_from_bbox"] == pytest.approx(row["max_lat"])
+    assert row["min_lon_from_bbox"] == pytest.approx(row["min_lon"])
+    assert row["max_lon_from_bbox"] == pytest.approx(row["max_lon"])
     assert row["local_name"] == "New"
+
+    radius_column_count = (
+        pl.read_database_uri(
+            """
+        select count(*)::int as count
+        from information_schema.columns
+        where table_name = 'advs'
+          and column_name = 'radius'
+        """,
+            database_url,
+            engine="adbc",
+        )
+        .select("count")
+        .item()
+    )
+    assert radius_column_count == 0
 
 
 def test_ingest_scan_jsonl_bytes(database_url: str) -> None:

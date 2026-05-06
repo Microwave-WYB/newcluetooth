@@ -44,29 +44,22 @@ scan_groups as (
     count(s.location)::bigint as location_count,
     st_centroid(
       st_collect(s.location) filter (where s.location is not null)
-    ) as centroid
+    )::geometry (Point, 4326) as centroid,
+    case
+      when count(s.location) = 0 then null
+      else st_makeenvelope(
+        min(st_x(s.location)) filter (where s.location is not null),
+        min(st_y(s.location)) filter (where s.location is not null),
+        max(st_x(s.location)) filter (where s.location is not null),
+        max(st_y(s.location)) filter (where s.location is not null),
+        4326
+      )::geometry (Polygon, 4326)
+    end as bbox
   from
     scans s
     join changed_keys k
       on k.addr = s.addr
      and k.raw = s.raw
-  group by
-    s.addr,
-    s.raw
-),
-location_radii as (
-  select
-    s.addr,
-    s.raw,
-    max(st_distance(s.location::geography, g.centroid::geography))::float8 as radius
-  from
-    scans s
-    join scan_groups g
-      on g.addr = s.addr
-     and g.raw = s.raw
-  where
-    s.location is not null
-    and g.centroid is not null
   group by
     s.addr,
     s.raw
@@ -80,10 +73,9 @@ projected_advs as (
     g.last_seen,
     g.scans_count,
     g.rssi_min,
-    st_y(g.centroid)::float8 as centroid_lat,
-    st_x(g.centroid)::float8 as centroid_lon,
     g.location_count,
-    r.radius,
+    g.centroid,
+    g.bbox,
     g.local_name,
     ble_adv_types(g.raw) as adv_types,
     ble_adv_manufacturer_ids(g.raw) as manufacturer_ids,
@@ -92,9 +84,6 @@ projected_advs as (
   from
     scan_groups g
     cross join target
-    left join location_radii r
-      on r.addr = g.addr
-     and r.raw = g.raw
 ),
 upserted as (
   insert into advs (
@@ -105,10 +94,9 @@ upserted as (
     last_seen,
     scans_count,
     rssi_min,
-    centroid_lat,
-    centroid_lon,
     location_count,
-    radius,
+    centroid,
+    bbox,
     local_name,
     adv_types,
     manufacturer_ids,
@@ -123,10 +111,9 @@ upserted as (
     last_seen,
     scans_count,
     rssi_min,
-    centroid_lat,
-    centroid_lon,
     location_count,
-    radius,
+    centroid,
+    bbox,
     local_name,
     adv_types,
     manufacturer_ids,
@@ -140,10 +127,9 @@ upserted as (
     last_seen = excluded.last_seen,
     scans_count = excluded.scans_count,
     rssi_min = excluded.rssi_min,
-    centroid_lat = excluded.centroid_lat,
-    centroid_lon = excluded.centroid_lon,
     location_count = excluded.location_count,
-    radius = excluded.radius,
+    centroid = excluded.centroid,
+    bbox = excluded.bbox,
     local_name = excluded.local_name,
     adv_types = excluded.adv_types,
     manufacturer_ids = excluded.manufacturer_ids,
