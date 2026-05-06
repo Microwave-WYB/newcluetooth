@@ -41,7 +41,6 @@ scan_groups as (
           s.id desc
       ) filter (where s.local_name is not null)
     ) [1] as local_name,
-    count(s.location)::bigint as location_count,
     st_centroid(
       st_collect(s.location) filter (where s.location is not null)
     )::geometry (Point, 4326) as centroid,
@@ -73,7 +72,6 @@ projected_advs as (
     g.last_seen,
     g.scans_count,
     g.rssi_min,
-    g.location_count,
     g.centroid,
     g.bbox,
     g.local_name,
@@ -94,7 +92,6 @@ upserted as (
     last_seen,
     scans_count,
     rssi_min,
-    location_count,
     centroid,
     bbox,
     local_name,
@@ -111,7 +108,6 @@ upserted as (
     last_seen,
     scans_count,
     rssi_min,
-    location_count,
     centroid,
     bbox,
     local_name,
@@ -127,7 +123,6 @@ upserted as (
     last_seen = excluded.last_seen,
     scans_count = excluded.scans_count,
     rssi_min = excluded.rssi_min,
-    location_count = excluded.location_count,
     centroid = excluded.centroid,
     bbox = excluded.bbox,
     local_name = excluded.local_name,

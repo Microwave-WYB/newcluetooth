@@ -714,7 +714,6 @@ def test_project_advs_location_and_local_name_rollup(database_url: str) -> None:
           centroid_lon,
           st_y(centroid) as centroid_lat_from_geom,
           st_x(centroid) as centroid_lon_from_geom,
-          location_count,
           min_lat,
           max_lat,
           min_lon,
@@ -739,7 +738,6 @@ def test_project_advs_location_and_local_name_rollup(database_url: str) -> None:
     assert row["centroid_lon"] == pytest.approx(0.001)
     assert row["centroid_lat_from_geom"] == pytest.approx(row["centroid_lat"])
     assert row["centroid_lon_from_geom"] == pytest.approx(row["centroid_lon"])
-    assert row["location_count"] == 2
     assert row["min_lat"] == pytest.approx(0.0)
     assert row["max_lat"] == pytest.approx(0.0)
     assert row["min_lon"] == pytest.approx(0.0)
@@ -750,13 +748,13 @@ def test_project_advs_location_and_local_name_rollup(database_url: str) -> None:
     assert row["max_lon_from_bbox"] == pytest.approx(row["max_lon"])
     assert row["local_name"] == "New"
 
-    radius_column_count = (
+    removed_column_count = (
         pl.read_database_uri(
             """
         select count(*)::int as count
         from information_schema.columns
         where table_name = 'advs'
-          and column_name = 'radius'
+          and column_name in ('radius', 'location_count')
         """,
             database_url,
             engine="adbc",
@@ -764,7 +762,7 @@ def test_project_advs_location_and_local_name_rollup(database_url: str) -> None:
         .select("count")
         .item()
     )
-    assert radius_column_count == 0
+    assert removed_column_count == 0
 
 
 def test_ingest_scan_jsonl_bytes(database_url: str) -> None:
