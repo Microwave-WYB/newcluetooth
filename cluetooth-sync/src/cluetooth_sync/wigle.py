@@ -238,6 +238,14 @@ def get_resumable_wigle_upload_batch(database_url: str) -> WigleBatch | None:
     return _batch_from_row(rows[0])
 
 
+def count_pending_wigle_rows(database_url: str) -> int:
+    rows = _read_database_dicts(
+        database_url,
+        _count_pending_wigle_rows_sql(),
+    )
+    return int(rows[0]["row_count"])
+
+
 def list_wigle_upload_batches(database_url: str, *, limit: int) -> list[WigleBatch]:
     rows = _read_database_dicts(
         database_url,
@@ -603,6 +611,30 @@ def _pending_wigle_rows_sql() -> str:
           )
         order by s.id
         limit $2::bigint
+    """
+
+
+def _count_pending_wigle_rows_sql() -> str:
+    return """
+        select count(*)::bigint as row_count
+        from scans s
+        where s.lat is not null
+          and s.lon is not null
+          and s.rssi is not null
+          and not exists (
+            select 1
+            from wigle_upload_batch_scans bs
+            join wigle_upload_batches b
+              on b.id = bs.batch_id
+            where bs.scan_id = s.id
+              and b.status in (
+                'created',
+                'exported',
+                'uploading',
+                'uploaded',
+                'completed'
+              )
+          )
     """
 
 

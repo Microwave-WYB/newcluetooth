@@ -28,20 +28,21 @@ the upload against an existing database volume that already contains scans.
    docker compose --profile manual run --rm sync
    ```
 
-4. Upload the next pending WiGLE batch:
+4. Upload all pending WiGLE batches:
 
    ```sh
    docker compose --profile manual run --rm wigle-upload
    ```
 
-   The service creates or resumes one tracked batch, writes a temporary CSV
-   inside the one-shot container, uploads it to WiGLE, and stores the WiGLE
-   transaction id in `wigle_upload_batches`.
+   The service creates or resumes tracked batches until no eligible rows remain.
+   Each batch is written as a temporary CSV inside the one-shot container,
+   uploaded to WiGLE, and recorded with its WiGLE transaction id in
+   `wigle_upload_batches`.
 
 Useful overrides:
 
 ```sh
-# Limit the number of scan rows claimed by a new batch.
+# Limit the number of scan rows claimed by each temporary CSV batch.
 CLUETOOTH_WIGLE_BATCH_SIZE=1000 docker compose --profile manual run --rm wigle-upload
 
 # Upload a specific existing batch.

@@ -7,12 +7,16 @@ from pathlib import Path
 from uuid import uuid4
 
 import polars as pl
+import pytest
+from typer.testing import CliRunner
 
+import cluetooth_sync.cli as cli
 import cluetooth_sync.pipeline.db as db
 from cluetooth_sync.pipeline import insert_prepared_scans, prepare_scan_jsonl_bytes
 from cluetooth_sync.wigle import (
     WIGLE_CSV_HEADER,
     build_wigle_auth_header,
+    count_pending_wigle_rows,
     create_wigle_upload_batch,
     export_wigle_batch_csv,
     write_wigle_csv,
@@ -189,16 +193,21 @@ def test_wigle_upload_batches_claim_only_unuploaded_eligible_scans(
         lon=None,
     )
 
+    assert count_pending_wigle_rows(database_url) == 2
+
     first_batch = create_wigle_upload_batch(
         database_url,
         batch_size=1,
         filename="first.csv",
     )
+    assert count_pending_wigle_rows(database_url) == 1
+
     second_batch = create_wigle_upload_batch(
         database_url,
         batch_size=10,
         filename="second.csv",
     )
+    assert count_pending_wigle_rows(database_url) == 0
 
     assert first_batch is not None
     assert second_batch is not None
@@ -252,3 +261,87 @@ def test_export_wigle_batch_csv_marks_batch_exported(
         "filename": "export.csv",
         "csv_sha256": result.csv_sha256,
     }
+
+
+def test_wigle_upload_command_drains_pending_batches(
+    database_url: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with db.session(database_url) as session:
+        session.cursor.execute(
+            """
+            update wigle_upload_batches
+            set status = 'uploaded'
+            where status in ('created', 'exported')
+            """
+        )
+
+    _mark_existing_eligible_scans_uploaded(database_url)
+    for index in range(3):
+        _insert_scan(
+            database_url,
+            addr=f"AA:BB:CC:00:20:{index:02X}",
+            scanned_at=f"2026-01-01T00:01:0{index}Z",
+        )
+    assert count_pending_wigle_rows(database_url) == 3
+
+    upload_count = 0
+
+    def fake_upload_wigle_file(
+        *,
+        file_path: Path,
+        auth_header: str,
+        donate: bool = False,
+        timeout_seconds: int = 120,
+    ) -> dict[str, object]:
+        nonlocal upload_count
+        upload_count += 1
+        assert file_path.exists()
+        assert auth_header == "Basic test-key"
+        assert donate is False
+        assert timeout_seconds == 120
+        return {
+            "success": True,
+            "results": {"transids": [{"transId": f"tx-{upload_count}"}]},
+        }
+
+    monkeypatch.setattr(cli, "upload_wigle_file", fake_upload_wigle_file)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "wigle",
+            "upload",
+            "--database-url",
+            database_url,
+            "--api-key",
+            "test-key",
+            "--batch-size",
+            "1",
+            "--work-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert upload_count == 3
+    assert "uploaded batches=3 rows=3" in result.output
+    assert count_pending_wigle_rows(database_url) == 0
+
+    batches = pl.read_database_uri(
+        """
+        select status, row_count, wigle_transids::text as wigle_transids
+        from wigle_upload_batches
+        order by id desc
+        limit 3
+        """,
+        database_url,
+        engine="adbc",
+    ).to_dicts()
+
+    assert batches == [
+        {"status": "uploaded", "row_count": 1, "wigle_transids": '["tx-3"]'},
+        {"status": "uploaded", "row_count": 1, "wigle_transids": '["tx-2"]'},
+        {"status": "uploaded", "row_count": 1, "wigle_transids": '["tx-1"]'},
+    ]
