@@ -17,7 +17,8 @@ dependencies = [
 ]
 
 [project.scripts]
-cluetooth-sync = "cluetooth_sync:main"
+cluetooth = "cluetooth_sync:main"
+cluetooth-sync = "cluetooth_sync.cli:sync_main"
 
 [build-system]
 requires = ["uv_build>=0.9.21,<0.10.0"]

@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import binascii
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -16,6 +17,33 @@ from cluetooth_sync.pipeline import (
     insert_builtin_ad_structures,
     project_advs,
     run_pipeline,
+)
+from cluetooth_sync.wigle import (
+    build_wigle_auth_header,
+    create_wigle_upload_batch,
+    default_wigle_filename,
+    export_wigle_batch_csv,
+    fetch_wigle_transactions,
+    get_resumable_wigle_upload_batch,
+    get_wigle_upload_batch,
+    list_wigle_upload_batches,
+    mark_wigle_batch_failed,
+    mark_wigle_batch_uploaded,
+    mark_wigle_batch_uploading,
+    update_wigle_batch_statuses,
+    upload_wigle_file,
+    write_wigle_csv,
+)
+
+
+app = typer.Typer(
+    name="cluetooth",
+    no_args_is_help=True,
+    help="Sync, export, and upload Cluetooth BLE observations.",
+)
+wigle_app = typer.Typer(
+    no_args_is_help=True,
+    help="Export and upload WiGLE-compatible Bluetooth CSV files.",
 )
 
 
@@ -50,7 +78,8 @@ def _build_storage_client(
     return storage_client
 
 
-def run(
+@app.command("sync")
+def sync(
     database_url: Annotated[
         str,
         typer.Option(
@@ -190,5 +219,315 @@ def run(
             time.sleep(poll_interval_seconds)
 
 
+@wigle_app.command("export")
+def wigle_export(
+    database_url: Annotated[
+        str,
+        typer.Option(
+            "--database-url",
+            envvar="CLUETOOTH_DATABASE_URL",
+            help="PostgreSQL URL for the source database.",
+        ),
+    ],
+    output_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            file_okay=True,
+            dir_okay=False,
+            writable=True,
+            help="Output CSV path. Defaults to stdout.",
+        ),
+    ] = None,
+    batch_id: Annotated[
+        int | None,
+        typer.Option(
+            "--batch-id",
+            min=1,
+            help="Export an exact tracked WiGLE batch instead of pending scans.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit",
+            min=1,
+            help="Maximum pending scan rows to export when --batch-id is omitted.",
+        ),
+    ] = None,
+    include_uploaded: Annotated[
+        bool,
+        typer.Option(
+            "--include-uploaded",
+            help="Include scans already assigned to active or uploaded WiGLE batches.",
+        ),
+    ] = False,
+    capabilities: Annotated[
+        str,
+        typer.Option(
+            "--capabilities",
+            help="Bluetooth capabilities text for WiGLE's AuthMode column.",
+        ),
+    ] = "Misc [LE]",
+) -> None:
+    if output_path is None:
+        row_count = write_wigle_csv(
+            database_url,
+            sys.stdout,
+            batch_id=batch_id,
+            limit=limit,
+            include_uploaded=include_uploaded,
+            capabilities=capabilities,
+        )
+        print(f"exported {row_count} rows", file=sys.stderr, flush=True)
+        return
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="") as output:
+        row_count = write_wigle_csv(
+            database_url,
+            output,
+            batch_id=batch_id,
+            limit=limit,
+            include_uploaded=include_uploaded,
+            capabilities=capabilities,
+        )
+    typer.echo(f"exported {row_count} rows to {output_path}")
+
+
+@wigle_app.command("upload")
+def wigle_upload(
+    database_url: Annotated[
+        str,
+        typer.Option(
+            "--database-url",
+            envvar="CLUETOOTH_DATABASE_URL",
+            help="PostgreSQL URL for the source database.",
+        ),
+    ],
+    api_key: Annotated[
+        str | None,
+        typer.Option(
+            "--api-key",
+            envvar="WIGLE_API_KEY",
+            help="Pre-encoded WiGLE Basic auth key.",
+        ),
+    ] = None,
+    batch_id: Annotated[
+        int | None,
+        typer.Option(
+            "--batch-id",
+            min=1,
+            help="Upload an existing tracked batch instead of creating/resuming one.",
+        ),
+    ] = None,
+    batch_size: Annotated[
+        int,
+        typer.Option(
+            "--batch-size",
+            envvar="CLUETOOTH_WIGLE_BATCH_SIZE",
+            min=1,
+            help="Maximum scan rows in a newly created WiGLE batch.",
+        ),
+    ] = 50_000,
+    work_dir: Annotated[
+        Path,
+        typer.Option(
+            "--work-dir",
+            envvar="CLUETOOTH_WIGLE_WORK_DIR",
+            file_okay=False,
+            dir_okay=True,
+            writable=True,
+            help="Directory for generated WiGLE CSV files.",
+        ),
+    ] = Path("/tmp/cluetooth-wigle"),
+    capabilities: Annotated[
+        str,
+        typer.Option(
+            "--capabilities",
+            help="Bluetooth capabilities text for WiGLE's AuthMode column.",
+        ),
+    ] = "Misc [LE]",
+    donate: Annotated[
+        bool,
+        typer.Option(
+            "--donate",
+            help="Set WiGLE's donate=on upload flag for commercial-use donation.",
+        ),
+    ] = False,
+    retry_failed: Annotated[
+        bool,
+        typer.Option(
+            "--retry-failed",
+            help="Allow explicit --batch-id upload of a failed batch.",
+        ),
+    ] = False,
+    timeout_seconds: Annotated[
+        int,
+        typer.Option(
+            "--timeout-seconds",
+            min=1,
+            help="HTTP timeout for WiGLE upload.",
+        ),
+    ] = 120,
+) -> None:
+    try:
+        auth_header = build_wigle_auth_header(api_key=api_key)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if batch_id is None:
+        batch = get_resumable_wigle_upload_batch(database_url)
+        if batch is None:
+            batch = create_wigle_upload_batch(
+                database_url,
+                batch_size=batch_size,
+                filename=default_wigle_filename(),
+            )
+    else:
+        batch = get_wigle_upload_batch(database_url, batch_id)
+
+    if batch is None:
+        typer.echo("no eligible scans to upload")
+        return
+
+    if batch.status == "failed" and not retry_failed:
+        raise typer.BadParameter(
+            f"batch {batch.id} is failed; pass --retry-failed to upload it again"
+        )
+    if batch.status == "uploading":
+        raise typer.BadParameter(
+            f"batch {batch.id} is marked uploading; inspect it before retrying"
+        )
+    if batch.status in ("uploaded", "completed"):
+        raise typer.BadParameter(f"batch {batch.id} is already {batch.status}")
+
+    filename = batch.filename or default_wigle_filename()
+    output_path = work_dir / filename
+    export_result = export_wigle_batch_csv(
+        database_url,
+        batch_id=batch.id,
+        output_path=output_path,
+        capabilities=capabilities,
+    )
+    mark_wigle_batch_uploading(database_url, batch_id=batch.id)
+
+    try:
+        response = upload_wigle_file(
+            file_path=output_path,
+            auth_header=auth_header,
+            donate=donate,
+            timeout_seconds=timeout_seconds,
+        )
+        if response.get("success") is False:
+            raise RuntimeError(f"WiGLE upload failed: {response}")
+    except Exception as exc:
+        mark_wigle_batch_failed(
+            database_url,
+            batch_id=batch.id,
+            error_message=str(exc),
+        )
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    transids = mark_wigle_batch_uploaded(
+        database_url,
+        batch_id=batch.id,
+        response=response,
+    )
+    typer.echo(
+        "uploaded "
+        f"batch={batch.id} rows={export_result.row_count} "
+        f"bytes={export_result.file_size} sha256={export_result.csv_sha256} "
+        f"transids={','.join(transids) if transids else '(none)'}"
+    )
+
+
+@wigle_app.command("status")
+def wigle_status(
+    database_url: Annotated[
+        str,
+        typer.Option(
+            "--database-url",
+            envvar="CLUETOOTH_DATABASE_URL",
+            help="PostgreSQL URL for the source database.",
+        ),
+    ],
+    api_key: Annotated[
+        str | None,
+        typer.Option("--api-key", envvar="WIGLE_API_KEY"),
+    ] = None,
+    page_start: Annotated[
+        int,
+        typer.Option("--page-start", min=0, help="WiGLE transaction page start."),
+    ] = 0,
+    page_end: Annotated[
+        int,
+        typer.Option("--page-end", min=1, help="WiGLE transaction page size."),
+    ] = 100,
+    timeout_seconds: Annotated[
+        int,
+        typer.Option("--timeout-seconds", min=1, help="HTTP timeout."),
+    ] = 120,
+) -> None:
+    try:
+        auth_header = build_wigle_auth_header(api_key=api_key)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    response = fetch_wigle_transactions(
+        auth_header=auth_header,
+        page_start=page_start,
+        page_end=page_end,
+        timeout_seconds=timeout_seconds,
+    )
+    updated = update_wigle_batch_statuses(
+        database_url,
+        transactions_response=response,
+    )
+    typer.echo(f"updated {updated} uploaded batch statuses")
+
+
+@wigle_app.command("batches")
+def wigle_batches(
+    database_url: Annotated[
+        str,
+        typer.Option(
+            "--database-url",
+            envvar="CLUETOOTH_DATABASE_URL",
+            help="PostgreSQL URL for the source database.",
+        ),
+    ],
+    limit: Annotated[
+        int,
+        typer.Option("--limit", min=1, help="Maximum batches to print."),
+    ] = 20,
+) -> None:
+    batches = list_wigle_upload_batches(database_url, limit=limit)
+    for batch in batches:
+        typer.echo(
+            "\t".join(
+                [
+                    str(batch.id),
+                    batch.status,
+                    str(batch.row_count),
+                    "" if batch.min_scan_id is None else str(batch.min_scan_id),
+                    "" if batch.max_scan_id is None else str(batch.max_scan_id),
+                    batch.filename or "",
+                    batch.wigle_status or "",
+                    ",".join(batch.wigle_transids),
+                ]
+            )
+        )
+
+
+app.add_typer(wigle_app, name="wigle")
+
+
 def main() -> None:
-    typer.run(run)
+    app()
+
+
+def sync_main() -> None:
+    typer.run(sync)

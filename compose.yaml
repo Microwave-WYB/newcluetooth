@@ -91,6 +91,26 @@ services:
       - google-service-account
     restart: unless-stopped
 
+  wigle-upload:
+    profiles:
+      - manual
+    build:
+      context: ./cluetooth-sync
+      dockerfile: Dockerfile
+    image: cluetooth-sync:latest
+    entrypoint: ["cluetooth"]
+    command: ["wigle", "upload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      CLUETOOTH_DATABASE_URL: postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable
+      CLUETOOTH_WIGLE_BATCH_SIZE: ${CLUETOOTH_WIGLE_BATCH_SIZE:-50000}
+      WIGLE_API_KEY: ${WIGLE_API_KEY:-}
+    restart: "no"
+
 volumes:
   postgres-data:
 
