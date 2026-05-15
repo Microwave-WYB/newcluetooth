@@ -9,6 +9,14 @@ from typing import Annotated
 
 import google.cloud.storage as gcs
 import typer
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from cluetooth_sync.pipeline import (
     GcsStorageClient,
@@ -45,6 +53,17 @@ wigle_app = typer.Typer(
     no_args_is_help=True,
     help="Export and upload WiGLE-compatible Bluetooth CSV files.",
 )
+
+
+def _progress() -> Progress:
+    return Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+    )
 
 
 def _read_private_key(path: Path) -> bytes:
@@ -377,65 +396,74 @@ def wigle_upload(
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    if batch_id is None:
-        batch = get_resumable_wigle_upload_batch(database_url)
+    with _progress() as progress:
+        task_id = progress.add_task("upload WiGLE batch", total=4)
+
+        if batch_id is None:
+            batch = get_resumable_wigle_upload_batch(database_url)
+            if batch is None:
+                batch = create_wigle_upload_batch(
+                    database_url,
+                    batch_size=batch_size,
+                    filename=default_wigle_filename(),
+                )
+        else:
+            batch = get_wigle_upload_batch(database_url, batch_id)
+        progress.advance(task_id)
+
         if batch is None:
-            batch = create_wigle_upload_batch(
-                database_url,
-                batch_size=batch_size,
-                filename=default_wigle_filename(),
+            progress.update(task_id, completed=4)
+            typer.echo("no eligible scans to upload")
+            return
+
+        if batch.status == "failed" and not retry_failed:
+            raise typer.BadParameter(
+                f"batch {batch.id} is failed; pass --retry-failed to upload it again"
             )
-    else:
-        batch = get_wigle_upload_batch(database_url, batch_id)
+        if batch.status == "uploading":
+            raise typer.BadParameter(
+                f"batch {batch.id} is marked uploading; inspect it before retrying"
+            )
+        if batch.status in ("uploaded", "completed"):
+            raise typer.BadParameter(f"batch {batch.id} is already {batch.status}")
 
-    if batch is None:
-        typer.echo("no eligible scans to upload")
-        return
-
-    if batch.status == "failed" and not retry_failed:
-        raise typer.BadParameter(
-            f"batch {batch.id} is failed; pass --retry-failed to upload it again"
-        )
-    if batch.status == "uploading":
-        raise typer.BadParameter(
-            f"batch {batch.id} is marked uploading; inspect it before retrying"
-        )
-    if batch.status in ("uploaded", "completed"):
-        raise typer.BadParameter(f"batch {batch.id} is already {batch.status}")
-
-    filename = batch.filename or default_wigle_filename()
-    output_path = work_dir / filename
-    export_result = export_wigle_batch_csv(
-        database_url,
-        batch_id=batch.id,
-        output_path=output_path,
-        capabilities=capabilities,
-    )
-    mark_wigle_batch_uploading(database_url, batch_id=batch.id)
-
-    try:
-        response = upload_wigle_file(
-            file_path=output_path,
-            auth_header=auth_header,
-            donate=donate,
-            timeout_seconds=timeout_seconds,
-        )
-        if response.get("success") is False:
-            raise RuntimeError(f"WiGLE upload failed: {response}")
-    except Exception as exc:
-        mark_wigle_batch_failed(
+        filename = batch.filename or default_wigle_filename()
+        output_path = work_dir / filename
+        export_result = export_wigle_batch_csv(
             database_url,
             batch_id=batch.id,
-            error_message=str(exc),
+            output_path=output_path,
+            capabilities=capabilities,
         )
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
+        progress.advance(task_id)
 
-    transids = mark_wigle_batch_uploaded(
-        database_url,
-        batch_id=batch.id,
-        response=response,
-    )
+        mark_wigle_batch_uploading(database_url, batch_id=batch.id)
+        try:
+            response = upload_wigle_file(
+                file_path=output_path,
+                auth_header=auth_header,
+                donate=donate,
+                timeout_seconds=timeout_seconds,
+            )
+            if response.get("success") is False:
+                raise RuntimeError(f"WiGLE upload failed: {response}")
+        except Exception as exc:
+            mark_wigle_batch_failed(
+                database_url,
+                batch_id=batch.id,
+                error_message=str(exc),
+            )
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        progress.advance(task_id)
+
+        transids = mark_wigle_batch_uploaded(
+            database_url,
+            batch_id=batch.id,
+            response=response,
+        )
+        progress.advance(task_id)
+
     typer.echo(
         "uploaded "
         f"batch={batch.id} rows={export_result.row_count} "
