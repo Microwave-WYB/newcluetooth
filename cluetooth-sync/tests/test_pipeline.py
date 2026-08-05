@@ -175,10 +175,11 @@ def test_prepare_legacy_scan_jsonl_bytes() -> None:
     ]
 
 
-def test_prepare_legacy_0_0_2_scan_jsonl_bytes() -> None:
+@pytest.mark.parametrize("version", ["0.0.2", "0.0.4"])
+def test_prepare_legacy_scan_jsonl_bytes_for_compatible_versions(version: str) -> None:
     scans = prepare_scan_jsonl_bytes(
         LEGACY_FIXTURE_PATH.read_bytes(),
-        "gs://test-bucket/scans/2025-08-21T18-49-02.128Z_device_0.0.2.jsonl.zst.encrypted",
+        f"gs://test-bucket/scans/2025-08-21T18-49-02.128Z_device_{version}.jsonl.zst.encrypted",
     )
 
     assert scans.height == 2
