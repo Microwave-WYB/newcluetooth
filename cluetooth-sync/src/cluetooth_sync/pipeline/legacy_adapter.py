@@ -18,7 +18,7 @@ LEGACY_SCAN_POLARS_SCHEMA: SchemaDict = {
     "raw": pl.Utf8,
 }
 
-LEGACY_SCAN_VERSION_PATTERN = re.compile(r"^0\.0\.[123](?:[-+].*)?$")
+LEGACY_SCAN_VERSION_PATTERN = re.compile(r"^0\.0\.[1-4](?:[-+].*)?$")
 
 
 def _detect_payload_version(gcs_blob_uri: str) -> str | None:
