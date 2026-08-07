@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Public key for encrypting data before upload -->
+    <!-- This key is from the shared directory in Base64 format -->
+    <string name="encryption_public_key">C3MTLw8eWNw//LyV8EcI0MBh5OQu2WS9x2CkOIHL+k8=</string>
+</resources>

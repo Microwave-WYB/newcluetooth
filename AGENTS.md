@@ -16,6 +16,13 @@ The design goal is:
   - Owns the database schema and migrations.
   - Uses `dbmate`.
   - Local test database config lives under `db/test/`.
+- `cluetooth-core/`
+  - Owns platform-neutral observation batching and schema-v2 pending Parquet state.
+  - Uses Rust, Polars, UUIDv7, Zstd Parquet, and UniFFI.
+- `cluetooth-android/`
+  - Owns BLE/location/UI/Firebase/WorkManager platform integration. Phase 4
+    forwards new observations to Rust, uploads Rust-prepared v2 ciphertext, and
+    retains strict pre-0.0.5 legacy pending-file upload.
 - `cluetooth-sync/`
   - Owns the sync and ingestion pipeline.
   - Uses Python, Polars, ADBC PostgreSQL, PyNaCl, Google Cloud Storage, Typer,
@@ -142,6 +149,8 @@ Notes:
   - Lists storage blobs under `gs://{bucket}/{prefix}`.
   - Skips only blob URIs already marked `success is true`.
   - Failed blobs are considered pending and may be retried.
+  - Always performs a full prefix listing; there is no UUID/date watermark, so
+    delayed older objects remain discoverable.
 - `download.py`
   - Reads one encrypted blob as bytes through an explicit `StorageClient`.
 - `decrypt.py`
@@ -150,9 +159,13 @@ Notes:
   - Runs post-sync built-in enrichment queries.
   - `insert_builtin_ad_structures(...)` inserts missing low-level AD structure
     rows into `adv_enrichments`.
+- `payload_route.py` / `payload_v2.py`
+  - Strictly route legacy `0.0.1`-`0.0.4` JSONL and nested schema-v2 Parquet URIs.
+  - Validate v2 UUID/date/footer/exact schema/required values and convert binary raw
+    bytes to the existing lowercase-hex staging representation.
 - `ingest.py`
   - Parses JSONL with a hand-written Polars schema.
-  - Handles current scan payloads and legacy `0.0.1`, `0.0.2`, and `0.0.3`
+  - Handles current scan payloads and legacy `0.0.1` through `0.0.4`
     scan blobs detected from the blob filename.
   - Writes a temporary staging table with Polars/ADBC, inserts into `scans`,
     and marks the blob succeeded in one transaction.
@@ -173,9 +186,13 @@ Current orchestration model:
 - download and ingest run as separate `asyncio` worker stages
 - stages are connected with `asyncio.Queue`
 - encrypted blob bytes are the in-memory handoff between download and ingest
+- legacy routing accepts only flat `scans/` objects from producers 0.0.1-0.0.4;
+  every schema-bearing or unsafe/nested legacy path is rejected
+- local mirroring resolves destinations beneath the resolved mirror root and
+  rejects traversal and existing symlink escapes
 - optional mirroring in `storage.py` can cache encrypted blobs on disk
-- ingest workers decrypt with `SealedBox`, decompress with zstd, then ingest
-  JSONL bytes
+- ingest workers route by URI, decrypt with `SealedBox`, then either decompress
+  legacy outer-Zstd JSONL or read v2 Parquet directly
 - blocking storage and ingest work runs in caller-provided executors
 - progress is printed to stdout as `0/N`, `1/N`, ...
 
