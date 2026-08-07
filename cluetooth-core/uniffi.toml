@@ -1,0 +1,4 @@
+[crates.cluetooth_core.bindings.kotlin]
+package_name = "edu.ucsd.sysnet.cluetoothscanner.core.generated"
+cdylib_name = "cluetooth_core"
+android = true

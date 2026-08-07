@@ -175,7 +175,7 @@ def test_prepare_legacy_scan_jsonl_bytes() -> None:
     ]
 
 
-@pytest.mark.parametrize("version", ["0.0.2", "0.0.4"])
+@pytest.mark.parametrize("version", ["0.0.2", "0.0.4", "0.0.4-debug"])
 def test_prepare_legacy_scan_jsonl_bytes_for_compatible_versions(version: str) -> None:
     scans = prepare_scan_jsonl_bytes(
         LEGACY_FIXTURE_PATH.read_bytes(),
