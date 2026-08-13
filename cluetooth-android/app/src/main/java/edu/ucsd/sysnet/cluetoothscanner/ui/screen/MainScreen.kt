@@ -14,7 +14,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -33,18 +32,12 @@ fun MainScreen(
     onShowBottomSheet: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val scanItems by viewModel.scanItems.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val currentLocation by viewModel.currentLocation.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val coreState by viewModel.coreUiState.collectAsState()
     val scanStatus by viewModel.scanStatus.collectAsState()
-
-    var deviceId by remember { mutableStateOf("loading...") }
-    LaunchedEffect(Unit) {
-        deviceId = edu.ucsd.sysnet.cluetoothscanner.utils.DeviceIdManager.getDeviceId(context)
-    }
+    val scanNotice = scanNoticeText(scanStatus.state)
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -55,13 +48,6 @@ fun MainScreen(
             TopAppBar(
                 title = {
                     Column {
-                        SelectionContainer {
-                            Text(
-                                text = "ID: $deviceId",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                         SelectionContainer {
                             Text(
                                 text = currentLocation?.let {
@@ -78,25 +64,13 @@ fun MainScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text(
-                            text = "BLE: ${scanStatus.state.name.lowercase().replace('_', ' ')}" +
-                                (scanStatus.message?.let { " — $it" } ?: ""),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = when {
-                                coreState.errorMessage != null -> "Core error: ${coreState.errorMessage}"
-                                coreState.coreReady -> "Core ready (API ${coreState.apiVersion})"
-                                else -> "Core initializing"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (coreState.errorMessage == null) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.error
-                            },
-                        )
+                        scanNotice?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
                 },
                 actions = {
