@@ -1,0 +1,28 @@
+[tasks.install]
+description = "Install the locked Python environment"
+run = "uv sync --locked"
+
+[tasks.lint]
+run = "uv run --locked ruff check ."
+
+[tasks.format-check]
+run = "uv run --locked ruff format --check ."
+
+[tasks.fix]
+run = "uv run --locked ruff check . --fix && uv run --locked ruff format ."
+
+[tasks.type-check]
+run = "uv run --locked basedpyright"
+
+[tasks.test]
+description = "Run integration tests (requires Docker; run mise install first)"
+run = "uv run --locked pytest"
+
+[tasks.check]
+description = "Run Python checks and integration tests"
+depends = ["lint", "format-check", "type-check", "test"]
+
+[tasks.sync]
+description = "Run the local sync CLI explicitly (may access GCS and Postgres)"
+raw_args = true
+run = "uv run --locked cluetooth-sync"

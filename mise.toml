@@ -1,0 +1,17 @@
+monorepo_root = true
+
+[monorepo]
+config_roots = ["db", "cluetooth-sync"]
+
+[tools]
+python = "3.14"
+uv = "latest"
+dbmate = "2.32.0"
+
+[tasks.install]
+description = "Install locked Python dependencies (run mise install for tool binaries first)"
+depends = ["//cluetooth-sync:install"]
+
+[tasks.check]
+description = "Run Python checks and integration tests (requires Docker)"
+depends = ["//cluetooth-sync:check"]

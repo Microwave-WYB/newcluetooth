@@ -10,7 +10,6 @@ from testcontainers.postgres import PostgresContainer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DB_DIR = REPO_ROOT / "db"
-DBMATE_BIN = DB_DIR / "node_modules" / "@dbmate" / "linux-x64" / "bin" / "dbmate"
 
 
 def _database_url(container: PostgresContainer) -> str:
@@ -25,7 +24,7 @@ def _database_url(container: PostgresContainer) -> str:
 def _run_migrations(database_url: str) -> None:
     subprocess.run(
         [
-            str(DBMATE_BIN),
+            "dbmate",
             "--url",
             database_url,
             "--migrations-dir",

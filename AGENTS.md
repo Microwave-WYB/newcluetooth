@@ -14,7 +14,7 @@ The design goal is:
 
 - `db/`
   - Owns the database schema and migrations.
-  - Uses `dbmate`.
+  - Uses mise-managed `dbmate`.
   - Local test database config lives under `db/test/`.
 - `cluetooth-sync/`
   - Owns the sync and ingestion pipeline.
@@ -238,21 +238,18 @@ stages.
 Current test approach:
 
 - use `testcontainers` to start PostGIS
-- apply migrations with the repo-local `dbmate` setup
+- apply migrations with mise-managed `dbmate` on PATH
 - use fixture JSONL for current and legacy scan payloads
 - verify inserted data with Polars database reads
 - refresh materialized views explicitly when tests need rollup state
 
-Run from `cluetooth-sync/`:
+From the repository root, run `mise install`, then `mise run install` to sync
+locked Python packages. `mise run check` runs Python checks and integration tests
+(Docker required). `mise run //cluetooth-sync:test` runs tests alone.
 
-- `make test`
-- `make check`
-
-Run from `db/` for the local test database:
-
-- `make testdb-up`
-- `make testdb-migrate`
-- `make testdb-down`
+For the local test database use `mise run //db:testdb-up`,
+`mise run //db:testdb-wait` (one readiness check),
+`mise run //db:testdb-migrate`, and `mise run //db:testdb-down`.
 
 ## Conventions
 

@@ -1,0 +1,15 @@
+[tasks.testdb-up]
+description = "Start the local test PostGIS database"
+run = "docker compose -f test/compose.yaml up -d"
+
+[tasks.testdb-wait]
+description = "Check local test PostGIS readiness once"
+run = "docker compose -f test/compose.yaml exec -T postgres pg_isready -U cluetooth_test -d cluetooth_test"
+
+[tasks.testdb-migrate]
+description = "Apply migrations to the local test database"
+run = "dbmate --url 'postgres://cluetooth_test:cluetooth_test@127.0.0.1:55432/cluetooth_test?sslmode=disable' up"
+
+[tasks.testdb-down]
+description = "Stop the local test PostGIS database (preserves data)"
+run = "docker compose -f test/compose.yaml down"
