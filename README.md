@@ -23,6 +23,7 @@ private-key file), and optionally `GOOGLE_APPLICATION_CREDENTIALS` (an absolute
 path to a local service-account JSON file), `CLUETOOTH_PREFIX`,
 `CLUETOOTH_MIRROR_DIR`, or `CLUETOOTH_MAX_BLOBS` in your own environment.
 Keep local credentials in a gitignored `secrets/` directory, not in mise config.
-credentials or contact GCS/Postgres during install or check. Running the sync
-CLI without `--help` can contact both. Production Compose services are separate
-and unchanged by the local mise toolchain.
+Install and check do not load these credentials or contact production services;
+integration tests use disposable local PostGIS containers. Running the sync CLI
+without `--help` can contact GCS and Postgres. Production Compose services are
+separate and unchanged by the local mise toolchain.
