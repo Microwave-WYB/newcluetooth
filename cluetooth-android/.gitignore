@@ -22,11 +22,9 @@ local.properties
 *.apk
 *.aab
 
-# Local Android/Firebase configuration
+# Local Android tooling configuration
 .claude/
 .idea/
 .kotlin/
-app/google-services.json
-
 # Rust/UniFFI outputs are generated under app/build, never source-controlled.
 app/src/main/jniLibs/
