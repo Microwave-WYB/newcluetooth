@@ -35,9 +35,10 @@ mise run native-check                 # separate four-ABI API-24 native build
 mise run //cluetooth-android:build     # separate product debug APK build; no install/launch
 ```
 
-Host Android tasks exclude `processDebugGoogleServices` and
-`buildCluetoothCoreAndroid`, **not** Kotlin compilation, generated bindings,
-JVM tests, or lint. They require SDK platform 35/build-tools 35.0.0 but do not
+Host Android tasks use guarded `-PcluetoothHostChecks=true` to leave Google
+Services unapplied only for explicit JVM/lint selectors; product/extra/default
+requests fail closed. They exclude native packaging, **not** Kotlin compilation,
+generated bindings, JVM tests or lint. SDK platform 35/build-tools 35.0.0 are required; they do not
 create or run an app. Host success is not proof of native packaging, product
 APK correctness, or device execution. Root checks serialize Rust, Android, then
 Python to avoid simultaneous heavyweight compilers; project Cargo jobs are capped

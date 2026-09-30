@@ -3,7 +3,22 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-    id("com.google.gms.google-services")
+    id("com.google.gms.google-services") apply false
+}
+
+// Host checks compile/test real app code without creating Firebase resources or an APK.
+val hostCheckFlag = providers.gradleProperty("cluetoothHostChecks").orNull
+if (hostCheckFlag != null) {
+    val allowed = setOf(":app:testDebugUnitTest", ":app:lintDebug")
+    val requested = gradle.startParameter.taskNames
+    if (hostCheckFlag != "true" || requested.isEmpty() || requested.any { it !in allowed }) {
+        throw GradleException(
+            "cluetoothHostChecks requires literal true and only explicit " +
+                ":app:testDebugUnitTest or :app:lintDebug selectors"
+        )
+    }
+} else {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 val cluetoothCoreAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")

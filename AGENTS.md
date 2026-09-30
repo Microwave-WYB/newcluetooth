@@ -263,8 +263,9 @@ Current test approach:
 From the root, `mise install` installs host tools in project-isolated Rust homes;
 `mise run install` syncs locked Python packages. `mise run check` serializes Rust,
 Android host JVM/lint, then Python checks/DB tests (Docker). Python tests first
-prebuild the Rust encryption example via mise. Android host tasks exclude only
-Firebase processing/native packaging, never compilation/JVM tests/lint; success
+prebuild the Rust encryption example via mise. Guarded Android host tasks leave
+Google Services unapplied only for exact JVM/lint selectors and exclude native
+packaging, never compilation/JVM tests/lint; success
 is not proof of APK/native/device behavior. SDK licenses/packages and all four
 Android targets/cargo-ndk use explicit setup tasks; see `cluetooth-android/README.md`.
 Product config is production-associated and does not match `.debug`. Do not run

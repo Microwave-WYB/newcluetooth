@@ -39,7 +39,7 @@ AGP 8.10 requires JDK **17**, Gradle 8.11.1 (the retained wrapper), SDK platform
    ```
 
    Host JVM compilation needs SDK platform/build-tools but not the NDK/ABI build. Missing licenses/packages are real blockers; do not skip tests or point at production resources to work around them. `local.properties` is optional when mise supplies `ANDROID_HOME`; keep any local override untracked.
-4. Run `mise run //cluetooth-android:check`. Host tasks compile real generated UniFFI/Kotlin, execute JVM tests and run lint with `abortOnError = true`. They explicitly exclude only `:app:processDebugGoogleServices` and `:app:buildCluetoothCoreAndroid`: no Firebase processing, ABI packaging, APK, device install or app startup. Excluding those packaging/config tasks does **not** exclude Kotlin compilation, tests or lint. Host success is not native/APK/device validation.
+4. Run `mise run //cluetooth-android:check`. Host tasks compile real generated UniFFI/Kotlin, execute JVM tests and run lint with `abortOnError = true`. They use `-PcluetoothHostChecks=true`, which leaves Google Services unapplied only for a nonempty request containing exactly `:app:testDebugUnitTest` and/or `:app:lintDebug`; other selectors or flag values fail before execution. Only `:app:buildCluetoothCoreAndroid` is excluded. Simply excluding the Google Services task breaks AGP's generated-resource provider. No Firebase resources, ABI packaging, APK, device install or app startup occur; compilation/tests/lint are not skipped. Product tasks apply Google Services normally. Host success is not native/APK/device validation.
 
 ### Firebase client configuration and environments
 

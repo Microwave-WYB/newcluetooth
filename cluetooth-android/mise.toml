@@ -13,15 +13,25 @@ run = 'test -f "$ANDROID_HOME/platforms/android-35/android.jar" && test -f "$AND
 [tasks.test]
 description = "Host JVM tests only: compile real bindings, no Firebase processing, native packaging, APK or device"
 depends = ["sdk-check"]
-run = "./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest -x :app:processDebugGoogleServices -x :app:buildCluetoothCoreAndroid"
+run = "./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true :app:testDebugUnitTest -x :app:buildCluetoothCoreAndroid"
 
 [tasks.lint]
 description = "Host Android lint without Firebase credentials or native packaging"
 depends = ["sdk-check"]
-run = "./gradlew --no-daemon --max-workers=2 :app:lintDebug -x :app:processDebugGoogleServices -x :app:buildCluetoothCoreAndroid"
+run = "./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true :app:lintDebug -x :app:buildCluetoothCoreAndroid"
+
+[tasks.host-guard-check]
+description = "Prove unrelated task selectors fail before execution in host-only mode"
+run = '''
+if output=$(./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true help 2>&1); then
+  printf '%s\n' "$output"; echo "Host guard failed: help was accepted" >&2; exit 1
+fi
+printf '%s\n' "$output"
+case "$output" in *"cluetoothHostChecks requires literal true"*) ;; *) exit 1 ;; esac
+'''
 
 [tasks.check]
-run = ["mise run //cluetooth-android:test", "mise run //cluetooth-android:lint"]
+run = ["mise run //cluetooth-android:host-guard-check", "mise run //cluetooth-android:test", "mise run //cluetooth-android:lint"]
 
 [tasks.build]
 description = "Product debug APKs (requires matching .debug Firebase client); no install or launch"
