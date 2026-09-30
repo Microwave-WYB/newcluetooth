@@ -50,8 +50,9 @@ Python packages remain locked in `cluetooth-sync/uv.lock`. DB tests create
 local disposable PostGIS containers and run dbmate from mise's PATH; no
 production URL, auth, or cloud objects are needed. Production sync's Docker
 image remains Python-only (`uv sync --frozen --no-dev`); it does not run tests
-or Cargo. See [db/README.md](db/README.md) for local database tasks and the
-coordinate migration's new-write/legacy compatibility policy.
+or Cargo. See [db/README.md](db/README.md) for local database tasks and
+[payload compatibility](docs/payload-schema-v2.md#coordinate-migration-compatibility)
+for the coordinate migration's new-write/legacy policy.
 
 The tracked Firebase client config is public APK metadata for the base package,
 associated with project `cluetooth-1da02` / its production bucket, not a test
