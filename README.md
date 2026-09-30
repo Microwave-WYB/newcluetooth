@@ -7,7 +7,7 @@ BLE observations, PostGIS migrations, and a Python sync pipeline.
 Install [mise](https://mise.jdx.dev/) and Docker with Compose. From this root:
 
 ```sh
-mise install      # Python 3.14, uv, dbmate 2.32.0; no Node/npm
+mise install      # Python 3.14, uv, dbmate 2.32.0, gcloud 587.0.0; no Node/npm
 mise run install  # uv sync --locked in cluetooth-sync/
 mise run check    # lint, format, types, integration tests (Docker required)
 ```
@@ -15,6 +15,11 @@ mise run check    # lint, format, types, integration tests (Docker required)
 The Python package versions remain in `cluetooth-sync/uv.lock`. Integration
 tests create disposable PostGIS containers and run dbmate from mise's PATH.
 For a standalone local test database, see [db/README.md](db/README.md).
+
+Mise installs gcloud from its `vfox:mise-plugins/vfox-gcloud` registry backend,
+pinned to 587.0.0. `mise exec -- gcloud --version` prints the local SDK version;
+`mise exec -- gcloud help` shows CLI help. Neither command authenticates or
+performs a cloud operation.
 
 `mise run //cluetooth-sync:sync -- --help` invokes the local sync CLI.
 To run an actual sync, explicitly provide `CLUETOOTH_DATABASE_URL`,
