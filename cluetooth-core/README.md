@@ -24,13 +24,11 @@ Canonical pending publication opens every generated component directory-relative
 
 ## Host validation
 
-Rust `1.96.1` is pinned by `rust-toolchain.toml`; dependencies are pinned by exact versions and `Cargo.lock`.
+Rust `1.96.1` is pinned in root `mise.toml` (also the `Cargo.toml` minimum); dependencies are pinned by exact versions and `Cargo.lock`. Run `mise install` from the repository root first. Mise supplies isolated rustup/Cargo homes under `~/.local/share/mise/newcluetooth/`; do not invoke global rustup to install these prerequisites.
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test --locked
-cargo build --locked --release --lib
+mise run //cluetooth-core:check  # fmt, strict clippy (all features), host tests
+mise run //cluetooth-core:build  # optimized host library
 ```
 
 Tests cover deterministic UUIDv7/date/path validation, FFI row/byte prevalidation, batch-granular rotation, exact row values, atomic failure/retry, zero-row behavior, independent path-correct corruption/footer mismatch, restart discovery, temporary cleanup, sealed-box compatibility, crash/retry/ack reconciliation, orphan ciphertext regeneration, and bounded active retention. The schema integration test writes and reads real Zstd Parquet, verifies exact ordered types/footer metadata/raw bytes and logical nullability, rejects external files with null required values, and exercises atomic replacement/cleanup.
@@ -38,8 +36,7 @@ Tests cover deterministic UUIDv7/date/path validation, FFI row/byte prevalidatio
 Regenerate the checked-in cross-language fixture reproducibly with:
 
 ```sh
-cargo run --locked --example generate_payload_v2_fixture -- \
-  ../cluetooth-sync/tests/fixtures/payload-v2
+mise run //cluetooth-core:fixture
 ```
 
 The expected file is `scans/v2/2025/03/24/0195c920-7c00-7abc-8def-0123456789ab.parquet` below that fixture root.
@@ -49,22 +46,17 @@ The expected file is `scans/v2/2025/03/24/0195c920-7c00-7abc-8def-0123456789ab.p
 Generate reproducibly from the host release library on Linux (`.so`) or macOS (`.dylib`):
 
 ```sh
-./scripts/generate-kotlin-bindings.sh \
-  ../cluetooth-android/app/build/generated/source/uniffi
+mise run //cluetooth-core:bindings
 ```
 
 The equivalent Gradle task is `../cluetooth-android/gradlew -p ../cluetooth-android :app:generateCluetoothCoreBindings`. The package and native-library name are pinned in `uniffi.toml`. Generated Kotlin is build output and is not tracked. Binding generation requires Bash plus a native Rust host toolchain and fails with an explicit unsupported-host error outside Linux/macOS; native Windows binding generation is not implemented.
 
 ## Android API 24 native libraries
 
-The Android native toolchain is pinned to NDK `27.2.12479018`, `cargo-ndk 4.1.2`, and the Rust `1.96.1` toolchain in `rust-toolchain.toml`. Install the exact prerequisites and all four Rust targets:
+NDK `27.2.12479018`, `cargo-ndk 4.1.2`, API 24, and all four Rust targets are required. Host `mise install` deliberately excludes optional Android targets. Follow [Android setup](../cluetooth-android/README.md), then install all four targets and cargo-ndk explicitly:
 
 ```sh
-sdkmanager "ndk;27.2.12479018"
-cargo install cargo-ndk --version 4.1.2 --locked
-rustup target add --toolchain 1.96.1 \
-  aarch64-linux-android armv7-linux-androideabi \
-  x86_64-linux-android i686-linux-android
+mise run //cluetooth-core:native-install  # cargo install cargo-ndk --version 4.1.2 --locked
 ```
 
 `build-android.sh` checks both tool versions and every Rust target before compiling. It honors `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT`, then checks the pinned NDK under `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the standard `$HOME/Android/Sdk`. Version and missing-target failures include corrective commands.
@@ -72,8 +64,7 @@ rustup target add --toolchain 1.96.1 \
 Build all four verified ABIs at API 24:
 
 ```sh
-./scripts/build-android.sh \
-  ../cluetooth-android/app/build/generated/jniLibs
+mise run //cluetooth-core:build-android
 ```
 
 Or run `../cluetooth-android/gradlew -p ../cluetooth-android :app:buildCluetoothCoreAndroid`. The output contains `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86`. Android uses the same four-value ABI split allowlist with no universal APK, so transitive `armeabi`, MIPS, or MIPS64 artifacts cannot create an APK that lacks `libcluetooth_core.so`.

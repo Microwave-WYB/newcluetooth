@@ -260,9 +260,15 @@ Current test approach:
 - verify inserted data with Polars database reads
 - refresh materialized views explicitly when tests need rollup state
 
-From the repository root, run `mise install`, then `mise run install` to sync
-locked Python packages. `mise run check` runs Python checks and integration tests
-(Docker required). `mise run //cluetooth-sync:test` runs tests alone.
+From the root, `mise install` installs host tools in project-isolated Rust homes;
+`mise run install` syncs locked Python packages. `mise run check` serializes Rust,
+Android host JVM/lint, then Python checks/DB tests (Docker). Python tests first
+prebuild the Rust encryption example via mise. Android host tasks exclude only
+Firebase processing/native packaging, never compilation/JVM tests/lint; success
+is not proof of APK/native/device behavior. SDK licenses/packages and all four
+Android targets/cargo-ndk use explicit setup tasks; see `cluetooth-android/README.md`.
+Product config is production-associated and does not match `.debug`. Do not run
+app/device/cloud operations in default checks or read service-account secrets.
 
 For the local test database use `mise run //db:testdb-up`,
 `mise run //db:testdb-wait` (one readiness check),
