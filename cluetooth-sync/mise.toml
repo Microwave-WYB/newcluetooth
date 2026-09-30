@@ -15,7 +15,8 @@ run = "uv run --locked ruff check . --fix && uv run --locked ruff format ."
 run = "uv run --locked basedpyright"
 
 [tasks.test]
-description = "Run integration tests (requires Docker; run mise install first)"
+description = "Run integration and Rust interoperability tests (Docker; isolated mise Rust PATH)"
+depends = ["//cluetooth-core:interop-build"]
 run = "uv run --locked pytest"
 
 [tasks.check]

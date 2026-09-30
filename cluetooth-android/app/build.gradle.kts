@@ -108,13 +108,13 @@ android {
     }
 
     lint {
-        abortOnError = false
+        abortOnError = true
     }
 }
 
 val cluetoothCoreDirectory = rootProject.layout.projectDirectory.dir("../cluetooth-core")
 val cluetoothCoreInputs = fileTree(cluetoothCoreDirectory) {
-    include("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "uniffi.toml")
+    include("Cargo.toml", "Cargo.lock", "uniffi.toml")
     include("src/**/*.rs")
 }
 
@@ -128,6 +128,7 @@ val generateCluetoothCoreBindings by tasks.registering(Exec::class) {
         layout.buildDirectory.dir("generated/source/uniffi").get().asFile.absolutePath,
     )
     inputs.files(cluetoothCoreInputs)
+    inputs.file(rootProject.layout.projectDirectory.file("../mise.toml"))
     inputs.file(cluetoothCoreDirectory.file("scripts/generate-kotlin-bindings.sh"))
     outputs.dir(layout.buildDirectory.dir("generated/source/uniffi"))
 }
@@ -142,6 +143,7 @@ val buildCluetoothCoreAndroid by tasks.registering(Exec::class) {
         layout.buildDirectory.dir("generated/jniLibs").get().asFile.absolutePath,
     )
     inputs.files(cluetoothCoreInputs)
+    inputs.file(rootProject.layout.projectDirectory.file("../mise.toml"))
     inputs.file(cluetoothCoreDirectory.file("scripts/build-android.sh"))
     outputs.dir(layout.buildDirectory.dir("generated/jniLibs"))
 }
@@ -173,7 +175,7 @@ val assembleCluetoothCoreDebug by tasks.registering {
 
 val connectedCluetoothCoreSmokeTest by tasks.registering {
     group = "verification"
-    description = "Run the network-free UniFFI/Parquet smoke test on a connected device"
+    description = "Opt-in device smoke; app startup can schedule Firebase uploads"
     dependsOn("connectedDebugAndroidTest")
 }
 

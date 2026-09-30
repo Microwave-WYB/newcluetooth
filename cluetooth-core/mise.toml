@@ -1,0 +1,36 @@
+[tasks.format]
+run = "cargo fmt --all"
+
+[tasks.format-check]
+run = "cargo fmt --all -- --check"
+
+[tasks.lint]
+run = "cargo clippy --locked --all-targets --all-features -- -D warnings"
+
+[tasks.test]
+run = "cargo test --locked"
+
+[tasks.check]
+run = ["mise run //cluetooth-core:format-check", "mise run //cluetooth-core:lint", "mise run //cluetooth-core:test"]
+
+[tasks.build]
+run = "cargo build --locked --release --lib"
+
+[tasks.interop-build]
+description = "Precompile the production encryption example before pytest's bounded runtime check"
+run = "cargo build --locked --example prepare_encrypted_payload"
+
+[tasks.fixture]
+description = "Regenerate the synthetic checked-in Rust/Polars fixture"
+run = "cargo run --locked --example generate_payload_v2_fixture -- ../cluetooth-sync/tests/fixtures/payload-v2"
+
+[tasks.bindings]
+run = "bash scripts/generate-kotlin-bindings.sh ../cluetooth-android/app/build/generated/source/uniffi"
+
+[tasks.native-install]
+description = "Install all four Android Rust targets and pinned cargo-ndk in isolated mise homes"
+run = ['rustup target add --toolchain "$RUSTUP_TOOLCHAIN" aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android', "cargo install cargo-ndk --version 4.1.2 --locked"]
+
+[tasks.build-android]
+description = "Build four API-24 ABIs; requires explicit SDK/NDK and cargo-ndk installation"
+run = "bash scripts/build-android.sh ../cluetooth-android/app/build/generated/jniLibs"

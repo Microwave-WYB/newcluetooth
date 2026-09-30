@@ -1,0 +1,36 @@
+[tasks.sdk-install]
+description = "Install host SDK platform35/build-tools35.0.0 only; licenses must be manually accepted first"
+run = ['sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" </dev/null', 'mise run //cluetooth-android:sdk-check']
+
+[tasks.native-sdk-install]
+description = "Explicit native-only NDK27.2.12479018 installation; no license acceptance"
+run = ['sdkmanager --sdk_root="$ANDROID_HOME" "ndk;27.2.12479018" </dev/null', 'test -f "$ANDROID_HOME/ndk/27.2.12479018/source.properties" || { echo "NDK installation incomplete; review licenses/setup manually" >&2; exit 1; }']
+
+[tasks.sdk-check]
+description = "Fail clearly if host SDK platform/build-tools are missing; no download/license acceptance"
+run = 'test -f "$ANDROID_HOME/platforms/android-35/android.jar" && test -f "$ANDROID_HOME/build-tools/35.0.0/source.properties" || { echo "Missing project Android SDK platform35/build-tools35.0.0; follow the manual license/setup steps in cluetooth-android/README.md" >&2; exit 1; }'
+
+[tasks.test]
+description = "Host JVM tests only: compile real bindings, no Firebase processing, native packaging, APK or device"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest -x :app:processDebugGoogleServices -x :app:buildCluetoothCoreAndroid"
+
+[tasks.lint]
+description = "Host Android lint without Firebase credentials or native packaging"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :app:lintDebug -x :app:processDebugGoogleServices -x :app:buildCluetoothCoreAndroid"
+
+[tasks.check]
+run = ["mise run //cluetooth-android:test", "mise run //cluetooth-android:lint"]
+
+[tasks.build]
+description = "Product debug APKs (requires matching .debug Firebase client); no install or launch"
+run = "./gradlew --no-daemon --max-workers=2 :app:assembleDebug"
+
+[tasks.build-release]
+description = "Product release APKs (explicit Firebase config; optional private signing); no install or launch"
+run = "./gradlew --no-daemon --max-workers=2 :app:assembleRelease"
+
+[tasks.device-smoke]
+description = "OPT-IN ONLY: installs/launches on a device; app startup can schedule Firebase uploads"
+run = 'test "${CLUETOOTH_ALLOW_DEVICE_SMOKE:-}" = 1 || { echo "Device smoke requires CLUETOOTH_ALLOW_DEVICE_SMOKE=1 and a separately reviewed offline app/network setup" >&2; exit 1; }; ./gradlew --no-daemon --max-workers=2 :app:connectedCluetoothCoreSmokeTest'

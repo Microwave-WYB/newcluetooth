@@ -1,18 +1,38 @@
 monorepo_root = true
 
 [monorepo]
-config_roots = ["db", "cluetooth-sync"]
+config_roots = ["db", "cluetooth-sync", "cluetooth-core", "cluetooth-android"]
 
 [tools]
 python = "3.14"
 uv = "latest"
 dbmate = "2.32.0"
 gcloud = "587.0.0"
+java = "temurin-17.0.20+8"
+android-sdk = "19.0"
+rust = { version = "1.96.1", profile = "minimal", components = ["clippy", "rustfmt"] }
+
+[env]
+# Keep rustup operations and cargo installs out of the user's global toolchains.
+MISE_RUSTUP_HOME = "{{env.HOME}}/.local/share/mise/newcluetooth/rustup"
+MISE_CARGO_HOME = "{{env.HOME}}/.local/share/mise/newcluetooth/cargo"
+RUSTUP_HOME = "{{env.HOME}}/.local/share/mise/newcluetooth/rustup"
+CARGO_HOME = "{{env.HOME}}/.local/share/mise/newcluetooth/cargo"
+# Bound Polars compilation memory without changing global Cargo configuration.
+CARGO_BUILD_JOBS = "2"
+# sdkmanager packages/licenses belong to this project, not a shared SDK install.
+ANDROID_HOME = "{{env.HOME}}/.local/share/mise/newcluetooth/android-sdk"
+ANDROID_SDK_ROOT = "{{env.HOME}}/.local/share/mise/newcluetooth/android-sdk"
 
 [tasks.install]
 description = "Install locked Python dependencies (run mise install for tool binaries first)"
 depends = ["//cluetooth-sync:install"]
 
 [tasks.check]
-description = "Run Python checks and integration tests (requires Docker)"
-depends = ["//cluetooth-sync:check"]
+description = "Host checks: Rust, Android JVM, Python/Parquet interoperability and disposable DB (Docker required); no APK/device/upload"
+# Serialize the heavyweight host stages instead of compiling Polars and Gradle together.
+run = ["mise run //cluetooth-core:check", "mise run //cluetooth-android:check", "mise run //cluetooth-sync:check"]
+
+[tasks.native-check]
+description = "Build four Android API-24 native ABIs; separate from host tests and product APKs"
+depends = ["//cluetooth-core:build-android"]
