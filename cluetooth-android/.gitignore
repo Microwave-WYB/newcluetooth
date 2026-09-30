@@ -1,0 +1,32 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Signing keys and packaged applications
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.apk
+*.aab
+
+# Local Android/Firebase configuration
+.claude/
+.idea/
+.kotlin/
+app/google-services.json
+
+# Rust/UniFFI outputs are generated under app/build, never source-controlled.
+app/src/main/jniLibs/

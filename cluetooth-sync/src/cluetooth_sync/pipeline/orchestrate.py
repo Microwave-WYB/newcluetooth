@@ -1,5 +1,6 @@
 import asyncio
 import compression.zstd as zstd
+import sys
 from collections.abc import Iterator
 from concurrent.futures import Executor
 from dataclasses import dataclass
@@ -16,7 +17,14 @@ from rich.progress import (
 from .decrypt import decrypt_blob_bytes
 from .discover import discover_pending_blobs
 from .download import read_blob_bytes
-from .ingest import ingest_scan_jsonl_bytes
+from .ingest import (
+    insert_prepared_scans,
+    mark_blob_failed,
+    mark_blob_succeeded_empty,
+    prepare_scan_jsonl_bytes,
+)
+from .payload_route import PayloadRouteKind, route_payload_uri
+from .payload_v2 import prepare_payload_v2_parquet_bytes
 from .storage import StorageClient
 
 
@@ -36,14 +44,44 @@ def _read_blob(
     )
 
 
+def _read_blob_bookkept(
+    storage_client: StorageClient,
+    database_url: str,
+    blob_uri: str,
+) -> BlobBytes | None:
+    try:
+        # Validate/routable paths before a mirrored client derives a local path.
+        route_payload_uri(blob_uri)
+        return _read_blob(storage_client, blob_uri)
+    except Exception as exc:
+        mark_blob_failed(database_url, blob_uri, exc)
+        print(f"failed {blob_uri}: {exc}", file=sys.stderr, flush=True)
+        return None
+
+
 def _ingest_blob(
     database_url: str,
     private_key: bytes,
     blob: BlobBytes,
-) -> None:
-    decrypted_bytes = decrypt_blob_bytes(blob.encrypted_bytes, private_key)
-    decompressed_bytes = zstd.decompress(decrypted_bytes)
-    ingest_scan_jsonl_bytes(database_url, decompressed_bytes, blob.uri)
+) -> bool:
+    try:
+        route = route_payload_uri(blob.uri)
+        decrypted_bytes = decrypt_blob_bytes(blob.encrypted_bytes, private_key)
+        if route.kind is PayloadRouteKind.LEGACY_JSONL_ZSTD:
+            decompressed_bytes = zstd.decompress(decrypted_bytes)
+            scans = prepare_scan_jsonl_bytes(decompressed_bytes, blob.uri)
+        else:
+            scans = prepare_payload_v2_parquet_bytes(decrypted_bytes, route)
+
+        if scans.is_empty():
+            mark_blob_succeeded_empty(database_url, blob.uri)
+        else:
+            insert_prepared_scans(database_url, scans, mark_failure=False)
+        return True
+    except Exception as exc:
+        mark_blob_failed(database_url, blob.uri, exc)
+        print(f"failed {blob.uri}: {exc}", file=sys.stderr, flush=True)
+        return False
 
 
 async def run_pipeline(
@@ -86,11 +124,15 @@ async def run_pipeline(
 
             blob = await loop.run_in_executor(
                 download_executor,
-                _read_blob,
+                _read_blob_bookkept,
                 storage_client,
+                database_url,
                 blob_uri,
             )
-            await ingest_queue.put(blob)
+            if blob is None:
+                await progress_queue.put(None)
+            else:
+                await ingest_queue.put(blob)
 
     async def ingest_worker() -> None:
         while True:

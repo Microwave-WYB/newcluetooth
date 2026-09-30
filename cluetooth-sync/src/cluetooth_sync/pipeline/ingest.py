@@ -71,7 +71,12 @@ def prepare_scan_jsonl_bytes(blob_bytes: bytes, gcs_blob_uri: str) -> pl.DataFra
     return scans.with_columns(pl.lit(gcs_blob_uri).alias("blob"))
 
 
-def insert_prepared_scans(database_url: str, scans: pl.DataFrame) -> int:
+def insert_prepared_scans(
+    database_url: str,
+    scans: pl.DataFrame,
+    *,
+    mark_failure: bool = True,
+) -> int:
     if scans.is_empty():
         return 0
 
@@ -96,7 +101,8 @@ def insert_prepared_scans(database_url: str, scans: pl.DataFrame) -> int:
                 time.sleep(sleep_seconds)
                 continue
 
-            _mark_blob_failed(database_url, gcs_blob_uri, exc)
+            if mark_failure:
+                mark_blob_failed(database_url, gcs_blob_uri, exc)
             print(f"failed {gcs_blob_uri}: {exc}", file=sys.stderr, flush=True)
             raise
 
@@ -130,9 +136,17 @@ def _is_retryable_insert_error(exc: Exception) -> bool:
     return any(f"SQLSTATE: {sqlstate}" in message for sqlstate in RETRYABLE_SQLSTATES)
 
 
-def _mark_blob_failed(database_url: str, gcs_blob_uri: str, exc: Exception) -> None:
+def mark_blob_failed(database_url: str, gcs_blob_uri: str, exc: Exception) -> None:
     with db.session(database_url, autocommit=True) as session:
         session.cursor.execute(
             read_query("blobs/mark_failed.sql"),
             (gcs_blob_uri, str(exc)),
         )
+
+
+def mark_blob_succeeded_empty(database_url: str, gcs_blob_uri: str) -> None:
+    with db.session(database_url) as session:
+        session.cursor.execute(
+            read_query("blobs/ensure_processing.sql"), [gcs_blob_uri]
+        )
+        session.cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])

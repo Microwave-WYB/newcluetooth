@@ -191,6 +191,7 @@ def test_wigle_upload_batches_claim_only_unuploaded_eligible_scans(
         scanned_at="2026-01-01T00:00:03Z",
         lat=None,
         lon=None,
+        accuracy=None,
     )
 
     assert count_pending_wigle_rows(database_url) == 2
