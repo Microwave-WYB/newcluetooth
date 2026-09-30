@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "952828187654",
+    "project_id": "cluetooth-1da02",
+    "storage_bucket": "cluetooth-1da02.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:952828187654:android:9a76ce60006c562cb81f87",
+        "android_client_info": {
+          "package_name": "edu.ucsd.sysnet.cluetoothscanner"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAMZ7idXXGWLrJXXSQ-jy0gzoxPL_mUx7Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
