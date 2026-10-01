@@ -1,3 +1,7 @@
+import com.google.gms.googleservices.GoogleServicesTask
+import groovy.json.JsonSlurper
+import javax.xml.parsers.DocumentBuilderFactory
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -124,6 +128,57 @@ android {
 
     lint {
         abortOnError = true
+    }
+}
+
+// Process only Firebase metadata: no app compilation, native build, APK or network calls.
+if (hostCheckFlag == null) {
+    tasks.register("verifyFirebaseConfigs") {
+        group = "verification"
+        description = "Verify genuine debug/test-bucket and release/production Firebase resources"
+        dependsOn("processDebugGoogleServices", "processReleaseGoogleServices")
+        doLast {
+            for (variant in listOf("Debug", "Release")) {
+                val debug = variant == "Debug"
+                val packageName = "edu.ucsd.sysnet.cluetoothscanner" + if (debug) ".debug" else ""
+                val expected = mapOf(
+                    "google_app_id" to if (debug) "1:952828187654:android:24c3c17e0c06adbeb81f87"
+                        else "1:952828187654:android:9a76ce60006c562cb81f87",
+                    "google_storage_bucket" to if (debug) "cluetooth-1da02-debug"
+                        else "cluetooth-1da02.firebasestorage.app",
+                    "project_id" to "cluetooth-1da02",
+                    "gcm_defaultSenderId" to "952828187654",
+                )
+                val processing = tasks.named<GoogleServicesTask>("process${variant}GoogleServices").get()
+                val configFile = file(if (debug) "src/debug/google-services.json" else "google-services.json")
+                check(processing.applicationId.get() == packageName) { "$variant application ID mismatch" }
+                check(processing.googleServicesJsonFiles.get().first { it.isFile } == configFile) {
+                    "$variant selected an unexpected Firebase config"
+                }
+                val config = JsonSlurper().parse(configFile) as Map<*, *>
+                val projectInfo = config["project_info"] as Map<*, *>
+                val clientInfo = (config["client"] as List<*>).map {
+                    (it as Map<*, *>)["client_info"] as Map<*, *>
+                }.single { (it["android_client_info"] as Map<*, *>)["package_name"] == packageName }
+                check(mapOf(
+                    "google_app_id" to clientInfo["mobilesdk_app_id"],
+                    "google_storage_bucket" to projectInfo["storage_bucket"],
+                    "project_id" to projectInfo["project_id"],
+                    "gcm_defaultSenderId" to projectInfo["project_number"],
+                ) == expected) { "$variant Firebase config differs from the registered identity/bucket" }
+                val xml = processing.outputDirectory.file("values/values.xml").get().asFile
+                val strings = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                    .parse(xml).getElementsByTagName("string")
+                val generated = (0 until strings.length).associate {
+                    val node = strings.item(it)
+                    node.attributes.getNamedItem("name").nodeValue to node.textContent
+                }
+                expected.forEach { (name, value) ->
+                    check(generated[name] == value) { "$variant generated $name mismatch" }
+                }
+                logger.lifecycle("$variant Firebase verified: $packageName, ${expected["google_app_id"]}, ${expected["google_storage_bucket"]}")
+            }
+        }
     }
 }
 
