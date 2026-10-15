@@ -3,7 +3,7 @@ qmd:
   metadata:
     title: "Sonicu SoniShield Duo"
     date: "2026-10-14"
-    tags: [hospital, environmental-monitoring]
+    tags: [hospital, environmental-monitoring, cold-chain]
     confidence: medium
 ---
 
