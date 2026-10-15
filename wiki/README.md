@@ -21,7 +21,10 @@ Confidence describes attribution of the research lead, not verified installation
 - [Sonicu SoniShield Duo](sonicu-sonishield-duo.md)
 - [Primex Sync clock family](primex-sync-clock.md)
 - [HID Seos door-reader / credential ecosystem](hid-seos.md)
+- [Cisco Unified IP Phone 8945 candidate](cisco-ip-phone-8945.md)
 - [Honeywell Xenon HC base family](honeywell-xenon-hc-base.md)
+- [HP Color LaserJet Pro MFP M479fdw candidate](hp-color-laserjet-m479fdw.md)
+- [HP LaserJet Pro MFP 4101fdw candidate](hp-laserjet-4101fdw.md)
 - [nLight AIR rES7](nlight-res7.md)
 - [nLight AIR rSDGR](nlight-rsdgr.md)
 - [nLight AIR rIO ZT](nlight-rio-zt.md)
@@ -33,7 +36,7 @@ Confidence describes attribution of the research lead, not verified installation
 
 ## Reading the evidence
 
-These are candidate clinical, navigation, and facilities product leads, not an inventory or ownership claim. Generic office equipment seen in search areas is not a hospital-related finding without separate healthcare-use or deployment evidence; those leads stay in private research notes.
+These are clinical, navigation, facilities, and office-infrastructure candidates from hospital-region searches, not an inventory or ownership claim. Generic phones and printers can be retained as possible hospital-system equipment; their model identification and plausible use do **not** establish hospital deployment.
 
 Saved responses were considered without requiring hospital-polygon membership. WiGLE observation and distinct `netid` counts are **not physical equipment counts or proof of deployment**; names, company IDs, and BT/BLE labels do not authenticate identity.
 
