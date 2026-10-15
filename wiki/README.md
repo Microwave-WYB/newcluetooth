@@ -25,6 +25,7 @@ Confidence describes attribution of the research lead, not verified installation
 - [Honeywell Xenon HC base family](honeywell-xenon-hc-base.md)
 - [HP Color LaserJet Pro MFP M479fdw candidate](hp-color-laserjet-m479fdw.md)
 - [HP LaserJet Pro MFP 4101fdw candidate](hp-laserjet-4101fdw.md)
+- [BIXOLON SLP-DX220B Bluetooth label printer candidate](bixolon-slp-dx220b.md)
 - [nLight AIR rES7](nlight-res7.md)
 - [nLight AIR rSDGR](nlight-rsdgr.md)
 - [nLight AIR rIO ZT](nlight-rio-zt.md)
