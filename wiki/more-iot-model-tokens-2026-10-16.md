@@ -71,6 +71,8 @@ Helio Strap also advertises the generic `180D` Heart Rate service; no Strap Pro 
 
 All **40 / 40 / 713** `LE-OpenRun*` observations have the sanitized exact model-name token `LE-OpenRun Pro`, supporting a [Shokz OpenRun Pro](https://shokz.com/pages/openrunpro) candidate. Most have ordered AD types `03,09,FF` (37 / 37 / 675); three add flags `01` (3 / 3 / 38). Advertised `180F` is the generic Battery Service, **not** a Shokz-specific identifier. The name alone does not distinguish Standard/Mini fit, generation or revision; no separate OpenRun Pro 2 cohort was found.
 
+The separate `OpenSwim*` cohort has **5 exact `(addr,raw)` variants / 5 addresses / 103 scans**, all with visible model token `OpenSwim Pro` (device-specific suffix hidden), Shokz-assigned company field 3244 and ordered `01/1,FF/8,09/21`. [Shokz's original support page](https://shokz.com/pages/openswimpro-support) distinguishes **OpenSwim Pro** (Bluetooth 5.4 and local MP3 storage) from the original non-Bluetooth **OpenSwim**. Bluetooth does not work underwater: this is neither evidence of underwater streaming nor proof of swimming activity or a pool sensor.
+
 ## Marshall Acton Bluetooth speakers
 
 The `Acton*` cohort is **13 / 13 / 190**. A distinct II/2 versus III/3 model token, rather than a shared generic shape, supports two [Marshall Acton speaker](https://www.marshall.com/us/en/product/acton-iii) generation candidates:
