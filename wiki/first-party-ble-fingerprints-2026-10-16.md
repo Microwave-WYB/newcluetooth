@@ -184,4 +184,8 @@ Four other case-insensitive `pedal*` advertisements (**4 exact variants / 4 addr
 
 `Tsunghanrog` (case-insensitive exact 11-byte name) has **7 exact variants / 7 addresses / 291 scans** with `01/1,03/6,06/16,09/11` (**5 / 5 / 287**) or `01/1,03/2,07/16,09/11` (**2 / 2 / 4**), no company field. Generic Device Information service `180A` and other unmapped short UUIDs do not identify a brand. The 128-bit UUID is withheld; **device category and manufacturer remain unknown**.
 
+`AZPDKC*` (four-byte suffix hidden, name 11 bytes) has **8 exact variants / 8 addresses / 173 scans**, ordered `01/1,0A/1,09/11`, no company field or advertised service UUID. This generic flags/Tx-power/name structure and unmatched name do **not** establish a manufacturer, product category or model.
+
+Case-insensitive exact `OMNI` (name 4 bytes) has **8 exact variants / 7 addresses / 138 scans**, ordered `01/1,07/16,0A/1,09/4,FF/16` and a withheld 128-bit service UUID. Auxiliary company field 256 is [assigned to TomTom](https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/company_identifiers/company_identifiers.yaml), but no product-source match ties these ads to TomTom or an OMNI-branded lock. **Brand, device category and model remain unassigned**; addresses are not verified unit counts.
+
 Sources and detailed private query notes remain outside Git in `us-osm-hospitals/20261013T225104Z`. No complete device addresses, serial-bearing names, raw advertisement payloads, precise locations, credentials or patient data are published.
