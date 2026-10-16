@@ -13,6 +13,8 @@ qmd:
 
 The historical research reports **unnamed** candidate records with company ID 506 (`0x01FA`), assigned to Gozio Inc. Gozio documents hospital wayfinding but can also [reuse existing Bluetooth beacons or positioning infrastructure](https://www.goziohealth.com/gozio-faqs) and [integrate BLE-enabled lighting](https://www.goziohealth.com/news/gozio-health-adds-atrius-iot-indoor-positioning-solution-acuity-brands-wayfinding-mobile-platform). These facts support a **company-field-associated vendor ecosystem lead**, **not** an exact Fusion Beacon/GZFUSION1 model, mandatory dedicated Gozio hardware, a named advertisement, a specific hospital deployment or ownership. A company ID can be copied or misreported.
 
+A separate unfiltered first-party `cluetooth` read-only company-field-506 aggregation returned **1 exact `(addr,raw)` variant / 1 address / 12 scans**, with ordered AD types/data lengths `01/1,FF/12,09/9,03/4,16/5`. Its name did **not** match the allowed public generic-name list and is withheld; manufacturer bytes, possible identifiers and service-data contents are likewise withheld. Company assignment alone still does **not** identify a Gozio-produced beacon or Fusion Beacon. This independent full-database record cannot be matched to the historical **unnamed** WiGLE observations or the statically inspected app's embedded-ID parser, nor used to infer hospital ownership.
+
 The FCC index for GZFUSION1 is related product context only: the original
 research encountered an access block and used indexed information, not a fully
 inspected filing. Gozio can also reuse other vendors' beacon infrastructure;
