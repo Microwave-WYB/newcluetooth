@@ -13,7 +13,7 @@ First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. Th
 
 ## Govee lighting and environmental monitoring
 
-The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **23 tokens** have been individually checked; **81 others have not** and must not all be labeled lights. Two checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
+The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **23 tokens** have been individually checked; the remaining **81 tokens / 163 exact variants / 158 addresses / 1,302 scans** have not been individually validated. A bounded follow-up found **no further directly manufacturer-proven non-lighting category** among them; this does **not** prove they are all lights. Two checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
 
 | Advertised model token (suffix hidden) | Manufacturer product / application | Variants / addresses / scans |
 |---|---|---:|
