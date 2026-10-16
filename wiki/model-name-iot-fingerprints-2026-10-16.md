@@ -13,7 +13,7 @@ First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. Th
 
 ## Govee lighting and environmental monitoring
 
-The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **23 tokens** have been individually checked; the remaining **81 tokens / 163 exact variants / 158 addresses / 1,302 scans** have not been individually validated. A bounded follow-up found **no further directly manufacturer-proven non-lighting category** among them; this does **not** prove they are all lights. Two checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
+The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **33 tokens** have been individually checked; the remaining **71 tokens / 104 exact variants / 945 scans** have not been individually validated (their distinct-address count was not recomputed). A bounded follow-up found **no further directly manufacturer-proven non-lighting category** among them; this does **not** prove they are all lights. Four checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
 
 | Advertised model token (suffix hidden) | Manufacturer product / application | Variants / addresses / scans |
 |---|---|---:|
@@ -40,8 +40,22 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H617C*` | [RGBIC Basic Bluetooth LED strip](https://us.govee.com/products/govee-rgbic-basic-led-strip-lights-refurbished) | **8 / 7 / 122** |
 | `Govee_H618F*` | [RGBIC LED strip model/connectivity guide](https://app-h5.govee.com/user-manual/wlan-guide) | **7 / 7 / 118** |
 | `Govee_H605C*` | [Envisual TV Backlight T2 dual-camera system](https://us.govee.com/products/govee-envisual-tv-backlight-t2) | **9 / 9 / 111** |
+| `Govee_H612D*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **12 / 12 / 83** |
+| `Govee_H6072*` | [Lyra RGBICWW corner floor lamp](https://ca.govee.com/products/refurbished-govee-lyra-rgbicww-corner-floor-lamp) | **10 / 9 / 39** |
+| `Govee_H6052*` | [Aura smart table lamp](https://uk.govee.com/products/refurbished-aura-smart-table-lamp) | **8 / 8 / 54** |
+| `Govee_H7015*` | [48 ft, 15-bulb outdoor string lights](https://community.govee.com/support/faqs/specs) | **6 / 6 / 53** |
+| `Govee_H7039*` | [Outdoor String Lights 2, 144 ft](https://us.govee.com/products/govee-outdoor-string-lights-2) | **5 / 5 / 24** |
+| `Govee_H6001*` | **Category unknown**; no directly matching original product category found | **4 / 4 / 27** |
+| `Govee_H60B0*` | [Uplighter floor lamp, Ripple Lighting Effect model](https://us.govee.com/products/govee-uplighter-floor-lamp), distinct from H60B3 | **4 / 4 / 18** |
+| `Govee_H6176*` | [Wi-Fi RGBIC Outdoor Strip Lights](https://us.govee.com/products/govee-wi-fi-rgbic-outdoor-strip-lights?variant=43029980709049) | **4 / 4 / 10** |
+| `Govee_H6097*` | [TV Backlight 3 Lite](https://us.govee.com/products/govee-tv-backlight-3-lite?variant=45351535083705), distinct public code from H6099 | **3 / 3 / 45** |
+| `Govee_H612F*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **3 / 3 / 4** |
 
 The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. The first eight added rows (H6199 through H5179) total **51 exact variants / 4,802 scans**; the following five lighting rows total **37 variants / 36 observed addresses / 628 scans**. Both are **subsets** of the 439 / 421 / 15,145 cohort above, not extra brands or devices. The five lighting rows share `01,09,FF,09` and auxiliary fields 34818/34819; earlier lighting and temperature groups also share layouts, but **neither AD pattern establishes category, identity or authenticity**. H5151 gateway addresses are not individual sensor counts; H5074 classification has weaker third-party support.
+
+Five further reviewed public codes (H612D, H6072, H6052, H7015, H7039) account for **41 exact variants / 253 scans** within the same cohort; the sum of their **40 per-code addresses** is not a deduplicated across-code or cohort address count. Four have direct original product-category mappings; H612D remains category-unknown. Refurbished product-page citations establish code-to-model context, **not** that the observed units were refurbished.
+
+A second non-overlapping five-code review (H6001, H60B0, H6176, H6097, H612F) contributes **18 exact variants / 104 scans** within the same cohort; three have direct original category mappings. H6001 has no corroborated original category and H612F is original-list-only. Different public codes H6097 and H6099 may share a TV Backlight 3 Lite *product line* without establishing identical retail configuration or two physical units.
 
 ## Sony EXTRA BASS portable speakers
 
