@@ -16,7 +16,7 @@ Dates are research-record dates, **not** inferred radio-observation dates. Confi
 
 ## Earlier hospital-region device and family pages
 
-- [Gozio hospital-wayfinding beacon family](gozio-wayfinding-beacon.md)
+- [Gozio-associated hospital-wayfinding signal — hardware model unknown](gozio-wayfinding-beacon.md)
 - [ResMed AirMini candidate](resmed-airmini.md)
 - [Enovate EmTag asset tag](enovate-emtag.md)
 - [Sonicu SoniShield Duo](sonicu-sonishield-duo.md)

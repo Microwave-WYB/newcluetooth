@@ -1,20 +1,17 @@
 ---
 qmd:
   metadata:
-    title: "Gozio hospital-wayfinding beacon family"
+    title: "Gozio-associated hospital-wayfinding signal"
     date: "2026-10-14"
     tags: [hospital, wayfinding]
     confidence: medium
 ---
 
-# Gozio hospital-wayfinding beacon family
+# Gozio-associated hospital-wayfinding signal
 
 ## Identification and hospital relevance
 
-The existing research reports company ID 506 (`0x01FA`), assigned to Gozio
-Inc. Gozio documents beacon-assisted hospital wayfinding. Together these support
-a vendor-family lead, **not** the exact Fusion Beacon model, a specific hospital
-deployment, or ownership. A company ID can be copied or misreported.
+The historical research reports **unnamed** candidate records with company ID 506 (`0x01FA`), assigned to Gozio Inc. Gozio documents hospital wayfinding but can also [reuse existing Bluetooth beacons or positioning infrastructure](https://www.goziohealth.com/gozio-faqs) and [integrate BLE-enabled lighting](https://www.goziohealth.com/news/gozio-health-adds-atrius-iot-indoor-positioning-solution-acuity-brands-wayfinding-mobile-platform). These facts support a **company-field-associated vendor ecosystem lead**, **not** an exact Fusion Beacon/GZFUSION1 model, mandatory dedicated Gozio hardware, a named advertisement, a specific hospital deployment or ownership. A company ID can be copied or misreported.
 
 The FCC index for GZFUSION1 is related product context only: the original
 research encountered an access block and used indexed information, not a fully
