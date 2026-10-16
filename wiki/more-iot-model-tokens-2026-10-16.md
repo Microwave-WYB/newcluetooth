@@ -310,4 +310,12 @@ The case-insensitive `HUAWEI*` cohort is **5 exact `(addr,raw)` variants / 5 add
 
 The private name suffixes stay hidden; none advertises a service UUID list (the table is **service data**). Company field 637 appears in all but GT 4; neither name nor auxiliary fields authenticate hardware, sizes or revisions. No phone, earbud or router model was identified in this cohort.
 
+## Status Audio Between 3ANC earbuds
+
+All **6 exact `(addr,raw)` variants / 6 addresses / 443 scans** in the case-insensitive `Between*` cohort have public model-name token `Between 3ANC`, ordered `09/12,FF/11` and no advertised service UUID. [Status Audio's original 3ANC product page](https://www.status.co/products/between-3anc) and [Bluetooth/Status Hub support](https://www.status.co/pages/troubleshooting) establish a true-wireless noise-cancelling earbud model candidate. Neither name nor auxiliary advertising data authenticate devices or hardware revisions; this is **not** a Between Pro cohort, and addresses do not count confirmed physical earbud sets.
+
+## Sony WI-C100 neckband-style wireless earphones
+
+All **7 exact `(addr,raw)` variants / 7 addresses / 10 scans** in the `LE_WI-C*` cohort include complete public token `LE_WI-C100`, supporting the [original Sony WI-C100 product](https://electronics.sony.com/audio/headphones/all-headphones/p/wic100-w). Six variants (**6 / 6 / 8**) advertise generic Fast Pair service-**data** `FE2C` without company field; one (**1 / 1 / 2**) also advertises service UUID `FD82` and Sony-assigned company field 301. These are **one model**, not separate earphone models; WI-C100 has left/right ears connected by a neck cable, **not** a `WF-` true-wireless earbud. Fast Pair alone does not identify Sony, and advertisements do not prove authenticity, color, firmware, audio playback or physical-unit count.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
