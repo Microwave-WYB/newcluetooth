@@ -13,7 +13,7 @@ First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. Th
 
 ## Govee lighting and environmental monitoring
 
-The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **38 tokens** have been individually checked; the remaining **66 tokens / 92 exact variants / 841 scans** have not been individually validated (their distinct-address count was not recomputed). A bounded follow-up found **no further directly manufacturer-proven non-lighting category** among them; this does **not** prove they are all lights. Five checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
+The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **43 tokens** have been individually checked; the remaining **61 tokens / 77 exact variants / 635 scans** have not been individually validated (their distinct-address count was not recomputed). A bounded follow-up found **no further directly manufacturer-proven non-lighting category** among them; this does **not** prove they are all lights. Five checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
 
 | Advertised model token (suffix hidden) | Manufacturer product / application | Variants / addresses / scans |
 |---|---|---:|
@@ -55,6 +55,11 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H6047*` | [RGBIC Wi-Fi Gaming Light Bars with Smart Controller](https://us.govee.com/products/refurbished-govee-rgbic-wi-fi-gaming-light-bars-with-smart-controller) | **2 / 2 / 9** |
 | `Govee_H605D*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **2 / 2 / 25** |
 | `Govee_H6078*` | [RGBICWW Cylinder Floor Lamp](https://us.govee.com/products/refurbished-govee-rgbicww-cylinder-floor-lamp) | **2 / 2 / 11** |
+| `Govee_H6167*` | [2.4 m RGBIC TV Backlight, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6167) | **3 / 3 / 89** |
+| `Govee_H617E*` | [RGBIC Basic LED strip, 65.6 ft](https://us.govee.com/products/govee-rgbic-basic-led-strip-lights-refurbished) | **3 / 3 / 67** |
+| `Govee_H61B5*` | [RGBIC LED strip with diffusing covers, 16.4 ft](https://us.govee.com/products/govee-rgbic-led-strip-lights-with-covers) | **3 / 3 / 35** |
+| `Govee_H7016*` | [2 × 48 ft, 30-bulb Bluetooth string lights](https://community.govee.com/support/faqs/specs) | **3 / 3 / 7** |
+| `Govee_H7028*` | [LED Bulb String Lights, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H7028) | **3 / 2 / 8** |
 
 The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. The first eight added rows (H6199 through H5179) total **51 exact variants / 4,802 scans**; the following five lighting rows total **37 variants / 36 observed addresses / 628 scans**. Both are **subsets** of the 439 / 421 / 15,145 cohort above, not extra brands or devices. The five lighting rows share `01,09,FF,09` and auxiliary fields 34818/34819; earlier lighting and temperature groups also share layouts, but **neither AD pattern establishes category, identity or authenticity**. H5151 gateway addresses are not individual sensor counts; H5074 classification has weaker third-party support.
 
@@ -63,6 +68,8 @@ Five further reviewed public codes (H612D, H6072, H6052, H7015, H7039) account f
 A second non-overlapping five-code review (H6001, H60B0, H6176, H6097, H612F) contributes **18 exact variants / 104 scans** within the same cohort; three have direct original category mappings. H6001 has no corroborated original category and H612F is original-list-only. Different public codes H6097 and H6099 may share a TV Backlight 3 Lite *product line* without establishing identical retail configuration or two physical units.
 
 A third disjoint five-code review (H702C, H70A1, H6047, H605D, H6078) adds **12 exact variants / 104 scans** within the existing cohort; four codes have original category mappings, while H605D has only a supported-model-list entry. The cited refurbished offerings do not identify the condition of observed units.
+
+The other five codes from this ranked review (H6167, H617E, H61B5, H7016, H7028) have direct original model-to-category descriptions and account for **15 exact variants / 206 scans** inside the 439-variant parent cohort. H7028's **3 variants / 2 addresses** shows why variants and addresses must not be equated. A cited refurbished listing is model context only, not evidence of unit condition.
 
 ## Sony EXTRA BASS portable speakers
 
