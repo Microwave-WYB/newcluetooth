@@ -11,9 +11,9 @@ qmd:
 
 First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. The principal feature here is a **sanitized model token in the advertised name**, not a claim that a generic BLE shape uniquely identifies a model. Counts are exact `(addr,raw)` variants / distinct observed addresses / scans, **not confirmed physical devices**. Hide all device-specific suffixes; names can be spoofed, and a research date is not an observation date. No hospital association is required.
 
-## Govee smart lighting
+## Govee lighting and environmental monitoring
 
-The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**. The following eight model tokens account for only a subset; do not extrapolate their labels to the rest of the cohort. Govee product pages corroborate the model families but not the authenticity of any particular advertiser.
+The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following ten tokens account for only a subset; **94 others have not been individually verified** and must not all be labeled lights. Original Govee product pages corroborate most model families but not the authenticity of any particular advertiser; the H5074 source below is third-party.
 
 | Advertised model token (suffix hidden) | Manufacturer product / application | Variants / addresses / scans |
 |---|---|---:|
@@ -25,8 +25,10 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**. 
 | `Govee_H617A*` | [5 m Bluetooth light strip](https://community.govee.com/support/faqs/specs) | **14 / 14 / 101** |
 | `Govee_H6046*` | [TV light bars](https://us.govee.com/products/govee-rgbic-tv-light-bars-for-55-75-inch-tvs) | **13 / 11 / 375** |
 | `Govee_H7021*` | [96 ft outdoor string lights](https://us.govee.com/products/refurbished-govee-rgbic-warm-white-wi-fi-bluetooth-smart-outdoor-string-lights) | **13 / 13 / 121** |
+| `Govee_H5151*` | [Wi-Fi/BLE gateway in a thermometer/hygrometer kit](https://us.govee.com/products/refurbished-wi-fi-digital-thermometer-hygrometer), **not** a count of standalone probes | **12 / 12 / 72** |
+| `Govee_H5074*` | [Bluetooth thermometer/hygrometer](https://www.manualslib.com/manual/4009235/Govee-H5074.html) — **third-party-hosted manual**, no reliable direct original-manufacturer URL confirmed | **10 / 8 / 11** |
 
-The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred.
+The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. H5151 gateway addresses are **not** individual temperature/humidity sensor counts; H5074 classification has weaker third-party source support.
 
 ## Sony EXTRA BASS portable speakers
 
