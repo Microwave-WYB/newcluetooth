@@ -359,7 +359,7 @@ A separate **18 exact `(addr,raw)` variants / 18 addresses / 226 scans** with co
 
 All **6 exact `(addr,raw)` variants / 6 addresses / 197 scans** advertise exact public name `ET-2850 Series`, supporting the [original Epson ET-2850 series](https://support.epson.com/Support/Printers/All-In-Ones/ET-Series/Epson-ET-2850/s/SPT_C11CJ63202): color ink-tank printing, scanning, copying and automatic duplex printing. Ordered AD `01/1,FF/5,06/16,09/14`; auxiliary company field 64, unverified 128-bit UUID withheld. This is separate from HP printer leads; the advertising does not distinguish country/retail SKU, authenticate manufacture or count physical printers.
 
-Four **other complete public ET-series name tokens**, explicitly excluding ET-2850 above, have original Epson model pages:
+Five **other complete public ET-series name tokens**, explicitly excluding ET-2850 above, have original Epson model pages:
 
 | Name token / original manufacturer model page | Exact variants / addresses / scans | Product-family distinction |
 |---|---:|---|
@@ -367,8 +367,9 @@ Four **other complete public ET-series name tokens**, explicitly excluding ET-28
 | [`ET-4850`](https://support.epson.com/select/For-Work/Printers/Inkjet/EcoTank-ET-4850-Wireless-Colour-All-in-One-Cartridge-Free-Supertank-Printer-with-Scanner%2C-Copier%2C-Fax%2C-ADF-and-Ethernet/p/C11CJ60202) | **3 / 3 / 53** | Color ink tank multifunction with fax and ADF. |
 | [`ET-2980`](https://epson.com/For-Home/Printers/Inkjet/EcoTank-ET-2980-Wireless-All-in-One-Color-Supertank-Printer-%E2%80%93-Black/p/C11CL41201) | **3 / 3 / 24** | Color ink tank print/scan/copy. |
 | [`ET-2800`](https://epson.com/For-Work/Printers/Inkjet/EcoTank-ET-2800-Wireless-Color-All-in-One-Cartridge-Free-Supertank-Printer-with-Scan-and-Copy/p/C11CJ66202) | **6 / 6 / 13** | Color ink tank print/scan/copy. |
+| [`ET-3950`](https://epson.com/Support/Printers/All-In-Ones/ET-Series/Epson-ET-3950/s/SPT_C11CL43201) | **2 / 2 / 20** | Color ink tank print/scan/copy with ADF and duplex; [shared manufacturer setup guide](https://files.support.epson.com/docid/cpd6/cpd64026.pdf) also covers other, **distinct** ET models. |
 
-These four cohorts also share company field 64 and ordered `01/1,FF/5,06/16,09/14` with ET-2850; a 128-bit UUID is withheld. **The shared shape does not distinguish models**: the full name tokens do. Manufacturer example SKU/region/color does not identify observed configurations, BLE presence does not show print data transport, and no address count establishes physical printers or hospital deployment.
+These five cohorts also share company field 64 and ordered `01/1,FF/5,06/16,09/14` with ET-2850; a 128-bit UUID is withheld. **The shared shape does not distinguish models**: the full name tokens do. Manufacturer example SKU/region/color does not identify observed configurations, BLE presence does not show print data transport, and no address count establishes physical printers or hospital deployment.
 
 ## Hyperice Hypervolt 2 and Hypervolt 2 Pro massage devices
 
@@ -397,5 +398,13 @@ One exact `(addr,raw)` variant / one address / **2 scans** advertises the comple
 ## Philips TAB5309 home soundbar
 
 One exact `(addr,raw)` variant / one address / **3 scans** in the case-insensitive `Philips*` name cohort carries public model token `TAB5309`, supporting the [original Philips TAB5309 2.1-channel soundbar with wireless subwoofer](https://www.usa.philips.com/c-p/TAB5309_37/soundbar-21-with-wireless-subwoofer/support). Ordered AD `01/1,FF/26,09/18`; auxiliary company field 15619, no listed service UUID. The linked `/37` country SKU is **not** identified by the broadcast. The other **3 / 3 / 13** `Philips*` variants lack a parsed public model and remain **category unknown**, not confirmed soundbars or medical products. The combined `Philips*` name cohort is **4 / 4 / 16**; no authenticity, physical-unit count or hospital installation is inferred.
+
+## Aranet4 indoor air-quality monitor
+
+One exact `(addr,raw)` variant / one address / **9 scans** advertises complete public token `Aranet4` with a hidden device-specific suffix, SAF TEHNIKA-assigned company field 1794 and ordered `01/1,09/13,06/16,FF/9` (128-bit UUID withheld). The [original Aranet4 product page](https://pro.aranet.com/products/aranet4/) and [manufacturer manual](https://assets.aranet.com/documents/aranet4_user_manual_v25_web.pdf) support a room-environment monitor of **CO₂, temperature, humidity and atmospheric pressure**. No HOME/PRO version, hardware revision, authenticity or physical-unit count is established. This is **not** a human medical diagnostic device, and no hospital installation or relation to earlier WiGLE identifiers follows.
+
+## nLight AIR rPP20 lighting power/relay pack
+
+The complete public `rPP20` model token appears in **2 exact `(addr,raw)` variants / 2 addresses / 15 scans**, with name suffix hidden, ordered `01/1,09/12,FF/20`, auxiliary company field 10245 and no advertised service UUID. [Original Acuity/nLight rPP20 product listing](https://www.acuitybrands.com/products/detail/771135/nlight/rpp20-relay-pack/rpp20-power-relay-pack) identifies a lighting power/relay pack in the nLight AIR ecosystem; manufacturer [installation instructions](https://img.acuitybrands.com/public-assets/catalog/771135/is-rpp20-002.pdf) are indexed but returned HTTP 403 to direct retrieval, so **no unverified configuration-specific electrical claims** are imported. This is a **different model token** from [rPP8 DS](nlight-rpp8-ds.md), without proof of interchangeability or replacement. Ordinary nLight AIR control uses a separate 900 MHz channel; these BLE ads do not demonstrate relay activity, control traffic, exact variant, physical-unit count or hospital deployment.
 
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
