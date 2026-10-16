@@ -149,6 +149,8 @@ Some have Sony auxiliary company field 301 / `FD2A`, others `FE03` or Fast Pair 
 
 A separate non-`LE_` `WF-C510` name cohort adds **5 exact variants / 5 addresses / 81 scans** (ordered AD `0A/1,16/8 or 15,09/11`, Fast Pair service-data UUID `FE2C`). Together with the **7 / 7 / 21** `LE_WF-C510` row above, the **same Sony WF-C510 model** has **12 name/raw variants / 12 observed addresses / 102 scans**, with no address overlap in this snapshot. This extends advertisement coverage, **not** the number of identified product models or verified earbud units; different/random addresses cannot prove different physical sets.
 
+A separate bounded read-only check found that all **25 / 25 / 249** literal `LE_WF-*` variants are accounted for by the six rows above. Literal bare `WF-*` totals **8 / 8 / 87**: the five `WF-C510` variants above are the only additional complete public model match, and the other **3 / 3 / 6 remain unassigned**. The latter are not counted as a seventh Sony earbud model merely because of the `WF-*` prefix.
+
 ## Beats headphones, earbuds and portable speaker
 
 All **27 / 27 / 148** `LE-Beats*` variants split by name token into three product candidates. [Beats](https://www.beatsbydre.com/) documents the products; a shared service UUID `5052494d-2dab-0341-6972-6f6861424c45` and ordered types `01,FF,07,09` do **not** distinguish the models.
