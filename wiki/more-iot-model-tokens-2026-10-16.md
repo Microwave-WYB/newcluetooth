@@ -333,4 +333,18 @@ The `Cleer*` cohort has **5 exact `(addr,raw)` variants / 5 addresses / 33 scans
 
 Model evidence comes from names, **not** generic battery/device-info service UUIDs or varying auxiliary company fields. No speaker model, hardware authenticity or number of physical units is established.
 
+## Anker SOLIX portable power stations and Prime power-bank family
+
+Literal `Anker*` has **5 exact `(addr,raw)` variants / 5 addresses / 70 scans**, with four distinct **public SOLIX model tokens**:
+
+| Advertised public token / original manufacturer source | Variants / addresses / scans | Product candidate |
+|---|---:|---|
+| [`Anker SOLIX C1000`](https://www.anker.com/nz/anker-portable-power-station-warranty-policy) | **1 / 1 / 3** | C1000 portable power station. |
+| [`Anker SOLIX C300`](https://support.anker.com/s/article/Anker-SOLIX-C300-Portable-Power-Station-Guide-de-l-utilisateur-A1722-CA) | **1 / 1 / 59** | C300 portable power station; not necessarily this guide's region or revision. |
+| [`Anker SOLIX C800 Plus`](https://service.anker.com/article-description/Anker-SOLIX-C800-PLUS-Portable-Power-Station) | **1 / 1 / 1** | C800 Plus portable power station. |
+| [`Anker SOLIX F2000`](https://service.anker.com/article-description/Anker-SOLIX-F2000-Portable-Power-Station-PowerHouse-767-USER-MANUAL) | **1 / 1 / 2** | F2000 / PowerHouse 767 portable power station. |
+| [`Anker Prime Power Bank`](https://www.anker.com/products/a1340-250w-power-bank) | **1 / 1 / 5** | **Prime power-bank family only**: linked A1340 is an example, **not** an identified model here. |
+
+Four SOLIX ads carry service UUID `FF09` and ordered `01,FF,03,09,0A`; the Prime ad instead carries `2215` and `01,FF,03,09`. All have uninformative company field `0xFFFF`. No exact `(addr,raw)` or address overlap with the separately recorded `AFYDKPN*` smart-charging lead in this snapshot, but different/random addresses cannot establish different physical units. Only the four explicit SOLIX name tokens add model candidates; ads do not authenticate hardware, region, capacity, firmware or active operating state.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
