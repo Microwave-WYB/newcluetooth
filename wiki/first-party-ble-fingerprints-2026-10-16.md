@@ -161,7 +161,7 @@ The [Levoit user-manual directory](https://levoit.ae/pages/user-manuals), [Vital
 | `Core400S*` → [Levoit Core 400S](levoit-core-400s.md) | **3 / 3 / 9** | 8 |
 | `LAP-C601S*` → [Levoit Core 600S model line](https://levoit.com/products/core-600s-p-smart-air-purifier) | **4 / 4 / 29** | 13 |
 
-All four `LAP-C601S*` variants share the table's `01/1,FF/14,09/13` skeleton, auxiliary company field 1744 and no advertised service/service-data UUID. The original product page's `LAP-C601S-WUS` / `Core 600S-P` retail suffix is **not** established for these shorter observed model tokens. A previous wildcarded name-length shape check found **18 variants/addresses and 143 scans** beyond the then-listed five name groups; overlap with the newly listed `LAP-C601S*` was **not recomputed**, so these figures must not be added as a disjoint sixth group. Shape/company field alone does not identify the model; two broad `CORE` rows without that field remain excluded.
+All four `LAP-C601S*` variants share the table's `01/1,FF/14,09/13` skeleton, auxiliary company field 1744 and no advertised service/service-data UUID. The original product page's `LAP-C601S-WUS` / `Core 600S-P` retail suffix is **not** established for these shorter observed model tokens. Repeating the whole-library wildcarded shape/company query: **18 / 18 / 143** beyond the old five groups included the newly recognized **4 / 4 / 29** `LAP-C601S*` variants. After excluding all six listed models, **14 exact variants / 14 addresses / 114 scans remain unassigned**. These are not confirmed Levoit devices, and shape/company field alone cannot identify a model. Two broad `CORE` rows lacking that company field remain excluded.
 
 ## Unassigned feature, not a product identification
 

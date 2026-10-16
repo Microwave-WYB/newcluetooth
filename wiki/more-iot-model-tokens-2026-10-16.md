@@ -365,6 +365,19 @@ All **16 exact `(addr,raw)` variants / 16 addresses / 5,626 scans** have public 
 
 A separate **18 exact `(addr,raw)` variants / 18 addresses / 226 scans** with complete public `Galaxy Watch6` token split into **two name-confirmed families**, not four advertising models: [`Galaxy Watch6`](https://news.samsung.com/us/samsung-galaxy-watch6-series-classic-inspiring-best-self-day-night-unpacked-2023/) without `Classic` (**12 / 12 / 60**) and [`Galaxy Watch6 Classic`](https://www.samsung.com/mm/watches/galaxy-watch/galaxy-watch6-classic-43mm-silver-bluetooth-sm-r950nzsaasa/) (**6 / 6 / 166**). Within Watch6, six variants carry `FD69` service/service-data UUID (**6 / 6 / 15**) and six Samsung-assigned company field 117 (**6 / 6 / 45**); all Classic variants carry company 117, with two auxiliary-data lengths (**3 / 3 / 3** and **3 / 3 / 163**). The original Samsung series announcement distinguishes Classic's rotating bezel, but no radio size, LTE variant, color, order SKU, firmware or authentic physical-watch count is inferred. Shared `FD69`/company-field shapes with Watch7 do **not** merge generations.
 
+## Four other Samsung Galaxy Watch public model tokens
+
+The following complete public name tokens are separate from the Watch6, Watch6 Classic and Watch7 cohorts above. `Classic` is matched before the unsuffixed Watch4 token; neither a name prefix nor any linked product-page retail SKU authenticates an observed device.
+
+| Public model-name token / original Samsung page | Exact `(addr,raw)` variants / addresses / scans |
+|---|---:|
+| [`Galaxy Watch4` (non-Classic)](https://www.samsung.com/ca/support/model.SM-R860NZSAXAC/) | **63 / 63 / 16,504** |
+| [`Galaxy Watch5` (non-Pro)](https://www.samsung.com/latin/watches/galaxy-watch/galaxy-watch5-44mm-sapphire-bluetooth-sm-r910nzbalta/) | **38 / 38 / 11,041** |
+| [`Galaxy Watch4 Classic`](https://www.samsung.com/ae/watches/galaxy-watch/galaxy-watch4-classic-black-bluetooth-sm-r890nzkamea/buy/) | **17 / 17 / 132** |
+| [`Galaxy Watch8` (non-Classic)](https://www.samsung.com/us/watches/galaxy-watch8/) | **6 / 6 / 11** |
+
+Linked sizes, colors, connectivity options and regional SKUs are examples of original model pages, **not observed configurations**. These four candidates do not establish completeness of the wider `Galaxy Watch*` name cohort, physical watch count or device authenticity.
+
 ## Epson EcoTank ET-series all-in-one printers
 
 All **6 exact `(addr,raw)` variants / 6 addresses / 197 scans** advertise exact public name `ET-2850 Series`, supporting the [original Epson ET-2850 series](https://support.epson.com/Support/Printers/All-In-Ones/ET-Series/Epson-ET-2850/s/SPT_C11CJ63202): color ink-tank printing, scanning, copying and automatic duplex printing. Ordered AD `01/1,FF/5,06/16,09/14`; auxiliary company field 64, unverified 128-bit UUID withheld. This is separate from HP printer leads; the advertising does not distinguish country/retail SKU, authenticate manufacture or count physical printers.
