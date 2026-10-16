@@ -154,4 +154,44 @@ A current case-insensitive `Charge*` cohort is **43 / 37 / 333**, up from 39 / 3
 
 Names/UUIDs can be spoofed, and the unknown group is not assigned to [JBL Charge](https://www.jbl.com/JBLCHARGE6BLKAM.html) from a generic word alone.
 
+## HP ENVY all-in-one printers
+
+Actual BLE advertisements in the `Envy*` cohort total **11 variants / 10 addresses / 21,778 scans**. All share auxiliary HP company field 101 and service UUID `FE78`; this is **not** a Wi-Fi Direct SSID survey. [HP's Bluetooth setup guide](https://support.hp.com/us-en/document/ish_2026021-1796387-16) discusses Bluetooth Smart discovery/setup, **not** printing over Bluetooth.
+
+| Sanitized model-series name / official HP source | Variants / addresses / scans |
+|---|---:|
+| [ENVY Photo 7100 series](https://support.hp.com/us-en/product/setup-user-guides/hp-envy-photo-7100-all-in-one-printer-series/9073119) | **5 / 4 / 8,934** |
+| [ENVY Photo 7800 series](https://support.hp.com/us-en/product/setup-user-guides/hp-envy-photo-7800-all-in-one-printer-series/9073159) | **3 / 3 / 12,836** |
+| [ENVY 5000 series](https://support.hp.com/us-en/product/setup-user-guides/hp-envy-5000-all-in-one-printer-series/14095644) | **3 / 3 / 8** |
+
+Five advertisements across four addresses do **not** mean five 7100 printers; scans do not represent print jobs. No retail SKU within these printer series is inferred.
+
+## COROS GPS sports watches
+
+`COROS*` has **9 variants / 9 addresses / 12 scans**. [Official COROS battery/model specifications](https://support.coros.com/hc/en-us/articles/23476623096980-Battery-Specifications) and [APEX](https://web-eu.coros.com/apex2)/[VERTIX](https://www.coros.com/vertix2s) product pages support seven advertised model-name tokens. Match a token with its full model boundary (e.g. APEX 2 excludes APEX 2 Pro; VERTIX 2 excludes 2S).
+
+| Sanitized model-name token | Variants / addresses / scans |
+|---|---:|
+| `COROS PACE PRO*` | **3 / 3 / 3** |
+| `COROS PACE 2*` | **1 / 1 / 2** |
+| `COROS PACE 3*` | **1 / 1 / 3** |
+| `COROS APEX 2*` (not Pro) | **1 / 1 / 1** |
+| `COROS APEX 2 PRO*` | **1 / 1 / 1** |
+| `COROS VERTIX 2*` (not 2S) | **1 / 1 / 1** |
+| `COROS VERTIX 2S*` | **1 / 1 / 1** |
+
+These observations share `180A,180F,FEE7`, which are not seven model identifiers. The names are candidates, not authenticated watches; no DURA cycling-computer token was observed.
+
+## EPOS office Bluetooth headsets
+
+Five exact public product names form **5 variants / 5 addresses / 113 scans**. Ordered AD layouts and optional manufacturer fields are auxiliary; the explicit name-model token distinguishes the three headset candidates.
+
+| Exact advertised model name / original EPOS source | Variants / addresses / scans |
+|---|---:|
+| [EPOS IMPACT 1060 ANC](https://www.eposaudio.com/en-us/products/audio/headsets/epos-impact-1060-anc/) | **2 / 2 / 8** |
+| [EPOS IMPACT 1060T ANC](https://www.eposaudio.com/en-us/products/audio/headsets/epos-impact-1060t-anc/) (Teams/Open Office-certified variant) | **2 / 2 / 102** |
+| [EPOS ADAPT 660](https://www.eposaudio.com/en-hk/products/audio/series/epos-adapt-660/) | **1 / 1 / 3** |
+
+No active call, USB-A/USB-C bundle choice or independent adapter is inferred from these advertisements.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
