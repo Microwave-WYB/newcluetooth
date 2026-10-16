@@ -13,7 +13,7 @@ Read-only simi `cluetooth` aggregates researched **2026-10-16**. The names below
 
 ## Bose personal audio
 
-Across `LE-Bose*`, `Bose*` and `LE-P-Bose*`, the current cohort is **734 / 718 / 36,900**. Normalize the `LE-` / `LE-P-` prefix and QC aliases **before** grouping models; do not sum per-prefix address counts. The eight leading identified model-name groups below are only a subset of the full cohort.
+Across `LE-Bose*`, `Bose*` and `LE-P-Bose*`, the current cohort is **734 / 718 / 36,900**. Normalize the `LE-` / `LE-P-` prefix and QC aliases **before** grouping models; do not sum per-prefix address counts. The **12 public product-name groups** below are only a subset of the full cohort; `LE-` in a name does not demonstrate LE Audio.
 
 | Sanitized model-name group / Bose source | Variants / addresses / scans |
 |---|---:|
@@ -25,8 +25,12 @@ Across `LE-Bose*`, `Bose*` and `LE-P-Bose*`, the current cohort is **734 / 718 /
 | [QuietComfort 35 II / QC35 II](https://support.bose.com/s/article/quietcomfort-35-ii-specifications) | **6 / 5 / 66** |
 | [Noise Cancelling Headphones 700 / NC700](https://www.bose.com/pressroom/bose-new-era-headphones) | **5 / 5 / 25** |
 | [QuietComfort Earbuds II](https://support.bose.com/s/article/qcearbii-headphonein-download-the-bose-app) | **3 / 3 / 7** |
+| [SoundLink Max portable Bluetooth speaker](https://www.bose.com/p/speakers/bose-soundlink-max-portable-speaker/SLMAX-SPEAKERWIRELESS.html) | **5 / 5 / 9** |
+| [SoundLink Micro Bluetooth speaker, generation unknown](https://www.bose.com/pressroom/meet-the-micro) | **2 / 2 / 13** |
+| [Frames Tempo sport audio sunglasses](https://www.bose.com/pressroom/new-bose-frames) | **1 / 1 / 1** |
+| [Frames Tenor square-frame audio sunglasses](https://www.bose.com/pressroom/new-bose-frames) | **1 / 1 / 10** |
 
-Do not infer an exact generation from generic `QuietComfort Earbuds` or `Ultra` names. These groups are distinct from the small, custom-named [Bose UUID/company-field candidate](first-party-ble-fingerprints-2026-10-16.md); no duplicate-free combined total is claimed.
+Do not infer an exact generation from generic `QuietComfort Earbuds`, `Ultra` or `SoundLink Micro` names; product-name tokens and original product descriptions are candidates, not broadcaster authentication or evidence audio was playing. These groups are distinct from the small, custom-named [Bose UUID/company-field candidate](first-party-ble-fingerprints-2026-10-16.md); no duplicate-free combined total is claimed.
 
 ## HP Poly Bluetooth audio
 
