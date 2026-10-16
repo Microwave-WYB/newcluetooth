@@ -269,4 +269,19 @@ Five exact `Pathfinder*` observations (**5 variants / 5 addresses / 15 scans**) 
 
 Model-name tokens support two ION Audio outdoor-speaker candidates, not authenticated hardware, independent unit counts or any inferred pet-tracking/navigation function.
 
+## Rockford Fosgate PMX-1 marine media receiver
+
+Eight exact `(addr,raw)` variants / 8 addresses / 17 scans have the public model-name token `PMX-1`, service UUIDs `5D00` and `FFC0`, auxiliary company field 1705, and ordered AD `01/1,02/4,FF/8,09/20,0A/1`. The [original Rockford Fosgate PMX-1 product page](https://rockfordfosgate.com/products/details/pmx-1/) confirms a Bluetooth-enabled marine/outdoor digital-media receiver with RF Connect App control; [FCC filing mirror](https://fccid.io/2AB7SPMX1) provides an OEM context, **not** advertiser authentication. No installation location, vessel, audio stream or physical-unit count can be inferred from BLE ads.
+
+## OontZ portable Bluetooth speakers
+
+The `OontZ*` cohort has **5 exact `(addr,raw)` variants / 5 addresses / 79 scans**. Both groups advertise generic service UUID `FFC0` and ordered `01/1,03/2,FF/14,09/<name length>`; only complete public model tokens support distinguishing the speakers:
+
+| Sanitized advertised model token / original manufacturer product | Variants / addresses / scans |
+|---|---:|
+| [`OontZ` + `Angle 3U` / Ultra → Angle 3 Ultra](https://www.theoontz.com/products/oontz-ultra) | **3 / 3 / 76** |
+| [`OontZ` + `Angle 3 Pro` → Angle 3 Pro](https://www.theoontz.com/products/oontz) | **2 / 2 / 3** |
+
+Device-specific suffixes remain hidden. Shared UUID/AD shape cannot distinguish model generation or authenticate hardware; address count is not a confirmed number of physical speakers.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.

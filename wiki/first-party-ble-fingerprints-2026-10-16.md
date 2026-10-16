@@ -126,6 +126,21 @@ These are **product or family candidates**, not authenticated device identities.
 | [Anker smart-charging / Prime-ecosystem `AFYDKPN*` **candidate**](https://github.com/geohot/anker-vibecoded/blob/master/anker_prime.py) | `AFYDKPN*` (device suffix hidden, name 17 bytes), service UUID `FF09`, uninformative company field `0xFFFF`; `01/1,03/2,FF/17,09/17` | **9 / 9 / 138** | **Third-party source code** explicitly recognizes this name prefix as Anker charging hardware. [Original Anker Prime Bluetooth base](https://www.anker.com/products/a1903-anker-prime-150w-charging-base) is category background only, **not** proof of A1903, base vs charger vs power bank, or wattage. |
 | [Garmin-assigned `FRONT*` BLE-service **candidate**](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Assigned_Numbers/out/en/index-en.html) | Case-insensitive `FRONT*` with Garmin-assigned company field 135 and service/service-data UUID `FE1F`; two `01,03,16,09,FF` / `01,03,FF,16,09` forms | **13 / 9 / 44** | Assigned-number reference supports a **brand-level signal**, not product class, physical front light, Frontpoint security or Garmin model; one other same-prefix variant below lacks these fields. Name-column and AD name lengths disagree in part; no repair assumed. |
 
+## `living*` is a shared room-name prefix, not one product
+
+Case-insensitive `living*` currently spans **13 exact `(addr,raw)` variants / 13 addresses / 129 scans**, versus an earlier 10 / 10 / 102 snapshot. The public room word and any manufacturer-assigned code below are only **family-level clues**; device-specific name suffixes stay hidden.
+
+| Distinct advertising clue / product-category source | Variants / addresses / scans | Limit |
+|---|---:|---|
+| Signify-assigned service/service-data `FE0F`; [Philips Hue original Bluetooth setup](https://www.philips-hue.com/en-us/explore-hue/faq/controls/how-to-connect-philips-hue-without-a-bridge) | **4 / 4 / 14** | Lighting-ecosystem candidate, not a particular bulb/bridge. |
+| Google-assigned service/service-data `FEA0`; [Google original home device guide](https://support.google.com/googlehome/answer/7381505?hl=en) | **4 / 4 / 85** | Google-related service, not an identified speaker/display. |
+| Somfy-assigned company field 1480; [original TaHoma controls](https://www.somfysystems.com/en-us/products/controls/tahoma/tahoma-by-somfy-app) | **2 / 2 / 2** | Home-control/shade ecosystem candidate, not TaHoma SKU. |
+| Molekule-assigned service `FE4F`; [original Air Bluetooth pairing](https://help.molekule.com/hc/en-us/articles/115006094428-How-to-pair-and-connect-Molekule-Air-to-Bluetooth-and-WiFi) | **1 / 1 / 25** | Purifier-ecosystem candidate, not a confirmed Air model. |
+| Samsung-assigned company field 117, no service UUID | **1 / 1 / 2** | Product category unknown, not a confirmed TV. |
+| No company field, service-data `252A` and withheld 128-bit UUID; `06/16,16/8,08/19` | **1 / 1 / 1** | Completely unassigned; only exact uppercase `LIVING*` hit. |
+
+These groups cannot be summed as one brand, product model or count of physical devices. The observed prefix is consistent with a room name but customization is not established.
+
 ## Levoit smart air-purifier model-name leads
 
 The [Levoit user-manual directory](https://levoit.ae/pages/user-manuals), [Vital 100S manual](https://levoit.com/cdn/shop/files/LAP-V102S-AUSR_Vital_100S-P_Smart_Air_Purifier_User_Manual.pdf), and [Core 300S product page](https://levoit.com/products/core-300s-p-smart-air-purifier) provide product context. The **model-name token**, rather than the shared shape, distinguishes these leads. All target variants have `01/1 → FF/14 → 09/<name length>` and auxiliary company field 1744; no advertised service UUID. Retail `-P` suffixes and shared SDK identity are **not** established by these observations.
