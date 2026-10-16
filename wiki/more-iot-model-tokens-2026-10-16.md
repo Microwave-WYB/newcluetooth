@@ -164,7 +164,7 @@ A current case-insensitive `Charge*` cohort is **43 / 37 / 333**, up from 39 / 3
 | Name token / Google product source | Variants / addresses / scans | Supporting feature |
 |---|---:|---|
 | [Fitbit Charge 5](https://support.google.com/googlehealth/answer/14237922?hl=en) | **4 / 4 / 7** | UUID `abbaff00-e56a-484c-b832-8b17cf6cbfe8`; model candidate. |
-| [Fitbit Charge 6](https://store.google.com/product/fitbit_charge_6?hl=en-US) | **30 / 28 / 250** | Many have Fitbit-assigned `FD62`; some carry `180D` or no service UUID. |
+| [Fitbit Charge 6](https://store.google.com/product/fitbit_charge_6?hl=en-US) | **30 / 28 / 250** | Many advertise `FD62`, a [Google LLC-assigned member service UUID](https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/uuids/member_uuids.yaml) associated with the Fitbit ecosystem; some carry `180D` or no service UUID. |
 | Other `Charge*` / `Charger*` | **9 / 5 / 76** | No reliable product attribution. |
 
 Names/UUIDs can be spoofed, and the unknown group is not assigned to [JBL Charge](https://www.jbl.com/JBLCHARGE6BLKAM.html) from a generic word alone.
