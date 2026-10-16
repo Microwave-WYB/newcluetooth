@@ -112,7 +112,9 @@ The `LE_WH-*` cohort is **170 variants / 137 addresses / 10,820 scans**, recheck
 | `LE_WH-1000XM3` | **2 / 2 / 228** |
 | `LE_WH-H910N` | **1 / 1 / 1** |
 | `LE_WH-XB900N` | **1 / 1 / 4** |
+| [`WH-CH720N` (no `LE_` prefix)](https://www.sony.co.uk/headphones/products/wh-ch720n) | **27 / 27 / 589** |
 
+The **separate literal `WH-*` cohort** consists of those **27 / 27 / 589** `WH-CH720N` records, supporting a Sony wireless noise-cancelling over-ear headphone model candidate. Sony's product-page **search index** supplied the model/category match; direct full-body retrieval returned 403 in this follow-up. A direct read-only deduplicated query across `LE_WH-*` and `WH-*` gives **197 exact variants / 164 distinct addresses / 11,409 scans**, covered by the eight public model tokens in this table. The `WH-*` counts are **not part of** the earlier `LE_WH-*` 170 / 137 / 10,820 parent; no identity or LE Audio mode is authenticated.
 ## Jabra earbuds, office headsets and speakerphone
 
 The `Jabra*` cohort is **15 variants / 14 addresses / 268 scans**. Match the public model token and hide any suffix; shared UUIDs, company fields and Fast Pair service `FE2C` **do not** distinguish these models.
