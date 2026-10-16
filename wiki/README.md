@@ -25,6 +25,7 @@ Dates are research-record dates, **not** inferred radio-observation dates. Confi
 - [Honeywell Xenon HC base family](honeywell-xenon-hc-base.md)
 - [HP Color LaserJet Pro MFP M479fdw candidate](hp-color-laserjet-m479fdw.md)
 - [HP LaserJet Pro MFP 4101fdw candidate](hp-laserjet-4101fdw.md)
+- [HP LaserJet Pro 3001dw Wi-Fi Direct name candidate — Bluetooth unverified](hp-laserjet-3001dw.md)
 - [BIXOLON SLP-DX220B Bluetooth label printer candidate](bixolon-slp-dx220b.md)
 - [nLight AIR rES7](nlight-res7.md)
 - [nLight AIR rSDGR](nlight-rsdgr.md)
