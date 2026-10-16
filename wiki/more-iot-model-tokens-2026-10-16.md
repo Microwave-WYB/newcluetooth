@@ -245,4 +245,17 @@ The `fenix*` first-party cohort is **9 exact `(addr,raw)` variants / 9 addresses
 
 Three earlier generations advertise the same 128-bit service UUID `6a4e3e10-667b-11e3-949a-0800200c9a66`; the 6X entry advertises generic Heart Rate service `180D`. Name tokens support candidates, not device authentication, precise hardware revisions or the number of physical watches.
 
+## Dreo fan model-name aliases
+
+Another **6 exact `(addr,raw)` variants / 6 addresses / 51 scans** advertise a `Dreo*` name with complete public model-code tokens (all device-specific suffixes withheld), ordered `01/1,09/21,08/21` and no company/service UUID. Original product sources place these **within the existing pedestal-fan (PF) or tower-fan (TF) categories**, not four new appliance families:
+
+| Advertised public code / original manufacturer product line | Variants / addresses / scans |
+|---|---:|
+| [`DR-HAF003S` → TurboPoly 513S pedestal/air-circulation fan](https://support.dreo.com/en/support/product/pf513s-613s/smart) | **2 / 2 / 13** |
+| [`DR-HTF001S` → tower fan](https://www.dreo.com/pages/product-security-policy) | **1 / 1 / 1** |
+| [`DR-HTF002S` → smart tower fan](https://www.dreo.com/pages/product-security-policy) | **2 / 2 / 34** |
+| [`DR-HTF007S` → Tower Fan 307S](https://ca.dreo.com/products/tower-fan-307s) | **1 / 1 / 3** |
+
+These full-name code observations are not included in the separate `DreoPF*`/`DreoTF*` **prefix** row counts, but are the **same product categories**, not extra product-family discoveries. The advertisement shape alone does not authenticate any model or feature.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
