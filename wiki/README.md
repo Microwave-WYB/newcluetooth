@@ -12,6 +12,8 @@ qmd:
 Earlier entries are sanitized hospital-region leads from private research recorded since **2026-10-14**; newer entries also use first-party BLE advertisements and **do not require any hospital association**.
 Dates are research-record dates, **not** inferred radio-observation dates. Confidence describes product attribution, not verified installation.
 
+[**What is actually hospital-related? Evidence tiers and limits**](hospital-relevance-evidence-tiers.md) distinguishes original hospital-facing product functions from plausible facilities equipment, consumer devices, and unknown identities. No listed observation establishes an installed or owned device at a particular hospital.
+
 ## Earlier hospital-region device and family pages
 
 - [Gozio hospital-wayfinding beacon family](gozio-wayfinding-beacon.md)
