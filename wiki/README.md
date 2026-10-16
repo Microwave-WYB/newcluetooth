@@ -36,7 +36,7 @@ Dates are research-record dates, **not** inferred radio-observation dates. Confi
 - [Wattstopper FSP-321](wattstopper-fsp-321.md)
 - [CAREL HVAC/R candidate](carel-hvac.md)
 - [Molekule purifier candidate](molekule-purifier.md)
-- [BladderScan family candidate — low confidence](verathon-bladderscan.md)
+- [`BladderSc` name — product identity unknown](verathon-bladderscan.md)
 - [Historical professional BRAVIA display and Alphabet Lighting downlight leads — low confidence](historical-facility-display-lighting-leads.md)
 - [Historical NET, PowerConfBLE and LifeSpan connectivity leads — unresolved](historical-ambiguous-connectivity-leads.md)
 

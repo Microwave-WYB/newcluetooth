@@ -1,21 +1,17 @@
 ---
 qmd:
   metadata:
-    title: "Verathon BladderScan family candidate"
+    title: "BladderSc name — product identity unknown"
     date: "2026-10-14"
     tags: [hospital, bladder-ultrasound]
     confidence: low
 ---
 
-# Verathon BladderScan family candidate
+# `BladderSc`: product identity unknown
 
 ## Weak identification lead
 
-The research name `BladderSc` is consistent with Verathon's BladderScan
-bladder-volume ultrasound family, but **no manufacturer-documented exact
-Bluetooth-name fingerprint was found**. Neither a Verathon identity nor the
-BVI 9400 model is confirmed. This optional entry retains a low-confidence lead
-rather than presenting an identified clinical instrument.
+The research name `BladderSc` **resembles** Verathon's BladderScan name, but no manufacturer-documented exact Bluetooth discovery-name or advertisement fingerprint was found. **Brand, product category and model are all unverified**: do not identify this as Verathon, BVI 9400, i10 or even a confirmed bladder ultrasound. This entry records a low-confidence name lead, **not** an identified clinical instrument.
 
 ## What the reference manuals establish
 

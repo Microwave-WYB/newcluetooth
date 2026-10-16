@@ -17,6 +17,8 @@ temperature/humidity monitoring for cold-chain storage, laboratories, and
 facilities. A name alone does not reveal attached probes, measurements, alarm
 settings, or what is being stored.
 
+The saved historical report counted **30 returned entries / 18 distinct API identifiers**, not 30 BLE scans or 18 installed meters; it does not supply a polygon-intersection total for this row. The original data sheet documents refrigerator/freezer, temperature/humidity and room differential-pressure monitoring, but neither it nor the pairing guide specifies `SonicuDuo_...` as an exact hardware-version advertisement name. Treat the observed string as a **family candidate**, not authenticated SoniShield Duo hardware or a patient-diagnostic sensor.
+
 Sonicu's display-pairing guide explicitly uses the mobile app's
 “Scan for SonShield Meters (BLE)” flow and pairs a display to a meter. BLE thus
 has a documented local setup/display role; the Duo's configured network is the
