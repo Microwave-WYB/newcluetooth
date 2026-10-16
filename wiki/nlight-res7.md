@@ -20,6 +20,8 @@ lighting control uses 900 MHz.** A WiGLE Bluetooth record does not capture that
 900 MHz control traffic or prove any particular control state.
 [Acuity's original CLX integration article](https://insights.acuitybrands.com/lithonia-lighting-whats-new/clx-is-now-even-better-with-two-embedded-nlight-air-options-2) explicitly describes rES7 motion/daylight sensing, standard PIR and optional dual-technology detection with Bluetooth and 900 MHz. It validates the *product family capability*, not an original default advertisement-name format, captured motion event, lighting state or installed fixture configuration.
 
+A separate read-only **first-party, unfiltered** `cluetooth` prefix aggregation found `rES7*` **21 exact `(addr,raw)` variants / 21 addresses / 1,709 scans**, all ordered `01/1,09/16,FF/20` with parsed company field 3589 and no advertised service/service-data UUID. This does **not** match or identify the earlier WiGLE records as the same devices, add to their counts, authenticate nLight hardware, prove actual occupancy/900 MHz activity or establish hospital installation. No private suffix, raw manufacturer data or possible embedded device ID is published.
+
 ## Important attribution pitfall
 
 Company ID 3589 (`0x0E05`) is assigned by the SIG to SUREPULSE MEDICAL LIMITED,

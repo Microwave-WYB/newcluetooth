@@ -17,6 +17,8 @@ The `rSDGR…` and `rSDGRRSX…` prefixes support an nLight AIR outdoor fixture-
 900 MHz.** The Bluetooth metadata is not 900 MHz business traffic.
 [Acuity's original outdoor-controls article](https://insights.acuitybrands.com/holophane-whats-new-blog/get-an-nlight-enabled-infrastructure-today-2) describes PIR/photocell functions, 900 MHz communication and phone Bluetooth setup for this equipment class; it does not certify the exact historical advertisement, an occupancy event, lamp state or a live control session.
 
+A separate read-only **first-party, unfiltered** `cluetooth` prefix aggregation found `rSDGR*` **7 exact `(addr,raw)` variants / 7 addresses / 12 scans**, of which `rSDGRRSX*` is a **subset** (**6 / 6 / 11**); the remaining non-RSX prefix contributes **1 / 1 / 1**. All have ordered `01/1,09/13,FF/20`, parsed company field 11781 and no advertised service/service-data UUID; this shared layout cannot determine a sensor SKU or fixture option. These counts are **not** added to earlier WiGLE results or evidence of the same physical devices, hospital installation, occupation sensing or 900 MHz control.
+
 Research company ID 11781 (`0x2E05`) was not an assigned SIG company identifier
 in the checked list. It must not be promoted to a confirmed manufacturer or a
 medical-device attribution. The name/product match is the basis of this lead;
