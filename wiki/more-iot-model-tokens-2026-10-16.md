@@ -113,4 +113,45 @@ The `Jabra*` cohort is **15 variants / 14 addresses / 268 scans**. Match the pub
 
 These name-based candidates cannot establish UC/Teams subvariants or device authenticity.
 
+## Sony WF true-wireless earbuds
+
+The literal `LE_WF-*` cohort currently has **25 variants / 25 addresses / 249 scans**, versus an earlier 15 / 15 / 210 snapshot. Sony's [XM4](https://helpguide.sony.net/mdr/wf1000xm4/v1/en/contents/TP1000240552.html) and [XM5](https://helpguide.sony.net/mdr/2963/v1/en/contents/TP1000781303.html) guides acknowledge `LE_WF-` connection names. Model-name tokens, not company/UUID alone, support these candidates:
+
+| Sanitized name token / original model source | Variants / addresses / scans |
+|---|---:|
+| [`LE_WF-1000XM5`](https://helpguide.sony.net/mdr/2963/v1/en/contents/TP1000781303.html) | **11 / 11 / 137** |
+| [`LE_WF-C510`](https://electronics.sony.com/audio/headphones/all-headphones/p/wfc510-b) | **7 / 7 / 21** |
+| [`LE_WF-1000XM6`](https://electronics.sony.com/audio/headphones/truly-wireless-earbuds/p/wf1000xm6-b/) | **2 / 2 / 36** |
+| [`LE_WF-1000XM4`](https://helpguide.sony.net/mdr/wf1000xm4/v1/en/contents/TP1000240552.html) | **2 / 2 / 37** |
+| [`LE_WF-C500`](https://www.sony.com/electronics/support/wireless-headphones-bluetooth-headphones/wf-c500) | **2 / 2 / 15** |
+| [`LE_WF-C710N`](https://electronics.sony.com/audio/headphones/all-headphones/p/wfc710n-w/) — anomalous parsed fields, lower-confidence lead | **1 / 1 / 3** |
+
+Some have Sony auxiliary company field 301 / `FD2A`, others `FE03` or Fast Pair `FE2C`, and some have no manufacturer field. None of these is a mandatory model identifier. One address does not prove one earbud set, case or physical device.
+
+## Beats headphones, earbuds and portable speaker
+
+All **27 / 27 / 148** `LE-Beats*` variants split by name token into three product candidates. [Beats](https://www.beatsbydre.com/) documents the products; a shared service UUID `5052494d-2dab-0341-6972-6f6861424c45` and ordered types `01,FF,07,09` do **not** distinguish the models.
+
+| Sanitized model token / manufacturer source | Variants / addresses / scans |
+|---|---:|
+| [Studio Pro over-ear ANC headphones](https://www.beatsbydre.com/headphones/studio-pro-wireless) | **13 / 13 / 68** |
+| [Solo Buds true-wireless earbuds](https://www.beatsbydre.com/earbuds/solo-buds) | **8 / 8 / 60** |
+| [Pill portable Bluetooth speaker](https://www.beatsbydre.com/speakers/beats-pill), generation unknown | **6 / 6 / 20** |
+
+## Cardo FREECOM motorcycle helmet intercoms
+
+The `Freecom*` cohort is **13 / 13 / 51**. Name-model tokens support [FREECOM 4X](https://cardosystems.com/products/freecom-4x) (**7 / 7 / 26**) and [FREECOM 2X](https://cardosystems.com/products/freecom-2x) (**5 / 5 / 22**); one further variant/address/three scans has no mapped model token. Both identified products are Bluetooth rider-to-rider helmet communicators; common AD order `01,07,FF,09`, a shared service UUID and auxiliary field 41222 do **not** identify the model. BLE observation cannot establish active intercom use.
+
+## Fitbit Charge health bands
+
+A current case-insensitive `Charge*` cohort is **43 / 37 / 333**, up from 39 / 33 / 267 in an earlier snapshot. Two exact model-name groups are supported; other `Charge*` or `Charger*` names are **unassigned**, not automatically JBL speakers or charging hardware.
+
+| Name token / Google product source | Variants / addresses / scans | Supporting feature |
+|---|---:|---|
+| [Fitbit Charge 5](https://support.google.com/googlehealth/answer/14237922?hl=en) | **4 / 4 / 7** | UUID `abbaff00-e56a-484c-b832-8b17cf6cbfe8`; model candidate. |
+| [Fitbit Charge 6](https://store.google.com/product/fitbit_charge_6?hl=en-US) | **30 / 28 / 250** | Many have Fitbit-assigned `FD62`; some carry `180D` or no service UUID. |
+| Other `Charge*` / `Charger*` | **9 / 5 / 76** | No reliable product attribution. |
+
+Names/UUIDs can be spoofed, and the unknown group is not assigned to [JBL Charge](https://www.jbl.com/JBLCHARGE6BLKAM.html) from a generic word alone.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
