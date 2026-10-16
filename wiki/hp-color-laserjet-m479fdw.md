@@ -15,10 +15,13 @@ One saved result from the Pacific 2026-10-15 hospital-region collection has a sa
 
 HP's model specifications list Bluetooth Low Energy and Wi-Fi Direct. However, HP separately documents `DIRECT-xx-HP …` as the usual **Wi-Fi Direct network-name pattern**. The name in this BLE-labeled result may have been reused across radios or represented by the source in an unexpected way. With no original advertisement bytes, Wi-Fi scan, or device session, **do not infer that Wi-Fi Direct is a Bluetooth protocol, that printing uses BLE, or that this is a captured Wi-Fi Direct network**. The company ID and recognizable model name are clues, not device authentication.
 
+[HP's original M479fdw product listing](https://www.hp.com/us-en/shop/pdp/hp-color-laserjet-pro-mfp-m479fdw) indexes **“Bluetooth Low-Energy for HP Roam for Business”** as a *product capability*. The manufacturer pages timed out on direct full-body retrieval in this follow-up, so this detail is cited as indexed source text, not a newly observed BLE session. The separate Ethernet phrase `10/100 BT` or `BASE-T` is **not** Bluetooth evidence. Cross-radio name reuse and API representation remain **unverified possible explanations**, not diagnosed causes.
+
 Other HP-named results in this day's saved pages include ENVY, a generic Color LaserJet, and OfficeJet Pro strings, but their exact models are not resolved here. Records are not physical-printer counts.
 
 ## Sources
 
+- [HP M479fdw original product listing](https://www.hp.com/us-en/shop/pdp/hp-color-laserjet-pro-mfp-m479fdw) — indexed HP Roam for Business BLE capability and W1A80A model context, not radio-frame evidence.
 - [HP: Color LaserJet Pro MFP M479 printer specifications — original manufacturer page](https://support.hp.com/us-en/document/c06372746), model M479fdw, product W1A80A, BLE connectivity.
 - [HP: M479fdw product specifications — original manufacturer page](https://support.hp.com/us-en/product/product-specs/hp/19202523), Wi-Fi Direct and wireless features.
 - [HP: printer setup with Wi-Fi Direct — original manufacturer page](https://support.hp.com/ee-en/document/ish_1841315-1637332-16), `DIRECT-xx-HP` network-name pattern; this documents Wi-Fi naming, **not** the observed radio protocol.
