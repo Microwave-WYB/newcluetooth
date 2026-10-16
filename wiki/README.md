@@ -21,6 +21,7 @@ Dates are research-record dates, **not** inferred radio-observation dates. Confi
 - [Primex Sync clock family](primex-sync-clock.md)
 - [HID Seos door-reader / credential ecosystem](hid-seos.md)
 - [Cisco Unified IP Phone 8945 candidate](cisco-ip-phone-8945.md)
+- [Cisco IP Phone 8851 candidate](cisco-ip-phone-8851.md)
 - [Honeywell Xenon HC base family](honeywell-xenon-hc-base.md)
 - [HP Color LaserJet Pro MFP M479fdw candidate](hp-color-laserjet-m479fdw.md)
 - [HP LaserJet Pro MFP 4101fdw candidate](hp-laserjet-4101fdw.md)
@@ -34,6 +35,7 @@ Dates are research-record dates, **not** inferred radio-observation dates. Confi
 - [Molekule purifier candidate](molekule-purifier.md)
 - [BladderScan family candidate — low confidence](verathon-bladderscan.md)
 - [Historical professional BRAVIA display and Alphabet Lighting downlight leads — low confidence](historical-facility-display-lighting-leads.md)
+- [Historical NET, PowerConfBLE and LifeSpan connectivity leads — unresolved](historical-ambiguous-connectivity-leads.md)
 
 ## Broader first-party BLE product fingerprints
 

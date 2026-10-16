@@ -19,4 +19,6 @@ These are **previously saved WiGLE-response name observations**, not newly queri
 
 The Sony reference-guide link in the source report was HTTP 403 on direct retrieval; **no Bluetooth-version claim is made here**. Manufacturer documentation describes products, not these specific radio records. OSM intersection is a geometric fact about an earlier response, **not proof of deployment in or ownership by a hospital**.
 
+A later first-party `cluetooth` query found **zero** name-token matches for `FW-75BZ35F`, `FW-85BZ35F` and `NU6-RD-RGBW-10LM-43K` (literal punctuation and token boundaries, case-insensitive). This narrow negative does **not** disprove the earlier returned names or establish that no equivalent device used another name.
+
 Private sanitized provenance: `hospital_iot_followup_2026-10-15.md` (Sony row, 221 accepted-page snapshot) and `medical_exploration_report.md` (Alphabet row, earlier subset), in external run `us-osm-hospitals/20261013T225104Z`. No raw identifiers, device suffixes, coordinates or responses are published.
