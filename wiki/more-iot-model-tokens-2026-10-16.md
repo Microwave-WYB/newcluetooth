@@ -128,7 +128,7 @@ The `Jabra*` cohort is **15 variants / 14 addresses / 268 scans**. Match the pub
 | [Evolve2 85](https://www.jabra.com/-/media/Images/SA-Pages/Zoom/2025/Jabra-Portfolio-Guide-Zoom-A4-051125.pdf) | Office over-ear headset | **1 / 1 / 2** |
 | [Speak2 75](https://www.jabra.com/business/speakerphones/jabra-speak-series/jabra-speak2-75) | Portable meeting speakerphone | **1 / 1 / 3** |
 
-These name-based candidates cannot establish UC/Teams subvariants or device authenticity.
+All **15 exact variants / 268 scans** in this bounded `Jabra*` search (including optional `LE` prefix and case-insensitive model spelling) are accounted for by the eight groups above; no further complete public model-name token was found. These name-based candidates cannot establish UC/Teams subvariants or device authenticity.
 
 ## Sony WF true-wireless earbuds
 
