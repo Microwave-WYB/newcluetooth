@@ -351,6 +351,10 @@ Four SOLIX ads carry service UUID `FF09` and ordered `01,FF,03,09,0A`; the Prime
 
 All **16 exact `(addr,raw)` variants / 16 addresses / 5,626 scans** have public name token `Galaxy Watch7`, supporting **one** [original Samsung Galaxy Watch7 product family](https://www.samsung.com/us/watches/galaxy-watch7/buy/galaxy-watch7-40mm-cream-wifi-bluetooth-sku-sm-l300nzeaxaa/), not two models. **8 / 8 / 1,387** carry service and service-data UUID `FD69` with ordered `01/1,03/2,16/22,09/20`; the other **8 / 8 / 4,239** carry Samsung-assigned company field 117 with `01/1,FF/15,19/2,09/20` and no listed service UUID. The [44 mm manufacturer example](https://www.samsung.com/us/watches/galaxy-watch7/buy/galaxy-watch7-44mm-silver-wifi-bluetooth-sku-sm-l310nzsaxaa/) establishes available variants, **not** which are present here. Neither advertising form nor `FD69` alone identifies watch size, radio option, order code, authenticity, ownership, lost/offline state or physical-watch count.
 
+## Samsung Galaxy Watch6 and Watch6 Classic smartwatches
+
+A separate **18 exact `(addr,raw)` variants / 18 addresses / 226 scans** with complete public `Galaxy Watch6` token split into **two name-confirmed families**, not four advertising models: [`Galaxy Watch6`](https://news.samsung.com/us/samsung-galaxy-watch6-series-classic-inspiring-best-self-day-night-unpacked-2023/) without `Classic` (**12 / 12 / 60**) and [`Galaxy Watch6 Classic`](https://www.samsung.com/mm/watches/galaxy-watch/galaxy-watch6-classic-43mm-silver-bluetooth-sm-r950nzsaasa/) (**6 / 6 / 166**). Within Watch6, six variants carry `FD69` service/service-data UUID (**6 / 6 / 15**) and six Samsung-assigned company field 117 (**6 / 6 / 45**); all Classic variants carry company 117, with two auxiliary-data lengths (**3 / 3 / 3** and **3 / 3 / 163**). The original Samsung series announcement distinguishes Classic's rotating bezel, but no radio size, LTE variant, color, order SKU, firmware or authentic physical-watch count is inferred. Shared `FD69`/company-field shapes with Watch7 do **not** merge generations.
+
 ## Epson EcoTank ET-2850 all-in-one printer
 
 All **6 exact `(addr,raw)` variants / 6 addresses / 197 scans** advertise exact public name `ET-2850 Series`, supporting the [original Epson ET-2850 series](https://support.epson.com/Support/Printers/All-In-Ones/ET-Series/Epson-ET-2850/s/SPT_C11CJ63202): color ink-tank printing, scanning, copying and automatic duplex printing. Ordered AD `01/1,FF/5,06/16,09/14`; auxiliary company field 64, unverified 128-bit UUID withheld. This is separate from HP printer leads; the advertising does not distinguish country/retail SKU, authenticate manufacture or count physical printers.
@@ -358,5 +362,17 @@ All **6 exact `(addr,raw)` variants / 6 addresses / 197 scans** advertise exact 
 ## Hyperice Hypervolt 2 and Hypervolt 2 Pro massage devices
 
 The **3 exact `(addr,raw)` variants / 3 addresses / 131 scans** in this cohort split by **complete public name tokens** into `Hypervolt 2` (**2 / 2 / 23**) and `Hypervolt 2 Pro` (**1 / 1 / 108**). The [original Hyperice Hypervolt family page](https://get.hyperice.com/hypervolt) supports two distinct percussion-massage/recovery model candidates, **not** evidence of clinical or hospital use. Both have Hyperice-assigned company field 2234, generic Device Information service `180A` and ordered `19,01,03,09,FF,09`; neither company code nor generic service alone identifies a model. Product links now redirect to third-generation pages, so no second-generation specifications, hardware revision or physical-unit count are inferred.
+
+## JBL Xtreme 3 portable speaker
+
+Exact public name `JBL Xtreme 3` appears in **5 exact `(addr,raw)` variants / 5 addresses / 489 scans**, supporting the [original JBL Xtreme 3 portable waterproof Bluetooth speaker](https://global.jbl.com/bluetooth-speakers/XTREME-3-.html). All include Harman-assigned company field 87 and service-**data** UUID `FDDF`, not an advertised service UUID. Three AD variants (`FF,16,09` with differing company-field lengths, or `01,FF,16,09`) are **not** three hardware versions. Neither the high scan total nor address count establishes playback, usage rate, authentic hardware, physical-unit count or hospital setting.
+
+## Samsung Galaxy Ring smart ring
+
+One exact `(addr,raw)` variant / one address / **3 scans** has public token `Galaxy Ring`, Samsung-assigned company field 117 and ordered `01/1,FF/20,09/19`, without service or service-data UUID. [Original Samsung Galaxy Ring support](https://www.samsung.com/us/support/answer/ANS10003278/) establishes the sleep/activity-monitoring smart-ring family, **distinct from the Galaxy Watch cohort**; advertising does not authenticate an individual ring or reveal size, color, usage or deployment setting.
+
+## JBL Endurance Peak 3 sports earbuds
+
+The complete public `Endurance Peak 3` token appears in **16 exact `(addr,raw)` variants / 15 addresses / 581 scans**, supporting the [original JBL Endurance Peak 3 true-wireless, ear-hook sport earbuds](https://www.jbl.com/ENDURANCE-PEAK-3.html). All include generic Fast Pair service-**data** UUID `FE2C` and no company field; varied service-data lengths and eight observed length combinations do **not** represent eight product models or authenticate JBL. Separate `Endurance Race 2` (**8 / 7 / 189**) and `Endurance Peak II` (**1 / 1 / 8**) names were explicitly **excluded** from the Peak 3 count; their product attribution awaits separate verification. Fifteen observed addresses do not establish fifteen physical earbud sets.
 
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
