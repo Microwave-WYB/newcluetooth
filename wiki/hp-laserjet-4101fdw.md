@@ -13,7 +13,11 @@ qmd:
 
 One newly saved Pacific **2026-10-15** record has the sanitized name `DIRECT-<id>-HP 4101fdw LJ`, reported company ID **101** (HP), and source API type **BLE**. HP's model specifications identify the **LaserJet Pro MFP 4101fdw** (product **2Z619F**) as a multifunction printer with Bluetooth Low Energy and Wi-Fi Direct. This is a model-name lead for an office printer that could support facility operations, **not** evidence it belongs to or operates inside a hospital.
 
+The HP 4101–4104 specification page's **manufacturer search index** explicitly marks BLE as included for **4101fdw / 2Z619F**, independently of the Ethernet spec's `10/100 BT` or `Base-T` wording (**not** Bluetooth evidence). Direct retrieval of the full HP page and data-sheet PDF failed in the follow-up, so this is indexed product-capability evidence, **not** newly verified original radio traffic or a Bluetooth printing session.
+
 HP separately documents `DIRECT-xx-HP…` as a **Wi-Fi Direct SSID format**. Although this record was returned with a BLE label, the name and ID do not prove a captured Wi-Fi network, raw BLE frame, printing over Bluetooth, or the radio's actual advertisement format. A reported company ID is not device authentication. No printer session, document contents, unique physical-device count, or hospital ownership was verified. This is a different model from the [M479fdw candidate](hp-color-laserjet-m479fdw.md).
+
+Separately, an unfiltered first-party `cluetooth` BLE-name search for the **standalone `4101fdw` model token** anywhere in the name found **0 exact variants / 0 addresses / 0 scans**. That does not contradict HP's indexed BLE capability or identify the historic WiGLE observation; the two sources cannot be linked.
 
 ## Sources
 

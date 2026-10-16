@@ -359,6 +359,8 @@ A separate **18 exact `(addr,raw)` variants / 18 addresses / 226 scans** with co
 
 All **6 exact `(addr,raw)` variants / 6 addresses / 197 scans** advertise exact public name `ET-2850 Series`, supporting the [original Epson ET-2850 series](https://support.epson.com/Support/Printers/All-In-Ones/ET-Series/Epson-ET-2850/s/SPT_C11CJ63202): color ink-tank printing, scanning, copying and automatic duplex printing. Ordered AD `01/1,FF/5,06/16,09/14`; auxiliary company field 64, unverified 128-bit UUID withheld. This is separate from HP printer leads; the advertising does not distinguish country/retail SKU, authenticate manufacture or count physical printers.
 
+Bluetooth SIG [official company identifiers](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Assigned_Numbers/out/en/index-en.html) assign **64 / `0x0040` to Seiko Epson Corporation**. That agrees with the ET/WF public model-name candidates below but is **only a parsed auxiliary field**, not proof that an advertisement came from a genuine Epson printer or any particular ET/WF model.
+
 Eight **other complete public ET-series name tokens**, explicitly excluding ET-2850 above, have original Epson model pages:
 
 | Name token / original manufacturer model page | Exact variants / addresses / scans | Product-family distinction |

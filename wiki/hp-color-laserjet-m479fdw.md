@@ -17,6 +17,8 @@ HP's model specifications list Bluetooth Low Energy and Wi-Fi Direct. However, H
 
 [HP's original M479fdw product listing](https://www.hp.com/us-en/shop/pdp/hp-color-laserjet-pro-mfp-m479fdw) indexes **“Bluetooth Low-Energy for HP Roam for Business”** as a *product capability*. The manufacturer pages timed out on direct full-body retrieval in this follow-up, so this detail is cited as indexed source text, not a newly observed BLE session. The separate Ethernet phrase `10/100 BT` or `BASE-T` is **not** Bluetooth evidence. Cross-radio name reuse and API representation remain **unverified possible explanations**, not diagnosed causes.
 
+A separate first-party `cluetooth` read-only search for **standalone `M479fdw` model tokens** anywhere in BLE local names found **0 exact variants / 0 addresses / 0 scans**. This limited negative result neither disproves HP's product BLE capability nor resolves the historic WiGLE API record's radio type or identity.
+
 Other HP-named results in this day's saved pages include ENVY, a generic Color LaserJet, and OfficeJet Pro strings, but their exact models are not resolved here. Records are not physical-printer counts.
 
 ## Sources

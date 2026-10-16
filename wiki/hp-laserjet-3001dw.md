@@ -15,4 +15,6 @@ The earlier saved **2026-10-15** WiGLE report records the sanitized name pattern
 
 The historical API BT/BLE label is **not** proof of Bluetooth advertising or BLE printing; `Ethernet 10/100 BT` in printer specifications denotes Ethernet signaling, **not Bluetooth**. The Wi-Fi Direct interpretation is better grounded but likewise does not verify the actual sampled radio frames. Do not include this lead in a verified-BLE-device count or infer contents of printed material, use by a hospital, physical-printer count or ownership.
 
+A separate first-party `cluetooth` read-only BLE-name search for the **standalone `3001dw` model token** returned **0 exact variants / 0 addresses / 0 scans**. This narrow absence does not negate the historic WiGLE name lead, prove anything about the product's BLE capabilities, or link either data source to a physical printer.
+
 Private sanitized provenance: `hospital_iot_followup_2026-10-15.md:13` under external run `us-osm-hospitals/20261013T225104Z`. No raw identifiers, exact locations, private names or source responses are published.
