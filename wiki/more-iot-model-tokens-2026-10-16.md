@@ -297,4 +297,17 @@ The name-column length sometimes differs from the AD name-data length; no repair
 
 A **separate** `TOZO-A*` cohort has **6 exact variants / 6 addresses / 60 scans**, all with the public pairing name `TOZO-A1`, ordered `FF/9,09/8` and no advertised service UUID. [Original TOZO A1 Mini product page](https://www.tozostore.com/products/a1) and indexed pairing name support the A1 Mini earbud model candidate, not hardware/firmware revision or authentic unit counts. These six observations are **not** included in the T6/T10 counts above.
 
+## HUAWEI watches and fitness bands
+
+The case-insensitive `HUAWEI*` cohort is **5 exact `(addr,raw)` variants / 5 addresses / 63 scans** (exact mixed-case `Huawei*` finds none). Complete public model-name tokens plus [original WATCH GT 3/GT 4 comparison](https://consumer.huawei.com/cn/support/content/zh-cn15972101/), [Band 9/10 support](https://consumer.huawei.com/mx/support/content/es-us15994489/) and [Band 10 product page](https://consumer.huawei.com/en/wearables/band10/) support four wearable model candidates:
+
+| Advertised public model token | Variants / addresses / scans | Service-**data** UUID |
+|---|---:|---|
+| `HUAWEI WATCH GT 3` | **2 / 2 / 59** | `FDEE` |
+| `HUAWEI WATCH GT 4` | **1 / 1 / 1** | `FDEE` |
+| `HUAWEI Band 9` | **1 / 1 / 1** | `3802` |
+| `HUAWEI Band 10` | **1 / 1 / 2** | `3802` |
+
+The private name suffixes stay hidden; none advertises a service UUID list (the table is **service data**). Company field 637 appears in all but GT 4; neither name nor auxiliary fields authenticate hardware, sizes or revisions. No phone, earbud or router model was identified in this cohort.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
