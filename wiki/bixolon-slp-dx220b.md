@@ -13,6 +13,8 @@ qmd:
 
 Two saved BT-labeled records have the sanitized name pattern `SLP-DX220B_<digits>`: two distinct WiGLE network IDs, with one returned entry intersecting a source hospital polygon. BIXOLON's original user manual identifies the **SLP-DX220B** as a Bluetooth-enabled label-printer variant, and the manufacturer's SLP-DX220 brochure explicitly lists **Healthcare** among its applications. It is a plausible label-printing candidate for hospital operations, but these records do **not** establish an installation, hospital ownership, printing activity, label contents, or two physical printers. Neither Bluetooth traffic nor printed output was captured.
 
+The [manufacturer pairing instructions](https://bixolon.com/_upload/manual/Manual_SLP-DX220B_DX223B_user_english_Rev_1_03.pdf), pp. 30–31, show the public name `SLP-DX220B`, strengthening the model lead but **not** authenticating the historical numeric suffix, physical unit or actual radio frame. The manual's discussion of SSP introduced in Bluetooth Core 2.1 does **not** prove the printer's exact Bluetooth version or BLE capability. **Healthcare is a brochure application, not medical-device certification**; no wristband, patient label or actual printed content was observed.
+
 ## Sources
 
 - [BIXOLON SLP-DX220B / SLP-DX223B user manual — manufacturer PDF](https://bixolon.com/_upload/manual/Manual_SLP-DX220B_DX223B_user_english_Rev_1_03.pdf), pp. 1, 11 and 31: model, internal Bluetooth module, and pairing instructions.

@@ -11,12 +11,7 @@ qmd:
 
 ## Identification and hospital relevance
 
-The sanitized name shape `ResMed <six digits>` matches ResMed's documented
-AirMini discovery naming and is accepted by the inspected AirMini client.
-This is a relatively strong **AirMini candidate**, not authenticated hardware
-identification: the client regex is broader than six digits and does not verify
-a model. AirMini is a respiratory-therapy product, but this lead does not
-establish clinical use, a hospital installation, or ownership.
+The sanitized historical name shape `ResMed <six digits>` is **compatible** with ResMed's [AirMini pairing example](https://ap.resmed.com/knowledge/how-do-i-pair-airmini-to-a-smartphone), which prints `ResMed` **immediately followed by six digits**, without an explicit space. The inspected AirMini client's optional-whitespace rule accepts the saved shape, but this is **indirect client compatibility**, not a manufacturer-published exact name match or hardware authentication. It supports an **AirMini candidate**, not confirmed equipment: the client regex is broader than six digits and does not verify a model. AirMini is a respiratory-therapy product, but this lead does not establish clinical use, a hospital installation, or ownership. A separate first-party `ResMed*` cohort with ResMed-assigned `FD56` ([see family-level notes](first-party-ble-fingerprints-2026-10-16.md)) **must not be merged** into this historical AirMini candidate: `FD56` identifies a member company, not an AirMini model.
 
 ## Static Android sample provenance
 

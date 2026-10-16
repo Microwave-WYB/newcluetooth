@@ -1,13 +1,13 @@
 ---
 qmd:
   metadata:
-    title: "Honeywell Xenon HC communication and charging base"
+    title: "Honeywell Xenon HC base family candidate"
     date: "2026-10-14"
     tags: [hospital, barcode-scanning]
     confidence: medium
 ---
 
-# Honeywell Xenon HC communication and charging base
+# Honeywell Xenon HC base family candidate
 
 ## Identification and use
 
@@ -15,6 +15,7 @@ The sanitized pattern `Xenon_CCB-U…-HC_SN_<suffix>` points to a Honeywell
 Xenon healthcare communication/charging-base family. It should not be relabeled
 as the handheld scanner itself. Honeywell's healthcare scanners support barcode
 workflows such as patient identification, medication, and specimen handling.
+The [original accessory guide](https://prod-edam.honeywell.com/content/dam/honeywell-edam/sps/ppr/en-us/public/products/barcode-scanners/healthcare/1960h/documents/hon-ia-pss-xenon-ultra-1960-962-ag.pdf) lists `CCB-U00-H` and other healthcare base/charger configurations but **does not map this exact historical discovery-name template to a part number**. It also allows **charge-only mode**: neither the name nor the base's communication capability establishes that scanner data was being transferred or that charge-only mode was used. The [original 1962h data sheet](https://prod-edam.honeywell.com/content/dam/honeywell-edam/sps/ppr/en-us/public/products/barcode-scanners/general-purpose-handheld/1962h/documents/sps-ppr-Scan-Xenon-Ultra-1962H-healthcare-DTS-en.pdf) describes bedside medication/specimen barcode workflows as **product applications**, not events observed here.
 
 The base-family lead does **not** establish a paired handheld's model
 (1962h or otherwise), its current use, barcode contents, or a hospital's
