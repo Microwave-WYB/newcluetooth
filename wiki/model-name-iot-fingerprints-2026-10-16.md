@@ -13,7 +13,7 @@ First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. Th
 
 ## Govee lighting and environmental monitoring
 
-The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **43 tokens** have been individually checked; the remaining **61 tokens / 77 exact variants / 635 scans** have not been individually validated (their distinct-address count was not recomputed). A bounded follow-up found **no further directly manufacturer-proven non-lighting category** among them; this does **not** prove they are all lights. Five checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
+The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **48 tokens** have been individually checked; the remaining **56 tokens / 70 exact variants / 309 scans** have not been individually validated (their distinct-address count was not recomputed). A bounded follow-up found **no further directly manufacturer-proven non-lighting category** among them; this does **not** prove they are all lights. Five checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
 
 | Advertised model token (suffix hidden) | Manufacturer product / application | Variants / addresses / scans |
 |---|---|---:|
@@ -60,6 +60,11 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H61B5*` | [RGBIC LED strip with diffusing covers, 16.4 ft](https://us.govee.com/products/govee-rgbic-led-strip-lights-with-covers) | **3 / 3 / 35** |
 | `Govee_H7016*` | [2 × 48 ft, 30-bulb Bluetooth string lights](https://community.govee.com/support/faqs/specs) | **3 / 3 / 7** |
 | `Govee_H7028*` | [LED Bulb String Lights, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H7028) | **3 / 2 / 8** |
+| `Govee_H61F5*` | [Strip Light 2 Pro](https://us.govee.com/products/govee-led-strip-light-2-pro?variant=45351530528953) | **2 / 1 / 91** |
+| `Govee_H619E*` | [RGBIC LED strip with protective coating, 2 × 32.8 ft](https://us.govee.com/products/refurbished-rgbic-led-strip-lights-with-protective-coating) | **1 / 1 / 72** |
+| `Govee_H61C3*` | [RGBIC Neon Rope Lights for Desks, 10 ft/3 m](https://us.govee.com/products/govee-rgbic-led-neon-rope-lights-for-desks) | **1 / 1 / 67** |
+| `Govee_H6065*` | [Glide Y modular wall lights](https://eu.govee.com/products/govee-glide-rgbic-y-lights) | **1 / 1 / 53** |
+| `Govee_H616C*` | [RGBIC Outdoor Strip Lights 2, 10 m, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H616C) | **2 / 2 / 43** |
 
 The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. The first eight added rows (H6199 through H5179) total **51 exact variants / 4,802 scans**; the following five lighting rows total **37 variants / 36 observed addresses / 628 scans**. Both are **subsets** of the 439 / 421 / 15,145 cohort above, not extra brands or devices. The five lighting rows share `01,09,FF,09` and auxiliary fields 34818/34819; earlier lighting and temperature groups also share layouts, but **neither AD pattern establishes category, identity or authenticity**. H5151 gateway addresses are not individual sensor counts; H5074 classification has weaker third-party support.
 
@@ -70,6 +75,8 @@ A second non-overlapping five-code review (H6001, H60B0, H6176, H6097, H612F) co
 A third disjoint five-code review (H702C, H70A1, H6047, H605D, H6078) adds **12 exact variants / 104 scans** within the existing cohort; four codes have original category mappings, while H605D has only a supported-model-list entry. The cited refurbished offerings do not identify the condition of observed units.
 
 The other five codes from this ranked review (H6167, H617E, H61B5, H7016, H7028) have direct original model-to-category descriptions and account for **15 exact variants / 206 scans** inside the 439-variant parent cohort. H7028's **3 variants / 2 addresses** shows why variants and addresses must not be equated. A cited refurbished listing is model context only, not evidence of unit condition.
+
+A further review ranked by **scan count rather than variant count** identified H61F5, H619E, H61C3, H6065 and H616C: **7 exact variants / 326 scans**, all with original code-to-category mappings and no duplicate public code among the already listed `ihoment_H*`/`GBK_H*` groups. This checks observation priority, **not** product prevalence; refurbished source pages do not describe the observed unit's condition.
 
 ## Sony EXTRA BASS portable speakers
 
@@ -123,7 +130,7 @@ The Plus+ group has ordered AD types `01,FF,20,09`, data lengths `1,17,4,17` and
 
 ## `ihoment_H` / Govee multi-category devices
 
-This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans** and **42 public H model codes**. Match `ihoment_Hxxxx` only when the token is followed by a delimiter or end of name; hide the rest. The **13 reviewed codes** below cover **114 variants / 1,741 scans**, leaving **29 unreviewed codes / 39 variants / 586 scans** (remaining distinct addresses not recomputed). They span lighting, power, leak detection and a fan; do not merge observations or addresses with `Govee_H*` or `GBK_H*` on a shared code.
+This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans** and **42 public H model codes**. Match `ihoment_Hxxxx` only when the token is followed by a delimiter or end of name; hide the rest. The **18 reviewed codes** below cover **125 variants / 2,102 scans**, leaving **24 unreviewed codes / 28 variants / 225 scans** (remaining distinct addresses not recomputed). They span lighting, power, leak detection, an air purifier and fans; do not merge observations or addresses with `Govee_H*` or `GBK_H*` on a shared code.
 
 | Sanitized name token | Product / source | Variants / addresses / scans |
 |---|---|---:|
@@ -140,10 +147,17 @@ This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans
 | `ihoment_H5080*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **3 / 3 / 17** |
 | `ihoment_H6159*` | [5 m RGB light strip, original device directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6159); **also appears as `GBK_H6159*` below** | **3 / 3 / 36** |
 | `ihoment_H7100*` | [Round table fan, original specification list](https://community.govee.com/support/faqs/specs) | **3 / 2 / 28** |
+| `ihoment_H7126*` | [GoveeLife Smart Air Purifier Lite](https://us.govee.com/products/goveelife-smart-air-purifier-lite) | **3 / 3 / 16** |
+| `ihoment_H6010*` | [BR30 RGBWW smart bulb, 1200 lm](https://us.govee.com/products/govee-rgbww-smart-led-light-bulbs) | **2 / 1 / 3** |
+| `ihoment_H6052*` | [Aura smart table lamp](https://uk.govee.com/products/refurbished-aura-smart-table-lamp); **already listed as `Govee_H6052*`** | **2 / 2 / 5** |
+| `ihoment_H6054*` | [DreamView P1 camera-assisted screen-backlight light bars](https://ca.govee.com/products/refurbished-govee-dreamview-p1-light-bars) | **2 / 2 / 14** |
+| `ihoment_H6117*` | [2 × 5 m RGBIC strip lights, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6117) | **2 / 2 / 323** |
 
 Govee has [announced a voluntary electric-heater recall](https://community.govee.com/posts/govee-life-and-govees-voluntary-recall-of-electric/219685). A historical advertisement does **not** establish current use or whether any unit was recalled. Matching model-name tokens plus product listings supports candidate attribution, not device authentication or hardware-revision identification.
 
 The newly listed `ihoment_H6159*` is the **same public H6159 code** already listed under `GBK_H*`; it adds another name-prefix observation, **not** a new retail model or a deduplicated cross-prefix count. H5043 appears in a kit listing alongside H5058, but the ad does not distinguish the gateway, probe or kit component.
+
+`ihoment_H6052*` likewise repeats the **public H6052 code** already present under `Govee_H*`; do not count another product or equate the two prefixes with one physical unit. The air-purifier model page is product-category evidence, not evidence of medical approval, air-quality results or clinical use.
 
 ## `GBK_H` Govee vehicle/home lighting
 
