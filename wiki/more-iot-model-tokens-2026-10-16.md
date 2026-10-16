@@ -347,4 +347,16 @@ Literal `Anker*` has **5 exact `(addr,raw)` variants / 5 addresses / 70 scans**,
 
 Four SOLIX ads carry service UUID `FF09` and ordered `01,FF,03,09,0A`; the Prime ad instead carries `2215` and `01,FF,03,09`. All have uninformative company field `0xFFFF`. No exact `(addr,raw)` or address overlap with the separately recorded `AFYDKPN*` smart-charging lead in this snapshot, but different/random addresses cannot establish different physical units. Only the four explicit SOLIX name tokens add model candidates; ads do not authenticate hardware, region, capacity, firmware or active operating state.
 
+## Samsung Galaxy Watch7 smartwatches
+
+All **16 exact `(addr,raw)` variants / 16 addresses / 5,626 scans** have public name token `Galaxy Watch7`, supporting **one** [original Samsung Galaxy Watch7 product family](https://www.samsung.com/us/watches/galaxy-watch7/buy/galaxy-watch7-40mm-cream-wifi-bluetooth-sku-sm-l300nzeaxaa/), not two models. **8 / 8 / 1,387** carry service and service-data UUID `FD69` with ordered `01/1,03/2,16/22,09/20`; the other **8 / 8 / 4,239** carry Samsung-assigned company field 117 with `01/1,FF/15,19/2,09/20` and no listed service UUID. The [44 mm manufacturer example](https://www.samsung.com/us/watches/galaxy-watch7/buy/galaxy-watch7-44mm-silver-wifi-bluetooth-sku-sm-l310nzsaxaa/) establishes available variants, **not** which are present here. Neither advertising form nor `FD69` alone identifies watch size, radio option, order code, authenticity, ownership, lost/offline state or physical-watch count.
+
+## Epson EcoTank ET-2850 all-in-one printer
+
+All **6 exact `(addr,raw)` variants / 6 addresses / 197 scans** advertise exact public name `ET-2850 Series`, supporting the [original Epson ET-2850 series](https://support.epson.com/Support/Printers/All-In-Ones/ET-Series/Epson-ET-2850/s/SPT_C11CJ63202): color ink-tank printing, scanning, copying and automatic duplex printing. Ordered AD `01/1,FF/5,06/16,09/14`; auxiliary company field 64, unverified 128-bit UUID withheld. This is separate from HP printer leads; the advertising does not distinguish country/retail SKU, authenticate manufacture or count physical printers.
+
+## Hyperice Hypervolt 2 and Hypervolt 2 Pro massage devices
+
+The **3 exact `(addr,raw)` variants / 3 addresses / 131 scans** in this cohort split by **complete public name tokens** into `Hypervolt 2` (**2 / 2 / 23**) and `Hypervolt 2 Pro` (**1 / 1 / 108**). The [original Hyperice Hypervolt family page](https://get.hyperice.com/hypervolt) supports two distinct percussion-massage/recovery model candidates, **not** evidence of clinical or hospital use. Both have Hyperice-assigned company field 2234, generic Device Information service `180A` and ordered `19,01,03,09,FF,09`; neither company code nor generic service alone identifies a model. Product links now redirect to third-generation pages, so no second-generation specifications, hardware revision or physical-unit count are inferred.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
