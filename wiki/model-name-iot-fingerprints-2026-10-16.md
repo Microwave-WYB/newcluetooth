@@ -55,6 +55,29 @@ An exact-case `Echo*` name cohort has **29 variants / 29 addresses / 330 scans**
 
 Dot/Pop generally combine their name token with Amazon-assigned service-data UUID `FE00`; `01/1,16/25,09/12,0A/1` is common, with one shorter service-data field. Buds combine their name with auxiliary Amazon company field 369 and a different service UUID; malformed-looking parsed AD fields are not a model discriminator. No `Echo Show` token was identified in this cohort.
 
+## Meta Quest VR / mixed-reality headsets
+
+The `Quest*` cohort has **26 variants / 26 addresses / 175 scans**. [Meta's Quest device comparison](https://developers.meta.com/horizon/essentials/compare-devices/) corroborates the three name-model candidates. Match `Quest 3` with a model-token boundary so it does **not** include `Quest 3S`.
+
+| Name-model token | Variants / addresses / scans |
+|---|---:|
+| `Quest 2` | **1 / 1 / 1** |
+| `Quest 3` (not `3S`) | **11 / 11 / 137** |
+| `Quest 3S` | **14 / 14 / 37** |
+
+All groups carry service/service-data UUID `FEB8` and auxiliary company field 1422; ordered AD types `01,09,03,FF,16` with name-data length 7 or 8. Name and UUID are **candidate features, not identity authentication** or proof the headset was running.
+
+## Pokémon GO physical accessories
+
+The case-insensitive `Pokemon*` cohort has **52 variants / 51 addresses / 1,023 scans**. Two exact product-name tokens account for the cohort, without implying that all broadcasters are original licensed hardware.
+
+| Observed name token | Candidate and source | Variants / addresses / scans |
+|---|---|---:|
+| `Pokemon GO Plus +` | [Pokémon GO Plus+](https://www.pokemongoplusplus.com/en/) (also works with Pokémon Sleep) | **42 / 41 / 924** |
+| `Pokemon GO Plus` | [Original GO Plus or compatible accessory](https://niantic.helpshift.com/hc/en/6-pokemon-go/faq/77-official-bluetooth-devices-1689609298/) | **10 / 10 / 99** |
+
+The Plus+ group has ordered AD types `01,FF,20,09`, data lengths `1,17,4,17` and auxiliary company field 1363; the earlier-name group uses four shapes and sometimes a service-data UUID field. Third-party auto-catchers or software emulation **cannot be ruled out**, especially for the earlier-name group. No Poké Ball Plus attribution is made.
+
 ## `ihoment_H` / Govee multi-category devices
 
 This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans** and 42 model tokens. Match `ihoment_Hxxxx` only when the token is followed by a delimiter or end of name; hide the rest. The eight most frequent tokens are **not all lighting products**, and none should be merged with the `Govee_H*` counts above.
@@ -71,6 +94,23 @@ This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans
 | `ihoment_H7131*` | [Govee portable electric space heater](https://us.govee.com/products/govee-smart-portable-electric-space-heater?Style=H7131) | **5 / 5 / 191** |
 
 Govee has [announced a voluntary electric-heater recall](https://community.govee.com/posts/govee-life-and-govees-voluntary-recall-of-electric/219685). A historical advertisement does **not** establish current use or whether any unit was recalled. Matching model-name tokens plus product listings supports candidate attribution, not device authentication or hardware-revision identification.
+
+## `GBK_H` Govee vehicle/home lighting
+
+Keep `GBK_H*` separate from `Govee_H*` and `ihoment_H*`: **60 variants / 58 addresses / 4,472 scans**. These eight model tokens account for 50 variants and 4,238 scans, but a repeated H-model token across different name prefixes does **not** prove a different physical device. [Govee specifications](https://community.govee.com/support/faqs/specs) and the [official supported-model list](https://developer.govee.com/docs/support-product-model) corroborate product-model candidates.
+
+| Sanitized name-model token | Candidate category | Variants / addresses / scans |
+|---|---|---:|
+| `GBK_H6114*` | RGB vehicle interior lights | **24 / 24 / 718** |
+| `GBK_H6159*` | RGB home light strip | **5 / 5 / 50** |
+| `GBK_H613E*` | RGB long light strip | **4 / 4 / 462** |
+| `GBK_H619Z*` | RGBIC Pro light strip | **4 / 3 / 36** |
+| `GBK_H61A0*` | RGBIC flexible neon light strip | **4 / 4 / 28** |
+| `GBK_H6119*` | RGBIC vehicle interior lights | **4 / 4 / 9** |
+| `GBK_H7090*` | RGBIC vehicle interior lights | **3 / 3 / 101** |
+| `GBK_H618A*` | RGBIC Basic light strip | **2 / 1 / 2,834** |
+
+Auxiliary company field `0x8802` is not sufficient brand proof; duplicate and reordered AD fields do not uniquely identify a model. The sharp scan imbalance for H618A is observation frequency, **not** a sales estimate.
 
 ## BlackVue connected dashcams
 

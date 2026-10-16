@@ -1,0 +1,116 @@
+---
+qmd:
+  metadata:
+    title: "More first-party BLE model-name fingerprints"
+    date: "2026-10-16"
+    tags: [iot, ble, models]
+    confidence: medium
+---
+
+# More first-party BLE model-name fingerprints
+
+Read-only simi `cluetooth` aggregates researched **2026-10-16**. The names below support **product/model candidates**, not authenticated identities. Counts are exact `(addr,raw)` variants / distinct observed addresses / scans, not physical devices. Hide any device-specific suffixes; research date is not observation date. The product source for each group documents the model/use, **not necessarily the exact advertisement syntax**.
+
+## Bose personal audio
+
+Across `LE-Bose*`, `Bose*` and `LE-P-Bose*`, the current cohort is **734 / 718 / 36,900**. Normalize the `LE-` / `LE-P-` prefix and QC aliases **before** grouping models; do not sum per-prefix address counts. The eight leading identified model-name groups below are only a subset of the full cohort.
+
+| Sanitized model-name group / Bose source | Variants / addresses / scans |
+|---|---:|
+| [QuietComfort Earbuds, generation unknown](https://www.bose.com/p/all-earbuds/bose-quietcomfort-earbuds/QCEARB-HEADPHONEIN-STNBLU-WW.html), excluding identified II/Ultra | **103 / 97 / 8,750** |
+| [QuietComfort 45 / QC45](https://support.bose.com/s/article/quietcomfort-45-headphones-specifications) | **29 / 29 / 493** |
+| [QuietComfort Ultra Earbuds](https://www.bose.com/p/SET-QCUH-QCUE.html) | **24 / 23 / 889** |
+| [Sport Earbuds](https://www.bose.com/p/all-refurbished/bose-sport-earbuds/SPORT-HEADPHONEIN-FR.html) | **7 / 7 / 19** |
+| [QuietComfort Ultra Headphones](https://www.bose.com/p/SET-QCUH-QCUE.html) | **7 / 7 / 157** |
+| [QuietComfort 35 II / QC35 II](https://support.bose.com/s/article/quietcomfort-35-ii-specifications) | **6 / 5 / 66** |
+| [Noise Cancelling Headphones 700 / NC700](https://www.bose.com/pressroom/bose-new-era-headphones) | **5 / 5 / 25** |
+| [QuietComfort Earbuds II](https://support.bose.com/s/article/qcearbii-headphonein-download-the-bose-app) | **3 / 3 / 7** |
+
+Do not infer an exact generation from generic `QuietComfort Earbuds` or `Ultra` names. These groups are distinct from the small, custom-named [Bose UUID/company-field candidate](first-party-ble-fingerprints-2026-10-16.md); no duplicate-free combined total is claimed.
+
+## HP Poly Bluetooth audio
+
+The `Poly*` cohort is **20 / 20 / 306**. HP's linked sources document the hardware; model-name tokens, not shared Fast Pair `FE2C`, distinguish the rows.
+
+| Sanitized product token / HP source | Variants / addresses / scans |
+|---|---:|
+| [Voyager Legend 50 headset](https://www.hp.com/us-en/poly/headsets/bluetooth-headsets-and-earbuds/voyager-legend-50-series.html) | **16 / 16 / 275** |
+| [Voyager Legend 30 headset](https://www.hp.com/us-en/poly/headsets/bluetooth-headsets-and-earbuds.html) | **1 / 1 / 1** |
+| [Voyager Free 60 wireless earbuds](https://kaas.hpcloud.hp.com/pdf-public/pdf_8578296_en-US-1.pdf) | **1 / 1 / 6** |
+| [BT700 USB Bluetooth audio adapter](https://www.hp.com/us-en/shop/pdp/poly-bt700-usb-a-bluetooth-adapter) | **2 / 2 / 24** |
+
+BT700 is **an adapter, not a headset**. `FE2C` is not Poly-exclusive; a subset of Legend 50 also advertises UUID `91617f9c-29cc-4951-8a9a-c16f73706363`.
+
+## Polestar electric vehicles
+
+The `Polestar*` cohort is **14 / 14 / 495**. Explicit model-name tokens support two model candidates; the shorter brand token is left unresolved. [Polestar 2 Bluetooth pairing](https://www.polestar.com/us/manual/polestar-2/2024/article/bd436382fbed6372c0a8015105dbf15d/) and [Polestar 3 digital-key information](https://www.polestar.com/us/support/faq/polestar-3-digital-key/) show product capabilities, **not** which protocol these advertisements implement.
+
+| Sanitized name token | Variants / addresses / scans | Limit |
+|---|---:|---|
+| `Polestar2` | **8 / 8 / 451** | Eight varying 128-bit service UUIDs; no fixed model UUID. |
+| `Polestar 3` | **4 / 4 / 12** | No advertised service UUID or company field. |
+| `Polestar*`, model hidden/unresolved | **2 / 2 / 32** | `FDFD` service UUID and company field 1534 are auxiliary, not a model identity. |
+
+Neither group proves phone-key use, vehicle ownership or number of distinct cars.
+
+## Amazfit health wearables
+
+The `Amazfit*` cohort is **17 / 17 / 517**. Five named groups cover **15 / 15 / 513**; two further variants/addresses and four scans remain unassigned. All five have auxiliary company field 343 and service UUID `FEE0`, which **does not distinguish a model**.
+
+| Sanitized name token / Amazfit source | Variants / addresses / scans |
+|---|---:|
+| [Helio Strap, screenless training/recovery band](https://us.amazfit.com/products/helio-strap) | **10 / 10 / 149** |
+| [Band 7 activity band](https://us.amazfit.com/products/amazfit-band-7) | **2 / 2 / 7** |
+| [T-Rex 3 outdoor watch](https://support.amazfit.com/en/faq/10760), excluding separate Pro token | **1 / 1 / 353** |
+| [Band 5 activity band](https://support.amazfit.com/it/amazfit_band_5/user-guide) | **1 / 1 / 3** |
+| [T-Rex Pro outdoor watch](https://support.amazfit.com/en/faq/10760) | **1 / 1 / 1** |
+
+Helio Strap also advertises the generic `180D` Heart Rate service; no Strap Pro or exact revision is inferred.
+
+## Shokz bone-conduction sports headset
+
+All **40 / 40 / 713** `LE-OpenRun*` observations have the sanitized exact model-name token `LE-OpenRun Pro`, supporting a [Shokz OpenRun Pro](https://shokz.com/pages/openrunpro) candidate. Most have ordered AD types `03,09,FF` (37 / 37 / 675); three add flags `01` (3 / 3 / 38). Advertised `180F` is the generic Battery Service, **not** a Shokz-specific identifier. The name alone does not distinguish Standard/Mini fit, generation or revision; no separate OpenRun Pro 2 cohort was found.
+
+## Marshall Acton Bluetooth speakers
+
+The `Acton*` cohort is **13 / 13 / 190**. A distinct II/2 versus III/3 model token, rather than a shared generic shape, supports two [Marshall Acton speaker](https://www.marshall.com/us/en/product/acton-iii) generation candidates:
+
+| Sanitized model token / original product source | Variants / addresses / scans | Auxiliary advertising signal |
+|---|---:|---|
+| [Acton II Bluetooth](https://www.marshall.com/cz/en/support/speakers/support-for-acton-ii-bluetooth/how-to-connect-and-pair) | **8 / 8 / 48** | `FE8F` service UUID; `01/1,03/2,FF/2,09/8` |
+| [Acton III](https://www.marshall.com/us/en/product/acton-iii) | **5 / 5 / 142** | Four variants with `FE2C` service data; one with `AA00` service UUID and auxiliary company field 1626. |
+
+`FE2C` is a generic Fast Pair service, not a Marshall-specific identity. Names and auxiliary UUIDs do not authenticate the device or determine hardware revisions.
+
+## Sony WH wireless headphones
+
+The `LE_WH-*` cohort is **170 variants / 137 addresses / 10,820 scans**, rechecked after an earlier 164 / 131 / 10,662 snapshot. [Sony's wireless-headphone model directory](https://www.sony.com/electronics/support/headphones-wireless-headphones) and [Sound Connect compatibility list](https://www.sony.com/electronics/support/wireless-headphones-bluetooth-headphones/wh-ult900n/articles/00346846) support seven model-name candidates. One model can yield many `(addr,raw)` variants; `LE_` does not prove LE Audio or active playback.
+
+| Advertised model-name token | Variants / addresses / scans |
+|---|---:|
+| `LE_WH-1000XM5` | **96 / 64 / 2,024** |
+| `LE_WH-1000XM4` | **62 / 61 / 8,380** |
+| `LE_WH-1000XM6` | **4 / 4 / 30** |
+| `LE_WH-XB910N` | **4 / 4 / 153** |
+| `LE_WH-1000XM3` | **2 / 2 / 228** |
+| `LE_WH-H910N` | **1 / 1 / 1** |
+| `LE_WH-XB900N` | **1 / 1 / 4** |
+
+## Jabra earbuds, office headsets and speakerphone
+
+The `Jabra*` cohort is **15 variants / 14 addresses / 268 scans**. Match the public model token and hide any suffix; shared UUIDs, company fields and Fast Pair service `FE2C` **do not** distinguish these models.
+
+| Sanitized model token / manufacturer source | Product category | Variants / addresses / scans |
+|---|---|---:|
+| [Elite 3](https://www.jabra.com/bluetooth-headsets/jabra-elite-3/ecom) | Consumer wireless earbuds | **2 / 2 / 35** |
+| [Elite 4](https://www.jabra.com/bluetooth-headsets/jabra-elite-4) | Consumer ANC earbuds | **4 / 3 / 189** |
+| [Elite Active 65t](https://www.jabra.com/en-MEA/footerpages/declarations-of-conformity) | Sports earbuds | **1 / 1 / 14** |
+| [Elite Active 75t](https://www.jabra.com/en-MEA/footerpages/declarations-of-conformity) | Sports earbuds | **2 / 2 / 10** |
+| [Evolve2 65](https://www.jabra.com/_/media/Jabra_VXi_Product-Documentation/Jabra-Evolve2-65/Technical-specifications/RevB/Jabra-Evolve2-65-Techsheet-A4-Web.pdf) | Office wireless headset | **3 / 3 / 14** |
+| [Evolve2 75](https://www.jabra.com/-/media/Images/SA-Pages/Zoom/2025/Jabra-Portfolio-Guide-Zoom-A4-051125.pdf) | Office ANC headset | **1 / 1 / 1** |
+| [Evolve2 85](https://www.jabra.com/-/media/Images/SA-Pages/Zoom/2025/Jabra-Portfolio-Guide-Zoom-A4-051125.pdf) | Office over-ear headset | **1 / 1 / 2** |
+| [Speak2 75](https://www.jabra.com/business/speakerphones/jabra-speak-series/jabra-speak2-75) | Portable meeting speakerphone | **1 / 1 / 3** |
+
+These name-based candidates cannot establish UC/Teams subvariants or device authenticity.
+
+No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.

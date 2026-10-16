@@ -39,6 +39,7 @@ Dates are research-record dates, **not** inferred radio-observation dates. Confi
 - [Levoit Core 400S smart air purifier](levoit-core-400s.md)
 - [Broader first-party BLE fingerprint catalogue](first-party-ble-fingerprints-2026-10-16.md)
 - [Model-name fingerprints: Govee lighting and BlackVue dashcams](model-name-iot-fingerprints-2026-10-16.md)
+- [More model-name fingerprints: Bose, Poly, Polestar, Amazfit, Shokz, Marshall, Sony and Jabra](more-iot-model-tokens-2026-10-16.md)
 
 These entries use anonymized, read-only first-party `cluetooth` observations rather than WiGLE names. Fingerprints can combine sanitized names, service UUIDs, manufacturer data, address-prefix patterns and ordered AD structures; shape is optional and rarely unique. No hospital relationship is required or implied.
 
