@@ -53,7 +53,7 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H702C*` | [Outdoor S14 Bulb String Lights 2](https://us.govee.com/products/govee-outdoor-s14-bulb-string-lights-2) | **3 / 3 / 48** |
 | `Govee_H70A1*` | [RGBICWW Outdoor LED Strip Lights](https://us.govee.com/products/govee-rgbicww-outdoor-led-strip-lights?variant=45351535214777) | **3 / 3 / 11** |
 | `Govee_H6047*` | [RGBIC Wi-Fi Gaming Light Bars with Smart Controller](https://us.govee.com/products/refurbished-govee-rgbic-wi-fi-gaming-light-bars-with-smart-controller) | **2 / 2 / 9** |
-| `Govee_H605D*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **2 / 2 / 25** |
+| `Govee_H605D*` | **Third-party, lower-confidence candidate**: [reflowed manual](https://www.manualslib.tech/guide/793986/govee-rgbicww-h605d-manual.html) names a camera-synchronized RGBICWW TV light kit (strip + two light bars) and instructs App search for `H605D`; [independent seller catalog](https://www.ebay.com/p/26058480558) labels H605D a TV backlight kit with camera. Neither is a verified original manual cover or App catalog entry. | **2 / 2 / 25** |
 | `Govee_H6078*` | [RGBICWW Cylinder Floor Lamp](https://us.govee.com/products/refurbished-govee-rgbicww-cylinder-floor-lamp) | **2 / 2 / 11** |
 | `Govee_H6167*` | [2.4 m RGBIC TV Backlight, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6167) | **3 / 3 / 89** |
 | `Govee_H617E*` | [RGBIC Basic LED strip, 65.6 ft](https://us.govee.com/products/govee-rgbic-basic-led-strip-lights-refurbished) | **3 / 3 / 67** |
@@ -72,7 +72,7 @@ Five further reviewed public codes (H612D, H6072, H6052, H7015, H7039) account f
 
 A second non-overlapping five-code review (H6001, H60B0, H6176, H6097, H612F) contributes **18 exact variants / 104 scans** within the same cohort. Three have direct manufacturer category mappings; H6001 now has an FCC-application LED-bulb description on a third-party mirror, and CSA lists H612F as a Strip Light S variant. Different public codes H6097 and H6099 may share a TV Backlight 3 Lite *product line* without establishing identical retail configuration or two physical units.
 
-A third disjoint five-code review (H702C, H70A1, H6047, H605D, H6078) adds **12 exact variants / 104 scans** within the existing cohort; four codes have original category mappings, while H605D has only a supported-model-list entry. The cited refurbished offerings do not identify the condition of observed units.
+A third disjoint five-code review (H702C, H70A1, H6047, H605D, H6078) adds **12 exact variants / 104 scans** within the existing cohort. Four codes have original category mappings; H605D has only a **third-party lower-confidence TV light-kit candidate** based on a reflowed manual's same-page App pairing code and product description, plus a seller catalog, not an original cover or App directory entry. The cited refurbished offerings do not identify the condition of observed units.
 
 The other five codes from this ranked review (H6167, H617E, H61B5, H7016, H7028) have direct original model-to-category descriptions and account for **15 exact variants / 206 scans** inside the 439-variant parent cohort. H7028's **3 variants / 2 addresses** shows why variants and addresses must not be equated. A cited refurbished listing is model context only, not evidence of unit condition.
 
