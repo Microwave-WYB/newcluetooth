@@ -12,12 +12,13 @@ qmd:
 ## Identification and use
 
 The `rES7…` name prefix matches Acuity nLight AIR's fixture-integrated
-occupancy/daylight sensor family. Suffixes are not evidence of a different model.
+occupancy/daylight sensor family. **Unverified numeric suffixes are not evidence of additional model identities**; real manufacturer options may exist but cannot be assigned from these names.
 This is a lighting-infrastructure lead, not a clinical monitor.
 
 **BLE is for mobile commissioning/discovery; normal nLight AIR wireless
 lighting control uses 900 MHz.** A WiGLE Bluetooth record does not capture that
 900 MHz control traffic or prove any particular control state.
+[Acuity's original CLX integration article](https://insights.acuitybrands.com/lithonia-lighting-whats-new/clx-is-now-even-better-with-two-embedded-nlight-air-options-2) explicitly describes rES7 motion/daylight sensing, standard PIR and optional dual-technology detection with Bluetooth and 900 MHz. It validates the *product family capability*, not an original default advertisement-name format, captured motion event, lighting state or installed fixture configuration.
 
 ## Important attribution pitfall
 

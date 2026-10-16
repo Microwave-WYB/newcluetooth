@@ -11,14 +11,11 @@ qmd:
 
 ## Identification and use
 
-The `rSDGR…` and `rSDGRRSX…` prefixes match nLight AIR's outdoor,
-fixture-embedded occupancy/daylight sensor family. RSX is associated with an
-outdoor area-luminaire family, not a reason to treat every suffix as a new sensor
-model. Possible applications include site lighting and parking areas, but the
-records do not establish such a use at any hospital.
+The `rSDGR…` and `rSDGRRSX…` prefixes support an nLight AIR outdoor fixture-embedded occupancy/daylight sensor **family candidate**, but no original default BLE advertisement-name or suffix rule was found. RSX is associated with an outdoor area-luminaire family; an **unverified numeric suffix is not by itself a new sensor model** and cannot reveal actual luminaire options. Possible applications include site lighting and parking areas, but the records do not establish such a use at any hospital.
 
 **BLE supports commissioning/discovery; normal nLight AIR wireless control is
 900 MHz.** The Bluetooth metadata is not 900 MHz business traffic.
+[Acuity's original outdoor-controls article](https://insights.acuitybrands.com/holophane-whats-new-blog/get-an-nlight-enabled-infrastructure-today-2) describes PIR/photocell functions, 900 MHz communication and phone Bluetooth setup for this equipment class; it does not certify the exact historical advertisement, an occupancy event, lamp state or a live control session.
 
 Research company ID 11781 (`0x2E05`) was not an assigned SIG company identifier
 in the checked list. It must not be promoted to a confirmed manufacturer or a
@@ -31,6 +28,7 @@ deployment, ownership, or control session is verified.
 - [Acuity rSDGR product page — original](https://www.acuitybrands.com/products/detail/817178/nlight/rsdgr/nlightr-air-outdoor-fixture-embedded-smart-sensor).
   [Verified Wayback fallback, captured 2026-02-23 18:08:17 UTC](https://web.archive.org/web/20260223180817/https://www.acuitybrands.com/products/detail/817178/nlight/rsdgr/nlightr-air-outdoor-fixture-embedded-smart-sensor).
 - [nLight AIR operating architecture — original](https://nlight.acuitybrands.com/nlight-air/how-nlight-air-works).
+- [Acuity outdoor nLight-enabled infrastructure overview — original](https://insights.acuitybrands.com/holophane-whats-new-blog/get-an-nlight-enabled-infrastructure-today-2): family-level sensing and wireless roles, not captured control traffic.
 - [Bluetooth SIG company identifiers — original](https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/company_identifiers/company_identifiers.yaml).
 - Private research: `hospital_iot_candidates_2026-10-14.md`, rSDGR row,
   and `today_all_records_2026-10-14.md`, company-ID caveat.

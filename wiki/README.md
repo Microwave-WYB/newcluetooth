@@ -20,7 +20,7 @@ Dates are research-record dates, **not** inferred radio-observation dates. Confi
 - [ResMed AirMini candidate](resmed-airmini.md)
 - [Enovate EmTag asset tag](enovate-emtag.md)
 - [Sonicu SoniShield Duo](sonicu-sonishield-duo.md)
-- [Primex Sync clock family](primex-sync-clock.md)
+- [Primex Sync clock/repeater family candidate](primex-sync-clock.md)
 - [HID Seos door-reader / credential ecosystem](hid-seos.md)
 - [Cisco Unified IP Phone 8945 candidate](cisco-ip-phone-8945.md)
 - [Cisco IP Phone 8851 candidate](cisco-ip-phone-8851.md)
