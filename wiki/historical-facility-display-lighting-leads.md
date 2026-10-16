@@ -1,0 +1,22 @@
+---
+qmd:
+  metadata:
+    title: "Historical hospital-region professional display and lighting leads"
+    date: "2026-10-16"
+    tags: [iot, facilities, display, lighting, wigle]
+    confidence: low
+---
+
+# Historical professional display and lighting leads
+
+These are **previously saved WiGLE-response name observations**, not newly queried radio data or first-party `cluetooth` advertisements. The underlying accepted-response cache and read-only ledger were not available for this follow-up, so the figures below are **historical report snapshots**, not current totals. Public model-like names and manufacturer specifications support product *candidates*; neither the API's BT/BLE labels nor an OSM hospital-polygon intersection proves a raw Bluetooth advertisement, authentic hardware, institution ownership, or installation.
+
+| Sanitized public model name | Historical reported observations | Manufacturer category evidence | Limit |
+|---|---:|---|---|
+| `FW-75BZ35F` | **2 returned entries / 1 API netid / 2 polygon-intersecting entries** | [Sony's BZ35F professional BRAVIA display series](https://pro.sony/en_GB/products/pro-displays/bz35f-professional-displays) and [75-inch model page](https://pro.sony/en_CY/products/pro-displays/fw-75bz35f) identify a professional display suitable for digital signage. | Name-based lead; no verified hardware identity, signage content, or hospital installation. |
+| `FW-85BZ35F` | **1 / 1 / 1** in the same snapshot | [Sony's 85-inch model page](https://pro.sony/en_BD/products/pro-displays/fw-85bz35f) identifies another BZ35F professional display. | Distinct model/size; do not treat the combined **3 returned entries** as three screens. |
+| `NU6-RD-RGBW-10LM-43K` | **7 polygon-intersecting entries in an earlier historical subset**; full-corpus total and unique identifier count **not recalculated** | [Alphabet Lighting's original NU6RD RGBW specification](https://alphabetlighting.com/wp-content/uploads/NU6RD-RGBW-Spec-Sheet.pdf) explains the public ordering-code structure for a recessed round RGBW downlight, including `10LM` and `43K` options. | The name-to-hardware mapping is unverified; not therapeutic lighting, verified BLE control or a count of seven fixtures. |
+
+The Sony reference-guide link in the source report was HTTP 403 on direct retrieval; **no Bluetooth-version claim is made here**. Manufacturer documentation describes products, not these specific radio records. OSM intersection is a geometric fact about an earlier response, **not proof of deployment in or ownership by a hospital**.
+
+Private sanitized provenance: `hospital_iot_followup_2026-10-15.md` (Sony row, 221 accepted-page snapshot) and `medical_exploration_report.md` (Alphabet row, earlier subset), in external run `us-osm-hospitals/20261013T225104Z`. No raw identifiers, device suffixes, coordinates or responses are published.

@@ -33,6 +33,7 @@ Dates are research-record dates, **not** inferred radio-observation dates. Confi
 - [CAREL HVAC/R candidate](carel-hvac.md)
 - [Molekule purifier candidate](molekule-purifier.md)
 - [BladderScan family candidate — low confidence](verathon-bladderscan.md)
+- [Historical professional BRAVIA display and Alphabet Lighting downlight leads — low confidence](historical-facility-display-lighting-leads.md)
 
 ## Broader first-party BLE product fingerprints
 
