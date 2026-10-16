@@ -194,4 +194,29 @@ Five exact public product names form **5 variants / 5 addresses / 113 scans**. O
 
 No active call, USB-A/USB-C bundle choice or independent adapter is inferred from these advertisements.
 
+## Sony Alpha interchangeable-lens cameras
+
+The `ILCE-*` first-party BLE cohort has **15 exact `(addr,raw)` variants / 10 addresses / 4,065 scans**. Match complete public Sony model tokens with boundaries; all device-specific name suffixes remain hidden. Official product links establish camera models, **not** advertiser authenticity or active shooting.
+
+| Advertised camera model token / Sony product | Variants / addresses / scans |
+|---|---:|
+| [`ILCE-7SM3` → α7S III](https://electronics.sony.com/imaging/interchangeable-lens-cameras/all-interchangeable-lens-cameras/p/ilce7sm3-b) | **9 / 6 / 2,703** |
+| [`ILCE-7M4` → α7 IV](https://electronics.sony.com/imaging/interchangeable-lens-cameras/all-interchangeable-lens-cameras/p/ilce7m4-b) | **3 / 2 / 1,315** |
+| [`ILCE-1` → α1](https://electronics.sony.com/imaging/interchangeable-lens-cameras/all-interchangeable-lens-cameras/p/ilce1-b) | **2 / 1 / 46** |
+| [`ILCE-7RM5` → α7R V](https://electronics.sony.com/imaging/interchangeable-lens-cameras/full-frame/p/ilce7rm5-b) | **1 / 1 / 1** |
+
+`ILCE-1` must be bounded so it does not absorb unrelated longer `ILCE-1…` models. Variant/address counts are not verified camera counts, lens assignments or firmware revisions.
+
+## DJI Osmo Action cameras
+
+Five `OsmoAction*` observations represent **5 variants / 5 addresses / 36 scans**. Public model-name tokens plus auxiliary DJI company field 2218 support three [DJI Osmo Action-series](https://www.dji.com/products/comparison-action) camera candidates; all also advertise generic service UUID `FFF0`, which is **not DJI-exclusive**.
+
+| Sanitized model token / original product source | Variants / addresses / scans |
+|---|---:|
+| [`OsmoAction3` → Osmo Action 3](https://dl.djicdn.com/downloads/DJI_Osmo_%20Action_%203/UM/0930/DJI_Osmo_Action_3_User_Manual_v1.0_en.pdf) | **1 / 1 / 4** |
+| [`OsmoAction4` → Osmo Action 4](https://www.dji.com/support/product/osmo-action-4) | **2 / 2 / 12** |
+| [`OsmoAction5Pro` → Osmo Action 5 Pro](https://www.dji.com/products/comparison-action) | **2 / 2 / 20** |
+
+The device suffixes remain hidden; neither BLE shape nor service UUID authenticates a camera, determines a lens/firmware version or proves it was filming.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
