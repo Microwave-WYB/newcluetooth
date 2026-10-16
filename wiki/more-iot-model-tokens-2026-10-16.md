@@ -258,4 +258,15 @@ Another **6 exact `(addr,raw)` variants / 6 addresses / 51 scans** advertise a `
 
 These full-name code observations are not included in the separate `DreoPF*`/`DreoTF*` **prefix** row counts, but are the **same product categories**, not extra product-family discoveries. The advertisement shape alone does not authenticate any model or feature.
 
+## ION Audio Pathfinder outdoor speakers
+
+Five exact `Pathfinder*` observations (**5 variants / 5 addresses / 15 scans**) advertise two complete public product-name tokens with `_BLE` suffix. Both use generic HID service UUID `1812` and ordered `01/1,03/2,FF/3,09/<name length>`; that UUID alone does not identify ION or a speaker:
+
+| Sanitized model token / original manufacturer guide | Variants / addresses / scans |
+|---|---:|
+| [`Pathfinder 4` + `_BLE`](https://support.ionaudio.com/en/support/solutions/articles/69000800442-ion-audio-pathfinder-4-frequently-asked-questions) | **3 / 3 / 8** |
+| [`Pathfinder 280` + `_BLE`](https://support.ionaudio.com/en/support/solutions/articles/69000800441-ion-audio-pathfinder-280-frequently-asked-questions) | **2 / 2 / 7** |
+
+Model-name tokens support two ION Audio outdoor-speaker candidates, not authenticated hardware, independent unit counts or any inferred pet-tracking/navigation function.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
