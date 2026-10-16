@@ -284,4 +284,17 @@ The `OontZ*` cohort has **5 exact `(addr,raw)` variants / 5 addresses / 79 scans
 
 Device-specific suffixes remain hidden. Shared UUID/AD shape cannot distinguish model generation or authenticate hardware; address count is not a confirmed number of physical speakers.
 
+## TOZO T-series true-wireless earbuds
+
+The `TOZO-T*` cohort contains **11 exact `(addr,raw)` variants / 11 addresses / 230 scans**. Complete public name tokens distinguish two [TOZO](https://www.tozostore.com/) in-ear earbud model candidates; both mainly show ordered `09,FF`, auxiliary company field 64600 (not brand authentication), and no advertised service UUID:
+
+| Advertised public model token / original manufacturer product | Variants / addresses / scans |
+|---|---:|
+| [`TOZO-T6` → T6](https://www.tozostore.com/products/t6) | **6 / 6 / 147** |
+| [`TOZO-T10` → T10](https://www.tozostore.com/products/t10) | **5 / 5 / 83** |
+
+The name-column length sometimes differs from the AD name-data length; no repair or hardware-revision inference is made. Advertisement names do not authenticate products or count complete earbud sets, and current retail specifications do not prove the observed generation.
+
+A **separate** `TOZO-A*` cohort has **6 exact variants / 6 addresses / 60 scans**, all with the public pairing name `TOZO-A1`, ordered `FF/9,09/8` and no advertised service UUID. [Original TOZO A1 Mini product page](https://www.tozostore.com/products/a1) and indexed pairing name support the A1 Mini earbud model candidate, not hardware/firmware revision or authentic unit counts. These six observations are **not** included in the T6/T10 counts above.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
