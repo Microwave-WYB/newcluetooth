@@ -15,7 +15,7 @@ First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. Th
 
 The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **48 tokens** have been individually checked; the remaining **56 tokens / 70 exact variants / 309 scans** have not been individually validated (their distinct-address count was not recomputed). A bounded follow-up found **no further directly manufacturer-proven non-lighting category** among them; this does **not** prove they are all lights. Five checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
 
-| Advertised model token (suffix hidden) | Manufacturer product / application | Variants / addresses / scans |
+| Advertised model token (suffix hidden) | Public model-to-category evidence | Variants / addresses / scans |
 |---|---|---:|
 | `Govee_H6076*` | [RGBICW smart floor lamp](https://us.govee.com/products/govee-rgbicw-smart-corner-floor-lamp) | **51 / 50 / 4,269** |
 | `Govee_H6099*` | [TV Backlight 3 Lite](https://us.govee.com/products/govee-tv-backlight-3-lite) | **24 / 23 / 553** |
@@ -28,10 +28,10 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H5151*` | [Wi-Fi/BLE gateway in a thermometer/hygrometer kit](https://us.govee.com/products/refurbished-wi-fi-digital-thermometer-hygrometer), **not** a count of standalone probes | **12 / 12 / 72** |
 | `Govee_H5074*` | [Bluetooth thermometer/hygrometer](https://www.manualslib.com/manual/4009235/Govee-H5074.html) — **third-party-hosted manual**, no reliable direct original-manufacturer URL confirmed | **10 / 8 / 11** |
 | `Govee_H6199*` | [DreamView T1 camera-based TV backlight](https://us.govee.com/products/refurbished-govee-dreamview-t1-tv-backlight-1) | **12 / 12 / 1,738** |
-| `Govee_H6168*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **6 / 5 / 1,649** |
+| `Govee_H6168*` | [FCC application mirrored by FCCID.io](https://fccid.io/2A7VD-H6168): Govee RGBIC LED TV Backlight | **6 / 5 / 1,649** |
 | `Govee_H6022*` | [Table Lamp 2](https://us.govee.com/products/led-table-lamp-2) | **11 / 10 / 813** |
 | `Govee_H61D5*` | [Neon Rope Light 2, 5 m](https://us.govee.com/products/govee-neon-rope-light-2?variant=45351533609145) | **3 / 3 / 208** |
-| `Govee_H6169*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **4 / 3 / 203** |
+| `Govee_H6169*` | [FCC application mirrored by FCCID.io](https://fccid.io/2A7VD-H6169): Govee TV Backlight for 70–80-inch TVs | **4 / 3 / 203** |
 | `Govee_H6098*` | [Govee Care original model video](https://www.youtube.com/watch?v=GXV6zk6Nrng): TV Backlight 3S **candidate** | **12 / 12 / 186** |
 | `Govee_H5051*` | [Original FAQ](https://ca.govee.com/pages/easy-faqs): Wi-Fi temperature monitor, initially configured by Bluetooth | **2 / 2 / 4** |
 | `Govee_H5179*` | [Original FAQ](https://ca.govee.com/pages/easy-faqs): temperature-monitoring family **candidate**; humidity/connectivity details unverified | **1 / 1 / 1** |
@@ -40,16 +40,16 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H617C*` | [RGBIC Basic Bluetooth LED strip](https://us.govee.com/products/govee-rgbic-basic-led-strip-lights-refurbished) | **8 / 7 / 122** |
 | `Govee_H618F*` | [2 × 15 m RGBIC LED Strip Light with Alexa, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H618F) | **7 / 7 / 118** |
 | `Govee_H605C*` | [Envisual TV Backlight T2 dual-camera system](https://us.govee.com/products/govee-envisual-tv-backlight-t2) | **9 / 9 / 111** |
-| `Govee_H612D*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **12 / 12 / 83** |
+| `Govee_H612D*` | [CSA certified Govee Strip Light S](https://csa-iot.org/csa_product/govee-strip-light-s-5/): `Family Variant SKU: H612D`, RGBICW strip | **12 / 12 / 83** |
 | `Govee_H6072*` | [Lyra RGBICWW corner floor lamp](https://ca.govee.com/products/refurbished-govee-lyra-rgbicww-corner-floor-lamp) | **10 / 9 / 39** |
 | `Govee_H6052*` | [Aura smart table lamp](https://uk.govee.com/products/refurbished-aura-smart-table-lamp) | **8 / 8 / 54** |
 | `Govee_H7015*` | [48 ft, 15-bulb outdoor string lights](https://community.govee.com/support/faqs/specs) | **6 / 6 / 53** |
 | `Govee_H7039*` | [Outdoor String Lights 2, 144 ft](https://us.govee.com/products/govee-outdoor-string-lights-2) | **5 / 5 / 24** |
-| `Govee_H6001*` | **Category unknown**; no directly matching original product category found | **4 / 4 / 27** |
+| `Govee_H6001*` | [FCC application mirrored by FCCID.io](https://fccid.io/2AQA6-H6001): LED bulb light | **4 / 4 / 27** |
 | `Govee_H60B0*` | [Uplighter floor lamp, Ripple Lighting Effect model](https://us.govee.com/products/govee-uplighter-floor-lamp), distinct from H60B3 | **4 / 4 / 18** |
 | `Govee_H6176*` | [Wi-Fi RGBIC Outdoor Strip Lights](https://us.govee.com/products/govee-wi-fi-rgbic-outdoor-strip-lights?variant=43029980709049) | **4 / 4 / 10** |
 | `Govee_H6097*` | [TV Backlight 3 Lite](https://us.govee.com/products/govee-tv-backlight-3-lite?variant=45351535083705), distinct public code from H6099 | **3 / 3 / 45** |
-| `Govee_H612F*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **3 / 3 / 4** |
+| `Govee_H612F*` | [CSA certified Govee Strip Light S](https://csa-iot.org/csa_product/govee-strip-light-s/): `Family Variant SKU: H612F` (strip; exact RGBICW feature not transferred from H612D) | **3 / 3 / 4** |
 | `Govee_H702C*` | [Outdoor S14 Bulb String Lights 2](https://us.govee.com/products/govee-outdoor-s14-bulb-string-lights-2) | **3 / 3 / 48** |
 | `Govee_H70A1*` | [RGBICWW Outdoor LED Strip Lights](https://us.govee.com/products/govee-rgbicww-outdoor-led-strip-lights?variant=45351535214777) | **3 / 3 / 11** |
 | `Govee_H6047*` | [RGBIC Wi-Fi Gaming Light Bars with Smart Controller](https://us.govee.com/products/refurbished-govee-rgbic-wi-fi-gaming-light-bars-with-smart-controller) | **2 / 2 / 9** |
@@ -68,9 +68,9 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 
 The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. The first eight added rows (H6199 through H5179) total **51 exact variants / 4,802 scans**; the following five lighting rows total **37 variants / 36 observed addresses / 628 scans**. Both are **subsets** of the 439 / 421 / 15,145 cohort above, not extra brands or devices. The five lighting rows share `01,09,FF,09` and auxiliary fields 34818/34819; earlier lighting and temperature groups also share layouts, but **neither AD pattern establishes category, identity or authenticity**. H5151 gateway addresses are not individual sensor counts; H5074 classification has weaker third-party support.
 
-Five further reviewed public codes (H612D, H6072, H6052, H7015, H7039) account for **41 exact variants / 253 scans** within the same cohort; the sum of their **40 per-code addresses** is not a deduplicated across-code or cohort address count. Four have direct original product-category mappings; H612D remains category-unknown. Refurbished product-page citations establish code-to-model context, **not** that the observed units were refurbished.
+Five further reviewed public codes (H612D, H6072, H6052, H7015, H7039) account for **41 exact variants / 253 scans** within the same cohort; the sum of their **40 per-code addresses** is not a deduplicated across-code or cohort address count. Four have original manufacturer category mappings; H612D is now independently mapped to Strip Light S by a same-page CSA variant-SKU entry. Refurbished product-page citations establish code-to-model context, **not** that observed units were refurbished.
 
-A second non-overlapping five-code review (H6001, H60B0, H6176, H6097, H612F) contributes **18 exact variants / 104 scans** within the same cohort; three have direct original category mappings. H6001 has no corroborated original category and H612F is original-list-only. Different public codes H6097 and H6099 may share a TV Backlight 3 Lite *product line* without establishing identical retail configuration or two physical units.
+A second non-overlapping five-code review (H6001, H60B0, H6176, H6097, H612F) contributes **18 exact variants / 104 scans** within the same cohort. Three have direct manufacturer category mappings; H6001 now has an FCC-application LED-bulb description on a third-party mirror, and CSA lists H612F as a Strip Light S variant. Different public codes H6097 and H6099 may share a TV Backlight 3 Lite *product line* without establishing identical retail configuration or two physical units.
 
 A third disjoint five-code review (H702C, H70A1, H6047, H605D, H6078) adds **12 exact variants / 104 scans** within the existing cohort; four codes have original category mappings, while H605D has only a supported-model-list entry. The cited refurbished offerings do not identify the condition of observed units.
 
@@ -144,7 +144,7 @@ This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans
 | `ihoment_H7131*` | [Govee portable electric space heater](https://us.govee.com/products/govee-smart-portable-electric-space-heater?Style=H7131) | **5 / 5 / 191** |
 | `ihoment_H5043*` | [GoveeLife water-leak detection system family](https://us.govee.com/products/refurbished-goveelife-water-leak-detector-2): original kit lists **H5043 & H5058**; observed emitter role within the kit unresolved | **4 / 3 / 10** |
 | `ihoment_H600A*` | [1200 lm RGBWW smart light bulb](https://us.govee.com/products/h600a-smart-led-night-light-bulb); two-/four-pack size is not another model | **4 / 2 / 17** |
-| `ihoment_H5080*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **3 / 3 / 17** |
+| `ihoment_H5080*` | [FCC application mirrored by FCCID.io](https://fccid.io/2AQA6-H5080): smart plug | **3 / 3 / 17** |
 | `ihoment_H6159*` | [5 m RGB light strip, original device directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6159); **also appears as `GBK_H6159*` below** | **3 / 3 / 36** |
 | `ihoment_H7100*` | [Round table fan, original specification list](https://community.govee.com/support/faqs/specs) | **3 / 2 / 28** |
 | `ihoment_H7126*` | [GoveeLife Smart Air Purifier Lite](https://us.govee.com/products/goveelife-smart-air-purifier-lite) | **3 / 3 / 16** |
@@ -174,7 +174,7 @@ Keep `GBK_H*` separate from `Govee_H*` and `ihoment_H*`: **60 exact variants / 5
 | `GBK_H7090*` | RGBIC vehicle interior lights | **3 / 3 / 101** |
 | `GBK_H618A*` | RGBIC Basic light strip | **2 / 1 / 2,834** |
 | `GBK_H613D*` | [Original specification-index clue](https://community.govee.com/support/faqs/specs) suggests RGB strip; full original category text not retrieved, **provisional only** | **2 / 2 / 190** |
-| `GBK_H6168*` | [Original supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown**; already listed under `Govee_H*` | **2 / 2 / 12** |
+| `GBK_H6168*` | [FCC application mirrored by FCCID.io](https://fccid.io/2A7VD-H6168): Govee RGBIC LED TV Backlight; same public code already under `Govee_H*` | **2 / 2 / 12** |
 | `GBK_H613G*` | [Original supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **1 / 1 / 1** |
 | `GBK_H6167*` | [2.4 m RGBIC TV Backlight, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6167); also under `Govee_H*` | **1 / 1 / 4** |
 | `GBK_H618F*` | [2 × 15 m RGBIC LED Strip Light with Alexa, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H618F); also under `Govee_H*` | **1 / 1 / 2** |
