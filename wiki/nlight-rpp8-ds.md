@@ -15,6 +15,7 @@ The research name `rPP8 DS…` supports an nLight AIR rPP8 lighting
 relay/dimming power-pack lead. Preserve **rPP8**: it must not be silently replaced
 by rPP20 documentation or treated as proof of another power-pack model.
 The name alone does not establish all voltage, wiring, or hardware options.
+The original Acuity RPP8 support listing confirms the **RPP8 product family exists**, but its specification attachment was not retrievable for this check. `DS` and the historical discovery-name suffix are **not** an original manufacturer BLE naming rule or verified feature definition. A third-party product listing supports the relay/dimming-power-pack **candidate** only; do not import rPP20 ratings or assume model interchangeability.
 
 **BLE supports mobile commissioning/discovery; normal nLight AIR wireless
 lighting control uses 900 MHz.** No 900 MHz commands, relay transitions,
