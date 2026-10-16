@@ -82,6 +82,17 @@ The `Acton*` cohort is **13 / 13 / 190**. A distinct II/2 versus III/3 model tok
 
 `FE2C` is a generic Fast Pair service, not a Marshall-specific identity. Names and auxiliary UUIDs do not authenticate the device or determine hardware revisions.
 
+## Marshall Stanmore home Bluetooth speakers
+
+The `Stanmore*` cohort is **8 exact `(addr,raw)` variants / 8 addresses / 96 scans**. Public generation tokens distinguish two **mains-powered home speakers**, not portable battery speakers:
+
+| Sanitized model token / original product source | Variants / addresses / scans | Advertising clue |
+|---|---:|---|
+| [Stanmore II Bluetooth](https://www.marshall.com/tr/en/support/speakers/support-for-stanmore-ii-bluetooth) | **3 / 3 / 31** | Name exactly `Stanmore II`, UUID `FE8F`; `01/1,03/2,FF/2,09/11` |
+| [Stanmore III](https://www.marshall.com/product/stanmore-iii) | **5 / 5 / 65** | Name contains `Stanmore III` (suffix hidden); two with UUID `AA00`, three with service-data `FE2C` |
+
+Two Stanmore III broadcast layouts do **not** imply extra speaker models; `FE2C` is generic Fast Pair, and neither names nor UUIDs authenticate speakers or identify color/market variants.
+
 ## Sony WH wireless headphones
 
 The `LE_WH-*` cohort is **170 variants / 137 addresses / 10,820 scans**, rechecked after an earlier 164 / 131 / 10,662 snapshot. [Sony's wireless-headphone model directory](https://www.sony.com/electronics/support/headphones-wireless-headphones) and [Sound Connect compatibility list](https://www.sony.com/electronics/support/wireless-headphones-bluetooth-headphones/wh-ult900n/articles/00346846) support seven model-name candidates. One model can yield many `(addr,raw)` variants; `LE_` does not prove LE Audio or active playback.
@@ -218,5 +229,18 @@ Five `OsmoAction*` observations represent **5 variants / 5 addresses / 36 scans*
 | [`OsmoAction5Pro` → Osmo Action 5 Pro](https://www.dji.com/products/comparison-action) | **2 / 2 / 20** |
 
 The device suffixes remain hidden; neither BLE shape nor service UUID authenticates a camera, determines a lens/firmware version or proves it was filming.
+
+## Garmin fēnix multisport GPS watches
+
+The `fenix*` first-party cohort is **9 exact `(addr,raw)` variants / 9 addresses / 614 scans**. Match complete visible Garmin model tokens with boundaries (`5X` must not collapse into `5`):
+
+| Sanitized name model token / original product source | Variants / addresses / scans |
+|---|---:|
+| [`fenix 5` → Garmin fēnix 5](https://www.garmin.com/en-US/blog/outdoor/fenix-5-family-size-comparison/) | **4 / 4 / 603** |
+| [`fenix 5X` → Garmin fēnix 5X](https://www.garmin.com/en-US/blog/outdoor/fenix-5-family-size-comparison/) | **3 / 3 / 8** |
+| [`fenix 3` → Garmin fēnix 3](https://www.garmin.com/en-US/newsroom/press-release/outdoor/2015-introducing-fnix-3-the-next-smart-multisport-gps-watch-from-garmin/) | **1 / 1 / 1** |
+| [`fenix 6X Pro Solar` → Garmin fēnix 6X Pro Solar](https://www.garmin.com/en-US/p/641375/pn/010-02157-23/) | **1 / 1 / 2** |
+
+Three earlier generations advertise the same 128-bit service UUID `6a4e3e10-667b-11e3-949a-0800200c9a66`; the 6X entry advertises generic Heart Rate service `180D`. Name tokens support candidates, not device authentication, precise hardware revisions or the number of physical watches.
 
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
