@@ -38,7 +38,7 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H70B3*` | [Curtain Lights 2](https://us.govee.com/products/govee-curtain-lights-2) | **2 / 2 / 145** |
 | `Govee_H610A*` | [Glide Lively modular wall lights, manufacturer model/spec listing](https://community.govee.com/support/faqs/specs) | **11 / 11 / 132** |
 | `Govee_H617C*` | [RGBIC Basic Bluetooth LED strip](https://us.govee.com/products/govee-rgbic-basic-led-strip-lights-refurbished) | **8 / 7 / 122** |
-| `Govee_H618F*` | [RGBIC LED strip model/connectivity guide](https://app-h5.govee.com/user-manual/wlan-guide) | **7 / 7 / 118** |
+| `Govee_H618F*` | [2 × 15 m RGBIC LED Strip Light with Alexa, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H618F) | **7 / 7 / 118** |
 | `Govee_H605C*` | [Envisual TV Backlight T2 dual-camera system](https://us.govee.com/products/govee-envisual-tv-backlight-t2) | **9 / 9 / 111** |
 | `Govee_H612D*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **12 / 12 / 83** |
 | `Govee_H6072*` | [Lyra RGBICWW corner floor lamp](https://ca.govee.com/products/refurbished-govee-lyra-rgbicww-corner-floor-lamp) | **10 / 9 / 39** |
@@ -123,7 +123,7 @@ The Plus+ group has ordered AD types `01,FF,20,09`, data lengths `1,17,4,17` and
 
 ## `ihoment_H` / Govee multi-category devices
 
-This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans** and 42 model tokens. Match `ihoment_Hxxxx` only when the token is followed by a delimiter or end of name; hide the rest. The eight most frequent tokens are **not all lighting products**, and none should be merged with the `Govee_H*` counts above.
+This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans** and **42 public H model codes**. Match `ihoment_Hxxxx` only when the token is followed by a delimiter or end of name; hide the rest. The **13 reviewed codes** below cover **114 variants / 1,741 scans**, leaving **29 unreviewed codes / 39 variants / 586 scans** (remaining distinct addresses not recomputed). They span lighting, power, leak detection and a fan; do not merge observations or addresses with `Govee_H*` or `GBK_H*` on a shared code.
 
 | Sanitized name token | Product / source | Variants / addresses / scans |
 |---|---|---:|
@@ -135,12 +135,19 @@ This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans
 | `ihoment_H6004*` | [Govee RGBWW bulb](https://app-h5.govee.com/user-manual/wlan-guide?im_rewards=1) | **7 / 7 / 49** |
 | `ihoment_H6114*` | [Govee car interior ambient lighting](https://community.govee.com/support/faqs/specs) | **5 / 5 / 174** |
 | `ihoment_H7131*` | [Govee portable electric space heater](https://us.govee.com/products/govee-smart-portable-electric-space-heater?Style=H7131) | **5 / 5 / 191** |
+| `ihoment_H5043*` | [GoveeLife water-leak detection system family](https://us.govee.com/products/refurbished-goveelife-water-leak-detector-2): original kit lists **H5043 & H5058**; observed emitter role within the kit unresolved | **4 / 3 / 10** |
+| `ihoment_H600A*` | [1200 lm RGBWW smart light bulb](https://us.govee.com/products/h600a-smart-led-night-light-bulb); two-/four-pack size is not another model | **4 / 2 / 17** |
+| `ihoment_H5080*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **3 / 3 / 17** |
+| `ihoment_H6159*` | [5 m RGB light strip, original device directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6159); **also appears as `GBK_H6159*` below** | **3 / 3 / 36** |
+| `ihoment_H7100*` | [Round table fan, original specification list](https://community.govee.com/support/faqs/specs) | **3 / 2 / 28** |
 
 Govee has [announced a voluntary electric-heater recall](https://community.govee.com/posts/govee-life-and-govees-voluntary-recall-of-electric/219685). A historical advertisement does **not** establish current use or whether any unit was recalled. Matching model-name tokens plus product listings supports candidate attribution, not device authentication or hardware-revision identification.
 
+The newly listed `ihoment_H6159*` is the **same public H6159 code** already listed under `GBK_H*`; it adds another name-prefix observation, **not** a new retail model or a deduplicated cross-prefix count. H5043 appears in a kit listing alongside H5058, but the ad does not distinguish the gateway, probe or kit component.
+
 ## `GBK_H` Govee vehicle/home lighting
 
-Keep `GBK_H*` separate from `Govee_H*` and `ihoment_H*`: **60 variants / 58 addresses / 4,472 scans**. These eight model tokens account for 50 variants and 4,238 scans, but a repeated H-model token across different name prefixes does **not** prove a different physical device. [Govee specifications](https://community.govee.com/support/faqs/specs) and the [official supported-model list](https://developer.govee.com/docs/support-product-model) corroborate product-model candidates.
+Keep `GBK_H*` separate from `Govee_H*` and `ihoment_H*`: **60 exact variants / 58 addresses / 4,472 scans** across the **16 public H codes** below. Shared H codes across prefixes do not establish distinct physical devices or additive address counts. [Govee specifications](https://community.govee.com/support/faqs/specs), [original product-code directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H619B), and [supported-model list](https://developer.govee.com/docs/support-product-model) support categories only where an individual code is mapped.
 
 | Sanitized name-model token | Candidate category | Variants / addresses / scans |
 |---|---|---:|
@@ -152,8 +159,18 @@ Keep `GBK_H*` separate from `Govee_H*` and `ihoment_H*`: **60 variants / 58 addr
 | `GBK_H6119*` | RGBIC vehicle interior lights | **4 / 4 / 9** |
 | `GBK_H7090*` | RGBIC vehicle interior lights | **3 / 3 / 101** |
 | `GBK_H618A*` | RGBIC Basic light strip | **2 / 1 / 2,834** |
+| `GBK_H613D*` | [Original specification-index clue](https://community.govee.com/support/faqs/specs) suggests RGB strip; full original category text not retrieved, **provisional only** | **2 / 2 / 190** |
+| `GBK_H6168*` | [Original supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown**; already listed under `Govee_H*` | **2 / 2 / 12** |
+| `GBK_H613G*` | [Original supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **1 / 1 / 1** |
+| `GBK_H6167*` | [2.4 m RGBIC TV Backlight, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6167); also under `Govee_H*` | **1 / 1 / 4** |
+| `GBK_H618F*` | [2 × 15 m RGBIC LED Strip Light with Alexa, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H618F); also under `Govee_H*` | **1 / 1 / 2** |
+| `GBK_H619B*` | [7.5 m RGBIC Pro Strip Lights with Alexa, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H619B) | **1 / 1 / 2** |
+| `GBK_H619D*` | [2 × 7.5 m RGBIC Pro Strip Lights with Alexa, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H619D) | **1 / 1 / 22** |
+| `GBK_H61A2*` | [5 m RGBIC LED Neon Rope Lights, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H61A2) | **1 / 1 / 1** |
 
 Auxiliary company field `0x8802` is not sufficient brand proof; duplicate and reordered AD fields do not uniquely identify a model. The sharp scan imbalance for H618A is observation frequency, **not** a sales estimate.
+
+The additional eight `GBK_H*` codes above account for the previously unlisted **10 exact variants / 234 scans**. H6168, H6167 and H618F are **already listed in `Govee_H*`**; H6114 and H6159 also occur under `ihoment_H*`. Duplicate public codes across prefixes are not extra product models or proof of identical broadcasting units. H613D's RGB-strip category remains an incomplete specification-index clue, not a directly verified original mapping.
 
 ## BlackVue connected dashcams
 
