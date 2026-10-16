@@ -394,4 +394,8 @@ Two further **non-overlapping name groups** have original product matches: [`End
 
 One exact `(addr,raw)` variant / one address / **2 scans** advertises the complete public product name `M720 Triathlon`, generic HID service UUID `1812` and Mouse Appearance 962 (`0x03C2`), with ordered `01/1,19/2,03/2,09/14,0A/1`. [Original Logitech M720 Triathlon product](https://www.logitech.com/en-us/shop/p/m720-triathlon) supports a multi-device wireless-mouse model candidate; no company field authenticates the brand. These BLE advertisements do not establish Unifying receiver use, host connection, active use or a verified physical-unit count.
 
+## Philips TAB5309 home soundbar
+
+One exact `(addr,raw)` variant / one address / **3 scans** in the case-insensitive `Philips*` name cohort carries public model token `TAB5309`, supporting the [original Philips TAB5309 2.1-channel soundbar with wireless subwoofer](https://www.usa.philips.com/c-p/TAB5309_37/soundbar-21-with-wireless-subwoofer/support). Ordered AD `01/1,FF/26,09/18`; auxiliary company field 15619, no listed service UUID. The linked `/37` country SKU is **not** identified by the broadcast. The other **3 / 3 / 13** `Philips*` variants lack a parsed public model and remain **category unknown**, not confirmed soundbars or medical products. The combined `Philips*` name cohort is **4 / 4 / 16**; no authenticity, physical-unit count or hospital installation is inferred.
+
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.

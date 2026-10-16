@@ -13,7 +13,7 @@ First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. Th
 
 ## Govee lighting and environmental monitoring
 
-The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **18 tokens** have been individually checked; **86 others have not** and must not all be labeled lights. Two checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
+The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **23 tokens** have been individually checked; **81 others have not** and must not all be labeled lights. Two checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
 
 | Advertised model token (suffix hidden) | Manufacturer product / application | Variants / addresses / scans |
 |---|---|---:|
@@ -35,8 +35,13 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H6098*` | [Govee Care original model video](https://www.youtube.com/watch?v=GXV6zk6Nrng): TV Backlight 3S **candidate** | **12 / 12 / 186** |
 | `Govee_H5051*` | [Original FAQ](https://ca.govee.com/pages/easy-faqs): Wi-Fi temperature monitor, initially configured by Bluetooth | **2 / 2 / 4** |
 | `Govee_H5179*` | [Original FAQ](https://ca.govee.com/pages/easy-faqs): temperature-monitoring family **candidate**; humidity/connectivity details unverified | **1 / 1 / 1** |
+| `Govee_H70B3*` | [Curtain Lights 2](https://us.govee.com/products/govee-curtain-lights-2) | **2 / 2 / 145** |
+| `Govee_H610A*` | [Glide Lively modular wall lights, manufacturer model/spec listing](https://community.govee.com/support/faqs/specs) | **11 / 11 / 132** |
+| `Govee_H617C*` | [RGBIC Basic Bluetooth LED strip](https://us.govee.com/products/govee-rgbic-basic-led-strip-lights-refurbished) | **8 / 7 / 122** |
+| `Govee_H618F*` | [RGBIC LED strip model/connectivity guide](https://app-h5.govee.com/user-manual/wlan-guide) | **7 / 7 / 118** |
+| `Govee_H605C*` | [Envisual TV Backlight T2 dual-camera system](https://us.govee.com/products/govee-envisual-tv-backlight-t2) | **9 / 9 / 111** |
 
-The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. The eight latest rows total **51 exact variants / 4,802 scans**, not an additional brand-wide cohort: all are already part of the 439 / 421 / 15,145 aggregate above. Their six higher-volume rows share `01,09,FF,09`; the two temperature leads share `01,03,09,FF`, but **neither AD pattern establishes a category or unifies models**. H5151 gateway addresses are not individual sensor counts; H5074 classification has weaker third-party source support.
+The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. The first eight added rows (H6199 through H5179) total **51 exact variants / 4,802 scans**; the following five lighting rows total **37 variants / 36 observed addresses / 628 scans**. Both are **subsets** of the 439 / 421 / 15,145 cohort above, not extra brands or devices. The five lighting rows share `01,09,FF,09` and auxiliary fields 34818/34819; earlier lighting and temperature groups also share layouts, but **neither AD pattern establishes category, identity or authenticity**. H5151 gateway addresses are not individual sensor counts; H5074 classification has weaker third-party support.
 
 ## Sony EXTRA BASS portable speakers
 
