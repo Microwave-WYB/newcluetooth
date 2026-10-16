@@ -21,7 +21,7 @@ A separate read-only **first-party, unfiltered** `cluetooth` `FSP-321*` cohort c
 This is a plausible lighting-sensor model-family match, not confirmation of a
 particular lens, configuration, fixture, or measured occupancy. Bluetooth
 discovery is not evidence of people being tracked or of a live dimming command.
-No raw radio frames, hospital deployment, or ownership were verified.
+No verifiable raw ADV or GATT exchange is available for the **historical WiGLE entries**. The separately reported first-party records support only parsed passive AD structure, not authenticated hardware, measured occupancy, a configuration/dimming session, hospital deployment or ownership.
 The nLight AIR 900 MHz architecture must not be generalized to this different
 manufacturer's product.
 
