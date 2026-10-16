@@ -141,6 +141,8 @@ The literal `LE_WF-*` cohort currently has **25 variants / 25 addresses / 249 sc
 
 Some have Sony auxiliary company field 301 / `FD2A`, others `FE03` or Fast Pair `FE2C`, and some have no manufacturer field. None of these is a mandatory model identifier. One address does not prove one earbud set, case or physical device.
 
+A separate non-`LE_` `WF-C510` name cohort adds **5 exact variants / 5 addresses / 81 scans** (ordered AD `0A/1,16/8 or 15,09/11`, Fast Pair service-data UUID `FE2C`). Together with the **7 / 7 / 21** `LE_WF-C510` row above, the **same Sony WF-C510 model** has **12 name/raw variants / 12 observed addresses / 102 scans**, with no address overlap in this snapshot. This extends advertisement coverage, **not** the number of identified product models or verified earbud units; different/random addresses cannot prove different physical sets.
+
 ## Beats headphones, earbuds and portable speaker
 
 All **27 / 27 / 148** `LE-Beats*` variants split by name token into three product candidates. [Beats](https://www.beatsbydre.com/) documents the products; a shared service UUID `5052494d-2dab-0341-6972-6f6861424c45` and ordered types `01,FF,07,09` do **not** distinguish the models.
@@ -317,5 +319,18 @@ All **6 exact `(addr,raw)` variants / 6 addresses / 443 scans** in the case-inse
 ## Sony WI-C100 neckband-style wireless earphones
 
 All **7 exact `(addr,raw)` variants / 7 addresses / 10 scans** in the `LE_WI-C*` cohort include complete public token `LE_WI-C100`, supporting the [original Sony WI-C100 product](https://electronics.sony.com/audio/headphones/all-headphones/p/wic100-w). Six variants (**6 / 6 / 8**) advertise generic Fast Pair service-**data** `FE2C` without company field; one (**1 / 1 / 2**) also advertises service UUID `FD82` and Sony-assigned company field 301. These are **one model**, not separate earphone models; WI-C100 has left/right ears connected by a neck cable, **not** a `WF-` true-wireless earbud. Fast Pair alone does not identify Sony, and advertisements do not prove authenticity, color, firmware, audio playback or physical-unit count.
+
+## Cleer wireless headphones and open-ear earbuds
+
+The `Cleer*` cohort has **5 exact `(addr,raw)` variants / 5 addresses / 33 scans**, with four **distinct public name groups**, all supported by original Cleer product or series material:
+
+| Exact advertised public name / original manufacturer source | Variants / addresses / scans | Product boundary |
+|---|---:|---|
+| [`Cleer ARC 3`](https://cleeraudio.com/products/arc-3-open-ear-earbuds-black) | **2 / 2 / 26** | Open-ear earbuds; two ads do not imply two generations. |
+| [`Cleer ARC II`](https://cleeraudio.com/blogs/news/cleer-arc-series-open-ear-audio-designed-for-everyday-life) | **1 / 1 / 3** | Open-ear series; no Sport subvariant established. |
+| [`Cleer ARC`](https://cleeraudio.com/blogs/news/cleer-arc-series-open-ear-audio-designed-for-everyday-life) | **1 / 1 / 2** | Open-ear family only; **generation unspecified**. |
+| [`Cleer ENDURO ANC`](https://cleeraudio.com/products/enduro-anc-noise-cancelling-headphones-with-60hr-battery-life-midnight-blue) | **1 / 1 / 2** | Over-ear noise-cancelling headset. |
+
+Model evidence comes from names, **not** generic battery/device-info service UUIDs or varying auxiliary company fields. No speaker model, hardware authenticity or number of physical units is established.
 
 No full MACs, raw advertisement payloads, serial-bearing names or precise locations are published.
