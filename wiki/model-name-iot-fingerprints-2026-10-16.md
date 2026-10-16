@@ -13,7 +13,7 @@ First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. Th
 
 ## Govee lighting and environmental monitoring
 
-The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following ten tokens account for only a subset; **94 others have not been individually verified** and must not all be labeled lights. Original Govee product pages corroborate most model families but not the authenticity of any particular advertiser; the H5074 source below is third-party.
+The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, spanning **104 distinct `H` model tokens**. The following **18 tokens** have been individually checked; **86 others have not** and must not all be labeled lights. Two checked tokens are confirmed only in a manufacturer model list, **without a product category**. Original Govee product/support material corroborates many model families but not the authenticity of advertisers; H5074 relies on a third-party manual.
 
 | Advertised model token (suffix hidden) | Manufacturer product / application | Variants / addresses / scans |
 |---|---|---:|
@@ -27,8 +27,16 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H7021*` | [96 ft outdoor string lights](https://us.govee.com/products/refurbished-govee-rgbic-warm-white-wi-fi-bluetooth-smart-outdoor-string-lights) | **13 / 13 / 121** |
 | `Govee_H5151*` | [Wi-Fi/BLE gateway in a thermometer/hygrometer kit](https://us.govee.com/products/refurbished-wi-fi-digital-thermometer-hygrometer), **not** a count of standalone probes | **12 / 12 / 72** |
 | `Govee_H5074*` | [Bluetooth thermometer/hygrometer](https://www.manualslib.com/manual/4009235/Govee-H5074.html) — **third-party-hosted manual**, no reliable direct original-manufacturer URL confirmed | **10 / 8 / 11** |
+| `Govee_H6199*` | [DreamView T1 camera-based TV backlight](https://us.govee.com/products/refurbished-govee-dreamview-t1-tv-backlight-1) | **12 / 12 / 1,738** |
+| `Govee_H6168*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **6 / 5 / 1,649** |
+| `Govee_H6022*` | [Table Lamp 2](https://us.govee.com/products/led-table-lamp-2) | **11 / 10 / 813** |
+| `Govee_H61D5*` | [Neon Rope Light 2, 5 m](https://us.govee.com/products/govee-neon-rope-light-2?variant=45351533609145) | **3 / 3 / 208** |
+| `Govee_H6169*` | [Manufacturer supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **4 / 3 / 203** |
+| `Govee_H6098*` | [Govee Care original model video](https://www.youtube.com/watch?v=GXV6zk6Nrng): TV Backlight 3S **candidate** | **12 / 12 / 186** |
+| `Govee_H5051*` | [Original FAQ](https://ca.govee.com/pages/easy-faqs): Wi-Fi temperature monitor, initially configured by Bluetooth | **2 / 2 / 4** |
+| `Govee_H5179*` | [Original FAQ](https://ca.govee.com/pages/easy-faqs): temperature-monitoring family **candidate**; humidity/connectivity details unverified | **1 / 1 / 1** |
 
-The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. H5151 gateway addresses are **not** individual temperature/humidity sensor counts; H5074 classification has weaker third-party source support.
+The match rule is `^Govee_(H[0-9A-Za-z]{4})` applied to the local name, followed by a hidden per-device suffix. Marketing names can vary by region; no exact hardware revision or ownership is inferred. The eight latest rows total **51 exact variants / 4,802 scans**, not an additional brand-wide cohort: all are already part of the 439 / 421 / 15,145 aggregate above. Their six higher-volume rows share `01,09,FF,09`; the two temperature leads share `01,03,09,FF`, but **neither AD pattern establishes a category or unifies models**. H5151 gateway addresses are not individual sensor counts; H5074 classification has weaker third-party source support.
 
 ## Sony EXTRA BASS portable speakers
 

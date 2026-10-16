@@ -355,9 +355,20 @@ All **16 exact `(addr,raw)` variants / 16 addresses / 5,626 scans** have public 
 
 A separate **18 exact `(addr,raw)` variants / 18 addresses / 226 scans** with complete public `Galaxy Watch6` token split into **two name-confirmed families**, not four advertising models: [`Galaxy Watch6`](https://news.samsung.com/us/samsung-galaxy-watch6-series-classic-inspiring-best-self-day-night-unpacked-2023/) without `Classic` (**12 / 12 / 60**) and [`Galaxy Watch6 Classic`](https://www.samsung.com/mm/watches/galaxy-watch/galaxy-watch6-classic-43mm-silver-bluetooth-sm-r950nzsaasa/) (**6 / 6 / 166**). Within Watch6, six variants carry `FD69` service/service-data UUID (**6 / 6 / 15**) and six Samsung-assigned company field 117 (**6 / 6 / 45**); all Classic variants carry company 117, with two auxiliary-data lengths (**3 / 3 / 3** and **3 / 3 / 163**). The original Samsung series announcement distinguishes Classic's rotating bezel, but no radio size, LTE variant, color, order SKU, firmware or authentic physical-watch count is inferred. Shared `FD69`/company-field shapes with Watch7 do **not** merge generations.
 
-## Epson EcoTank ET-2850 all-in-one printer
+## Epson EcoTank ET-series all-in-one printers
 
 All **6 exact `(addr,raw)` variants / 6 addresses / 197 scans** advertise exact public name `ET-2850 Series`, supporting the [original Epson ET-2850 series](https://support.epson.com/Support/Printers/All-In-Ones/ET-Series/Epson-ET-2850/s/SPT_C11CJ63202): color ink-tank printing, scanning, copying and automatic duplex printing. Ordered AD `01/1,FF/5,06/16,09/14`; auxiliary company field 64, unverified 128-bit UUID withheld. This is separate from HP printer leads; the advertising does not distinguish country/retail SKU, authenticate manufacture or count physical printers.
+
+Four **other complete public ET-series name tokens**, explicitly excluding ET-2850 above, have original Epson model pages:
+
+| Name token / original manufacturer model page | Exact variants / addresses / scans | Product-family distinction |
+|---|---:|---|
+| [`ET-3850`](https://epson.com/For-Work/Printers/Inkjet/EcoTank-ET-3850-Wireless-Color-All-in-One-Cartridge-Free-Supertank-Printer-with-Scanner%2C-Copier%2C-ADF-and-Ethernet/p/C11CJ61201) | **4 / 4 / 246** | Color ink tank print/scan/copy with ADF. |
+| [`ET-4850`](https://support.epson.com/select/For-Work/Printers/Inkjet/EcoTank-ET-4850-Wireless-Colour-All-in-One-Cartridge-Free-Supertank-Printer-with-Scanner%2C-Copier%2C-Fax%2C-ADF-and-Ethernet/p/C11CJ60202) | **3 / 3 / 53** | Color ink tank multifunction with fax and ADF. |
+| [`ET-2980`](https://epson.com/For-Home/Printers/Inkjet/EcoTank-ET-2980-Wireless-All-in-One-Color-Supertank-Printer-%E2%80%93-Black/p/C11CL41201) | **3 / 3 / 24** | Color ink tank print/scan/copy. |
+| [`ET-2800`](https://epson.com/For-Work/Printers/Inkjet/EcoTank-ET-2800-Wireless-Color-All-in-One-Cartridge-Free-Supertank-Printer-with-Scan-and-Copy/p/C11CJ66202) | **6 / 6 / 13** | Color ink tank print/scan/copy. |
+
+These four cohorts also share company field 64 and ordered `01/1,FF/5,06/16,09/14` with ET-2850; a 128-bit UUID is withheld. **The shared shape does not distinguish models**: the full name tokens do. Manufacturer example SKU/region/color does not identify observed configurations, BLE presence does not show print data transport, and no address count establishes physical printers or hospital deployment.
 
 ## Hyperice Hypervolt 2 and Hypervolt 2 Pro massage devices
 
