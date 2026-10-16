@@ -28,10 +28,10 @@ The `Govee_H*` cohort contains **439 variants / 421 addresses / 15,145 scans**, 
 | `Govee_H5151*` | [Wi-Fi/BLE gateway in a thermometer/hygrometer kit](https://us.govee.com/products/refurbished-wi-fi-digital-thermometer-hygrometer), **not** a count of standalone probes | **12 / 12 / 72** |
 | `Govee_H5074*` | [Bluetooth thermometer/hygrometer](https://www.manualslib.com/manual/4009235/Govee-H5074.html) — **third-party-hosted manual**, no reliable direct original-manufacturer URL confirmed | **10 / 8 / 11** |
 | `Govee_H6199*` | [DreamView T1 camera-based TV backlight](https://us.govee.com/products/refurbished-govee-dreamview-t1-tv-backlight-1) | **12 / 12 / 1,738** |
-| `Govee_H6168*` | [FCC application mirrored by FCCID.io](https://fccid.io/2A7VD-H6168): Govee RGBIC LED TV Backlight | **6 / 5 / 1,649** |
+| `Govee_H6168*` | [FCC application mirror](https://fccid.io/2A7VD-H6168) and [Govee-branded manual cover, Amazon mirror](https://m.media-amazon.com/images/I/B1qcwy7nX2L.pdf#page=1): RGBIC LED TV Backlight | **6 / 5 / 1,649** |
 | `Govee_H6022*` | [Table Lamp 2](https://us.govee.com/products/led-table-lamp-2) | **11 / 10 / 813** |
 | `Govee_H61D5*` | [Neon Rope Light 2, 5 m](https://us.govee.com/products/govee-neon-rope-light-2?variant=45351533609145) | **3 / 3 / 208** |
-| `Govee_H6169*` | [FCC application mirrored by FCCID.io](https://fccid.io/2A7VD-H6169): Govee TV Backlight for 70–80-inch TVs | **4 / 3 / 203** |
+| `Govee_H6169*` | [FCC application mirror](https://fccid.io/2A7VD-H6169): TV backlight for 70–80-inch TVs; [Govee-branded manual cover, Amazon mirror](https://m.media-amazon.com/images/I/B1g1XVIpvTL.pdf#page=1): RGBIC LED TV Backlight | **4 / 3 / 203** |
 | `Govee_H6098*` | [Govee Care original model video](https://www.youtube.com/watch?v=GXV6zk6Nrng): TV Backlight 3S **candidate** | **12 / 12 / 186** |
 | `Govee_H5051*` | [Original FAQ](https://ca.govee.com/pages/easy-faqs): Wi-Fi temperature monitor, initially configured by Bluetooth | **2 / 2 / 4** |
 | `Govee_H5179*` | [Original FAQ](https://ca.govee.com/pages/easy-faqs): temperature-monitoring family **candidate**; humidity/connectivity details unverified | **1 / 1 / 1** |
@@ -175,7 +175,7 @@ Keep `GBK_H*` separate from `Govee_H*` and `ihoment_H*`: **60 exact variants / 5
 | `GBK_H618A*` | RGBIC Basic light strip | **2 / 1 / 2,834** |
 | `GBK_H613D*` | [Original specification-index clue](https://community.govee.com/support/faqs/specs) suggests RGB strip; full original category text not retrieved, **provisional only** | **2 / 2 / 190** |
 | `GBK_H6168*` | [FCC application mirrored by FCCID.io](https://fccid.io/2A7VD-H6168): Govee RGBIC LED TV Backlight; same public code already under `Govee_H*` | **2 / 2 / 12** |
-| `GBK_H613G*` | [Original supported-model list](https://developer.govee.com/docs/support-product-model): **category unknown** | **1 / 1 / 1** |
+| `GBK_H613G*` | [Govee-branded manual cover, Amazon mirror](https://m.media-amazon.com/images/I/C1-J9TE21SL.pdf#page=1): RGB LED Strip Light | **1 / 1 / 1** |
 | `GBK_H6167*` | [2.4 m RGBIC TV Backlight, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H6167); also under `Govee_H*` | **1 / 1 / 4** |
 | `GBK_H618F*` | [2 × 15 m RGBIC LED Strip Light with Alexa, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H618F); also under `Govee_H*` | **1 / 1 / 2** |
 | `GBK_H619B*` | [7.5 m RGBIC Pro Strip Lights with Alexa, original model directory](https://app2.govee.com/bff-app/v1/user/guide/device/info?market=US&name=H619B) | **1 / 1 / 2** |
@@ -185,6 +185,8 @@ Keep `GBK_H*` separate from `Govee_H*` and `ihoment_H*`: **60 exact variants / 5
 Auxiliary company field `0x8802` is not sufficient brand proof; duplicate and reordered AD fields do not uniquely identify a model. The sharp scan imbalance for H618A is observation frequency, **not** a sales estimate.
 
 The additional eight `GBK_H*` codes above account for the previously unlisted **10 exact variants / 234 scans**. H6168, H6167 and H618F are **already listed in `Govee_H*`**; H6114 and H6159 also occur under `ihoment_H*`. Duplicate public codes across prefixes are not extra product models or proof of identical broadcasting units. H613D's RGB-strip category remains an incomplete specification-index clue, not a directly verified original mapping.
+
+The H613G, H6168 and H6169 descriptions also appear alongside the exact codes on original-manufacturer manuals hosted by Amazon; these are **manual mirrors, not Govee App category records**. The name/model match remains a candidate and does not authenticate a received BLE advertisement.
 
 ## BlackVue connected dashcams
 
