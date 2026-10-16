@@ -1,19 +1,18 @@
 ---
 qmd:
   metadata:
-    title: "Hospital-related IoT research wiki"
-    date: "2026-10-15"
-    tags: [hospital]
+    title: "IoT product fingerprint research wiki"
+    date: "2026-10-16"
+    tags: [iot, ble]
     confidence: medium
 ---
 
-# Hospital-related IoT research wiki
+# IoT product fingerprint research wiki
 
-Sanitized device/family leads from existing private research recorded since **2026-10-14**.
-Dates are research-record dates, **not** inferred radio-observation dates.
-Confidence describes attribution of the research lead, not verified installation.
+Earlier entries are sanitized hospital-region leads from private research recorded since **2026-10-14**; newer entries also use first-party BLE advertisements and **do not require any hospital association**.
+Dates are research-record dates, **not** inferred radio-observation dates. Confidence describes product attribution, not verified installation.
 
-## Device and family pages
+## Earlier hospital-region device and family pages
 
 - [Gozio hospital-wayfinding beacon family](gozio-wayfinding-beacon.md)
 - [ResMed AirMini candidate](resmed-airmini.md)
@@ -35,17 +34,21 @@ Confidence describes attribution of the research lead, not verified installation
 - [Molekule purifier candidate](molekule-purifier.md)
 - [BladderScan family candidate — low confidence](verathon-bladderscan.md)
 
+## Broader first-party BLE product fingerprints
+
+- [Levoit Core 400S smart air purifier](levoit-core-400s.md)
+- [Broader first-party BLE fingerprint catalogue](first-party-ble-fingerprints-2026-10-16.md)
+- [Model-name fingerprints: Govee lighting and BlackVue dashcams](model-name-iot-fingerprints-2026-10-16.md)
+
+These entries use anonymized, read-only first-party `cluetooth` observations rather than WiGLE names. Fingerprints can combine sanitized names, service UUIDs, manufacturer data, address-prefix patterns and ordered AD structures; shape is optional and rarely unique. No hospital relationship is required or implied.
+
 ## Reading the evidence
 
-These are clinical, navigation, facilities, and office-infrastructure candidates from hospital-region searches, not an inventory or ownership claim. Generic phones and printers can be retained as possible hospital-system equipment; their model identification and plausible use do **not** establish hospital deployment.
+The earlier hospital-region pages cover clinical, navigation, facilities, and office-infrastructure candidates, not an inventory or ownership claim. Generic phones and printers can be retained as possible hospital-system equipment; their model identification and plausible use do **not** establish hospital deployment.
 
 Saved responses were considered without requiring hospital-polygon membership. WiGLE observation and distinct `netid` counts are **not physical equipment counts or proof of deployment**; names, company IDs, and BT/BLE labels do not authenticate identity.
 
-No raw ADV/GATT frames were available to verify these identifications. APK
-findings are static client capabilities, not captured sessions or vulnerability
-proof. No new WiGLE queries, device operations, credentials, or app execution
-were used for this wiki. Raw addresses, coordinates, device serials, responses,
-and APK binaries remain outside Git.
+For earlier WiGLE-based pages, no raw ADV/GATT frames were available to verify identifications. APK findings are static client capabilities, not captured sessions or vulnerability proof. No new WiGLE queries or device operations were used for those pages. Raw addresses, coordinates, device serials, responses, and APK binaries remain outside Git.
 
 Private provenance: `hospital_iot_candidates_2026-10-14.md`,
 `medical_exploration_report.md`, `today_all_records_2026-10-14.md`,
