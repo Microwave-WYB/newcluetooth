@@ -1,0 +1,79 @@
+---
+qmd:
+  metadata:
+    title: "Unassigned name prefixes: no product identification"
+    date: "2026-10-16"
+    tags: [iot, ble, fingerprints]
+    confidence: medium
+---
+
+# Unassigned name prefixes: no product identification
+
+## How to recognize it
+
+- **Local name:** `DT-TAG*`, `Envoy*`, `FSCE*`, `FJLB*`, `FSLB*`, `TNNOW`, `raven*`, `memo-dem*`, `TCL_B*`, `quec_ble_*`, `gate*`, `rnet`, `HN_ACCF*`, `glow`, `sande`, `Orange`, `FI-FC*`, `DEI-*`, `BTSQ*`, `Tsunghanrog`, `AZPDKC*`, `OMNI`, `LDL-*`, `XH_CL_B*`, `PROV_*`, `DFU-V*`, `office*`, `Baxter*`
+- **Company field:** company field 881, company field 256, company field 1087
+- **Service / service-data UUID:** `FFF1`, `FE59`, `FE2C`, `1800`
+- **AD shape (ordered type/data length):** `01/1,FF/6,09/13,FF/14`, `01/1,FF/25,0A/1,03/2,16/13,09/5`
+- **What it is:** Name prefixes, shapes and company fields examined and left without a reliable product, vendor or category.
+- **Confidence and limits:** No product identification; every entry lists why it remains unassigned. Identifiers restate values recorded in the entries below; shared or generic values are flagged there.
+
+These are **product or family candidates**, not authenticated device identities. A fingerprint may combine a sanitized local name, advertised UUID, manufacturer field or ordered AD structure; **shape need not be unique**. Counts below are exact `(addr,raw)` advertisement variants / distinct observed addresses / summed scans from read-only queries of simi's first-party `cluetooth` database on **2026-10-16**. These are different from physical-device counts. Research date is not observation date. No hospital relationship is required or inferred. AD lengths below count **data bytes only**, excluding the length and type bytes; types and lengths preserve their observed order.
+
+## Unassigned name groups
+
+`DT-TAG*` occurs in **18 variants / 17 addresses / 279 scans** with ordered types `01, FF, 09, 12, 0A`. Seventeen variants have corresponding data lengths `1,25,15,4,1` and iBeacon-format manufacturer data; one has `1,16,15,4,1` and a different auxiliary company value. A name field has a trailing NUL. No reliable matching product/model documentation was found. **Do not attribute it to a tag vendor or UWB technology** from the name or iBeacon frame alone.
+
+`Envoy*` has **9 variants / 9 addresses / 72 scans**, with no company field: eight advertise generic `1800` and one generic Espressif provisioning UUID `021a9004-0382-4aea-bff4-6b3f1c5adfb4`. An [Enphase Envoy-S gateway](https://investor.enphase.com/news-releases/news-release-details/enphase-energy-launches-next-generation-envoy-s) exists, but no evidence binds these broadcasts to Enphase; brand/model remain **unassigned**.
+
+Three unassigned name groups share parsed company field 881 and chiefly `01/1, FF/6, 09/13, FF/14`: `FSCE*` (**462 variants / 462 addresses / 1,008 scans**), `FJLB*` (**307 / 307 / 679**), and `FSLB*` (**226 / 226 / 446**). Their suffixes stay private. The [SIG Assigned Numbers HTML dated 2023-12-27](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Assigned_Numbers/out/en/index-en.html) lists **881 / `0x0371` as ORBCOMM**, while the [official current company-identifiers YAML](https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/company_identifiers/company_identifiers.yaml) checked in this follow-up omitted that number; no revocation or reassignment is inferred. No manufacturer maps these names to a broadcast product. Neither the old allocation, shared shape nor field proves one maker, product class, three models, or a relationship among these groups.
+
+An additional **11 variants / 11 addresses / 151 scans** in a custom-name cohort have service-data UUID `FE2C`, the [Google Fast Pair service](https://developers.google.com/nearby/fast-pair/specifications/service/provider), but **no confirmed product manufacturer/model**. The possibly personal name is not published or used to combine these with the separate Bose candidate.
+
+`TNNOW` (case-insensitive exact five-byte name) has **34 variants / 33 addresses / 600 scans**, all advertising service/service-data UUID `FFF1` with `01/1,FF/25,0A/1,03/2,16/13,09/5`. Company field 76 is not brand proof. An [independent conference-badge teardown](https://xkyle.com/reInvent-2023-Badge-Teardown/) mentions a similarly named BLE module, but its `FFF1` is a **GATT characteristic**, not proof of matching advertising protocol. Manufacturer, model and conference deployment remain **unassigned**.
+
+`raven*` (name 9 bytes) has **6 exact variants / 6 addresses / 92 scans** with `01/1,07/16,09/9`; its six 128-bit service UUIDs differ, may encode device-level identifiers and are **not published**. [Raven Connected's vehicle-camera/telematics product](https://ravenconnected.com/product/) is only a same-name possibility; no public match binds these broadcasts to the vendor, so **manufacturer and category remain unassigned**.
+
+`memo-dem*` (suffix hidden, name 17 bytes) has **8 exact variants / 8 addresses / 213 scans** with ordered `09/17,12/4,FF/21,12/4` (including both repeated AD type `12` entries), no service UUID, and company fields 1537 (5 / 5 / 155) or 1547 (3 / 3 / 58). Although [MEMO sells BLE-connected display locks](https://memolocks.com/en/order-platform/product/air2-line-network-starter-package/), no source maps this broadcast name to a MEMO product; the two assigned company fields do **not** support that attribution. **Manufacturer, use and model remain unknown.**
+
+`TCL_B*` (literal underscore, suffix hidden, name 17 bytes) has **6 exact variants / 6 addresses / 49 scans** with `01/1,09/17,FF/6`, no UUID and inconsistent company fields. [TCL's Bluetooth TV remote pairing guide](https://support.tcl.com/en_US/how-to-pair-your-remote-with-your-tcl-android-tv) is only product background: **brand, television/remote/appliance category and model remain unassigned**.
+
+`quec_ble_*` (literal underscore, suffix hidden, name 13 bytes) has **12 exact variants / 12 addresses / 255 scans** on a newer case-insensitive recheck (older snapshot 8 / 8 / 34), `01/1,FF/23,08/13,02/2`, generic GATT UUID `1801` and unverified company field 21841. A [Quectel BLE module AT manual](https://developer.quectel.com/doc/shortrange/HCM511S/en/Resources/AT-Firmware/AT-Commands-Manual.html) documents configurable names, **not** this name or HCM511S identification; brand, module model and end-product role remain unknown.
+
+`gate*` (suffix hidden) has **11 exact variants / 11 addresses / 561 scans** across three name-length/AD forms: target 6-byte-name group **8 / 8 / 518** with `01/1,07/16,09/6`; 7-byte-name group **2 / 2 / 10** with an additional `16/17`; 24-byte-name group **1 / 1 / 33** with repeated `01` and `09`. No company field or reliable product mapping was found; the common 128-bit UUID for the first group is withheld pending confidence it is not device-specific. **Not classified as a gate/garage/access-control product.**
+
+`rnet` (exact four-byte name) has **10 exact variants / 10 addresses / 17 scans** with ordered `01/1,FF/8,09/4,06/16`. [Curtiss-Wright/PG Drives R-net wheelchair Bluetooth products](https://www.cw-industrial.com/sites/default/files/resources/Medical-Mobility-Product-Brochures/R-net-Android.pdf) exist, but no source maps this exact BLE name/shape to them. **Do not count it as an identified wheelchair controller.**
+
+`HN_ACCF*` (suffix hidden, name 15 bytes) has **9 exact variants / 9 addresses / 179 scans**, ordered `01/1,09/15,09/15` with duplicated name AD and no company/service UUID. An [independent EPEVER BLE investigation](https://github.com/eliasweingaertner/epever-ble) mentions a broader `HN_` naming family but **does not** bind this exact prefix. Neither EPEVER nor air conditioning/ventilation is established; manufacturer and use remain unknown.
+
+`glow` (exact four-byte name) has **7 exact variants / 7 addresses / 730 scans**, `01/1,16/19,09/4,07/16`, service-data UUID `0001` and a withheld shared 128-bit UUID, without company field. [Casper's Glow product](https://casper.com/products/glow) is **not** an identification: the [published integration](https://www.home-assistant.io/integrations/casper_glow) discovers its BLE units as `Jar*`. Manufacturer/use remain unknown.
+
+`sande` (exact five-byte name) has **8 exact variants / 8 addresses / 304 scans**, ordered `19/2,01/1,FF/14,09/5,FF/16`, no service UUID and varying parsed company values. Neither Sanden HVAC nor a [same-name consumer earbud manual](https://manuals.plus/sande/bs01-true-wireless-stereo-earphones-manual) maps to this broadcast. Manufacturer, category and model remain unknown.
+
+`Orange` (case-insensitive exact six-byte name) has **8 exact variants / 8 addresses / 103 scans**, `01/1,09/6,FF/18`, no service UUID and uninformative company field `0xFFFF`. [Orange Box's original product](https://orangeamps.com/en-us/products/orange-box/) uses pairing name `Orange Box`, **not** this exact name; Orange Amps/telecom identity, speaker type and model remain unknown.
+
+`FI-FC*` (suffix hidden, name 14 bytes) has **8 exact variants / 8 addresses / 60 scans**, ordered `19/2,01/1,07/16,09/14`, no company field and a withheld shared 128-bit UUID. [Fi smart dog collars](https://tryfi.com/) exist, but no public source maps this name/UUID to Fi; **not** eight identified collars/pets or any established generation.
+
+`DEI-*` (seven-byte suffix hidden) has **18 exact variants / 9 addresses / 99 scans**, chiefly ordered `01/1,FF/9,09/11,0A/1,07/16` and a non-identifying `0xFFFF` company field (17 variants). [Directed's DS4 Bluetooth vehicle remote starter](https://www.directed.com/our-products/directed-ds4) does not document this BLE name; **not** classified as a Directed/vehicle alarm product.
+
+`BTSQ*` (suffix hidden, name 11 bytes) has **4 exact variants / 4 addresses / 733 scans**, ordered `19/2,01/1,09/11,07/16`, no company field and a withheld 128-bit service UUID. No reliable source binds the name/shape to a hardware product; a same-name Bluetooth scanner app is **not** device identity evidence. Manufacturer and use remain unknown.
+
+`Tsunghanrog` (case-insensitive exact 11-byte name) has **7 exact variants / 7 addresses / 291 scans** with `01/1,03/6,06/16,09/11` (**5 / 5 / 287**) or `01/1,03/2,07/16,09/11` (**2 / 2 / 4**), no company field. Generic Device Information service `180A` and other unmapped short UUIDs do not identify a brand. The 128-bit UUID is withheld; **device category and manufacturer remain unknown**.
+
+`AZPDKC*` (four-byte suffix hidden, name 11 bytes) has **8 exact variants / 8 addresses / 173 scans**, ordered `01/1,0A/1,09/11`, no company field or advertised service UUID. This generic flags/Tx-power/name structure and unmatched name do **not** establish a manufacturer, product category or model.
+
+Case-insensitive exact `OMNI` (name 4 bytes) has **8 exact variants / 7 addresses / 138 scans**, ordered `01/1,07/16,0A/1,09/4,FF/16` and a withheld 128-bit service UUID. Auxiliary company field 256 is [assigned to TomTom](https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/company_identifiers/company_identifiers.yaml), but no product-source match ties these ads to TomTom or an OMNI-branded lock. **Brand, device category and model remain unassigned**; addresses are not verified unit counts.
+
+`LDL-*` (suffix hidden, name 20 bytes) has **10 exact variants / 10 addresses / 54 scans**, ordered `09/20,01/1`, with no company or advertised service UUID. No credible source maps this prefix to a manufacturer, medical/vehicle/lighting use or model; the acronym is **not** product evidence.
+
+`XH_CL_B*` (literal underscores, suffix hidden, name 14 bytes) has **6 exact variants / 6 addresses / 64 scans**, ordered `01/1,09/14,0A/1,FF/2`, without advertised service UUID. The two-byte manufacturer fields parse as 0 (**5 / 5 / 38**) or 2 (**1 / 1 / 26**) but do not prove either vendor or two models. No reliable product mapping was found; category, brand and model remain unknown.
+
+`PROV_*` (literal underscore, suffix hidden) now has **11 exact variants / 11 addresses / 76 scans** (older 5 / 5 / 57), ordered `01/1,07/16,09/12`, without company field; the 128-bit service UUID is withheld. [Espressif's original Wi-Fi BLE provisioning example](https://github.com/espressif/esp-idf/blob/v5.2/examples/provisioning/wifi_prov_mgr/README.md) uses `PROV_` names, but these ads **do not match its published service UUID**. No ESP32, downstream appliance, temporary state or actual provisioning success is established.
+
+Case-insensitive `DFU-V*` (suffix hidden, name 7 bytes) has **7 exact variants / 7 addresses / 232 scans**, all with service/service-data UUID `FE59` and ordered `01/1,02/2,09/7,16/12` (**6 / 6 / 231**) or `16/6` (**1 / 1 / 1**). [Nordic's original Secure DFU transport documentation](https://docs.nordicsemi.com/r/bundle/nrf5_sdk_v17.1.1/page/lib_dfu_transport_ble.html) assigns `FE59` to update support, **not** to any identified end product. These ads do not establish an active update, bootloader state, brand/chip model or two hardware types.
+
+Strict lowercase `office*` has **2 exact variants / 2 addresses / 84 scans**: exact `office` (**1 / 1 / 83**, UUID `FFB0`, `01/1,03/2,FF/10,09/6`) and `office*` with suffix hidden (**1 / 1 / 1**, no UUID, `01/1,FF/26,08/9`). Neither identifies a printer or office IoT product. Broader case-insensitive `office*` is **6 / 6 / 91** and includes one separate **1 / 1 / 2** `OfficeJet` name with HP company field 101, a generic [HP printer-family](https://www.hp.com/us-en/shop/mdp/printers/officejet) clue already noted in the HP wiki; it does not classify the lowercase cohort or add an exact printer model.
+
+A read-only case-insensitive name-prefix check for `iHealth*`, `Omron*`, `Withings*`, `Dexcom*`, `Masimo*`, and `Nonin*` found **only `Dexcom*` (1 exact variant / 1 address / 4 scans)**. Its public name has no identifiable complete product-model token; the exact transmitter/device class remains **unknown** and no medical product is counted from this check. Other five named prefixes have zero matches **by name only**, not proof that those brands' devices are absent or that any observed device was used in a hospital.
+
+A separate `Baxter*` name hit (**1 exact variant / 1 address / 1 scan**) has generic Battery Service `180F` and company field 1087, which [Bluetooth SIG assigns to Tentacle Sync GmbH](https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/company_identifiers/company_identifiers.yaml), **not Baxter**. The name and assigned field conflict; brand, product category and model remain **unknown**. It cannot be called a Baxter infusion pump or hospital device. `Medtronic*`, `Abbott*`, `Mindray*` and literal `GE Healthcare*` name-prefix checks had zero matches, not absence of those devices under other names.
