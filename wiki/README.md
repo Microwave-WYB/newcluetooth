@@ -110,7 +110,7 @@ Each page is one advertisement-structure / protocol family. These entries use an
 - [`living*` shared room-name prefix](living-room-name-prefix.md) — Not one product: a room-name prefix over several unrelated ecosystems.
 - [Logitech `M720 Triathlon` / `MX Master 2S` HID mice](logitech-hid-mice.md) — Logitech wireless-mouse name tokens with HID service and mouse appearance.
 - [Marshall Acton and Stanmore speakers (`FE8F`, `AA00`, `FE2C`)](marshall-home-speakers.md) — Marshall Acton and Stanmore Bluetooth speakers distinguished by generation name token.
-- [Unnamed Bluetooth Mesh Proxy (`1828`) service signal](mesh-proxy-1828-unnamed.md) — Unnamed advertisements carrying the SIG Mesh Proxy service UUID `1828`.
+- [Unnamed Bluetooth Mesh Proxy (`1828`) and Provisioning (`1827`) service signals](mesh-proxy-1828-unnamed.md) — Unnamed advertisements carrying the SIG Mesh Proxy service UUID `1828` or Mesh Provisioning service UUID `1827`.
 - [Meta `Quest*` headsets (`FEB8`)](meta-quest-feb8.md) — Meta Quest 2 / 3 / 3S name tokens.
 - [`MIRA-*` name with Nordic-like UUID (manufacturer unknown)](mira-name-unknown-uuid.md) — `MIRA-*` name signal; manufacturer and product class unknown.
 - [Motive fleet `AABL*` / `Motive_AABL*` (`FC6D`)](motive-aabl.md) — Motive fleet BLE endpoint candidates.
