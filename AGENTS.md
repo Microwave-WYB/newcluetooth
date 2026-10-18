@@ -275,6 +275,38 @@ For the local test database use `mise run //db:testdb-up`,
 `mise run //db:testdb-wait` (one readiness check),
 `mise run //db:testdb-migrate`, and `mise run //db:testdb-down`.
 
+## Wiki
+
+`wiki/` exists for **lookup**: someone who sees a Bluetooth advertisement must be
+able to quickly find out what it is. Organize for lookup by observable
+identifiers, not for narrative.
+
+- One page per **advertisement-structure / protocol family**, not per brand or
+  marketing product line. Entries whose advertisements are very similar (same
+  company field, service UUID scheme, AD-structure layout, name-token
+  convention, or vendor protocol across models) live on one page; split into
+  separate pages when the structure or protocol clearly differs, even within one
+  brand. One brand with several unrelated ad formats gets several pages; several
+  brands sharing one protocol or ODM ad format may share a page. Name the page
+  after the protocol/shape family and mention the brands in the title or intro.
+  Decide only from evidence already recorded; never invent technical claims to
+  justify a grouping.
+- Every family page opens with a compact "How to recognize it" block: company
+  field(s), service/service-data UUID(s), local-name pattern, ordered
+  AD-structure shape, then what it is with confidence and caveats. Use the same
+  notation everywhere so grep works: company fields as `company field N`
+  (decimal), 16-bit UUIDs uppercase (`FEA0`), 128-bit UUIDs lowercase, AD shape
+  as `type/length` pairs in observed order (`01/1,09/17,FF/7`).
+- `wiki/README.md` is the only index. It holds lookup tables keyed by company
+  field, service UUID, name prefix and AD shape that point to the family page.
+  An identifier shared by several families is listed with all of them and
+  flagged as ambiguous, never resolved to one.
+- Aggregate or cross-family pages may exist only as thin indexes linking to
+  family pages; they must not hold entry content.
+- New findings go into the matching family page; create one only if none fits.
+- Keep the existing evidence rules: candidates are not authenticated identities,
+  and no MACs, raw payloads, locations, device-level UUIDs, WiGLE data or secrets.
+
 ## Conventions
 
 - Prefer simple stage boundaries over defensive wrappers.
