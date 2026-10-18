@@ -1,13 +1,21 @@
 ---
 qmd:
   metadata:
-    title: "IoT fingerprints from broadcast model-name tokens"
+    title: "Govee H-code name tokens: Govee_H*, ihoment_H*, GBK_H*"
     date: "2026-10-16"
-    tags: [iot, ble, models]
+    tags: [iot, ble, fingerprints]
     confidence: medium
 ---
 
-# IoT fingerprints from broadcast model-name tokens
+# Govee H-code name tokens: `Govee_H*`, `ihoment_H*`, `GBK_H*`
+
+## How to recognize it
+
+- **Local name:** `Govee_H*`, `ihoment_H*`, `GBK_H*`
+- **Company field:** company field 34818, company field 34819, company field 0x8802
+- **AD shape (ordered type/data length):** `01,09,FF,09`
+- **What it is:** Govee lighting, plug, environmental-monitoring and other products identified by the public `H` model code in the local name (three name prefixes, same code scheme).
+- **Confidence and limits:** Candidate per model code from manufacturer/third-party material; ranges from original manufacturer mappings to lower-confidence third-party candidates (see per-code rows). Identifiers restate values recorded in the entries below; shared or generic values are flagged there.
 
 First-party simi `cluetooth` read-only aggregates, researched **2026-10-16**. The principal feature here is a **sanitized model token in the advertised name**, not a claim that a generic BLE shape uniquely identifies a model. Counts are exact `(addr,raw)` variants / distinct observed addresses / scans, **not confirmed physical devices**. Hide all device-specific suffixes; names can be spoofed, and a research date is not an observation date. No hospital association is required.
 
@@ -78,56 +86,6 @@ The other five codes from this ranked review (H6167, H617E, H61B5, H7016, H7028)
 
 A further review ranked by **scan count rather than variant count** identified H61F5, H619E, H61C3, H6065 and H616C: **7 exact variants / 326 scans**, all with original code-to-category mappings and no duplicate public code among the already listed `ihoment_H*`/`GBK_H*` groups. This checks observation priority, **not** product prevalence; refurbished source pages do not describe the observed unit's condition.
 
-## Sony EXTRA BASS portable speakers
-
-Five exact `LE_SRS-XB` model-name tokens appear in **25 variants / 25 addresses / 167 scans**. [Sony's SRS-XB43 specifications](https://www.sony.com/electronics/support/wireless-speakers/srs-xb43/specifications) and [XB41/XB31 series guide](https://www.sony.fr/electronics/support/articles/00200861) document Bluetooth portable speakers; the model token is the primary fingerprint. `LE_` in a name does **not** imply LE Audio support.
-
-| Advertised name-model token | Variants / addresses / scans |
-|---|---:|
-| `LE_SRS-XB23` | **5 / 5 / 54** |
-| `LE_SRS-XB31` | **1 / 1 / 18** |
-| `LE_SRS-XB33` | **9 / 9 / 44** |
-| `LE_SRS-XB41` | **2 / 2 / 23** |
-| `LE_SRS-XB43` | **8 / 8 / 28** |
-
-Sixteen variants have `FF/21, 01/1, 09/11` with auxiliary Sony company field 301; nine have `16/(10,11 or 15), 0A/1, 09/11` with `FE2C` service data. A model can appear in both layouts: neither shape alone identifies the model.
-
-## Amazon Echo subfamilies
-
-An exact-case `Echo*` name cohort has **29 variants / 29 addresses / 330 scans**; an earlier case-insensitive prefix survey counted 30 / 30 / 335 and should not be silently combined. [Amazon's Echo buying guide](https://www.aboutamazon.com/news/devices/amazon-echo-buying-guide) distinguishes Dot/Pop smart speakers from Buds wireless earbuds; names do not establish product generation.
-
-| Sanitized name token | Candidate category | Variants / addresses / scans |
-|---|---|---:|
-| `Echo Dot*` | Alexa smart speaker | **21 / 21 / 206** |
-| `Echo Pop*` | Compact Alexa smart speaker | **4 / 4 / 97** |
-| `Echo Buds*` | Alexa wireless earbuds, **not a speaker** | **2 / 2 / 22** |
-| Other `Echo*` | Unresolved Echo-family lead | **2 / 2 / 5** |
-
-Dot/Pop generally combine their name token with Amazon-assigned service-data UUID `FE00`; `01/1,16/25,09/12,0A/1` is common, with one shorter service-data field. Buds combine their name with auxiliary Amazon company field 369 and a different service UUID; malformed-looking parsed AD fields are not a model discriminator. No `Echo Show` token was identified in this cohort.
-
-## Meta Quest VR / mixed-reality headsets
-
-The `Quest*` cohort has **26 variants / 26 addresses / 175 scans**. [Meta's Quest device comparison](https://developers.meta.com/horizon/essentials/compare-devices/) corroborates the three name-model candidates. Match `Quest 3` with a model-token boundary so it does **not** include `Quest 3S`.
-
-| Name-model token | Variants / addresses / scans |
-|---|---:|
-| `Quest 2` | **1 / 1 / 1** |
-| `Quest 3` (not `3S`) | **11 / 11 / 137** |
-| `Quest 3S` | **14 / 14 / 37** |
-
-All groups carry service/service-data UUID `FEB8` and auxiliary company field 1422; ordered AD types `01,09,03,FF,16` with name-data length 7 or 8. Name and UUID are **candidate features, not identity authentication** or proof the headset was running.
-
-## Pokémon GO physical accessories
-
-The case-insensitive `Pokemon*` cohort has **52 variants / 51 addresses / 1,023 scans**. Two exact product-name tokens account for the cohort, without implying that all broadcasters are original licensed hardware.
-
-| Observed name token | Candidate and source | Variants / addresses / scans |
-|---|---|---:|
-| `Pokemon GO Plus +` | [Pokémon GO Plus+](https://www.pokemongoplusplus.com/en/) (also works with Pokémon Sleep) | **42 / 41 / 924** |
-| `Pokemon GO Plus` | [Original GO Plus or compatible accessory](https://niantic.helpshift.com/hc/en/6-pokemon-go/faq/77-official-bluetooth-devices-1689609298/) | **10 / 10 / 99** |
-
-The Plus+ group has ordered AD types `01,FF,20,09`, data lengths `1,17,4,17` and auxiliary company field 1363; the earlier-name group uses four shapes and sometimes a service-data UUID field. Third-party auto-catchers or software emulation **cannot be ruled out**, especially for the earlier-name group. No Poké Ball Plus attribution is made.
-
 ## `ihoment_H` / Govee multi-category devices
 
 This separate name cohort has **153 exact variants / 144 addresses / 2,327 scans** and **42 public H model codes**. Match `ihoment_Hxxxx` only when the token is followed by a delimiter or end of name; hide the rest. The **18 reviewed codes** below cover **125 variants / 2,102 scans**, leaving **24 unreviewed codes / 28 variants / 225 scans** (remaining distinct addresses not recomputed). They span lighting, power, leak detection, an air purifier and fans; do not merge observations or addresses with `Govee_H*` or `GBK_H*` on a shared code.
@@ -187,19 +145,3 @@ Auxiliary company field `0x8802` is not sufficient brand proof; duplicate and re
 The additional eight `GBK_H*` codes above account for the previously unlisted **10 exact variants / 234 scans**. H6168, H6167 and H618F are **already listed in `Govee_H*`**; H6114 and H6159 also occur under `ihoment_H*`. Duplicate public codes across prefixes are not extra product models or proof of identical broadcasting units. H613D's RGB-strip category remains an incomplete specification-index clue, not a directly verified original mapping.
 
 The H613G, H6168 and H6169 descriptions also appear alongside the exact codes on original-manufacturer manuals hosted by Amazon; these are **manual mirrors, not Govee App category records**. The name/model match remains a candidate and does not authenticate a received BLE advertisement.
-
-## BlackVue connected dashcams
-
-Name-model tokens distinguish seven candidate series within **19 variants / 19 addresses / 176 scans**; the broader case-insensitive `BlackVue*` prefix has one further **unassigned** variant/address/scan (20 / 20 / 177 total). The [official BlackVue smartphone connection instructions](https://manual.blackvue.com/docs/dr770x/playing-and-managing-videos/using-your-smartphone-android-ios-dr750x-plus-series/) describe Bluetooth Seamless Pairing followed by Wi-Fi; Cloud connectivity is optional, not inferred from a BLE advertisement. These are series-name leads, not proof of camera sub-configuration.
-
-| Name-model token (suffix hidden) | Variants / addresses / scans | Ordered AD types / data lengths in bytes |
-|---|---:|---|
-| `750XPLUS*` | **4 / 4 / 5** | `01/1, 09/23` |
-| `970XLTE*` | **3 / 3 / 124** | `01/1, 09/23` |
-| `770X*` | **3 / 3 / 5** | `01/1, 09/19` |
-| `900X*` | **3 / 3 / 12** | `01/1, 0A/1, 09/19` |
-| `900XPLUS*` | **3 / 3 / 3** | `01/1, 09/23` |
-| `970X*` | **2 / 2 / 25** | `01/1, 09/20` |
-| `750XLTE*` | **1 / 1 / 2** | `01/1, 09/26` |
-
-AD lengths exclude the length/type bytes. The `900X` and `970X` rows exclude their separately listed `PLUS` and `LTE` tokens respectively. These advertisements do not carry a manufacturer ID or service UUID. Identical simple AD shapes across distinct names are **not** grounds to merge product series. No full MACs, per-device names, serials, payloads or locations are published.
