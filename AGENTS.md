@@ -277,9 +277,10 @@ For the local test database use `mise run //db:testdb-up`,
 
 ## Wiki
 
-`wiki/` exists for **lookup**: someone who sees a Bluetooth advertisement must be
-able to quickly find out what it is. Organize for lookup by observable
-identifiers, not for narrative.
+`wiki/` is a **record of identified Bluetooth advertisement families**. It is not
+itself a lookup tool: the records are meant to be compiled later into a
+machine-built, queryable index, so do not hand-maintain lookup or ambiguity
+tables.
 
 - One page per **advertisement-structure / protocol family**, not per brand or
   marketing product line. Entries whose advertisements are very similar (same
@@ -291,16 +292,16 @@ identifiers, not for narrative.
   after the protocol/shape family and mention the brands in the title or intro.
   Decide only from evidence already recorded; never invent technical claims to
   justify a grouping.
-- Every family page opens with a compact "How to recognize it" block: company
-  field(s), service/service-data UUID(s), local-name pattern, ordered
-  AD-structure shape, then what it is with confidence and caveats. Use the same
-  notation everywhere so grep works: company fields as `company field N`
-  (decimal), 16-bit UUIDs uppercase (`FEA0`), 128-bit UUIDs lowercase, AD shape
-  as `type/length` pairs in observed order (`01/1,09/17,FF/7`).
-- `wiki/README.md` is the only index. It holds lookup tables keyed by company
-  field, service UUID, name prefix and AD shape that point to the family page.
-  An identifier shared by several families is listed with all of them and
-  flagged as ambiguous, never resolved to one.
+- Every family page keeps a consistent "How to recognize it" block (local name,
+  company field, service/service-data UUID, ordered AD shape, what it is,
+  confidence and limits) followed by the evidence. Treat it as structured data
+  for a future indexer and keep the notation identical everywhere: company
+  fields as `company field N` (decimal), 16-bit UUIDs uppercase (`FEA0`),
+  128-bit UUIDs lowercase, AD shape as `type/length` pairs in observed order
+  (`01/1,09/17,FF/7`). Add the block to older pages only as a pure restatement
+  of identifiers already in the page.
+- `wiki/README.md` is a plain list of the family pages with a short description,
+  plus the evidence-reading notes. It is not a hand-made lookup index.
 - Aggregate or cross-family pages may exist only as thin indexes linking to
   family pages; they must not hold entry content.
 - New findings go into the matching family page; create one only if none fits.
