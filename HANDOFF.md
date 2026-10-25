@@ -1,8 +1,84 @@
 # Handoff: ops/continuous-sync (2026-10-25)
 
 Branch `ops/continuous-sync`, worktree `/home/wyb/.paseo/worktrees/1pefufa6/sync`.
-Commits: `196b125` (robust continuous sync, tests passed then) and `c805203` (WIP
-schema restructure, **tests not updated, suite will fail**). Nothing is pushed.
+Commits: `196b125` (robust continuous sync, tests passed then), `c805203` (WIP
+schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
+`4f49915` (minute-schema tests), `455f7e8` (schema.sql). Nothing is pushed.
+
+## Report, 2026-10-26 (this pass)
+
+### What passed
+
+- `mise run //cluetooth-sync:test`: **105 passed** (including the Rust
+  SealedBox interop test). `ruff check`, `ruff format --check` and
+  `basedpyright` are clean.
+- The backfill and every verification check pass on a freshly migrated database
+  in the tests, and on the 1.2M-row synthetic dataset in the scratch container:
+  checks 01–11 `ok`, 12/13 informational, `backfill rows=1200002`.
+- Migration `20261026000000` applies in ~0.1 s, and its down migration still
+  restores the old schema (re-verified on the scratch container).
+- All work is local: throwaway containers `cluetooth-schema-scratch`
+  (+ `scratch_old`, `scratch_schema` inside it) and testcontainers. simi, GCS
+  and Firebase were never touched.
+
+### Measurements (1.2M synthetic sightings, 12,002 distinct raws, 12,542
+(addr,raw) keys, 62-byte raws with zero padding, 3 uploaders/144 objects)
+
+| | old schema | new schema |
+|---|---|---|
+| rows | 1,200,002 in `scans` | 66,862 minute rows + 12,602 payloads + 2,671 structures |
+| size | 407 MB (`scans` 384 MB: 283 heap + 101 indexes) | **53 MB** (incl. partitions/indexes) |
+| rollups | `advs` 12,542 rows/10.0 MB (2.8 s), `adv_enrichments` 12,542 rows/7.7 MB | `adv_shapes` is a view, no enrichment rows |
+| WiGLE | `wigle_upload_batch_scans` 60,000 rows/5.8 MB | `wigle_upload_batch_minutes` 60,000 rows/6.8 MB |
+
+- Dedupe: 3,600,006 structure instances in sightings → 2,671 `ad_structures`
+  rows (1,348x); 37,806 structure slots in payloads → 2,671 (14.2x);
+  1,200,002 sightings → 12,602 payloads (95x).
+- Minute rows: 66,862 per `(minute, addr, payload)` vs 60,002 per
+  `(minute, addr)` — the payload dimension adds 11.4%.
+- Backfill: **169.1 s for 1,200,002 rows = 140.9 s per million rows** (66
+  transactions of ≤100k rows, 100k batch size).
+- Verification: 154 s total; 145 s of that is check 12 (informational
+  local-name divergence, 240,000 rows); check 08 5.3 s; every numeric check
+  under 1.5 s.
+- Ingest of one 20,000-sighting object (200 devices): decrypt+parse 0.06 s
+  (312k rows/s), insert 0.49 s (40.6k rows/s), end-to-end 0.56 s
+  (35.9k rows/s) writing 12,000 minute rows. The old per-sighting path inserted
+  the same object in 0.25 s (80k rows/s, 20,000 rows), so the new path costs
+  ~2x per ingested row but writes 40% of the rows.
+- `replay` of that object: 0.06 s (decrypt + Zstd + parse, 20,000 rows).
+- Prod reference (read-only, 1M contiguous scans): 48,229 per-addr minute rows,
+  14,334 distinct raws, 18,172 (addr,raw) keys. The synthetic 1M slice gives
+  50,002 / 10,011 / 10,451 — minute-row density matches, payload variety is
+  lower than prod's.
+- Estimate for 12.26M rows: backfill ≈ 29 min, verification ≈ 26 min
+  (dominated by the informational check), i.e. **under an hour**, plus a fresh
+  dump first. Disk after dropping `*_old`: ≈ 540 MB instead of ≈ 4.2 GB.
+
+### Open questions for the owner
+
+1. `scans_old.blob` is nullable. `backfill/batch.sql` joins `blobs`, so a row
+   with a null or missing blob is dropped and the per-range count check then
+   raises. Should the backfill (a) abort, or (b) skip such rows with a warning
+   and report the count? I did not check prod for null blobs (local only).
+2. `sighting_minutes` only enforces the lat/lon *ranges* of its extent columns.
+   The old per-row coordinate contract (paired lat/lon, accuracy requires
+   coordinates and is finite) is now enforced in Python for v2 payloads only.
+   Should legacy JSONL ingest validate the same, or the table get an
+   equivalent check?
+3. The `cluetooth backfill` CLI exits nonzero when a check fails. Confirm that
+   is the wanted behaviour for the runbook.
+4. `sightings/delete_empty.sql` now keeps a zeroed minute row that a WiGLE batch
+   already claims (the FK is `on delete restrict`); such a row exports an empty
+   CSV line. Acceptable, or should rebuild refuse instead?
+5. Names come from `raw`, so the producer's masked names are unmasked in
+   `payload_fields` and in WiGLE SSIDs (240,000 divergent rows in the synthetic
+   set). Confirm this is still acceptable.
+6. The v3 columns (`addr_type`, `adv_length`, `is_legacy`, `primary_phy`,
+   `secondary_phy`) have no producer yet and no test coverage; only the merge
+   rule (first non-null) is implemented.
+7. When may `*_old` and `backfill_progress` be dropped, and when may
+   `adv_shapes` become materialized?
 
 ## Hard rules from the owner
 
@@ -109,8 +185,47 @@ schema restructure, **tests not updated, suite will fail**). Nothing is pushed.
     `backfill/`, `backfill/verify/01..13`.
   - Removed: `project.py`, `enrich.py`, the projection thread and the
     projection health fields.
+- `edc03f2`, backfill and CLI:
+  - `pipeline/backfill.py`: `run_backfill`/`backfill_minutes` (progress table,
+    `blobs.sql`, partitions, batched id ranges, enrichments) and
+    `verify_backfill` over `queries/backfill/verify/*.sql` with per-check
+    timing; `queries.query_names` enumerates them.
+  - `sightings.months_between`, shared with `rebuild`.
+  - CLI `backfill`, `replay` (ndjson/csv/parquet, `--blob` or
+    `--uploader/--since/--until`) and `rebuild`.
+  - `sightings/delete_empty.sql` keeps minute rows a WiGLE batch already claims.
+- `e989b7b`, `4f49915`, tests:
+  - `test_pipeline.py`, `test_continuous_sync.py`, `test_wigle.py`,
+    `test_payload_v2.py` rewritten for the minute schema; the projection,
+    watermark and builtin-enrichment tests are gone with the code.
+  - New `test_sightings.py` (merge exactness in both orders vs a single pass,
+    structure/payload dedupe, `payload_raw` round-trip with padding and a
+    truncated tail, partition routing and the default partition, extent
+    check), `test_replay.py` (encrypted replay, CLI replay, rebuild keeps ids
+    and follows the archive), `test_backfill.py` (batched backfill, resume,
+    every check, failure detection, masked-name info check).
+  - `conftest.clean_database_url`: a freshly migrated database per test for
+    whole-table assertions.
+  - Fixed on the way: ADBC cannot bind a null parameter (absent
+    uploader/app-version/session now travel as `-1`/`''` sentinels);
+    `ble.parse_raw` now stops at a truncated field like `ble_adv_split`;
+    `write_wigle_csv` without `--limit` used to pass a null parameter and
+    failed.
+- `455f7e8`, `db/schema.sql`: cleaned `pg_dump --schema-only` snapshot.
+- Docs: `docs/schema.md` (new), `docs/operations.md` (new runbook marked NOT
+  EXECUTED, GCS archive rule, lifecycle check, spatial queries, provisional
+  coefficients, replay/rebuild), `AGENTS.md` and `cluetooth-sync/README.md`.
 
-## Remaining, step by step
+## Remaining after this pass
+
+The seven steps below are done. What is left is the owner's: answering the open
+questions above, and then the simi runbook in `docs/operations.md`
+(**NOT EXECUTED**) — stop the sync, fresh dump, migrate, backfill, verify,
+start the sync. Also still open from the survey: the 29 pending legacy objects
+(one invalid hex), the 22 `scans/v2/` objects and the 6 rejected
+`scans/schema=v2/` objects.
+
+### The original step list (kept for reference)
 
 1. **Backfill driver** `pipeline/backfill.py` plus the CLI command
    `cluetooth backfill [--batch-size 100000] [--verify-only]`:
@@ -207,10 +322,12 @@ use the shared `cluetooth-test-db`: the KB site uses it.
 - **Partition boundaries.** `ensure_sighting_partition` uses UTC bounds. If
   the default partition already holds rows for a month, that month's
   partition can't be created, and the function returns false.
-- **Null parameters.** Null typed parameters through ADBC are untested. The
-  rebuild queries pass `''` for "all uploaders" instead of null.
-  `ensure_ingest.sql` passes possibly-null uploader/session ids; check this
-  in tests.
+- **Null parameters.** ADBC cannot bind a null parameter at all
+  (`nanoarrow ... Expected array with 0 buffer(s) but found 1 buffer(s)`). The
+  rebuild queries pass `''` for "all uploaders"; ingest sends `-1` (uploader) or
+  `''` (app version, session) and the SQL restores the null with `nullif`;
+  `write_wigle_csv` sends `0` for "no limit". Tests cover the null-uploader and
+  no-limit paths.
 - **Unmasked names.** Prod `scans.local_name` is masked for some names
   (`QT 325D****`) while `raw` holds the full name. The new schema derives
   names from raw, which unmasks them, and WiGLE SSIDs would carry the full
@@ -230,5 +347,14 @@ use the shared `cluetooth-test-db`: the KB site uses it.
   migrations. Take a fresh dump first, and stop the sync during the
   backfill.
 - **Raw bytes.** `raw` is 62 bytes (31 AD + 31 scan response, zero padded).
-  `parse_ble_adv` stops at the first zero length, and so does
-  `ble_adv_split`; the rest goes to `zero_padding`/`tail`.
+  `parse_ble_adv` stops at the first zero length, and so do
+  `ble_adv_split` and `ble.parse_raw`; the rest goes to
+  `zero_padding`/`tail`.
+- **Scratch containers.** The measurements used `cluetooth-schema-scratch`
+  (postgis 18-3.6, port 55499, user/db `scratch`, plus databases
+  `scratch_old` at `20261025093000` and `scratch_schema` for the dump). The
+  generator and timing scripts are `/tmp/gen_old.sql`, `/tmp/old_state.sql`,
+  `/tmp/new_state.sql`, `/tmp/measure_ingest.py` (outside the repo). Remove the
+  container when the numbers are accepted; nothing else depends on it.
+- **Host disk.** The host root filesystem is ~98% full (26 GB free); the
+  synthetic dataset needs well under 1 GB, but keep dumps on `/data`.

@@ -32,109 +32,79 @@ The design goal is:
 
 ## Database Model
 
-The database is defined in `db/db/migrations/`.
+The database is defined in `db/db/migrations/`; `docs/schema.md` is the prose
+description and `db/schema.sql` a generated snapshot.
 
-Current important tables and materialized views:
+There are **no per-sighting rows**. The uploaded GCS objects are the raw
+archive (`cluetooth replay` reads them back, `cluetooth rebuild` regenerates
+aggregates), and the database holds a dictionary of exact advertisements plus
+one aggregate row per sighting minute:
 
-- `blobs`
-  - Processing ledger for source blobs.
-  - `uri` is the primary key.
-  - Tracks optional uploader/app metadata plus sync success/failure state.
-  - Discovery is read-only against this table; processing stages create or update
-    rows as blobs are ingested.
-- `scans`
-  - One row per observed BLE adv.
-  - `raw` is the authoritative adv payload (`bytea`).
-  - Convenience fields include `local_name`, `tx_power`, and `is_connectable`.
-  - Location fields are `lat`, `lon`, `accuracy`, and computed PostGIS
-    `location`.
-  - There is intentionally no rich decoded adv column on `scans`.
-- `gatt_discoveries`
-  - One row per active GATT discovery result.
-  - Stores the observed device, discovery time, optional raw adv,
-    `raw_profile`, `profile_hash`, and location.
-- `gatt_attributes`
-  - Attribute rows for a GATT discovery.
-  - Keyed by `(discovery_id, attribute_id)`.
-  - Stores parent relationship, attribute kind, UUID, and raw structured data.
-- `adv_enrichments`
-  - Passive enrichment output for exact `(addr, raw)` adv identity.
-  - Keyed by `(addr, raw, enrichment_kind, enrichment_id, enrichment_revision)`.
-  - Built-in AD structure parsing is stored here as:
-    - `enrichment_kind = 'builtin'`
-    - `enrichment_id = 'ad_structures'`
-    - `enrichment_revision = '20260416210856_init'`
-- `recipe_interaction_runs`
-  - Active recipe CLI sessions against a device/adv.
-  - Stores recipe identity, target address, timing, status, and result JSON.
-- `recipe_interaction_events`
-  - Structured transcript/BLE events for a recipe interaction run.
-- `adv_observations`
-  - Materialized rollup by `blob`, `addr`, and `raw`.
-  - Includes latest local name, first/last seen, average RSSI, centroid, radius,
-    and scan count.
-- `advs`
-  - Materialized rollup by `addr` and `raw`.
-  - Represents exact producer address plus exact adv payload identity.
-  - Primary analyst-facing adv table/view.
-  - Includes query-friendly built-in fields:
-    - `adv_types`
-    - `manufacturer_ids`
-    - `service_uuids`
-    - `service_data_uuids`
-- `devices`
-  - Materialized rollup by device address.
-  - Answers where/when a MAC has been observed across payload variants.
+- `ad_structures`
+  - Every distinct AD structure once, unique on `(ad_type, data)`.
+  - Generated `local_name`, `company_id` and `uuids`, so matching rules are
+    computed once instead of per `(addr, raw)`.
 - `payloads`
-  - Materialized rollup by raw adv payload.
-  - Answers where/when a payload has been observed across addresses.
+  - Every distinct advertisement once: `sha256`, ordered `structure_ids`,
+    `zero_padding`, `tail`, and the `first_seen`/`last_seen`/`sightings` stats.
+  - No raw column; `payload_raw(id)` rebuilds the exact bytes and ingest fails
+    unless every payload round-trips.
+  - `payload_fields` is the view with `local_name`, `adv_types`,
+    `ad_data_lengths`, `manufacturer_ids`, `service_uuids`,
+    `service_data_uuids`.
+- `sighting_minutes`
+  - One row per `(minute, addr, payload_id, uploader_id, session_id)`, unique
+    with nulls not distinct, partitioned by month on `minute` (a default
+    partition catches producer clocks far off).
+  - Every column is exact under merge: `blob_counts`/`blob_ids` provenance,
+    `sightings`, first/last seen, RSSI min/max/sum/count/mean, spatial extent,
+    `tx_power`, `is_connectable`, reserved v3 fields, and the minute's best
+    sample (`location`, `best_rssi`, `best_accuracy`, `best_score`,
+    `best_seen`).
+  - The best sample's score coefficients are **provisional**.
+- `adv_shapes`
+  - A plain **view** over `sighting_minutes` plus `payload_fields`. Filter or
+    join a small candidate set; do not scan it whole.
+- `uploaders`, `blobs`
+  - Producer tokens and the processing ledger (`blobs` also has `id`,
+    `uploader_id`, `session_id`, `attempts`, `next_attempt_at`).
+- `adv_enrichments`
+  - Passive enrichment per `(addr, payload_id, kind, id, revision)`; built-in
+    AD structure parsing lives in `ad_structures` instead.
+- `wigle_upload_batch_minutes`
+  - WiGLE membership by minute row, so one CSV row is one minute and nothing is
+    uploaded twice.
+- `backfill_progress`
+  - Resumability ledger for `cluetooth backfill`.
 
 Important schema rules:
 
-- `raw` is authoritative for adv payload identity.
-- `(addr, raw)` is the stable key for exact advs.
-- `advs` should stay ergonomic for common filtering and grouping. Prefer
-  first-class typed columns there for common Bluetooth SIG keys over forcing
-  analysts to repeatedly unpack JSON.
-- Anything richer than raw payload identity belongs in:
-  - a convenience field on `scans`,
-  - `adv_enrichments`,
-  - GATT discovery tables, or
-  - later research/analysis outputs.
-- Materialized rollups are not automatically refreshed by ingest. Tests refresh
-  `adv_observations`, `advs`, `devices`, and `payloads`
-  explicitly before asserting rollup state.
+- `raw` is authoritative for adv payload identity; `sha256` is its exact
+  identity in the database.
+- `(minute, addr, payload, uploader, session)` is the stable aggregate key.
+- Anything richer than raw payload identity belongs in `adv_enrichments`,
+  GATT discovery tables, or later research/analysis outputs.
+- The previous tables are renamed, never dropped: `scans_old`, `advs_old`,
+  `adv_enrichments_old`, `wigle_upload_batch_scans_old`,
+  `projection_state_old`. Only an explicit migration the owner approves removes
+  them.
+- The GCS objects must never be deleted; see `docs/operations.md`.
 
 ## Adv Parsing
 
-Scan ingest does not populate `adv_enrichments` inside the scan insert
-transaction. Built-in low-level AD structures are inserted after each sync cycle
-by `insert_builtin_ad_structures(...)`, which runs the
-`adv_enrichments/insert_builtin_ad_structures.sql` query against committed
-`scans`.
+Scan ingest does not decode advertisements. Each raw payload is split into its
+low-level AD structures by `ble_adv_split(raw)`:
 
-`parse_ble_adv(raw)` in the init migration parses raw BLE adv bytes
-into JSON like:
+- it preserves order and duplicates;
+- it stops at a zero length or a truncated field instead of repairing;
+- the unparsed remainder becomes `zero_padding` (all zero bytes) or `tail`
+  (anything else, e.g. a truncated field);
+- Python `cluetooth_sync.ble.parse_raw` follows the same stop rule and is used
+  by the legacy adapter to extract names.
 
-```json
-[
-  { "type": 1, "data": "06" },
-  { "type": 9, "data": "..." },
-  { "type": 255, "data": "..." }
-]
-```
-
-Notes:
-
-- `parse_ble_adv(raw)` returns only a list of low-level AD structures.
-- It preserves order.
-- It preserves duplicates.
-- It does not do protocol-specific decoding.
-- It exits on zero-length or truncated AD fields rather than trying to repair
-  malformed payloads.
-- Python `cluetooth_sync.ble.parse_raw` exists for lightweight local parsing,
-  currently used by the legacy adapter to extract local names. The database
-  parser remains the canonical built-in enrichment.
+`ad_structures` stores each distinct structure once with generated
+`local_name`, `company_id` and `uuids`; `payloads` stores the ordered structure
+ids plus the remainder. Nothing protocol-specific is decoded at ingest.
 
 ## Python Sync Pipeline
 
@@ -155,10 +125,19 @@ Notes:
   - Reads one encrypted blob as bytes through an explicit `StorageClient`.
 - `decrypt.py`
   - Decrypts ciphertext bytes with PyNaCl `SealedBox` and a 32-byte private key.
-- `enrich.py`
-  - Runs post-sync built-in enrichment queries.
-  - `insert_builtin_ad_structures(...)` inserts missing low-level AD structure
-    rows into `adv_enrichments`.
+- `sightings.py`
+  - The shared write path: distinct raws of a batch into a temporary `raws`
+    table, new structures into `ad_structures`, new payloads into `payloads`
+    (failing unless every payload round-trips), normalized sightings into a
+    temporary `batch` table, then the merge into `sighting_minutes` (plus
+    payload stats, except for rebuild).
+  - Also owns monthly partition creation.
+- `backfill.py`
+  - `cluetooth backfill`: batched, resumable aggregation of `scans_old` into
+    minute rows, then the `queries/backfill/verify/*.sql` checks.
+- `replay.py`
+  - `cluetooth replay` (raw sightings of archived objects) and
+    `cluetooth rebuild` (regenerate a minute range from the archive).
 - `payload_route.py` / `payload_v2.py`
   - Strictly route legacy `0.0.1`-`0.0.4` JSONL and nested schema-v2 Parquet URIs.
   - Validate v2 UUID/date/footer/exact schema/required values and convert binary raw
@@ -167,10 +146,12 @@ Notes:
   - Parses JSONL with a hand-written Polars schema.
   - Handles current scan payloads and legacy `0.0.1` through `0.0.4`
     scan blobs detected from the blob filename.
-  - Writes a temporary staging table with Polars/ADBC, inserts into `scans`,
-    and marks the blob succeeded in one transaction.
+  - Stages rows with Polars/ADBC and calls `sightings.py`, so payloads, minute
+    rows and `success = true` commit in one transaction.
   - Retries retryable deadlock/serialization SQL states, then marks the blob
     failed on final failure.
+  - ADBC cannot bind a null parameter: absent uploader/app version/session
+    values travel as `-1`/`''` sentinels and the SQL restores the null.
 - `legacy_adapter.py`
   - Converts legacy scan JSONL (`mac`, `timestamp`, base64 `raw`) into the
     current scan schema.
@@ -202,15 +183,13 @@ environment variables for database URL, bucket, prefix, private key path,
 service account key, mirror dir, worker counts, queue size, polling interval,
 and max blobs.
 
-In continuous mode (`--poll-interval-seconds`), a background thread runs the
-incremental `advs` projection and range-bounded `insert_builtin_ad_structures(...)`
-every `--project-interval-seconds`; one-shot runs do it once after a non-empty
-cycle. The projection reads a commit-safe watermark (ingest holds a shared
-advisory lock), so it can run beside ingest. Cycle errors back off and retry
+In continuous mode (`--poll-interval-seconds`), cycle errors back off and retry
 instead of exiting; failed blobs retry with exponential backoff
 (`blobs.attempts`, `next_attempt_at`). A heartbeat JSON file backs
 `cluetooth health`; `--list-only` inventories GCS against the ledger without
-downloads or writes. See `docs/operations.md`.
+downloads or writes. There is no projection thread and no materialized view to
+refresh. Ingest holds shared advisory lock 4381022501 and `rebuild` takes it
+exclusively. See `docs/operations.md`.
 
 ## Ingest Rules
 
@@ -242,6 +221,8 @@ Current JSONL contract:
 - RSSI value `127` is treated as unavailable and converted to null
 - SQL inserts cast `addr` to `macaddr`, `rssi`/`tx_power` to `smallint`, and
   decode `raw` from hex to `bytea`
+- per-row `local_name` is not stored: names come from the raw advertisement, so
+  a name the producer masked in the source object appears unmasked here
 
 ## Logging / Observability
 
@@ -264,7 +245,9 @@ Current test approach:
 - apply migrations with mise-managed `dbmate` on PATH
 - use fixture JSONL for current and legacy scan payloads
 - verify inserted data with Polars database reads
-- refresh materialized views explicitly when tests need rollup state
+- assert on minute rows directly; there are no materialized views to refresh
+- `clean_database_url` (conftest) gives a test its own freshly migrated
+  database when it asserts whole-table state, as the backfill verification does
 
 From the root, `mise install` installs host tools in project-isolated Rust homes;
 `mise run install` syncs locked Python packages. `mise run check` serializes Rust,

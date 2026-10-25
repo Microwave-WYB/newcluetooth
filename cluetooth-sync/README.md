@@ -1,7 +1,41 @@
 # cluetooth-sync
 
-Sync encrypted BLE scan blobs into Postgres/PostGIS, then export eligible scan
-rows to WiGLE-compatible Bluetooth CSV batches.
+Sync encrypted BLE scan blobs into Postgres/PostGIS, then export eligible
+sighting minutes to WiGLE-compatible Bluetooth CSV batches.
+
+Ingest writes no per-sighting rows. Each blob's distinct advertisements go into
+`ad_structures` (once per distinct structure) and `payloads` (once per exact
+advertisement), and one aggregate row per `(minute, addr, payload, uploader,
+session)` is merged into the partitioned `sighting_minutes` table. The uploaded
+objects remain the only copy of the raw data: `cluetooth replay` reads them
+back and `cluetooth rebuild` regenerates a minute range from them. See
+`docs/schema.md`.
+
+## Commands
+
+```sh
+# continuous or one-shot sync from GCS
+cluetooth sync --database-url ... --bucket ... --private-key key.txt
+
+# aggregate the pre-restructure scans_old table into minute rows, then verify
+cluetooth backfill --database-url ... [--batch-size 100000] [--verify-only]
+
+# read raw sightings back out of the archived objects
+cluetooth replay --database-url ... --private-key key.txt \
+  (--blob gs://bucket/scans/... | --since ... --until ... [--uploader ...]) \
+  [--format ndjson|csv|parquet] [-o file]
+
+# regenerate minute rows of a range from the archive
+cluetooth rebuild --database-url ... --private-key key.txt --since ... --until ...
+
+# WiGLE export/upload/status, and the sync heartbeat
+cluetooth wigle export|upload|status|batches
+cluetooth health
+```
+
+`backfill` is resumable (`backfill_progress`) and exits nonzero when a
+verification check fails. `rebuild` takes the ingest advisory lock exclusively,
+so no blob commits while it runs, and it leaves payload stats untouched.
 
 ## Payload routing
 
@@ -26,8 +60,9 @@ ledger state, and require a separate historical-data migration decision.
 
 ## WiGLE Uploads With Docker Compose
 
-WiGLE uploads read already-ingested rows from Postgres. Run a sync first, or run
-the upload against an existing database volume that already contains scans.
+WiGLE uploads read already-ingested minute rows from Postgres: one CSV row per
+minute, using that minute's best sample. Run a sync first, or run the upload
+against an existing database volume that already contains minutes.
 
 1. Copy the root environment template and fill in credentials:
 
@@ -63,7 +98,7 @@ the upload against an existing database volume that already contains scans.
 Useful overrides:
 
 ```sh
-# Limit the number of scan rows claimed by each temporary CSV batch.
+# Limit the number of minute rows claimed by each temporary CSV batch.
 CLUETOOTH_WIGLE_BATCH_SIZE=1000 docker compose --profile manual run --rm wigle-upload
 
 # Upload a specific existing batch.
