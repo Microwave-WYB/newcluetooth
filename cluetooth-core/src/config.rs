@@ -1,12 +1,12 @@
 pub const DEFAULT_LOCATION_MAX_AGE_MS: u64 = 5_000;
 pub const DEFAULT_RECENT_LOCATION_CAPACITY: u32 = 32;
 pub const MAX_RECENT_LOCATION_CAPACITY: u32 = 4_096;
-/// Emergency ceiling; normal payloads rotate first at 10 MiB or five minutes.
+/// Emergency ceiling; normal payloads rotate first at 10 MiB or an hour.
 pub const DEFAULT_PAYLOAD_MAX_ROWS: u32 = 100_000;
 pub const MAX_PAYLOAD_MAX_ROWS: u32 = 1_000_000;
 pub const DEFAULT_PAYLOAD_MAX_ESTIMATED_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_PAYLOAD_MAX_ESTIMATED_BYTES: u64 = 256 * 1024 * 1024;
-pub const DEFAULT_PAYLOAD_MAX_AGE_MS: u64 = 5 * 60 * 1_000;
+pub const DEFAULT_PAYLOAD_MAX_AGE_MS: u64 = 60 * 60 * 1_000;
 pub const MAX_PAYLOAD_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1_000;
 pub const MAX_INPUT_BATCH_ROWS: usize = 64;
 pub const MAX_INPUT_BATCH_ESTIMATED_BYTES: u64 = 1024 * 1024;

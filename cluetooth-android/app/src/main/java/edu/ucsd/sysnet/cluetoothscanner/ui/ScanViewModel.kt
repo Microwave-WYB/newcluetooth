@@ -17,6 +17,7 @@ import edu.ucsd.sysnet.cluetoothscanner.core.GatewayExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayPreparedExport
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayLegacySessionRows
 import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
+import edu.ucsd.sysnet.cluetoothscanner.service.sealThenUpload
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -80,7 +81,6 @@ class ScanViewModel(
     private val deviceMap = mutableMapOf<String, DisplayItem>()
     private val deviceOrder = mutableListOf<String>()  // Preserve insertion order
 
-    private var periodicUploadJob: Job? = null
     private var userWantsScanning = true
     private var locationRetryJob: Job? = null
     private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -110,7 +110,6 @@ class ScanViewModel(
         observeScanStatus()
         observeLocationUpdates()
         // Start periodic upload when app is running
-        startPeriodicUpload()
     }
 
     internal fun startWhenReady(readiness: ScanReadiness) {
@@ -319,22 +318,14 @@ class ScanViewModel(
         }
     }
 
-    private fun startPeriodicUpload() {
-        periodicUploadJob = viewModelScope.launch {
-            while (true) {
-                delay(UPLOAD_INTERVAL_MS)
-                uploadService.autoUploadNow()
-            }
+    /** "Upload now": seal the open payload, then upload immediately. */
+    fun uploadNow() {
+        viewModelScope.launch {
+            sealThenUpload(flush = { repository.flushPayloadAndWait() }, enqueueImmediate = uploadService::forceUpload)
         }
     }
 
-    private fun stopPeriodicUpload() {
-        periodicUploadJob?.cancel()
-        periodicUploadJob = null
-    }
-
     override fun onCleared() {
-        stopPeriodicUpload()
         locationRetryJob?.cancel()
         locationRetryJob = null
 
@@ -356,6 +347,5 @@ class ScanViewModel(
 
     companion object {
         private const val MAX_DEVICES = 100
-        private const val UPLOAD_INTERVAL_MS = 30 * 1000L // 30 seconds
     }
 }

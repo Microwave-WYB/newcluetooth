@@ -1539,7 +1539,7 @@ mod tests {
             directory.path().join("checkpoint-time"),
             CoreConfig::default(),
             Arc::new(DeterministicRuntime {
-                times: Mutex::new([1_742_860_800_000, 1_742_861_100_000, 1_742_861_100_001].into()),
+                times: Mutex::new([1_742_860_800_000, 1_742_864_400_000, 1_742_864_400_001].into()),
                 random: [0x33; 10],
             }),
         )
@@ -2386,8 +2386,8 @@ mod tests {
             started_at_ms: Some(1_000),
             ..ActivePayload::default()
         };
-        assert!(!core.should_rotate(&active, 300_999));
-        assert!(core.should_rotate(&active, 301_000));
+        assert!(!core.should_rotate(&active, 3_600_999));
+        assert!(core.should_rotate(&active, 3_601_000));
         active.started_at_ms = Some(1_000_000);
         active.estimated_bytes = 10 * 1024 * 1024;
         assert!(core.should_rotate(&active, 1_000_000));
