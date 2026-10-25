@@ -1,4 +1,5 @@
 import io
+from uuid import UUID
 
 import polars as pl
 from polars._typing import SchemaDict
@@ -9,6 +10,7 @@ from .payload_route import PayloadRoute, PayloadRouteKind
 
 PAYLOAD_SCHEMA_METADATA_KEY = "cluetooth.payload_schema"
 PAYLOAD_ID_METADATA_KEY = "cluetooth.payload_id"
+SCAN_SESSION_ID_METADATA_KEY = "cluetooth.scan_session_id"
 PAYLOAD_SCHEMA_VERSION = "v2"
 PAYLOAD_V2_POLARS_SCHEMA: SchemaDict = {
     "addr": pl.String,
@@ -22,6 +24,17 @@ PAYLOAD_V2_POLARS_SCHEMA: SchemaDict = {
     "lon": pl.Float64,
     "accuracy": pl.Float32,
 }
+
+
+def _optional_session_id(occurrences: list[tuple[str, str | None]]) -> str | None:
+    """Producer session UUID if written exactly once and well formed, else None."""
+    values = [v for k, v in occurrences if k == SCAN_SESSION_ID_METADATA_KEY]
+    if len(values) != 1 or values[0] is None:
+        return None
+    try:
+        return str(UUID(values[0]))
+    except ValueError:
+        return None
 
 
 def _required_metadata_value(
@@ -96,6 +109,9 @@ def prepare_payload_v2_parquet_bytes(
         pl.col("lon"),
         pl.col("accuracy"),
         pl.lit(route.uri, dtype=pl.String).alias("blob"),
+        pl.lit(_optional_session_id(metadata_occurrences), dtype=pl.String).alias(
+            "session_id"
+        ),
     )
 
 

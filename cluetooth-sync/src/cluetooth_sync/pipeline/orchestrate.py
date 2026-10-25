@@ -6,6 +6,8 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Executor
 from dataclasses import dataclass
 
+import polars as pl
+
 from .decrypt import decrypt_blob_bytes
 from .discover import discover_pending_blobs
 from .download import read_blob_bytes
@@ -75,6 +77,15 @@ def _read_blob_bookkept(
         return None
 
 
+def parse_blob(blob: BlobBytes, private_key: bytes) -> pl.DataFrame:
+    """Route, decrypt and parse one stored object into prepared sightings."""
+    route = route_payload_uri(blob.uri)
+    decrypted_bytes = decrypt_blob_bytes(blob.encrypted_bytes, private_key)
+    if route.kind is PayloadRouteKind.LEGACY_JSONL_ZSTD:
+        return prepare_scan_jsonl_bytes(zstd.decompress(decrypted_bytes), blob.uri)
+    return prepare_payload_v2_parquet_bytes(decrypted_bytes, route)
+
+
 def _ingest_blob(
     database_url: str,
     private_key: bytes,
@@ -82,14 +93,7 @@ def _ingest_blob(
 ) -> int | None:
     """Return inserted row count, or None after recording a failure."""
     try:
-        route = route_payload_uri(blob.uri)
-        decrypted_bytes = decrypt_blob_bytes(blob.encrypted_bytes, private_key)
-        if route.kind is PayloadRouteKind.LEGACY_JSONL_ZSTD:
-            decompressed_bytes = zstd.decompress(decrypted_bytes)
-            scans = prepare_scan_jsonl_bytes(decompressed_bytes, blob.uri)
-        else:
-            scans = prepare_payload_v2_parquet_bytes(decrypted_bytes, route)
-
+        scans = parse_blob(blob, private_key)
         if scans.is_empty():
             mark_blob_succeeded_empty(database_url, blob.uri)
             return 0

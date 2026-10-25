@@ -1,7 +1,6 @@
 import io
 import sys
 import time
-from uuid import uuid4
 
 import polars as pl
 from polars._typing import SchemaDict
@@ -9,9 +8,20 @@ from polars._typing import SchemaDict
 import cluetooth_sync.pipeline.db as db
 from cluetooth_sync.pipeline.legacy_adapter import (
     is_legacy_scan_blob,
+    legacy_blob_identity,
     read_legacy_scan_jsonl_bytes,
 )
-from cluetooth_sync.pipeline.queries import read_query, scan_insert_from_stage
+from cluetooth_sync.pipeline.queries import read_query, stage_query
+from cluetooth_sync.pipeline.sightings import (
+    batch_count,
+    create_batch_table,
+    create_raws_table,
+    ensure_partitions,
+    frame_months,
+    merge_batch,
+    store_payloads,
+    temp_table_name,
+)
 
 SCAN_POLARS_SCHEMA: SchemaDict = {
     "addr": pl.Utf8,
@@ -112,36 +122,113 @@ def insert_prepared_scans(
     raise AssertionError("unreachable insert retry state")
 
 
+def stage_frame(scans: pl.DataFrame) -> pl.DataFrame:
+    """Prepared blob frame -> stage columns (per-row local_name is not stored)."""
+    if "session_id" not in scans.columns:
+        scans = scans.with_columns(pl.lit(None, dtype=pl.String).alias("session_id"))
+    return scans.select(
+        "addr",
+        "rssi",
+        "scanned_at",
+        "raw",
+        "tx_power",
+        "is_connectable",
+        "lat",
+        "lon",
+        "accuracy",
+        "session_id",
+    )
+
+
+def write_stage(session: db.DatabaseSession, stage: pl.DataFrame) -> str:
+    staging_table = temp_table_name("scan_stage")
+    stage.write_database(
+        table_name=staging_table,
+        connection=session.connection,
+        if_table_exists="replace",
+        engine="adbc",
+        engine_options={"temporary": True},
+    )
+    return staging_table
+
+
+def load_stage_batch(
+    session: db.DatabaseSession,
+    stage: pl.DataFrame,
+    *,
+    blob_id: int,
+    uploader_id: int | None,
+) -> str:
+    """Stage one blob's sightings, store its payloads, return the batch table."""
+    staging_table = write_stage(session, stage)
+    raws = create_raws_table(session)
+    session.cursor.execute(
+        stage_query("payloads/collect_from_stage.sql", raws=raws, stage=staging_table)
+    )
+    store_payloads(session, raws)
+    batch = create_batch_table(session)
+    session.cursor.execute(
+        stage_query("sightings/batch_from_stage.sql", batch=batch, stage=staging_table),
+        [blob_id, uploader_id],
+    )
+    loaded = batch_count(session, batch)
+    if loaded != stage.height:
+        raise RuntimeError(f"batched {loaded} of {stage.height} sightings")
+    return batch
+
+
 def _insert_prepared_scans_once(
     database_url: str,
     scans: pl.DataFrame,
     gcs_blob_uri: str,
     skip_if_succeeded: bool,
 ) -> int:
-    staging_table = f"scan_stage_{uuid4().hex}"
+    stage = stage_frame(scans)
+    ensure_partitions(database_url, frame_months(stage))
+    uploader, app_version = legacy_blob_identity(gcs_blob_uri)
+    session_ids = stage.get_column("session_id").drop_nulls().unique()
+    blob_session_id = session_ids.item() if len(session_ids) == 1 else None
 
     with db.session(database_url) as session:
-        session.cursor.execute(read_query("scans/ingest_lock.sql"))
+        session.cursor.execute(read_query("sightings/ingest_lock.sql"))
         session.cursor.fetch_polars()
-        session.cursor.execute(
-            read_query("blobs/ensure_processing.sql"), [gcs_blob_uri]
+        uploader_id = ensure_uploader(session, uploader)
+        blob_id, already_succeeded = ensure_blob(
+            session, gcs_blob_uri, uploader_id, app_version, blob_session_id
         )
-        session.cursor.execute(read_query("blobs/lock_for_ingest.sql"), [gcs_blob_uri])
-        already_succeeded = session.cursor.fetch_polars().item(0, "success") is True
         if skip_if_succeeded and already_succeeded:
             # Another sync process committed this blob after our discovery.
             print(f"skip {gcs_blob_uri}: already ingested", flush=True)
             return 0
-        scans.write_database(
-            table_name=staging_table,
-            connection=session.connection,
-            if_table_exists="replace",
-            engine="adbc",
-            engine_options={"temporary": True},
+        batch = load_stage_batch(
+            session, stage, blob_id=blob_id, uploader_id=uploader_id
         )
-        session.cursor.execute(scan_insert_from_stage(staging_table))
+        merge_batch(session, batch, update_payload_stats=True)
         session.cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])
-    return scans.height
+    return stage.height
+
+
+def ensure_uploader(session: db.DatabaseSession, uploader: str | None) -> int | None:
+    if uploader is None:
+        return None
+    session.cursor.execute(read_query("uploaders/ensure.sql"), [uploader])
+    session.cursor.execute(read_query("uploaders/get_id.sql"), [uploader])
+    return int(session.cursor.fetch_polars().item(0, "id"))
+
+
+def ensure_blob(
+    session: db.DatabaseSession,
+    gcs_blob_uri: str,
+    uploader_id: int | None,
+    app_version: str | None,
+    session_id: str | None,
+) -> tuple[int, bool]:
+    session.cursor.execute(
+        read_query("blobs/ensure_ingest.sql"),
+        [gcs_blob_uri, uploader_id, app_version, session_id],
+    )
+    row = session.cursor.fetch_polars()
+    return int(row.item(0, "id")), row.item(0, "success") is True
 
 
 def _is_retryable_insert_error(exc: Exception) -> bool:
@@ -158,8 +245,8 @@ def mark_blob_failed(database_url: str, gcs_blob_uri: str, exc: Exception) -> No
 
 
 def mark_blob_succeeded_empty(database_url: str, gcs_blob_uri: str) -> None:
+    uploader, app_version = legacy_blob_identity(gcs_blob_uri)
     with db.session(database_url) as session:
-        session.cursor.execute(
-            read_query("blobs/ensure_processing.sql"), [gcs_blob_uri]
-        )
+        uploader_id = ensure_uploader(session, uploader)
+        ensure_blob(session, gcs_blob_uri, uploader_id, app_version, None)
         session.cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])

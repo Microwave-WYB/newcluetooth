@@ -3,7 +3,6 @@ from importlib.resources import files
 
 import cluetooth_sync.queries as query_resources
 
-SCAN_INSERT_STAGE_PLACEHOLDER = "{{ staging_table }}"
 
 
 @functools.cache
@@ -19,8 +18,11 @@ def quote_pg_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
-def scan_insert_from_stage(staging_table: str) -> str:
-    return read_query("scans/insert_from_stage.sql").replace(
-        SCAN_INSERT_STAGE_PLACEHOLDER,
-        quote_pg_identifier(staging_table),
-    )
+def stage_query(relative_path: str, **tables: str) -> str:
+    """Query with `{{ name }}` placeholders replaced by quoted table names."""
+    query = read_query(relative_path)
+    for name, table in tables.items():
+        query = query.replace("{{ " + name + " }}", quote_pg_identifier(table))
+    if "{{ " in query:
+        raise ValueError(f"unresolved table placeholder in {relative_path}")
+    return query

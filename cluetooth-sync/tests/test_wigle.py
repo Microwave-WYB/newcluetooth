@@ -83,14 +83,14 @@ def _mark_existing_eligible_scans_uploaded(database_url: str) -> None:
             """
             with candidate as (
               select s.id
-              from scans s
+              from observations s
               where s.lat is not null
                 and s.lon is not null
                 and s.rssi is not null
                 and not exists (
                   select 1
                   from wigle_upload_batch_scans bs
-                  where bs.scan_id = s.id
+                  where bs.observation_id = s.id
                 )
             ),
             new_batch as (
@@ -100,7 +100,7 @@ def _mark_existing_eligible_scans_uploaded(database_url: str) -> None:
               returning id
             ),
             inserted as (
-              insert into wigle_upload_batch_scans (batch_id, scan_id)
+              insert into wigle_upload_batch_scans (batch_id, observation_id)
               select new_batch.id, candidate.id
               from new_batch
               cross join candidate
@@ -110,16 +110,16 @@ def _mark_existing_eligible_scans_uploaded(database_url: str) -> None:
               select
                 batch_id,
                 count(*)::bigint as row_count,
-                min(scan_id)::bigint as min_scan_id,
-                max(scan_id)::bigint as max_scan_id
+                min(scan_id)::bigint as min_item_id,
+                max(scan_id)::bigint as max_item_id
               from inserted
               group by batch_id
             )
             update wigle_upload_batches b
             set
               row_count = stats.row_count,
-              min_scan_id = stats.min_scan_id,
-              max_scan_id = stats.max_scan_id
+              min_item_id = stats.min_item_id,
+              max_item_id = stats.max_item_id
             from stats
             where b.id = stats.batch_id
             """
@@ -213,11 +213,11 @@ def test_wigle_upload_batches_claim_only_unuploaded_eligible_scans(
     assert first_batch is not None
     assert second_batch is not None
     assert first_batch.row_count == 1
-    assert first_batch.min_scan_id == first_scan_id
-    assert first_batch.max_scan_id == first_scan_id
+    assert first_batch.min_item_id == first_scan_id
+    assert first_batch.max_item_id == first_scan_id
     assert second_batch.row_count == 1
-    assert second_batch.min_scan_id == second_scan_id
-    assert second_batch.max_scan_id == second_scan_id
+    assert second_batch.min_item_id == second_scan_id
+    assert second_batch.max_item_id == second_scan_id
 
 
 def test_export_wigle_batch_csv_marks_batch_exported(
@@ -237,7 +237,7 @@ def test_export_wigle_batch_csv_marks_batch_exported(
     )
 
     assert batch is not None
-    assert batch.min_scan_id == scan_id
+    assert batch.min_item_id == scan_id
 
     result = export_wigle_batch_csv(
         database_url,

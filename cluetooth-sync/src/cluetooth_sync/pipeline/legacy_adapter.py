@@ -33,6 +33,22 @@ def _detect_payload_version(gcs_blob_uri: str) -> str | None:
     return match.group(1)
 
 
+_LEGACY_IDENTITY_PATTERN = re.compile(
+    r"^[^_/]+_(?P<uploader>.+)_(?P<version>[0-9]+(?:\.[0-9]+){2}(?:[-+][A-Za-z0-9_.-]+)?)"
+    r"\.jsonl(?:\.zst)?(?:\.encrypted)?$"
+)
+
+
+def legacy_blob_identity(gcs_blob_uri: str) -> tuple[str | None, str | None]:
+    """(uploader, app_version) from `<timestamp>_<uploader>_<version>.jsonl...`."""
+    if not is_legacy_scan_blob(gcs_blob_uri):
+        return None, None
+    match = _LEGACY_IDENTITY_PATTERN.fullmatch(Path(gcs_blob_uri).name)
+    if match is None:
+        return None, _detect_payload_version(gcs_blob_uri)
+    return match.group("uploader"), match.group("version")
+
+
 def is_legacy_scan_blob(gcs_blob_uri: str) -> bool:
     version = _detect_payload_version(gcs_blob_uri)
     return (

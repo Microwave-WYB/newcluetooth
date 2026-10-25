@@ -39,8 +39,8 @@ class WigleBatch:
     id: int
     status: str
     row_count: int
-    min_scan_id: int | None
-    max_scan_id: int | None
+    min_item_id: int | None
+    max_item_id: int | None
     filename: str | None
     csv_sha256: str | None
     wigle_status: str | None
@@ -92,17 +92,17 @@ def create_wigle_upload_batch(
               where client_token = $2
             ),
             candidate as materialized (
-              select s.id
-              from scans s
-              where s.lat is not null
-                and s.lon is not null
-                and s.rssi is not null
+              select m.id, m.minute
+              from sighting_minutes m
+              where m.location is not null
+                and m.best_rssi is not null
                 and not exists (
                   select 1
-                  from wigle_upload_batch_scans bs
+                  from wigle_upload_batch_minutes bm
                   join wigle_upload_batches b
-                    on b.id = bs.batch_id
-                  where bs.scan_id = s.id
+                    on b.id = bm.batch_id
+                  where bm.minute_id = m.id
+                    and bm.minute = m.minute
                     and b.status in (
                       'created',
                       'exported',
@@ -111,12 +111,12 @@ def create_wigle_upload_batch(
                       'completed'
                     )
                 )
-              order by s.id
+              order by m.minute, m.id
               limit $1
-              for update of s skip locked
+              for update of m skip locked
             )
-            insert into wigle_upload_batch_scans (batch_id, scan_id)
-            select batch.id, candidate.id
+            insert into wigle_upload_batch_minutes (batch_id, minute_id, minute)
+            select batch.id, candidate.id, candidate.minute
             from batch
             cross join candidate
             """,
@@ -131,20 +131,20 @@ def create_wigle_upload_batch(
             ),
             stats as (
               select
-                bs.batch_id,
+                bm.batch_id,
                 count(*)::bigint as row_count,
-                min(bs.scan_id)::bigint as min_scan_id,
-                max(bs.scan_id)::bigint as max_scan_id
-              from wigle_upload_batch_scans bs
+                min(bm.minute_id)::bigint as min_item_id,
+                max(bm.minute_id)::bigint as max_item_id
+              from wigle_upload_batch_minutes bm
               join batch
-                on batch.id = bs.batch_id
-              group by bs.batch_id
+                on batch.id = bm.batch_id
+              group by bm.batch_id
             )
             update wigle_upload_batches b
             set
               row_count = stats.row_count,
-              min_scan_id = stats.min_scan_id,
-              max_scan_id = stats.max_scan_id
+              min_item_id = stats.min_item_id,
+              max_item_id = stats.max_item_id
             from stats
             where b.id = stats.batch_id
             """,
@@ -170,8 +170,8 @@ def get_wigle_upload_batch(database_url: str, batch_id: int) -> WigleBatch | Non
           id,
           status,
           row_count,
-          min_scan_id,
-          max_scan_id,
+          min_item_id,
+          max_item_id,
           filename,
           csv_sha256,
           wigle_status,
@@ -197,8 +197,8 @@ def _get_wigle_upload_batch_by_token(
           id,
           status,
           row_count,
-          min_scan_id,
-          max_scan_id,
+          min_item_id,
+          max_item_id,
           filename,
           csv_sha256,
           wigle_status,
@@ -221,8 +221,8 @@ def get_resumable_wigle_upload_batch(database_url: str) -> WigleBatch | None:
           id,
           status,
           row_count,
-          min_scan_id,
-          max_scan_id,
+          min_item_id,
+          max_item_id,
           filename,
           csv_sha256,
           wigle_status,
@@ -254,8 +254,8 @@ def list_wigle_upload_batches(database_url: str, *, limit: int) -> list[WigleBat
           id,
           status,
           row_count,
-          min_scan_id,
-          max_scan_id,
+          min_item_id,
+          max_item_id,
           filename,
           csv_sha256,
           wigle_status,
@@ -571,62 +571,30 @@ def _write_preheader_csv(output: TextIO, row: list[str]) -> None:
     )
 
 
-def _pending_wigle_rows_sql() -> str:
-    return """
-        select
-          s.addr::text as "MAC",
-          coalesce(s.local_name, '') as "SSID",
-          $1::text as "AuthMode",
-          to_char(s.scanned_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as "FirstSeen",
+_WIGLE_ROW_COLUMNS = """
+          m.addr::text as "MAC",
+          coalesce(f.local_name, '') as "SSID",
+          {auth_mode}::text as "AuthMode",
+          to_char(m.best_seen at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as "FirstSeen",
           '0' as "Channel",
           '' as "Frequency",
-          s.rssi::text as "RSSI",
-          s.lat::text as "CurrentLatitude",
-          s.lon::text as "CurrentLongitude",
+          m.best_rssi::text as "RSSI",
+          st_y(m.location::geometry)::text as "CurrentLatitude",
+          st_x(m.location::geometry)::text as "CurrentLongitude",
           '' as "AltitudeMeters",
-          coalesce(s.accuracy::text, '') as "AccuracyMeters",
+          coalesce(m.best_accuracy::text, '') as "AccuracyMeters",
           '' as "RCOIs",
-          coalesce((public.ble_adv_manufacturer_ids(s.raw))[1]::text, '') as "MfgrId",
+          coalesce(f.manufacturer_ids[1]::text, '') as "MfgrId",
           'BLE' as "Type"
-        from scans s
-        where s.lat is not null
-          and s.lon is not null
-          and s.rssi is not null
-          and (
-            $3::boolean
-            or not exists (
-              select 1
-              from wigle_upload_batch_scans bs
-              join wigle_upload_batches b
-                on b.id = bs.batch_id
-              where bs.scan_id = s.id
-                and b.status in (
-                  'created',
-                  'exported',
-                  'uploading',
-                  'uploaded',
-                  'completed'
-                )
-            )
-          )
-        order by s.id
-        limit $2::bigint
-    """
+"""
 
-
-def _count_pending_wigle_rows_sql() -> str:
-    return """
-        select count(*)::bigint as row_count
-        from scans s
-        where s.lat is not null
-          and s.lon is not null
-          and s.rssi is not null
-          and not exists (
+_WIGLE_NOT_CLAIMED = """
             select 1
-            from wigle_upload_batch_scans bs
+            from wigle_upload_batch_minutes bm
             join wigle_upload_batches b
-              on b.id = bs.batch_id
-            where bs.scan_id = s.id
+              on b.id = bm.batch_id
+            where bm.minute_id = m.id
+              and bm.minute = m.minute
               and b.status in (
                 'created',
                 'exported',
@@ -634,32 +602,51 @@ def _count_pending_wigle_rows_sql() -> str:
                 'uploaded',
                 'completed'
               )
+"""
+
+
+# One WiGLE row per sighting minute: the minute's best sample (position, its
+# RSSI, accuracy and time).
+def _pending_wigle_rows_sql() -> str:
+    return f"""
+        select
+          {_WIGLE_ROW_COLUMNS.format(auth_mode="$1")}
+        from sighting_minutes m
+        join payload_fields f
+          on f.payload_id = m.payload_id
+        where m.location is not null
+          and m.best_rssi is not null
+          and (
+            $3::boolean
+            or not exists ({_WIGLE_NOT_CLAIMED})
           )
+        order by m.minute, m.id
+        limit $2::bigint
+    """
+
+
+def _count_pending_wigle_rows_sql() -> str:
+    return f"""
+        select count(*)::bigint as row_count
+        from sighting_minutes m
+        where m.location is not null
+          and m.best_rssi is not null
+          and not exists ({_WIGLE_NOT_CLAIMED})
     """
 
 
 def _batch_wigle_rows_sql() -> str:
-    return """
+    return f"""
         select
-          s.addr::text as "MAC",
-          coalesce(s.local_name, '') as "SSID",
-          $2::text as "AuthMode",
-          to_char(s.scanned_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as "FirstSeen",
-          '0' as "Channel",
-          '' as "Frequency",
-          s.rssi::text as "RSSI",
-          s.lat::text as "CurrentLatitude",
-          s.lon::text as "CurrentLongitude",
-          '' as "AltitudeMeters",
-          coalesce(s.accuracy::text, '') as "AccuracyMeters",
-          '' as "RCOIs",
-          coalesce((public.ble_adv_manufacturer_ids(s.raw))[1]::text, '') as "MfgrId",
-          'BLE' as "Type"
-        from wigle_upload_batch_scans bs
-        join scans s
-          on s.id = bs.scan_id
-        where bs.batch_id = $1
-        order by s.id
+          {_WIGLE_ROW_COLUMNS.format(auth_mode="$2")}
+        from wigle_upload_batch_minutes bm
+        join sighting_minutes m
+          on m.id = bm.minute_id
+         and m.minute = bm.minute
+        join payload_fields f
+          on f.payload_id = m.payload_id
+        where bm.batch_id = $1
+        order by m.minute, m.id
     """
 
 
@@ -693,8 +680,8 @@ def _batch_from_row(row: Mapping[str, Any]) -> WigleBatch:
         id=int(row["id"]),
         status=str(row["status"]),
         row_count=int(row["row_count"]),
-        min_scan_id=None if row["min_scan_id"] is None else int(row["min_scan_id"]),
-        max_scan_id=None if row["max_scan_id"] is None else int(row["max_scan_id"]),
+        min_item_id=None if row["min_item_id"] is None else int(row["min_item_id"]),
+        max_item_id=None if row["max_item_id"] is None else int(row["max_item_id"]),
         filename=None if row["filename"] is None else str(row["filename"]),
         csv_sha256=None if row["csv_sha256"] is None else str(row["csv_sha256"]),
         wigle_status=None if row["wigle_status"] is None else str(row["wigle_status"]),

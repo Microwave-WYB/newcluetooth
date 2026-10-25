@@ -83,7 +83,6 @@ services:
       CLUETOOTH_INGEST_WORKERS: ${CLUETOOTH_INGEST_WORKERS:-2}
       CLUETOOTH_QUEUE_SIZE: ${CLUETOOTH_QUEUE_SIZE:-0}
       CLUETOOTH_POLL_INTERVAL_SECONDS: ${CLUETOOTH_POLL_INTERVAL_SECONDS:-30}
-      CLUETOOTH_PROJECT_INTERVAL_SECONDS: ${CLUETOOTH_PROJECT_INTERVAL_SECONDS:-600}
       CLUETOOTH_HEARTBEAT_PATH: /tmp/cluetooth-sync/heartbeat.json
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-service-account
     volumes:
@@ -93,7 +92,7 @@ services:
       - google-service-account
     healthcheck:
       # Fresh heartbeat (rewritten every 15s) and fewer than 5 consecutive
-      # cycle or projection errors.
+      # cycle errors.
       test: ["CMD", "cluetooth", "health", "--max-age-seconds", "120"]
       interval: 60s
       timeout: 10s

@@ -29,10 +29,6 @@ class SyncStatus:
     total_rows: int = 0
     consecutive_cycle_errors: int = 0
     last_cycle_error: str | None = None
-    last_projection_at: str | None = None
-    projection_scans_through_id: int | None = None
-    consecutive_projection_errors: int = 0
-    last_projection_error: str | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def begin_cycle(self) -> None:
@@ -66,17 +62,6 @@ class SyncStatus:
             self.total_rows += self.cycle.rows
             self.consecutive_cycle_errors += 1
             self.last_cycle_error = f"{_now()} {type(exc).__name__}: {exc}"[:2000]
-
-    def projection_succeeded(self, scans_through_id: int) -> None:
-        with self._lock:
-            self.last_projection_at = _now()
-            self.projection_scans_through_id = scans_through_id
-            self.consecutive_projection_errors = 0
-
-    def projection_failed(self, exc: BaseException) -> None:
-        with self._lock:
-            self.consecutive_projection_errors += 1
-            self.last_projection_error = f"{_now()} {type(exc).__name__}: {exc}"[:2000]
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -120,13 +105,10 @@ def check_heartbeat(
         f"cycle={cycle.get('completed')}/{cycle.get('discovered')} "
         f"cycle_failed={cycle.get('failed')} total_ok={data.get('total_succeeded')} "
         f"total_failed={data.get('total_failed')} rows={data.get('total_rows')} "
-        f"cycle_errors={data.get('consecutive_cycle_errors')} "
-        f"projection_errors={data.get('consecutive_projection_errors')}"
+        f"cycle_errors={data.get('consecutive_cycle_errors')}"
     )
     if age > max_age_seconds:
         return False, f"stale heartbeat: {summary}"
     if data.get("consecutive_cycle_errors", 0) >= max_consecutive_errors:
         return False, f"repeated cycle errors: {summary}"
-    if data.get("consecutive_projection_errors", 0) >= max_consecutive_errors:
-        return False, f"repeated projection errors: {summary}"
     return True, summary

@@ -28,8 +28,6 @@ from cluetooth_sync.pipeline import (
     StorageClient,
     SyncStatus,
     check_heartbeat,
-    insert_builtin_ad_structures,
-    project_advs,
     run_pipeline,
     survey_blobs,
     write_heartbeat,
@@ -277,15 +275,6 @@ def sync(
             help="Only process up to N pending blobs per sync cycle.",
         ),
     ] = None,
-    project_interval_seconds: Annotated[
-        int,
-        typer.Option(
-            "--project-interval-seconds",
-            envvar="CLUETOOTH_PROJECT_INTERVAL_SECONDS",
-            min=1,
-            help="In continuous mode, project advs/enrichments every N seconds.",
-        ),
-    ] = 600,
     heartbeat_path: Annotated[
         Path,
         typer.Option(
@@ -316,10 +305,6 @@ def sync(
     continuous = poll_interval_seconds is not None
     stop = threading.Event()
     _start_daemon(_heartbeat_loop, status, heartbeat_path, stop)
-    if continuous:
-        _start_daemon(
-            _projection_loop, status, database_url, project_interval_seconds, stop
-        )
 
     with (
         ThreadPoolExecutor(max_workers=download_workers) as download_executor,
@@ -372,8 +357,6 @@ def sync(
                     flush=True,
                 )
                 if not continuous:
-                    if stats.succeeded > 0:
-                        _project(status, database_url)
                     break
 
                 time.sleep(poll_interval_seconds)
@@ -393,40 +376,6 @@ def _heartbeat_loop(status: SyncStatus, path: Path, stop: threading.Event) -> No
         except OSError as exc:
             print(f"heartbeat write failed: {exc}", file=sys.stderr, flush=True)
         if stop.wait(HEARTBEAT_INTERVAL_SECONDS):
-            return
-
-
-def _project(status: SyncStatus, database_url: str) -> None:
-    started = time.monotonic()
-    projected = project_advs(database_url)
-    insert_builtin_ad_structures(
-        database_url,
-        scans_after_id=projected.previous_scans_through_id,
-        scans_through_id=projected.scans_through_id,
-    )
-    status.projection_succeeded(projected.scans_through_id)
-    print(
-        f"project advs through scan {projected.scans_through_id} "
-        f"(+{projected.scans_through_id - projected.previous_scans_through_id} ids) "
-        f"in {time.monotonic() - started:.1f}s",
-        flush=True,
-    )
-
-
-def _projection_loop(
-    status: SyncStatus,
-    database_url: str,
-    interval_seconds: int,
-    stop: threading.Event,
-) -> None:
-    # Runs beside ingest; project_advs takes a commit-safe scan watermark.
-    while True:
-        try:
-            _project(status, database_url)
-        except Exception as exc:
-            status.projection_failed(exc)
-            print(f"projection failed: {exc}", file=sys.stderr, flush=True)
-        if stop.wait(interval_seconds):
             return
 
 
@@ -796,8 +745,8 @@ def wigle_batches(
                     str(batch.id),
                     batch.status,
                     str(batch.row_count),
-                    "" if batch.min_scan_id is None else str(batch.min_scan_id),
-                    "" if batch.max_scan_id is None else str(batch.max_scan_id),
+                    "" if batch.min_item_id is None else str(batch.min_item_id),
+                    "" if batch.max_item_id is None else str(batch.max_item_id),
                     batch.filename or "",
                     batch.wigle_status or "",
                     ",".join(batch.wigle_transids),
