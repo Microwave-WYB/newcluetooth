@@ -1,11 +1,10 @@
 # Production sync operations (simi)
 
-> **Status, 2026-10-26:** the robust continuous sync and the minute-index schema
-> restructure are implemented and tested on branch `ops/continuous-sync`, but
-> **not deployed**. On simi, the checkout is still `4220a1b`, no migrations
-> after `20260702120000` have been applied, `sync-continuous` is not running,
-> and the backfill has never run. The steps below are the intended procedure;
-> the restructure runbook is marked **NOT EXECUTED**.
+> **Status, 2026-10-25: DEPLOYED on simi** at `7a5b325` plus `ac84d8f`
+> (compose restart policy). The migrations through `20261026000000` are applied,
+> the backfill ran and passed every check, and `sync-continuous` is running and
+> healthy with 4 download / 2 ingest workers. See "Deployment record" below for
+> what was done and measured. The `*_old` tables are kept.
 >
 > See `docs/schema.md` for the schema itself and `HANDOFF.md` for the local
 > measurements (1.2M synthetic sightings) and open questions.
@@ -146,7 +145,7 @@ sets 24/16/256, which is too heavy for a server that hosts other work.
     sync --list-only
   ```
 
-## Restructure runbook — **NOT EXECUTED**
+## Restructure runbook (executed 2026-10-25, see the deployment record)
 
 The minute-index schema is applied by migration `20261026000000`, which renames
 the old tables instead of dropping them. Applying it alone leaves an **empty**
@@ -158,15 +157,24 @@ backfilled data only.
    this runbook can recover raw data.
 1. Take a fresh dump (above) and check `df -h /data /var/lib/docker`.
 2. `docker compose stop sync-continuous` and confirm it stayed stopped.
-3. **Pre-migration integrity check.** `raw` is authoritative and
+3. Apply the migration: `docker compose run --rm --no-deps migrate` (dbmate `up`). This
+   runs `20260805233000` and `20261025093000` first if they are still pending,
+   then `20261026000000_minute_index_schema`. The rename itself is metadata
+   only; the new tables start empty.
+4. **Archive integrity check (after the migration, before the backfill).** `raw` is authoritative and
    `scans.local_name` was modified in place at some point, so before copying
    `scans_old` into the minute index, replay a random sample of the archived
    objects and compare their raw bytes per sighting with `scans_old`:
 
+   The check compares against `scans_old`, so it can only run once the
+   migration has renamed the table (running it earlier fails with `relation
+   "scans_old" does not exist`). The rename is metadata only and the backfill
+   has not copied anything yet, so the check still comes first. Do not set a
+   read-only session (`PGOPTIONS`): it stages rows in temp tables.
+
    ```sh
    docker compose run --rm --no-deps --entrypoint cluetooth sync-continuous \
-     verify-raws --database-url postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable \
-     --private-key /run/secrets/cluetooth-private-key --sample 10
+     verify-raws --private-key /run/secrets/cluetooth-private-key --sample 20
    ```
 
    It prints one line per sampled object
@@ -177,10 +185,6 @@ backfilled data only.
    instead of continuing, because the backfill copies `scans_old`, not the
    objects. A larger `--sample` costs one GCS read per object; 10 is enough to
    catch a systematic divergence, more is better if the run allows it.
-4. Apply the migration: `docker compose run --rm migrate` (dbmate `up`). This
-   runs `20260805233000` and `20261025093000` first if they are still pending,
-   then `20261026000000_minute_index_schema`. The rename itself is metadata
-   only; the new tables start empty.
 5. Run the backfill inside the sync image (it needs no GCS access). The image
    entrypoint is `cluetooth-sync`, so override it:
 
@@ -195,18 +199,20 @@ backfilled data only.
    nonzero when a check fails; report that to the owner instead of continuing.
    The same entrypoint override runs `replay` and `rebuild`.
 6. Read the verification output: checks 01–11 must be `ok` and check 12
-   (`12_info_default_partition_rows`) is informational.
-7. Only then start the sync: `docker compose up -d sync-continuous`.
+   (`12_info_default_partition_rows`) is informational. Check 08 (random
+   minute recompute from `scans_old`) is the slow one: 44 min on the real data.
+7. Only then start the sync: `docker compose up -d --no-recreate sync-continuous`.
 8. Watch `docker compose logs -f sync-continuous`, `docker compose ps` and
    `cluetooth health`.
 
-Local measurements of this sequence (1.2M synthetic sightings): backfill
+The 12 s per million rows below is from synthetic data; production took 63 s per
+million rows in total (see the record). Local measurements of this sequence (1.2M synthetic sightings): backfill
 aggregation 14.9 s (12.4 s per million rows), verification 10.1 s, and the
-pre-migration check costs one GCS read, one decrypt/parse and one query per
+archive check costs one GCS read, one decrypt/parse and one query per
 sampled object. The new tables are 47 MB where the old ones were 407 MB. See
 `HANDOFF.md`.
 
-## Deploy (intended, on hold)
+## Deploy (generic procedure; superseded for the restructure by the runbook above)
 
 1. Take a backup (above) and check `df -h /data /var/lib/docker`.
 2. `git fetch` from the workstation remote, or apply the branch bundle, then
@@ -232,8 +238,9 @@ sampled object. The new tables are 47 MB where the old ones were 407 MB. See
 - Restart: `docker compose restart sync-continuous`. This is safe mid-backlog.
 - Stop: `docker compose stop sync-continuous`. `restart: unless-stopped` keeps
   it stopped across reboots until it is started again.
-- `cluetooth-db` has no restart policy. After a host reboot it must be started
-  with `docker start cluetooth-db`, as happened on 2026-10-25.
+- `cluetooth-db` has `restart: unless-stopped` (set 2026-10-25 with
+  `docker update --restart unless-stopped cluetooth-db`, no recreate, and in
+  `compose.yaml`). Before that it stayed down after a host reboot.
 
 ## Roll back
 
@@ -255,7 +262,33 @@ sampled object. The new tables are 47 MB where the old ones were 407 MB. See
    before rolling this one back.
 5. Restore the dump only if data was damaged. Confirm with the owner first.
 
-## Pending inventory (survey, 2026-10-25)
+## Deployment record (simi, 2026-10-25)
+
+- Backup reused, not retaken: `cluetooth-predeploy-20261025.dump` (sha256 checked
+  OK before starting).
+- Code: git bundle over ssh (nothing pushed) fetched into the checkout, now
+  `ac84d8f` on `ops/continuous-sync`; image `cluetooth-sync:latest` built (45 s).
+  `.env` backup: `.env.bak-20261025`; workers now 4/2, queue 16.
+- Archive check: `verify-raws --sample 20`: 20 objects, `mismatched_keys=0`,
+  `skipped=0`. It was run before the migration with a patched copy of its query
+  (`scans` instead of `scans_old`) mounted over the image's; this is why the
+  runbook order above now has it after the migration.
+- Migrations: `20260805233000` 39 ms, `20261025093000` 55 ms,
+  `20261026000000` 2.5 s.
+- Backfill: 12,275,936 rows, aggregation 777.9 s, verification 2731.0 s (check 08
+  alone 2638.9 s; the others 0–32 s). Checks 01–11 `ok`; 12 informational, 0 rows
+  in the default partition.
+- Sync: first cycle ingested the 51 pending objects (22 `scans/v2/`, 29 legacy),
+  119,676 rows. Still failing by design, on hourly backoff: 6 `scans/schema=v2/`
+  objects (unsupported path) and 1 `0.0.5-debug` legacy-named object (producer
+  version outside 0.0.1–0.0.4).
+- Rows: `scans_old` 12,275,936 (unchanged); `sighting_minutes` 0 -> 724,996 after
+  backfill -> 738,755 after the first cycle; `payloads` 259,034;
+  `ad_structures` 268,232 (after backfill). Database 6,572 MB -> 7,252 MB (old
+  and new tables coexist); `/data` 67 GB -> 68 GB used.
+- `*_old` tables and `backfill_progress` are kept.
+
+## Pending inventory (survey, 2026-10-25, before the deploy)
 
 | kind | objects | succeeded | failed | new |
 |---|---|---|---|---|
