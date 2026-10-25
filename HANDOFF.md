@@ -3,7 +3,8 @@
 Branch `ops/continuous-sync`, worktree `/home/wyb/.paseo/worktrees/1pefufa6/sync`.
 Commits: `196b125` (robust continuous sync, tests passed then), `c805203` (WIP
 schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
-`4f49915` (minute-schema tests), `455f7e8` (schema.sql). Nothing is pushed.
+`4f49915` (minute-schema tests), `455f7e8` (schema.sql), `733fb83` and
+`365c0d9` (docs). Nothing is pushed.
 
 ## Report, 2026-10-26 (this pass)
 
@@ -36,8 +37,8 @@ schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
   1,200,002 sightings → 12,602 payloads (95x).
 - Minute rows: 66,862 per `(minute, addr, payload)` vs 60,002 per
   `(minute, addr)` — the payload dimension adds 11.4%.
-- Backfill: **169.1 s for 1,200,002 rows = 140.9 s per million rows** (66
-  transactions of ≤100k rows, 100k batch size).
+- Backfill: **169.1 s for 1,200,002 rows = 140.9 s per million rows** (61 id
+  ranges of ≤100k rows at `--batch-size 100000`; 13 of them held data).
 - Verification: 154 s total; 145 s of that is check 12 (informational
   local-name divergence, 240,000 rows); check 08 5.3 s; every numeric check
   under 1.5 s.
