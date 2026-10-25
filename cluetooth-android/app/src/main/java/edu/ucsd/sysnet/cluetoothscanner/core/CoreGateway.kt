@@ -323,7 +323,7 @@ class NativeCoreGateway private constructor(
     }
 
     companion object {
-        fun open(dataDirectory: String, config: CoreConfig = defaultCoreConfig()): NativeCoreGateway {
+        fun open(dataDirectory: String, config: CoreConfig = PayloadRotationConfig.apply(defaultCoreConfig())): NativeCoreGateway {
             val gateway = NativeCoreGateway(CluetoothCore.open(dataDirectory, config))
             val version = try {
                 gateway.apiVersion()

@@ -61,13 +61,13 @@ mise run //cluetooth-core:native-install  # cargo install cargo-ndk --version 4.
 
 `build-android.sh` checks both tool versions and every Rust target before compiling. It honors `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT`, then checks the pinned NDK under `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the standard `$HOME/Android/Sdk`. Version and missing-target failures include corrective commands.
 
-Build all four verified ABIs at API 24:
+Build the requested ABIs at API 24 (default `arm64-v8a`; opt in to others with `CLUETOOTH_ABIS=arm64-v8a,x86_64`, any of `arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`). Every requested ABI must be built or the script fails:
 
 ```sh
 mise run //cluetooth-core:build-android
 ```
 
-Or run `../cluetooth-android/gradlew -p ../cluetooth-android :app:buildCluetoothCoreAndroid`. The output contains `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86`. Android uses the same four-value ABI split allowlist with no universal APK, so transitive `armeabi`, MIPS, or MIPS64 artifacts cannot create an APK that lacks `libcluetooth_core.so`.
+Or run `../cluetooth-android/gradlew -p ../cluetooth-android :app:buildCluetoothCoreAndroid`. The output contains exactly the requested ABIs. Android uses the same list as its ABI split allowlist with no universal APK, so transitive `armeabi`, MIPS, or MIPS64 artifacts cannot create an APK that lacks `libcluetooth_core.so`.
 
 `[profile.release] strip = "symbols"` reproducibly removes static symbols and debug sections while preserving the generated dynamic UniFFI API. Validate the current exports from each built ABI with the pinned NDK's `llvm-readelf --dyn-syms`; exact counts change when UniFFI surface metadata changes and are not a stable release invariant. Cargo's default unwind panic strategy is unchanged. Binding generation explicitly disables stripping only for its ignored host cdylib because UniFFI bindgen needs its static metadata; that host artifact is not packaged.
 

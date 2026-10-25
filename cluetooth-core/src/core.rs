@@ -1927,6 +1927,32 @@ mod tests {
     }
 
     #[test]
+    fn rotation_configuration_accepts_exact_bounds_and_rejects_zero() {
+        let directory = tempfile::tempdir().unwrap();
+        let open = |name: &str, value: CoreConfig| {
+            CluetoothCore::open(directory.path().join(name).to_string_lossy().into(), value)
+        };
+        let mut maximum = config(1);
+        maximum.payload_max_rows = crate::config::MAX_PAYLOAD_MAX_ROWS;
+        maximum.payload_max_estimated_bytes = crate::config::MAX_PAYLOAD_MAX_ESTIMATED_BYTES;
+        maximum.payload_max_age_ms = crate::config::MAX_PAYLOAD_MAX_AGE_MS;
+        assert!(open("maximum", maximum).is_ok());
+        let mut minimum = config(1);
+        minimum.payload_max_estimated_bytes = 1;
+        minimum.payload_max_age_ms = 1;
+        assert!(open("minimum", minimum).is_ok());
+        for zeroed in 0..3 {
+            let mut value = config(1);
+            match zeroed {
+                0 => value.payload_max_rows = 0,
+                1 => value.payload_max_estimated_bytes = 0,
+                _ => value.payload_max_age_ms = 0,
+            }
+            assert!(open("zero", value).is_err());
+        }
+    }
+
+    #[test]
     fn reopen_removes_orphan_ciphertext() {
         let directory = tempfile::tempdir().unwrap();
         let orphan = directory.path().join(

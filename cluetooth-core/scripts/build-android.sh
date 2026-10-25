@@ -4,12 +4,25 @@ set -euo pipefail
 readonly EXPECTED_CARGO_NDK_VERSION="4.1.2"
 readonly EXPECTED_NDK_VERSION="27.2.12479018"
 readonly ANDROID_API="24"
-readonly RUST_TARGETS=(
-  "aarch64-linux-android"
-  "armv7-linux-androideabi"
-  "x86_64-linux-android"
-  "i686-linux-android"
+# CLUETOOTH_ABIS is a comma-separated Android ABI list; default arm64-v8a. Every requested ABI is
+# built and verified, otherwise the script fails. Other ABIs (emulators, 32-bit) are opt-in.
+declare -A RUST_TARGET_FOR_ABI=(
+  ["arm64-v8a"]="aarch64-linux-android"
+  ["armeabi-v7a"]="armv7-linux-androideabi"
+  ["x86_64"]="x86_64-linux-android"
+  ["x86"]="i686-linux-android"
 )
+IFS=',' read -r -a ABIS <<<"${CLUETOOTH_ABIS:-arm64-v8a}"
+RUST_TARGETS=()
+CARGO_NDK_TARGET_ARGS=()
+for abi in "${ABIS[@]}"; do
+  if [[ -z "${RUST_TARGET_FOR_ABI[$abi]:-}" ]]; then
+    echo "unsupported ABI '$abi' in CLUETOOTH_ABIS; supported: ${!RUST_TARGET_FOR_ABI[*]}" >&2
+    exit 2
+  fi
+  RUST_TARGETS+=("${RUST_TARGET_FOR_ABI[$abi]}")
+  CARGO_NDK_TARGET_ARGS+=(--target "$abi")
+done
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 <jniLibs-output-directory>" >&2
@@ -66,9 +79,13 @@ rm -rf "$out_dir"
 mkdir -p "$out_dir"
 cargo ndk \
   --platform "$ANDROID_API" \
-  --target arm64-v8a \
-  --target armeabi-v7a \
-  --target x86_64 \
-  --target x86 \
+  "${CARGO_NDK_TARGET_ARGS[@]}" \
   --output-dir "$out_dir" \
   build --locked --release --lib
+
+for abi in "${ABIS[@]}"; do
+  if [[ ! -s "$out_dir/$abi/libcluetooth_core.so" ]]; then
+    echo "requested ABI $abi was not built: missing $out_dir/$abi/libcluetooth_core.so" >&2
+    exit 1
+  fi
+done

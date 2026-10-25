@@ -68,13 +68,15 @@ Never add these values or the keystore to this repository. Host JVM tests need n
 
 ```sh
 mise run //cluetooth-core:bindings        # generated host UniFFI Kotlin
-mise run native-check                    # four API-24 native ABIs, no APK
+mise run native-check                    # API-24 native ABIs, no APK (default arm64-v8a)
 mise run //cluetooth-android:build        # product debug APKs, matching .debug client required
 mise run //cluetooth-android:build-release # product release APKs, unsigned without signing values
 ```
 
 The Gradle equivalents remain `:app:generateCluetoothCoreBindings`, `:app:buildCluetoothCoreAndroid`, `:app:prepareCluetoothCoreAndroid`, `:app:assembleDebug`, and `:app:assembleRelease`. Kotlin compilation depends on binding generation; JNI merge/package tasks depend on the native build. Generated inputs cannot silently be omitted from product builds. Bindings go to `app/build/generated/source/uniffi`; stripped native libraries go to `app/build/generated/jniLibs`. All native targets/tool versions are checked before building; no ABI is silently skipped.
 
-The app produces one APK per supported ABI (`arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`), no universal APK. Host JVM tests do not assert packaged libraries, installation, API-24 loading or on-device behavior.
+Payload rotation (5 minutes, 10 MiB, 100k rows) is set in Kotlin in `core/PayloadRotationConfig.kt` and passed to the Rust core when it is opened; the core validates it against hard maximums and keeps its own constants only as defaults. Changing the interval is a Kotlin-only change and does not rebuild the native libraries (Gradle reuses them while the Rust inputs are unchanged).
+
+Only `arm64-v8a` is built by default for both debug and release. Opt in to more ABIs (e.g. emulators) with `-PcluetoothAbis=arm64-v8a,x86_64` or `CLUETOOTH_ABIS=arm64-v8a,x86_64` (any of `arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`); the same list drives the native build and the APK splits. Every requested ABI must be built and packaged; the build fails otherwise. One APK per requested ABI, no universal APK. Host JVM tests do not assert packaged libraries, installation, API-24 loading or on-device behavior.
 
 **Device smoke is opt-in only:** `mise run //cluetooth-android:device-smoke` refuses unless `CLUETOOTH_ALLOW_DEVICE_SMOKE=1` is set. It installs and launches test/app components. Although the smoke-test body uses synthetic local data, `CluetoothApplication.onCreate` schedules uploads, so the complete instrumentation run is **not guaranteed network-free**. A separately reviewed non-production/offline app and device/network setup is required before opting in; the existing production client config does not satisfy that requirement. Never use this task in default checks, and do not infer it is safe merely from its test source. This integration does not perform device operations.

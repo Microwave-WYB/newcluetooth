@@ -32,5 +32,5 @@ description = "Install all four Android Rust targets and pinned cargo-ndk in iso
 run = ['rustup target add --toolchain "$RUSTUP_TOOLCHAIN" aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android', "cargo install cargo-ndk --version 4.1.2 --locked"]
 
 [tasks.build-android]
-description = "Build four API-24 ABIs; requires explicit SDK/NDK and cargo-ndk installation"
+description = "Build the ABIs in CLUETOOTH_ABIS (default arm64-v8a; e.g. arm64-v8a,x86_64) at API 24; requires explicit SDK/NDK and cargo-ndk installation"
 run = "bash scripts/build-android.sh ../cluetooth-android/app/build/generated/jniLibs"

@@ -34,5 +34,5 @@ description = "Host checks: Rust, Android JVM, Python/Parquet interoperability a
 run = ["mise run //cluetooth-core:check", "mise run //cluetooth-android:check", "mise run //cluetooth-sync:check"]
 
 [tasks.native-check]
-description = "Build four Android API-24 native ABIs; separate from host tests and product APKs"
+description = "Build the Android API-24 native ABIs in CLUETOOTH_ABIS (default arm64-v8a); separate from host tests and product APKs"
 depends = ["//cluetooth-core:build-android"]

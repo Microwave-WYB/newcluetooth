@@ -25,7 +25,21 @@ if (hostCheckFlag != null) {
     apply(plugin = "com.google.gms.google-services")
 }
 
-val cluetoothCoreAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+// Opt in to more ABIs (e.g. emulators) with -PcluetoothAbis=arm64-v8a,x86_64 or CLUETOOTH_ABIS.
+// Every requested ABI must be built and packaged; the build fails otherwise.
+val supportedCluetoothAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+val cluetoothCoreAbis = (
+    providers.gradleProperty("cluetoothAbis")
+        .orElse(providers.environmentVariable("CLUETOOTH_ABIS"))
+        .orElse("arm64-v8a").get()
+    ).split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct().also { abis ->
+        val unsupported = abis.filterNot { it in supportedCluetoothAbis }
+        if (abis.isEmpty() || unsupported.isNotEmpty()) {
+            throw GradleException(
+                "cluetoothAbis must be a non-empty subset of $supportedCluetoothAbis; unsupported: $unsupported"
+            )
+        }
+    }
 val v2UploaderEnabled = true
 val mapsApiKey = providers.gradleProperty("CLUETOOTH_MAPS_API_KEY")
     .orElse(providers.environmentVariable("CLUETOOTH_MAPS_API_KEY"))
@@ -205,8 +219,10 @@ val generateCluetoothCoreBindings by tasks.registering(Exec::class) {
 
 val buildCluetoothCoreAndroid by tasks.registering(Exec::class) {
     group = "rust"
-    description = "Build and package the four pinned Rust Android ABIs at API 24"
+    description = "Build the requested Rust Android ABIs (default arm64-v8a, see cluetoothAbis) at API 24; fails if any is missing"
     workingDir(cluetoothCoreDirectory)
+    environment("CLUETOOTH_ABIS", cluetoothCoreAbis.joinToString(","))
+    inputs.property("cluetoothAbis", cluetoothCoreAbis.joinToString(","))
     commandLine(
         "bash",
         "scripts/build-android.sh",
@@ -233,13 +249,13 @@ tasks.matching { task ->
 
 val prepareCluetoothCoreAndroid by tasks.registering {
     group = "rust"
-    description = "Generate UniFFI bindings and all four API-24 Android native libraries"
+    description = "Generate UniFFI bindings and the requested API-24 Android native libraries"
     dependsOn(generateCluetoothCoreBindings, buildCluetoothCoreAndroid)
 }
 
 val assembleCluetoothCoreDebug by tasks.registering {
     group = "verification"
-    description = "Build the ABI-split debug app and instrumentation APKs from clean inputs"
+    description = "Build the requested-ABI-split debug app and instrumentation APKs from clean inputs"
     dependsOn("assembleDebug", "assembleDebugAndroidTest")
 }
 
