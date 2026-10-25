@@ -53,6 +53,21 @@ class PayloadUploadCoordinatorTest {
     }
 
     @Test
+    fun deniedRetryOfAlreadyStoredObjectIsAcknowledgedAsSuccess() = runTest {
+        val file = File.createTempFile("ciphertext", ".encrypted")
+        val core = UploadFakeCore(file)
+        val uploader = object : ObjectFileUploader {
+            override suspend fun putFile(objectPath: String, localFile: File) = error("denied")
+            override suspend fun exists(objectPath: String) = true
+        }
+
+        val summary = PayloadUploadCoordinator(core, uploader).uploadPending()
+
+        assertEquals(PayloadUploadSummary(1, 0), summary)
+        assertEquals(listOf("prepare", "success"), core.outcomes)
+    }
+
+    @Test
     fun transferFailureKeepsRetryIdentityAndReportsFailureToRust() = runTest {
         val file = File.createTempFile("ciphertext", ".encrypted")
         val core = UploadFakeCore(file)

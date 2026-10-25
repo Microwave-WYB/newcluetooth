@@ -160,9 +160,9 @@ fun UploadStatusScreen(
                     Text("Export", maxLines = 1)
                 }
             }
-            if (coreState.lastUploadError != null) {
+            coreState.lastUploadError?.let { uploadError ->
                 Text(
-                    "Some scans could not be uploaded. Try again.",
+                    "Some scans could not be uploaded. Try again.\n$uploadError",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
