@@ -35,12 +35,8 @@ def test_nonlegacy_scan_versions_are_not_misclassified(version: str) -> None:
 
 
 def test_parse_raw_stops_at_a_truncated_field_like_the_sql_tokenizer() -> None:
-    assert parse_raw(bytes.fromhex("020106")) == [
-        AdStruct(ad_type=1, data=b"\x06")
-    ]
+    assert parse_raw(bytes.fromhex("020106")) == [AdStruct(ad_type=1, data=b"\x06")]
     # The second field claims two bytes but only its length byte is present.
-    assert parse_raw(bytes.fromhex("02010602")) == [
-        AdStruct(ad_type=1, data=b"\x06")
-    ]
+    assert parse_raw(bytes.fromhex("02010602")) == [AdStruct(ad_type=1, data=b"\x06")]
     # A lone length byte has no type byte at all.
     assert parse_raw(bytes.fromhex("02")) == []

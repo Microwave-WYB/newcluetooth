@@ -428,3 +428,36 @@ def test_partition_routing_and_default_partition(database_url: str) -> None:
         engine="adbc",
     ).item()
     assert blocked is False
+
+
+def test_minute_extent_check_rejects_invalid_coordinates(database_url: str) -> None:
+    """The minute row keeps the range contract of the old coordinate checks."""
+    assert (
+        _ingest(
+            database_url,
+            "gs://t/extent/seed.jsonl",
+            [_row("AA:00:00:00:00:41", "2026-02-05T00:00:00.000Z", "020106", rssi=-50)],
+        )
+        == 1
+    )
+
+    invalid_extents = [
+        "'NaN'::float8",
+        "'Infinity'::float8",
+        "'-Infinity'::float8",
+        "91::float8",
+        "-91::float8",
+    ]
+    for extent in invalid_extents:
+        with pytest.raises(Exception, match="sighting_minutes_extent_range"):
+            with db.session(database_url) as session:
+                session.cursor.execute(
+                    f"""
+                    insert into sighting_minutes
+                      (minute, addr, payload_id, blob_counts, sightings, min_lat)
+                    select timestamp '2026-02-05 01:00:00+00', 'aa:00:00:00:00:42', p.id,
+                           '{{}}'::jsonb, 1, {extent}
+                    from payloads p
+                    where p.sha256 = sha256(decode('020106', 'hex'))
+                    """
+                )

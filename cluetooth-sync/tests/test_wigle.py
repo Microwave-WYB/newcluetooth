@@ -4,6 +4,7 @@ import csv
 import io
 import json
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import polars as pl
@@ -61,36 +62,44 @@ def _insert_scan(
     )
     insert_prepared_scans(database_url, scans)
 
+    return _minute_id(database_url, addr, scanned_at)
+
+
+def _minute_id(database_url: str, addr: str, scanned_at: str) -> int:
     return int(
         pl.read_database_uri(
             """
-            select max(id)::bigint as id
-            from scans
-            where blob = $1
+            select m.id
+            from sighting_minutes m
+            where m.addr = cast($1 as macaddr)
+              and m.minute = date_trunc('minute', cast($2 as timestamptz), 'UTC')
             """,
             database_url,
             engine="adbc",
-            execute_options={"parameters": [blob_uri]},
-        )
-        .select("id")
-        .item()
+            execute_options={"parameters": [addr, scanned_at]},
+        ).item()
     )
 
 
-def _mark_existing_eligible_scans_uploaded(database_url: str) -> None:
+def _claim_pending_minutes(database_url: str) -> None:
+    """Mark everything already exportable as uploaded by one batch."""
     with db.session(database_url) as session:
         session.cursor.execute(
             """
-            with candidate as (
-              select s.id
-              from observations s
-              where s.lat is not null
-                and s.lon is not null
-                and s.rssi is not null
+            with candidate as materialized (
+              select m.id, m.minute
+              from sighting_minutes m
+              where m.location is not null
+                and m.best_rssi is not null
                 and not exists (
                   select 1
-                  from wigle_upload_batch_scans bs
-                  where bs.observation_id = s.id
+                  from wigle_upload_batch_minutes bm
+                  join wigle_upload_batches b on b.id = bm.batch_id
+                  where bm.minute_id = m.id
+                    and bm.minute = m.minute
+                    and b.status in (
+                      'created', 'exported', 'uploading', 'uploaded', 'completed'
+                    )
                 )
             ),
             new_batch as (
@@ -100,18 +109,18 @@ def _mark_existing_eligible_scans_uploaded(database_url: str) -> None:
               returning id
             ),
             inserted as (
-              insert into wigle_upload_batch_scans (batch_id, observation_id)
-              select new_batch.id, candidate.id
+              insert into wigle_upload_batch_minutes (batch_id, minute_id, minute)
+              select new_batch.id, candidate.id, candidate.minute
               from new_batch
               cross join candidate
-              returning batch_id, scan_id
+              returning batch_id, minute_id
             ),
             stats as (
               select
                 batch_id,
                 count(*)::bigint as row_count,
-                min(scan_id)::bigint as min_item_id,
-                max(scan_id)::bigint as max_item_id
+                min(minute_id)::bigint as min_item_id,
+                max(minute_id)::bigint as max_item_id
               from inserted
               group by batch_id
             )
@@ -127,7 +136,7 @@ def _mark_existing_eligible_scans_uploaded(database_url: str) -> None:
 
 
 def test_write_wigle_csv_exports_bluetooth_rows(database_url: str) -> None:
-    _mark_existing_eligible_scans_uploaded(database_url)
+    _claim_pending_minutes(database_url)
     _insert_scan(
         database_url,
         addr="AA:BB:CC:00:10:01",
@@ -171,16 +180,38 @@ def test_write_wigle_csv_exports_bluetooth_rows(database_url: str) -> None:
     ]
 
 
-def test_wigle_upload_batches_claim_only_unuploaded_eligible_scans(
+def test_write_wigle_csv_without_limit_exports_every_pending_row(
     database_url: str,
 ) -> None:
-    _mark_existing_eligible_scans_uploaded(database_url)
-    first_scan_id = _insert_scan(
+    """No --limit means no limit; the parameter cannot be null (ADBC)."""
+    _claim_pending_minutes(database_url)
+    _insert_scan(
+        database_url,
+        addr="AA:BB:CC:00:10:0A",
+        scanned_at="2026-01-01T00:00:00Z",
+    )
+    _insert_scan(
+        database_url,
+        addr="AA:BB:CC:00:10:0B",
+        scanned_at="2026-01-01T00:00:01Z",
+    )
+
+    output = io.StringIO()
+    row_count = write_wigle_csv(database_url, output)
+
+    assert row_count == 2
+
+
+def test_wigle_upload_batches_claim_only_unuploaded_eligible_minutes(
+    database_url: str,
+) -> None:
+    _claim_pending_minutes(database_url)
+    first_minute_id = _insert_scan(
         database_url,
         addr="AA:BB:CC:00:10:02",
         scanned_at="2026-01-01T00:00:01Z",
     )
-    second_scan_id = _insert_scan(
+    second_minute_id = _insert_scan(
         database_url,
         addr="AA:BB:CC:00:10:03",
         scanned_at="2026-01-01T00:00:02Z",
@@ -213,19 +244,19 @@ def test_wigle_upload_batches_claim_only_unuploaded_eligible_scans(
     assert first_batch is not None
     assert second_batch is not None
     assert first_batch.row_count == 1
-    assert first_batch.min_item_id == first_scan_id
-    assert first_batch.max_item_id == first_scan_id
+    assert first_batch.min_item_id == first_minute_id
+    assert first_batch.max_item_id == first_minute_id
     assert second_batch.row_count == 1
-    assert second_batch.min_item_id == second_scan_id
-    assert second_batch.max_item_id == second_scan_id
+    assert second_batch.min_item_id == second_minute_id
+    assert second_batch.max_item_id == second_minute_id
 
 
 def test_export_wigle_batch_csv_marks_batch_exported(
     database_url: str,
     tmp_path: Path,
 ) -> None:
-    _mark_existing_eligible_scans_uploaded(database_url)
-    scan_id = _insert_scan(
+    _claim_pending_minutes(database_url)
+    minute_id = _insert_scan(
         database_url,
         addr="AA:BB:CC:00:10:05",
         scanned_at="2026-01-01T00:00:04Z",
@@ -237,7 +268,7 @@ def test_export_wigle_batch_csv_marks_batch_exported(
     )
 
     assert batch is not None
-    assert batch.min_item_id == scan_id
+    assert batch.min_item_id == minute_id
 
     result = export_wigle_batch_csv(
         database_url,
@@ -278,7 +309,7 @@ def test_wigle_upload_command_drains_pending_batches(
             """
         )
 
-    _mark_existing_eligible_scans_uploaded(database_url)
+    _claim_pending_minutes(database_url)
     for index in range(3):
         _insert_scan(
             database_url,
@@ -295,7 +326,7 @@ def test_wigle_upload_command_drains_pending_batches(
         auth_header: str,
         donate: bool = False,
         timeout_seconds: int = 120,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         nonlocal upload_count
         upload_count += 1
         assert file_path.exists()

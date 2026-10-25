@@ -21,10 +21,11 @@ from cluetooth_sync.pipeline import (
 from cluetooth_sync.parquet_footer import read_parquet_key_value_occurrences
 from cluetooth_sync.pipeline.orchestrate import BlobBytes, _ingest_blob
 from cluetooth_sync.pipeline.payload_v2 import _required_metadata_value
-from cluetooth_sync.pipeline import db
 
 PAYLOAD_ID = "0195c920-7c00-7abc-8def-0123456789ab"
 V2_URI = f"gs://test-bucket/scans/v2/2025/03/24/{PAYLOAD_ID}.parquet.encrypted"
+SESSION_ID = "0195c920-7c00-7abc-8def-0123456789cd"
+SESSION_URI = f"gs://test-bucket/scans/v2/2025/03/24/{SESSION_ID}.parquet.encrypted"
 FIXTURE = (
     Path(__file__).parent
     / "fixtures/payload-v2/scans/v2/2025/03/24"
@@ -56,6 +57,7 @@ def test_rust_fixture_exact_contract_and_raw_round_trip() -> None:
             "lon": pl.Float64,
             "accuracy": pl.Float32,
             "blob": pl.String,
+            "session_id": pl.String,
         }
     )
     assert scans.select(
@@ -356,11 +358,16 @@ def test_encrypted_v2_payload_runs_through_decrypt_validation_and_database_contr
 
     inserted = pl.read_database_uri(
         """
-        select addr::text as addr, encode(raw, 'hex') as raw,
-               pg_typeof(accuracy)::text as accuracy_type, accuracy
-        from scans
-        where blob = $1
-        order by addr::text
+        select m.addr::text as addr,
+               encode(payload_raw(m.payload_id), 'hex') as raw,
+               pg_typeof(m.best_accuracy)::text as accuracy_type,
+               m.best_accuracy,
+               m.sightings,
+               m.session_id
+        from sighting_minutes m
+        join blobs b on b.id = any (m.blob_ids)
+        where b.uri = $1
+        order by m.addr::text
         """,
         database_url,
         engine="adbc",
@@ -371,13 +378,17 @@ def test_encrypted_v2_payload_runs_through_decrypt_validation_and_database_contr
             "addr": "00:11:22:33:44:55",
             "raw": "00ff1000",
             "accuracy_type": "real",
-            "accuracy": None,
+            "best_accuracy": None,
+            "sightings": 1,
+            "session_id": None,
         },
         {
             "addr": "aa:bb:cc:dd:ee:ff",
             "raw": "02010605ff0080fe",
             "accuracy_type": "real",
-            "accuracy": 3.25,
+            "best_accuracy": 3.25,
+            "sightings": 1,
+            "session_id": None,
         },
     ]
     ledger = pl.read_database_uri(
@@ -389,25 +400,40 @@ def test_encrypted_v2_payload_runs_through_decrypt_validation_and_database_contr
     assert ledger.to_dicts() == [{"success": True}]
 
 
-def test_database_coordinate_constraints_reject_nan_infinity_and_unpaired_values(
-    database_url: str,
-) -> None:
-    invalid_values = [
-        ("NULL", "0", "NULL"),
-        ("'NaN'::float8", "0", "NULL"),
-        ("0", "'Infinity'::float8", "NULL"),
-        ("0", "0", "'NaN'::float4"),
-        ("0", "0", "'Infinity'::float4"),
-        ("0", "0", "-1::float4"),
-        ("NULL", "NULL", "1::float4"),
+def test_v2_session_footer_reaches_the_minute_row(database_url: str) -> None:
+    """v2 objects carry no uploader; the session footer keeps phones apart."""
+    session_id = "7f0e5b1c-0000-4000-8000-000000000001"
+    frame = pl.read_parquet(FIXTURE).filter(pl.col("addr") == "AA:BB:CC:DD:EE:FF")
+    output = io.BytesIO()
+    frame.write_parquet(
+        output,
+        metadata={
+            "cluetooth.payload_schema": "v2",
+            "cluetooth.payload_id": SESSION_ID,
+            "cluetooth.scan_session_id": session_id,
+        },
+    )
+    private_key = PrivateKey(bytes(range(32)))
+    ciphertext = SealedBox(private_key.public_key).encrypt(output.getvalue())
+
+    assert _ingest_blob(
+        database_url, bytes(private_key), BlobBytes(SESSION_URI, ciphertext)
+    )
+
+    rows = pl.read_database_uri(
+        """
+        select m.addr::text as addr, m.session_id::text as session_id, m.sightings
+        from sighting_minutes m
+        join blobs b on b.id = any (m.blob_ids)
+        where b.uri = $1
+        """,
+        database_url,
+        engine="adbc",
+        execute_options={"parameters": [SESSION_URI]},
+    ).to_dicts()
+    assert rows == [
+        {"addr": "aa:bb:cc:dd:ee:ff", "session_id": session_id, "sightings": 1}
     ]
-    for lat, lon, accuracy in invalid_values:
-        with pytest.raises(Exception):
-            with db.session(database_url) as database:
-                database.cursor.execute(
-                    f"insert into scans (addr, scanned_at, raw, lat, lon, accuracy) "
-                    f"values ('AA:BB:CC:DD:EE:FF', now(), '\\x00', {lat}, {lon}, {accuracy})"
-                )
 
 
 def test_valid_empty_exact_schema_payload_is_marked_successful(

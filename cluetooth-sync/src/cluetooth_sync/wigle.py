@@ -299,10 +299,11 @@ def write_wigle_csv(
     )
 
     if batch_id is None:
+        # The ADBC driver cannot bind a null parameter, so "no limit" is 0.
         rows_df = _read_database_frame(
             database_url,
             _pending_wigle_rows_sql(),
-            [capabilities, limit, include_uploaded],
+            [capabilities, limit or 0, include_uploaded],
         )
     else:
         rows_df = _read_database_frame(
@@ -621,7 +622,7 @@ def _pending_wigle_rows_sql() -> str:
             or not exists ({_WIGLE_NOT_CLAIMED})
           )
         order by m.minute, m.id
-        limit $2::bigint
+        limit nullif($2::bigint, 0)
     """
 
 

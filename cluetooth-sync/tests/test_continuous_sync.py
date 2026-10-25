@@ -12,20 +12,20 @@ import pytest
 from typer.testing import CliRunner
 
 import cluetooth_sync.cli as cli
+import cluetooth_sync.pipeline.db as db
 from cluetooth_sync.pipeline import (
     CycleStats,
     SyncStatus,
     check_heartbeat,
     discover_pending_blobs,
-    insert_builtin_ad_structures,
     insert_prepared_scans,
     prepare_scan_jsonl_bytes,
-    project_advs,
     write_heartbeat,
 )
 from cluetooth_sync.pipeline.ingest import mark_blob_failed
-from cluetooth_sync.pipeline.project import safe_scan_watermark
+from cluetooth_sync.pipeline.queries import read_query
 from cluetooth_sync.pipeline.survey import survey_blobs
+
 
 SCAN_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "scans.jsonl"
 
@@ -100,8 +100,7 @@ def test_failed_blob_backs_off_then_is_retried(database_url: str) -> None:
     assert _blob_row(database_url, uri)["retry_in"] <= 3600
 
 
-def test_watermark_waits_for_in_flight_ingest(database_url: str) -> None:
-    uri = "gs://test-bucket/continuous/in-flight.jsonl"
+def test_rebuild_lock_waits_for_in_flight_ingest(database_url: str) -> None:
     connection = pg_dbapi.connect(database_url)
     cursor = connection.cursor()
     try:
@@ -109,103 +108,42 @@ def test_watermark_waits_for_in_flight_ingest(database_url: str) -> None:
             "select true as locked from pg_advisory_xact_lock_shared(4381022501)"
         )
         cursor.fetch_polars()
-        cursor.execute(
-            "insert into blobs (uri) values ($1) on conflict do nothing", [uri]
-        )
-        cursor.execute(
-            """
-            insert into scans (blob, addr, scanned_at, raw)
-            values ($1, '00:11:22:33:44:55', now(), '\\x0201'::bytea)
-            """,
-            [uri],
-        )
-        cursor.execute("select max(id)::bigint as id from scans")
-        in_flight_id = int(cursor.fetch_polars().item(0, "id"))
 
-        result: list[int] = []
-        waiter = threading.Thread(
-            target=lambda: result.append(safe_scan_watermark(database_url))
-        )
+        result: list[str] = []
+
+        def take_rebuild_lock() -> None:
+            with db.session(database_url) as session:
+                session.cursor.execute(read_query("sightings/rebuild_lock.sql"))
+                session.cursor.fetch_polars()
+                result.append("locked")
+
+        waiter = threading.Thread(target=take_rebuild_lock)
         waiter.start()
         waiter.join(timeout=1.0)
-        assert waiter.is_alive(), "watermark must wait for the uncommitted insert"
+        assert waiter.is_alive(), "rebuild must wait for the uncommitted ingest"
 
         connection.commit()
         waiter.join(timeout=10)
-        assert result and result[0] >= in_flight_id
+        assert result == ["locked"]
     finally:
         cursor.close()
         connection.close()
 
 
-def test_ranged_enrichment_follows_projection(database_url: str) -> None:
-    uri = "gs://test-bucket/continuous/ranged-enrichment.jsonl"
-    project_advs(database_url)
-    # A payload unique to this test, so shared-database enrichment state of other
-    # tests' fixture advs is untouched.
-    rows = [
-        {
-            "addr": f"02:00:00:00:00:0{index}",
-            "rssi": -60,
-            "scanned_at": "2026-10-25T00:00:00.000Z",
-            "raw": f"0201060303aafe0416ffff0{index}",
-            "local_name": None,
-            "tx_power": None,
-            "is_connectable": None,
-            "lat": None,
-            "lon": None,
-            "accuracy": None,
-        }
-        for index in (1, 2)
-    ]
-    jsonl = "".join(json.dumps(row) + "\n" for row in rows).encode()
-    scans = prepare_scan_jsonl_bytes(jsonl, uri)
-    assert insert_prepared_scans(database_url, scans) == 2
-
-    projected = project_advs(database_url)
-    assert projected.scans_through_id > projected.previous_scans_through_id
-    _execute(
-        database_url,
-        """
-        delete from adv_enrichments e
-        using scans s
-        where s.blob = $1 and e.addr = s.addr and e.raw = s.raw
-        """,
-        [uri],
-    )
-    insert_builtin_ad_structures(
-        database_url,
-        scans_after_id=projected.previous_scans_through_id,
-        scans_through_id=projected.scans_through_id,
-    )
-
-    count = pl.read_database_uri(
-        """
-        select count(*)::int as count
-        from adv_enrichments e
-        join (select distinct addr, raw from scans where blob = $1) s
-          on s.addr = e.addr and s.raw = e.raw
-        where e.enrichment_kind = 'builtin' and e.enrichment_id = 'ad_structures'
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [uri]},
-    ).item()
-    assert count == 2
-
-    # A repeated projection with no new scans is an empty, idempotent range.
-    again = project_advs(database_url)
-    assert again.previous_scans_through_id == again.scans_through_id
-
-
-def test_skip_if_succeeded_prevents_double_ingest(database_url: str) -> None:
+def test_skip_if_succeeded_prevents_double_ingest(clean_database_url: str) -> None:
+    database_url = clean_database_url
     uri = "gs://test-bucket/continuous/double-ingest.jsonl"
     scans = prepare_scan_jsonl_bytes(SCAN_FIXTURE_PATH.read_bytes(), uri)
     assert insert_prepared_scans(database_url, scans, skip_if_succeeded=True) == 2
     assert insert_prepared_scans(database_url, scans, skip_if_succeeded=True) == 0
 
     count = pl.read_database_uri(
-        "select count(*)::int as count from scans where blob = $1",
+        """
+        select coalesce(sum(m.sightings), 0)::int as count
+        from sighting_minutes m
+        join blobs b on b.id = any (m.blob_ids)
+        where b.uri = $1
+        """,
         database_url,
         engine="adbc",
         execute_options={"parameters": [uri]},
@@ -279,7 +217,6 @@ def test_continuous_loop_survives_cycle_errors(
 
     monkeypatch.setattr(cli, "run_pipeline", fake_pipeline)
     monkeypatch.setattr(cli, "_build_storage_client", lambda *args: object())
-    monkeypatch.setattr(cli, "_projection_loop", lambda *args: None)
     monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
 
     with pytest.raises(KeyboardInterrupt):

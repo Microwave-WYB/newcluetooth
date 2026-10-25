@@ -156,7 +156,9 @@ def test_prepare_legacy_scan_jsonl_bytes_trims_name_null_padding() -> None:
     assert scans.select("local_name").item() == "Foo"
 
 
-def test_insert_prepared_scans(database_url: str) -> None:
+def test_insert_prepared_scans(clean_database_url: str) -> None:
+    """Row-exact assertions, so on a database of its own (see conftest)."""
+    database_url = clean_database_url
     scans = prepare_scan_jsonl_bytes(SCAN_FIXTURE_PATH.read_bytes(), SCAN_FIXTURE_URI)
 
     inserted = insert_prepared_scans(database_url, scans)
