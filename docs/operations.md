@@ -162,16 +162,21 @@ backfilled data only.
    runs `20260805233000` and `20261025093000` first if they are still pending,
    then `20261026000000_minute_index_schema`. The rename itself is metadata
    only; the new tables start empty.
-4. Run the backfill inside the sync image (it needs no GCS access):
+4. Run the backfill inside the sync image (it needs no GCS access). The image
+   entrypoint is `cluetooth-sync`, so override it:
 
    ```sh
-   docker compose run --rm --no-deps sync-continuous \
-     cluetooth backfill --database-url "$CLUETOOTH_DATABASE_URL" --batch-size 100000
+   docker compose run --rm --no-deps --entrypoint cluetooth sync-continuous \
+     backfill --database-url postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable \
+     --batch-size 100000
    ```
 
    It is resumable: a re-run continues at `backfill_progress.through_id`, and
    `--verify-only` re-runs the checks without aggregating. The command exits
    nonzero when a check fails; report that to the owner instead of continuing.
+   The same entrypoint override runs `replay` and `rebuild` (they need the
+   private key, which compose already mounts as
+   `/run/secrets/cluetooth-private-key`).
 5. Read the verification output. `12_info_local_name_divergent` is
    informational: it counts rows whose stored name was masked while `raw` keeps
    the full name (see `docs/schema.md`).
