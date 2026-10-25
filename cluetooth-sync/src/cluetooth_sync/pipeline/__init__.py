@@ -26,9 +26,11 @@ from .storage import (
     parse_gcs_uri,
 )
 from .survey import survey_blobs
+from .verify_raws import BlobComparison, VerifyRawsResult, run_verify_raws
 
 __all__ = [
     "BackfillResult",
+    "BlobComparison",
     "CycleStats",
     "GcsStorageClient",
     "MirroredStorageClient",
@@ -41,6 +43,7 @@ __all__ = [
     "UnsupportedPayloadPathError",
     "UnsupportedPayloadSchemaError",
     "VerifyResult",
+    "VerifyRawsResult",
     "blobs_in_range",
     "check_heartbeat",
     "decrypt_blob_bytes",
@@ -57,6 +60,7 @@ __all__ = [
     "route_payload_uri",
     "run_backfill",
     "run_pipeline",
+    "run_verify_raws",
     "survey_blobs",
     "write_heartbeat",
 ]

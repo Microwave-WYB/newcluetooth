@@ -158,11 +158,30 @@ backfilled data only.
    this runbook can recover raw data.
 1. Take a fresh dump (above) and check `df -h /data /var/lib/docker`.
 2. `docker compose stop sync-continuous` and confirm it stayed stopped.
-3. Apply the migration: `docker compose run --rm migrate` (dbmate `up`). This
+3. **Pre-migration integrity check.** `raw` is authoritative and
+   `scans.local_name` was modified in place at some point, so before copying
+   `scans_old` into the minute index, replay a random sample of the archived
+   objects and compare their raw bytes per sighting with `scans_old`:
+
+   ```sh
+   docker compose run --rm --no-deps --entrypoint cluetooth sync-continuous \
+     verify-raws --database-url postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable \
+     --private-key /run/secrets/cluetooth-private-key --sample 10
+   ```
+
+   It prints one line per sampled object
+   (`archived=<sightings in the object> scans_old=<rows for that blob>
+   mismatched=<keys whose multiplicity differs>`) plus a summary, and exits
+   nonzero if any object disagrees or cannot be routed. A mismatch means the
+   archive and the ledger have diverged: stop and report it to the owner
+   instead of continuing, because the backfill copies `scans_old`, not the
+   objects. A larger `--sample` costs one GCS read per object; 10 is enough to
+   catch a systematic divergence, more is better if the run allows it.
+4. Apply the migration: `docker compose run --rm migrate` (dbmate `up`). This
    runs `20260805233000` and `20261025093000` first if they are still pending,
    then `20261026000000_minute_index_schema`. The rename itself is metadata
    only; the new tables start empty.
-4. Run the backfill inside the sync image (it needs no GCS access). The image
+5. Run the backfill inside the sync image (it needs no GCS access). The image
    entrypoint is `cluetooth-sync`, so override it:
 
    ```sh
@@ -174,19 +193,18 @@ backfilled data only.
    It is resumable: a re-run continues at `backfill_progress.through_id`, and
    `--verify-only` re-runs the checks without aggregating. The command exits
    nonzero when a check fails; report that to the owner instead of continuing.
-   The same entrypoint override runs `replay` and `rebuild` (they need the
-   private key, which compose already mounts as
-   `/run/secrets/cluetooth-private-key`).
-5. Read the verification output. `12_info_local_name_divergent` is
-   informational: it counts rows whose stored name was masked while `raw` keeps
-   the full name (see `docs/schema.md`).
-6. Only then start the sync: `docker compose up -d sync-continuous`.
-7. Watch `docker compose logs -f sync-continuous`, `docker compose ps` and
+   The same entrypoint override runs `replay` and `rebuild`.
+6. Read the verification output: checks 01–11 must be `ok` and check 12
+   (`12_info_default_partition_rows`) is informational.
+7. Only then start the sync: `docker compose up -d sync-continuous`.
+8. Watch `docker compose logs -f sync-continuous`, `docker compose ps` and
    `cluetooth health`.
 
 Local measurements of this sequence (1.2M synthetic sightings): backfill
-169 s, verification 154 s of which 145 s is the informational check; the new
-tables are 53 MB where the old ones were 407 MB. See `HANDOFF.md`.
+aggregation 14.9 s (12.4 s per million rows), verification 10.1 s, and the
+pre-migration check costs one GCS read, one decrypt/parse and one query per
+sampled object. The new tables are 47 MB where the old ones were 407 MB. See
+`HANDOFF.md`.
 
 ## Deploy (intended, on hold)
 

@@ -350,32 +350,8 @@ def test_verify_reports_a_missing_minute_row(clean_database_url: str) -> None:
     checks = {check.name: check for check in verify_backfill(clean_database_url)}
     assert checks["01_total_sightings"].state == "FAILED"
     assert checks["07_minute_rows"].state == "FAILED"
-    assert checks["13_info_default_partition_rows"].state == "info"
+    assert checks["12_info_default_partition_rows"].state == "info"
     assert not run_backfill(clean_database_url, batch_size=100, verify_only=True).ok
-
-
-def test_verify_flags_divergent_local_names_as_information(
-    clean_database_url: str,
-) -> None:
-    """Prod masks some stored names; the raw advertisement keeps the real one."""
-    _old_scan(
-        clean_database_url,
-        blob_uri="gs://test-bucket/scans/2026-06-03T00-00-00Z_device_0.0.3.jsonl.zst.encrypted",
-        addr="AA:00:00:00:00:71",
-        scanned_at="2026-06-03T00:00:00.000Z",
-        raw="02010605094e616d6505ff4c000104",
-        rssi=-50,
-        local_name="Name****",
-    )
-
-    result = run_backfill(clean_database_url, batch_size=100)
-
-    checks = {check.name: check for check in result.checks}
-    divergent = checks["12_info_local_name_divergent"]
-    assert divergent.informational
-    assert divergent.old_value is None
-    assert divergent.new_value == 1
-    assert result.ok
 
 
 def test_backfill_of_an_empty_old_table_verifies_trivially(

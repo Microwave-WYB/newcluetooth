@@ -35,6 +35,7 @@ from cluetooth_sync.pipeline import (
     replay_sightings,
     run_backfill,
     run_pipeline,
+    run_verify_raws,
     survey_blobs,
     write_heartbeat,
 )
@@ -703,6 +704,85 @@ def rebuild(
         uploader=uploader,
     )
     typer.echo(f"rebuilt {result.sightings} sightings from {result.blobs} objects")
+
+
+@app.command("verify-raws")
+def verify_raws(
+    database_url: Annotated[
+        str,
+        typer.Option(
+            "--database-url",
+            envvar="CLUETOOTH_DATABASE_URL",
+            help="PostgreSQL URL of the ledger and scans_old.",
+        ),
+    ],
+    private_key_path: Annotated[
+        Path,
+        typer.Option(
+            "--private-key",
+            envvar="CLUETOOTH_PRIVATE_KEY_PATH",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Base64 or raw 32-byte private key for decrypting blobs.",
+        ),
+    ],
+    sample: Annotated[
+        int,
+        typer.Option(
+            "--sample",
+            min=1,
+            help="Number of succeeded blobs to replay and compare.",
+        ),
+    ] = 10,
+    service_account_key: Annotated[
+        Path | None,
+        typer.Option(
+            "--service-account-key",
+            envvar="GOOGLE_APPLICATION_CREDENTIALS",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Optional Google service account JSON key.",
+        ),
+    ] = None,
+    mirror_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--mirror-dir",
+            envvar="CLUETOOTH_MIRROR_DIR",
+            file_okay=False,
+            dir_okay=True,
+            writable=True,
+            help="Optional local mirror directory for cached blobs.",
+        ),
+    ] = None,
+) -> None:
+    """Replay sampled archived objects and compare their raws with scans_old."""
+    result = run_verify_raws(
+        database_url,
+        _build_storage_client(service_account_key, mirror_dir),
+        _read_private_key(private_key_path),
+        sample=sample,
+    )
+    for comparison in result.comparisons:
+        print(
+            f"check {comparison.uri} archived={comparison.archived} "
+            f"scans_old={comparison.old} mismatched={comparison.mismatched}",
+            flush=True,
+        )
+    for uri, reason in result.skipped:
+        print(f"skip {uri}: {reason}", file=sys.stderr, flush=True)
+    if not result.comparisons:
+        print("no succeeded blobs to check", file=sys.stderr, flush=True)
+    typer.echo(
+        f"checked {len(result.comparisons)} objects, "
+        f"mismatched_keys={result.mismatched}, skipped={len(result.skipped)}"
+    )
+    if not result.ok:
+        raise typer.Exit(code=1)
 
 
 @wigle_app.command("export")

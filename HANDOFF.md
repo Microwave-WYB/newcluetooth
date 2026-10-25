@@ -27,21 +27,20 @@ schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
 
 | | old schema | new schema |
 |---|---|---|
-| rows | 1,200,002 in `scans` | 66,862 minute rows + 12,602 payloads + 2,671 structures |
-| size | 407 MB (`scans` 384 MB: 283 heap + 101 indexes) | **53 MB** (incl. partitions/indexes) |
+| rows | 1,200,002 in `scans` | 66,862 minute rows + 12,002 payloads + 2,471 structures |
+| size | 407 MB (`scans` 384 MB: 283 heap + 101 indexes) | **47 MB** (incl. partitions/indexes) |
 | rollups | `advs` 12,542 rows/10.0 MB (2.8 s), `adv_enrichments` 12,542 rows/7.7 MB | `adv_shapes` is a view, no enrichment rows |
 | WiGLE | `wigle_upload_batch_scans` 60,000 rows/5.8 MB | `wigle_upload_batch_minutes` 60,000 rows/6.8 MB |
 
-- Dedupe: 3,600,006 structure instances in sightings → 2,671 `ad_structures`
-  rows (1,348x); 37,806 structure slots in payloads → 2,671 (14.2x);
-  1,200,002 sightings → 12,602 payloads (95x).
+- Dedupe: 3,600,006 structure instances in sightings → 2,471 `ad_structures`
+  rows (1,457x); 36,006 structure slots in payloads → 2,471 (14.6x);
+  1,200,002 sightings → 12,002 payloads (100x).
 - Minute rows: 66,862 per `(minute, addr, payload)` vs 60,002 per
   `(minute, addr)` — the payload dimension adds 11.4%.
-- Backfill: **169.1 s for 1,200,002 rows = 140.9 s per million rows** (61 id
-  ranges of ≤100k rows at `--batch-size 100000`; 13 of them held data).
-- Verification: 154 s total; 145 s of that is check 12 (informational
-  local-name divergence, 240,000 rows); check 08 5.3 s; every numeric check
-  under 1.5 s.
+- Backfill: **aggregation 14.9 s for 1,200,002 rows = 12.4 s per million
+  rows** (61 id ranges of ≤100k rows at `--batch-size 100000`; 13 of them held
+  data), plus **verification 10.1 s** (check 08 5.8 s, 07 1.4 s, 06 1.1 s,
+  09 1.1 s, every other check under 0.3 s).
 - Ingest of one 20,000-sighting object (200 devices): decrypt+parse 0.06 s
   (312k rows/s), insert 0.49 s (40.6k rows/s), end-to-end 0.56 s
   (35.9k rows/s) writing 12,000 minute rows. The old per-sighting path inserted
@@ -52,9 +51,19 @@ schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
   14,334 distinct raws, 18,172 (addr,raw) keys. The synthetic 1M slice gives
   50,002 / 10,011 / 10,451 — minute-row density matches, payload variety is
   lower than prod's.
-- Estimate for 12.26M rows: backfill ≈ 29 min, verification ≈ 26 min
-  (dominated by the informational check), i.e. **under an hour**, plus a fresh
-  dump first. Disk after dropping `*_old`: ≈ 540 MB instead of ≈ 4.2 GB.
+- Estimate for 12.26M rows: backfill aggregation ≈ 2.5 min, verification
+  ≈ 2 min, i.e. **under five minutes**, plus a fresh dump first. Disk after
+  dropping `*_old`: ≈ 480 MB instead of ≈ 4.2 GB.
+
+### Owner decisions
+
+- **No masking anywhere.** The database, the WiGLE export and the wiki use the
+  full names parsed from `raw`. The informational masked-name check
+  (`12_info_local_name_divergent`) is deleted, and the runbook instead checks
+  the archive itself: `cluetooth verify-raws` replays a random sample of
+  succeeded objects and compares their raw bytes per sighting with `scans_old`,
+  reporting any mismatch (raw is authoritative; the production `local_name`
+  column was modified in place).
 
 ### Open questions for the owner
 
@@ -72,13 +81,10 @@ schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
 4. `sightings/delete_empty.sql` now keeps a zeroed minute row that a WiGLE batch
    already claims (the FK is `on delete restrict`); such a row exports an empty
    CSV line. Acceptable, or should rebuild refuse instead?
-5. Names come from `raw`, so the producer's masked names are unmasked in
-   `payload_fields` and in WiGLE SSIDs (240,000 divergent rows in the synthetic
-   set). Confirm this is still acceptable.
-6. The v3 columns (`addr_type`, `adv_length`, `is_legacy`, `primary_phy`,
+5. The v3 columns (`addr_type`, `adv_length`, `is_legacy`, `primary_phy`,
    `secondary_phy`) have no producer yet and no test coverage; only the merge
    rule (first non-null) is implemented.
-7. When may `*_old` and `backfill_progress` be dropped, and when may
+6. When may `*_old` and `backfill_progress` be dropped, and when may
    `adv_shapes` become materialized?
 
 ## Hard rules from the owner
@@ -195,6 +201,14 @@ schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
   - CLI `backfill`, `replay` (ndjson/csv/parquet, `--blob` or
     `--uploader/--since/--until`) and `rebuild`.
   - `sightings/delete_empty.sql` keeps minute rows a WiGLE batch already claims.
+- `verify_raws.py` plus `cluetooth verify-raws`: the pre-migration integrity
+  check the owner asked for. It samples succeeded blobs, replays each object and
+  compares its raw bytes per sighting with `scans_old`
+  (`queries/verify_raws/sample_blobs.sql`, `compare.sql`), reporting per-object
+  `archived`/`scans_old` counts and mismatched `(addr, scanned_at, raw)` keys,
+  and exiting nonzero on a mismatch or an unroutable object. The masked-name
+  informational check (`12_info_local_name_divergent.sql`) is deleted; the
+  remaining informational check is `12_info_default_partition_rows.sql`.
 - `e989b7b`, `4f49915`, tests:
   - `test_pipeline.py`, `test_continuous_sync.py`, `test_wigle.py`,
     `test_payload_v2.py` rewritten for the minute schema; the projection,
@@ -204,7 +218,9 @@ schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
     truncated tail, partition routing and the default partition, extent
     check), `test_replay.py` (encrypted replay, CLI replay, rebuild keeps ids
     and follows the archive), `test_backfill.py` (batched backfill, resume,
-    every check, failure detection, masked-name info check).
+    every check, failure detection) and `test_verify_raws.py` (the archive
+    check matches, detects a changed raw and a missing row, skips unroutable
+    objects, CLI exit codes).
   - `conftest.clean_database_url`: a freshly migrated database per test for
     whole-table assertions.
   - Fixed on the way: ADBC cannot bind a null parameter (absent
@@ -329,10 +345,11 @@ use the shared `cluetooth-test-db`: the KB site uses it.
   `''` (app version, session) and the SQL restores the null with `nullif`;
   `write_wigle_csv` sends `0` for "no limit". Tests cover the null-uploader and
   no-limit paths.
-- **Unmasked names.** Prod `scans.local_name` is masked for some names
-  (`QT 325D****`) while `raw` holds the full name. The new schema derives
-  names from raw, which unmasks them, and WiGLE SSIDs would carry the full
-  name. Flag this to the owner. Verify check 12 counts it.
+- **Names.** No masking anywhere (owner decision, 2026-10-26): the database,
+  the WiGLE export and the wiki use the full names parsed from `raw`. Names are
+  derived from `ad_structures.local_name`; nothing per-row is stored, and the
+  old informational divergence check is gone. The pre-migration
+  `cluetooth verify-raws` check guards the archive instead.
 - **v2 uploader identity.** v2 objects have no uploader identity; without a
   session footer, different phones' v2 sightings in the same minute merge
   into one row.

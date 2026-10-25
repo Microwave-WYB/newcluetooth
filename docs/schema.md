@@ -130,9 +130,27 @@ cluetooth replay --database-url ... --private-key key.txt \
 # regenerate minutes of a range from the archive
 cluetooth rebuild --database-url ... --private-key key.txt \
   --since 2026-09-01T00:00:00Z --until 2026-09-02T00:00:00Z
+
+# pre-migration integrity check: sampled objects vs scans_old
+cluetooth verify-raws --database-url ... --private-key key.txt --sample 10
 ```
 
+## Names
+
+There is no masking anywhere: the database, the WiGLE export and the wiki use
+the full names parsed from the raw bytes. `raw` is authoritative and the
+producer's `local_name` column was modified in place in production, so names
+are derived from the advertisement (see `ad_structures.local_name`) and no
+per-row name is stored.
+
 ## Migrating the old data
+
+Before copying `scans_old`, `cluetooth verify-raws --sample N` replays N random
+succeeded objects through the storage client and compares their raw bytes per
+sighting with `scans_old`, reporting `archived`/`scans_old` counts and the
+number of `(addr, scanned_at, raw)` keys whose multiplicity differs. It exits
+nonzero on any mismatch or unroutable object; the runbook runs it before the
+migration because the backfill copies the ledger, not the archive.
 
 `cluetooth backfill [--batch-size N] [--verify-only]` aggregates `scans_old`
 into minute rows in resumable id ranges and then runs
@@ -153,9 +171,6 @@ that the owner approves.
 
 ## Known limits
 
-- Names are derived from `raw`, so a name the producer masked in
-  `scans.local_name` appears unmasked in `payload_fields.local_name` and in
-  WiGLE SSIDs. `backfill/verify/12_info_local_name_divergent.sql` counts them.
 - v2 objects without a session footer have no producer identity: different
   phones' sightings in the same minute merge into one row.
 - `sighting_minutes` checks the latitude/longitude ranges of its extent

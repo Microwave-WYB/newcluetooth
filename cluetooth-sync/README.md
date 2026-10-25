@@ -28,6 +28,9 @@ cluetooth replay --database-url ... --private-key key.txt \
 # regenerate minute rows of a range from the archive
 cluetooth rebuild --database-url ... --private-key key.txt --since ... --until ...
 
+# pre-migration integrity check: replay sampled objects, compare with scans_old
+cluetooth verify-raws --database-url ... --private-key key.txt --sample 10
+
 # WiGLE export/upload/status, and the sync heartbeat
 cluetooth wigle export|upload|status|batches
 cluetooth health
@@ -36,6 +39,8 @@ cluetooth health
 `backfill` is resumable (`backfill_progress`) and exits nonzero when a
 verification check fails. `rebuild` takes the ingest advisory lock exclusively,
 so no blob commits while it runs, and it leaves payload stats untouched.
+`verify-raws` is the pre-migration gate: raw is authoritative, so it compares
+replayed objects with `scans_old` and exits nonzero on any mismatch.
 
 ## Payload routing
 

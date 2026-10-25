@@ -337,8 +337,8 @@ def test_ingest_legacy_sample_to_new_db(database_url: str) -> None:
 
 
 def test_legacy_ingest_derives_the_name_from_raw(database_url: str) -> None:
-    """Names come from the raw advertisement, not from a stored per-row name."""
-    blob_uri = "gs://test-bucket/scans/2026-04-11T00-00-00.000Z_masked_0.0.4.jsonl.zst.encrypted"
+    """The name comes from the raw advertisement; nothing is stored per row."""
+    blob_uri = "gs://test-bucket/scans/2026-04-11T00-00-00.000Z_device_0.0.4.jsonl.zst.encrypted"
     raw = bytes.fromhex("0c09515420384232384242424202")
     payload = (
         json.dumps(

@@ -50,8 +50,13 @@ class VerifyResult:
 @dataclass(frozen=True)
 class BackfillResult:
     rows: int
-    seconds: float
+    aggregate_seconds: float
+    verify_seconds: float
     checks: tuple[VerifyResult, ...]
+
+    @property
+    def seconds(self) -> float:
+        return self.aggregate_seconds + self.verify_seconds
 
     @property
     def ok(self) -> bool:
@@ -71,11 +76,15 @@ def run_backfill(
         rows = backfill_minutes(database_url, batch_size=batch_size)
         run_script(database_url, "backfill/enrichments.sql")
 
+    aggregated = time.monotonic()
     checks = tuple(verify_backfill(database_url))
-    seconds = time.monotonic() - started
+    verified = time.monotonic()
+    aggregate_seconds = aggregated - started
+    verify_seconds = verified - aggregated
     print(
-        f"backfill rows={rows} seconds={seconds:.1f} "
-        f"seconds_per_million={seconds_per_million(seconds, rows):.1f}",
+        f"backfill rows={rows} aggregate_seconds={aggregate_seconds:.1f} "
+        f"verify_seconds={verify_seconds:.1f} "
+        f"seconds_per_million={seconds_per_million(aggregate_seconds, rows):.1f}",
         flush=True,
     )
     for check in checks:
@@ -84,7 +93,12 @@ def run_backfill(
             f"old={check.old_value} new={check.new_value} {check.seconds:.2f}s",
             flush=True,
         )
-    return BackfillResult(rows=rows, seconds=seconds, checks=checks)
+    return BackfillResult(
+        rows=rows,
+        aggregate_seconds=aggregate_seconds,
+        verify_seconds=verify_seconds,
+        checks=checks,
+    )
 
 
 def seconds_per_million(seconds: float, rows: int) -> float:

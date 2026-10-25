@@ -135,6 +135,11 @@ ids plus the remainder. Nothing protocol-specific is decoded at ingest.
 - `backfill.py`
   - `cluetooth backfill`: batched, resumable aggregation of `scans_old` into
     minute rows, then the `queries/backfill/verify/*.sql` checks.
+- `verify_raws.py`
+  - `cluetooth verify-raws`: the pre-migration integrity check. Samples
+    succeeded blobs, replays each object and compares its raw bytes per
+    sighting with `scans_old` (`queries/verify_raws/`), reporting mismatched
+    `(addr, scanned_at, raw)` keys and unroutable objects.
 - `replay.py`
   - `cluetooth replay` (raw sightings of archived objects) and
     `cluetooth rebuild` (regenerate a minute range from the archive).
@@ -221,8 +226,9 @@ Current JSONL contract:
 - RSSI value `127` is treated as unavailable and converted to null
 - SQL inserts cast `addr` to `macaddr`, `rssi`/`tx_power` to `smallint`, and
   decode `raw` from hex to `bytea`
-- per-row `local_name` is not stored: names come from the raw advertisement, so
-  a name the producer masked in the source object appears unmasked here
+- per-row `local_name` is not stored: names always come from the raw
+  advertisement (there is no masking anywhere, in the database, the WiGLE
+  export or the wiki)
 
 ## Logging / Observability
 
