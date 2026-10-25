@@ -76,7 +76,9 @@ def insert_prepared_scans(
     scans: pl.DataFrame,
     *,
     mark_failure: bool = True,
+    skip_if_succeeded: bool = False,
 ) -> int:
+    """Insert one blob's scans; return inserted rows (0 if skipped as done)."""
     if scans.is_empty():
         return 0
 
@@ -88,8 +90,9 @@ def insert_prepared_scans(
 
     for attempt in range(1, MAX_INSERT_ATTEMPTS + 1):
         try:
-            _insert_prepared_scans_once(database_url, scans, gcs_blob_uri)
-            return scans.height
+            return _insert_prepared_scans_once(
+                database_url, scans, gcs_blob_uri, skip_if_succeeded
+            )
         except Exception as exc:
             if _is_retryable_insert_error(exc) and attempt < MAX_INSERT_ATTEMPTS:
                 sleep_seconds = 0.1 * (2 ** (attempt - 1))
@@ -113,13 +116,22 @@ def _insert_prepared_scans_once(
     database_url: str,
     scans: pl.DataFrame,
     gcs_blob_uri: str,
-) -> None:
+    skip_if_succeeded: bool,
+) -> int:
     staging_table = f"scan_stage_{uuid4().hex}"
 
     with db.session(database_url) as session:
+        session.cursor.execute(read_query("scans/ingest_lock.sql"))
+        session.cursor.fetch_polars()
         session.cursor.execute(
             read_query("blobs/ensure_processing.sql"), [gcs_blob_uri]
         )
+        session.cursor.execute(read_query("blobs/lock_for_ingest.sql"), [gcs_blob_uri])
+        already_succeeded = session.cursor.fetch_polars().item(0, "success") is True
+        if skip_if_succeeded and already_succeeded:
+            # Another sync process committed this blob after our discovery.
+            print(f"skip {gcs_blob_uri}: already ingested", flush=True)
+            return 0
         scans.write_database(
             table_name=staging_table,
             connection=session.connection,
@@ -129,6 +141,7 @@ def _insert_prepared_scans_once(
         )
         session.cursor.execute(scan_insert_from_stage(staging_table))
         session.cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])
+    return scans.height
 
 
 def _is_retryable_insert_error(exc: Exception) -> bool:

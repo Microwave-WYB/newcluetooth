@@ -202,9 +202,15 @@ environment variables for database URL, bucket, prefix, private key path,
 service account key, mirror dir, worker counts, queue size, polling interval,
 and max blobs.
 
-After each non-empty sync cycle, the CLI runs `insert_builtin_ad_structures(...)`
-so low-level AD structure enrichments are populated after scan transactions
-commit. This keeps raw scan ingest independent from enrichment contention.
+In continuous mode (`--poll-interval-seconds`), a background thread runs the
+incremental `advs` projection and range-bounded `insert_builtin_ad_structures(...)`
+every `--project-interval-seconds`; one-shot runs do it once after a non-empty
+cycle. The projection reads a commit-safe watermark (ingest holds a shared
+advisory lock), so it can run beside ingest. Cycle errors back off and retry
+instead of exiting; failed blobs retry with exponential backoff
+(`blobs.attempts`, `next_attempt_at`). A heartbeat JSON file backs
+`cluetooth health`; `--list-only` inventories GCS against the ledger without
+downloads or writes. See `docs/operations.md`.
 
 ## Ingest Rules
 

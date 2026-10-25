@@ -27,7 +27,7 @@ def test_full_listing_discovers_delayed_older_uuid_without_date_watermark(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "cluetooth_sync.pipeline.discover._successful_blob_uris",
+        "cluetooth_sync.pipeline.discover._skipped_blob_uris",
         lambda database_url, uri_prefix: {NEWER_URI},
     )
     storage = _DelayedStorage()

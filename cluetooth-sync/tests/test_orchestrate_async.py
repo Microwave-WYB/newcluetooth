@@ -7,7 +7,7 @@ import compression.zstd as zstd
 import polars as pl
 import pytest
 
-from cluetooth_sync.pipeline.orchestrate import run_pipeline
+from cluetooth_sync.pipeline.orchestrate import CycleStats, run_pipeline
 
 PAYLOAD_ID = "0195c920-7c00-7abc-8def-0123456789ab"
 V2_URI = f"gs://bucket/scans/v2/2025/03/24/{PAYLOAD_ID}.parquet.encrypted"
@@ -70,7 +70,7 @@ def test_bounded_multiworker_pipeline_drains_mixed_peer_failures(
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.insert_prepared_scans",
-        lambda database_url, scans, mark_failure: (
+        lambda database_url, scans, mark_failure, skip_if_succeeded: (
             inserted.append(scans.item(0, "blob")) or scans.height
         ),
     )
@@ -79,7 +79,7 @@ def test_bounded_multiworker_pipeline_drains_mixed_peer_failures(
         lambda database_url, uri, exc: failures.append((uri, str(exc))),
     )
 
-    async def run() -> int:
+    async def run() -> CycleStats:
         with (
             ThreadPoolExecutor(max_workers=3) as downloads,
             ThreadPoolExecutor(max_workers=2) as ingests,
@@ -100,7 +100,7 @@ def test_bounded_multiworker_pipeline_drains_mixed_peer_failures(
                 timeout=5,
             )
 
-    completed = asyncio.run(run())
+    completed = asyncio.run(run()).completed
 
     assert completed == len(discovered)
     assert sorted(inserted) == sorted([*LEGACY_URIS, V2_URI])

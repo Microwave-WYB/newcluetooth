@@ -8,10 +8,12 @@ with state as materialized (
   for update
 ),
 target as materialized (
+  -- $1 is a watermark read under the exclusive ingest lock (advs/safe_watermark.sql),
+  -- so no uncommitted scan can still receive an id at or below it.
   select
-    coalesce(max(id), 0)::bigint as target_scans_through_id
+    greatest($1::bigint, state.previous_scans_through_id) as target_scans_through_id
   from
-    scans
+    state
 ),
 changed_keys as materialized (
   select distinct
@@ -145,3 +147,6 @@ from
   updated_advs
 where
   projection_state.name = 'advs'
+returning
+  state.previous_scans_through_id,
+  target.target_scans_through_id

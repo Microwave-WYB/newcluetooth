@@ -434,14 +434,16 @@ def test_valid_empty_exact_schema_payload_is_marked_successful(
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.insert_prepared_scans",
-        lambda database_url, scans, mark_failure: inserted.append("unexpected"),
+        lambda database_url, scans, mark_failure, skip_if_succeeded: inserted.append(
+            "unexpected"
+        ),
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.mark_blob_failed",
         lambda database_url, uri, exc: failed.append(uri),
     )
 
-    assert _ingest_blob("db", b"key", BlobBytes(V2_URI, output.getvalue()))
+    assert _ingest_blob("db", b"key", BlobBytes(V2_URI, output.getvalue())) == 0
     assert succeeded == [V2_URI]
     assert inserted == []
     assert failed == []
@@ -470,7 +472,7 @@ def test_mixed_legacy_and_v2_ingest_routes_before_decoding(
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.insert_prepared_scans",
-        lambda database_url, scans, mark_failure: (
+        lambda database_url, scans, mark_failure, skip_if_succeeded: (
             inserted.append((scans.item(0, "blob"), scans.height)) or scans.height
         ),
     )
@@ -512,7 +514,7 @@ def test_whole_blob_failure_is_bookkept_once_and_retryable(
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.insert_prepared_scans",
-        lambda database_url, scans, mark_failure: scans.height,
+        lambda database_url, scans, mark_failure, skip_if_succeeded: scans.height,
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.mark_blob_failed",
@@ -520,6 +522,6 @@ def test_whole_blob_failure_is_bookkept_once_and_retryable(
     )
 
     blob = BlobBytes(V2_URI, b"parquet")
-    assert not _ingest_blob("db", b"key", blob)
-    assert _ingest_blob("db", b"key", blob)
+    assert _ingest_blob("db", b"key", blob) is None
+    assert _ingest_blob("db", b"key", blob) is not None
     assert failures == [(V2_URI, "bad ciphertext")]

@@ -3,6 +3,7 @@ import base64
 import binascii
 import math
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -19,13 +20,19 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
+import polars as pl
+
 from cluetooth_sync.pipeline import (
     GcsStorageClient,
     MirroredStorageClient,
     StorageClient,
+    SyncStatus,
+    check_heartbeat,
     insert_builtin_ad_structures,
     project_advs,
     run_pipeline,
+    survey_blobs,
+    write_heartbeat,
 )
 from cluetooth_sync.wigle import (
     WigleBatch,
@@ -46,6 +53,11 @@ from cluetooth_sync.wigle import (
     upload_wigle_file,
     write_wigle_csv,
 )
+
+
+DEFAULT_HEARTBEAT_PATH = Path("/tmp/cluetooth-sync/heartbeat.json")
+HEARTBEAT_INTERVAL_SECONDS = 15.0
+MAX_CYCLE_ERROR_BACKOFF_SECONDS = 600
 
 
 app = typer.Typer(
@@ -265,39 +277,199 @@ def sync(
             help="Only process up to N pending blobs per sync cycle.",
         ),
     ] = None,
+    project_interval_seconds: Annotated[
+        int,
+        typer.Option(
+            "--project-interval-seconds",
+            envvar="CLUETOOTH_PROJECT_INTERVAL_SECONDS",
+            min=1,
+            help="In continuous mode, project advs/enrichments every N seconds.",
+        ),
+    ] = 600,
+    heartbeat_path: Annotated[
+        Path,
+        typer.Option(
+            "--heartbeat-path",
+            envvar="CLUETOOTH_HEARTBEAT_PATH",
+            dir_okay=False,
+            help="Heartbeat JSON file rewritten while sync runs.",
+        ),
+    ] = DEFAULT_HEARTBEAT_PATH,
+    list_only: Annotated[
+        bool,
+        typer.Option(
+            "--list-only",
+            help=(
+                "List storage objects and summarize them against the ledger by kind "
+                "and month; no download, decryption, or database writes."
+            ),
+        ),
+    ] = False,
 ) -> None:
-    private_key = _read_private_key(private_key_path)
     storage_client = _build_storage_client(service_account_key, mirror_dir)
+    if list_only:
+        _print_survey(storage_client, database_url, bucket_name, prefix)
+        return
+
+    private_key = _read_private_key(private_key_path)
+    status = SyncStatus()
+    continuous = poll_interval_seconds is not None
+    stop = threading.Event()
+    _start_daemon(_heartbeat_loop, status, heartbeat_path, stop)
+    if continuous:
+        _start_daemon(
+            _projection_loop, status, database_url, project_interval_seconds, stop
+        )
 
     with (
         ThreadPoolExecutor(max_workers=download_workers) as download_executor,
         ThreadPoolExecutor(max_workers=ingest_workers) as ingest_executor,
     ):
-        while True:
-            processed_count = asyncio.run(
-                run_pipeline(
-                    storage_client=storage_client,
-                    database_url=database_url,
-                    bucket_name=bucket_name,
-                    prefix=prefix,
-                    private_key=private_key,
-                    download_executor=download_executor,
-                    ingest_executor=ingest_executor,
-                    download_workers=download_workers,
-                    ingest_workers=ingest_workers,
-                    queue_size=queue_size,
-                    max_blobs=max_blobs,
+        try:
+            while True:
+                status.begin_cycle()
+                try:
+                    stats = asyncio.run(
+                        run_pipeline(
+                            storage_client=storage_client,
+                            database_url=database_url,
+                            bucket_name=bucket_name,
+                            prefix=prefix,
+                            private_key=private_key,
+                            download_executor=download_executor,
+                            ingest_executor=ingest_executor,
+                            download_workers=download_workers,
+                            ingest_workers=ingest_workers,
+                            queue_size=queue_size,
+                            max_blobs=max_blobs,
+                            on_progress=status.cycle_progress,
+                        )
+                    )
+                except Exception as exc:
+                    # Transient GCS/DB outages must not end continuous sync.
+                    if not continuous:
+                        raise
+                    status.cycle_failed(exc)
+                    delay = min(
+                        poll_interval_seconds * 2**status.consecutive_cycle_errors,
+                        MAX_CYCLE_ERROR_BACKOFF_SECONDS,
+                    )
+                    print(
+                        f"cycle error ({status.consecutive_cycle_errors} in a row), "
+                        f"retry in {delay}s: {type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    time.sleep(delay)
+                    continue
+
+                status.end_cycle(stats)
+                print(
+                    f"cycle {status.cycles} done: discovered={stats.discovered} "
+                    f"ok={stats.succeeded} failed={stats.failed} rows={stats.rows} "
+                    f"total_ok={status.total_succeeded} "
+                    f"total_failed={status.total_failed}",
+                    flush=True,
                 )
-            )
-            if processed_count > 0:
-                project_advs(database_url)
-                print("project advs", flush=True)
-                insert_builtin_ad_structures(database_url)
+                if not continuous:
+                    if stats.succeeded > 0:
+                        _project(status, database_url)
+                    break
 
-            if poll_interval_seconds is None:
-                break
+                time.sleep(poll_interval_seconds)
+        finally:
+            stop.set()
+            write_heartbeat(status, heartbeat_path)
 
-            time.sleep(poll_interval_seconds)
+
+def _start_daemon(target, *args) -> None:  # noqa: ANN001
+    threading.Thread(target=target, args=args, daemon=True).start()
+
+
+def _heartbeat_loop(status: SyncStatus, path: Path, stop: threading.Event) -> None:
+    while True:
+        try:
+            write_heartbeat(status, path)
+        except OSError as exc:
+            print(f"heartbeat write failed: {exc}", file=sys.stderr, flush=True)
+        if stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+            return
+
+
+def _project(status: SyncStatus, database_url: str) -> None:
+    started = time.monotonic()
+    projected = project_advs(database_url)
+    insert_builtin_ad_structures(
+        database_url,
+        scans_after_id=projected.previous_scans_through_id,
+        scans_through_id=projected.scans_through_id,
+    )
+    status.projection_succeeded(projected.scans_through_id)
+    print(
+        f"project advs through scan {projected.scans_through_id} "
+        f"(+{projected.scans_through_id - projected.previous_scans_through_id} ids) "
+        f"in {time.monotonic() - started:.1f}s",
+        flush=True,
+    )
+
+
+def _projection_loop(
+    status: SyncStatus,
+    database_url: str,
+    interval_seconds: int,
+    stop: threading.Event,
+) -> None:
+    # Runs beside ingest; project_advs takes a commit-safe scan watermark.
+    while True:
+        try:
+            _project(status, database_url)
+        except Exception as exc:
+            status.projection_failed(exc)
+            print(f"projection failed: {exc}", file=sys.stderr, flush=True)
+        if stop.wait(interval_seconds):
+            return
+
+
+def _print_survey(
+    storage_client: StorageClient,
+    database_url: str,
+    bucket_name: str,
+    prefix: str,
+) -> None:
+    summary = survey_blobs(storage_client, database_url, bucket_name, prefix)
+    with pl.Config(tbl_rows=-1, tbl_width_chars=200, tbl_hide_dataframe_shape=True):
+        print(summary)
+        print(
+            summary.group_by("kind")
+            .agg(pl.col("objects", "succeeded", "failed", "new").sum())
+            .sort("kind")
+        )
+
+
+@app.command("health")
+def health(
+    heartbeat_path: Annotated[
+        Path,
+        typer.Option("--heartbeat-path", envvar="CLUETOOTH_HEARTBEAT_PATH"),
+    ] = DEFAULT_HEARTBEAT_PATH,
+    max_age_seconds: Annotated[
+        float,
+        typer.Option("--max-age-seconds", min=1, help="Max heartbeat age."),
+    ] = 120,
+    max_consecutive_errors: Annotated[
+        int,
+        typer.Option("--max-consecutive-errors", min=1),
+    ] = 5,
+) -> None:
+    """Exit nonzero unless the sync heartbeat is fresh and not erroring."""
+    healthy, message = check_heartbeat(
+        heartbeat_path,
+        max_age_seconds=max_age_seconds,
+        max_consecutive_errors=max_consecutive_errors,
+    )
+    typer.echo(message)
+    if not healthy:
+        raise typer.Exit(code=1)
 
 
 @wigle_app.command("export")
