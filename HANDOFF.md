@@ -4,18 +4,19 @@ Branch `ops/continuous-sync`, worktree `/home/wyb/.paseo/worktrees/1pefufa6/sync
 Commits: `196b125` (robust continuous sync, tests passed then), `c805203` (WIP
 schema restructure), `edc03f2` (backfill + replay/rebuild CLI), `e989b7b` and
 `4f49915` (minute-schema tests), `455f7e8` (schema.sql), `733fb83` and
-`365c0d9` (docs). Nothing is pushed.
+`365c0d9` (docs), `56d2fed` (report fixes), `15b7fe0` (no masking, pre-migration
+archive check). Nothing is pushed.
 
 ## Report, 2026-10-26 (this pass)
 
 ### What passed
 
-- `mise run //cluetooth-sync:test`: **105 passed** (including the Rust
+- `mise run //cluetooth-sync:test`: **110 passed** (including the Rust
   SealedBox interop test). `ruff check`, `ruff format --check` and
   `basedpyright` are clean.
 - The backfill and every verification check pass on a freshly migrated database
   in the tests, and on the 1.2M-row synthetic dataset in the scratch container:
-  checks 01–11 `ok`, 12/13 informational, `backfill rows=1200002`.
+  checks 01–11 `ok`, check 12 informational, `backfill rows=1200002`.
 - Migration `20261026000000` applies in ~0.1 s, and its down migration still
   restores the old schema (re-verified on the scratch container).
 - All work is local: throwaway containers `cluetooth-schema-scratch`
