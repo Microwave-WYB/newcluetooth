@@ -18,6 +18,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   migrate:
     image: ghcr.io/amacneil/dbmate:latest
