@@ -1,6 +1,6 @@
 # Cluetooth Android
 
-This directory prepares Android `0.0.5` (`versionCode = 8`, `minSdk = 24`). Debug builds retain the `.debug` application ID suffix for side-by-side installation. Android `0.0.5` is payload-v2-only: observations are no longer fed into the legacy JSONL writer. Phase 4 asks Rust to prepare sealed-box ciphertext and uses WorkManager/Firebase to upload the stable returned object path.
+This directory prepares Android `0.0.5` (`versionCode = 9`, `minSdk = 24`). Debug builds retain the `.debug` application ID suffix for side-by-side installation. Android `0.0.5` is payload-v2-only: observations are no longer fed into the legacy JSONL writer. Phase 4 asks Rust to prepare sealed-box ciphertext and uses WorkManager/Firebase to upload the stable returned object path.
 
 ## Phase 4 durable core and uploader
 
