@@ -14,7 +14,9 @@ def parse_raw(raw: bytes) -> Sequence[AdStruct]:
     i = 0
     while i < len(raw):
         length = view[i]
-        if length == 0:
+        # Same stop rule as the SQL tokenizer ble_adv_split: a zero length or a
+        # field that runs past the buffer ends the parse, unparsed rest is tail.
+        if length == 0 or i + length >= len(raw):
             break
         ad_type = view[i + 1]
         data = view[i + 2 : i + 1 + length].tobytes()

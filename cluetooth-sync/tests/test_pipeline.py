@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
@@ -8,98 +10,24 @@ import pytest
 
 from cluetooth_sync.pipeline import (
     ingest_scan_jsonl_bytes,
-    insert_builtin_ad_structures,
     insert_prepared_scans,
-    project_advs,
     prepare_scan_jsonl_bytes,
 )
 
 
 SCAN_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "scans.jsonl"
 SCAN_FIXTURE_URI = "gs://test-bucket/scans.jsonl"
+
+
+def _utc(*args: int) -> datetime:
+    return datetime(*args, tzinfo=UTC)
+
+
 LEGACY_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "legacy_0_0_3.jsonl"
 LEGACY_FIXTURE_URI = (
     "gs://test-bucket/scans/"
     "2026-04-10T19-37-46.210Z_balexfbQ4yvHMTOqdix2cmS61Y-_0.0.3.jsonl.zst.encrypted"
 )
-APPLE_ADV_RAW = "02010605094e616d6505ff4c000102"
-SERVICE_ADV_RAW = (
-    "03030d18"
-    "050578563412"
-    "1107fb349b5f80000080001000000d180000"
-    "04160f1801"
-    "06204433221101"
-    "1221fb349b5f80000080001000000d18000001"
-)
-
-
-def _insert_scan(
-    database_url: str,
-    *,
-    blob_uri: str,
-    addr: str,
-    raw: str,
-    scanned_at: str,
-    rssi: int | None = None,
-    local_name: str | None = None,
-    lat: float | None = None,
-    lon: float | None = None,
-    accuracy: float | None = None,
-) -> int:
-    payload = {
-        "addr": addr,
-        "rssi": rssi,
-        "scanned_at": scanned_at,
-        "raw": raw,
-        "local_name": local_name,
-        "tx_power": None,
-        "is_connectable": None,
-        "lat": lat,
-        "lon": lon,
-        "accuracy": accuracy,
-    }
-    scans = prepare_scan_jsonl_bytes(
-        (json.dumps(payload) + "\n").encode(),
-        blob_uri,
-    )
-    insert_prepared_scans(database_url, scans)
-
-    scan_id = (
-        pl.read_database_uri(
-            """
-        select max(id)::bigint as id
-        from scans
-        where blob = $1
-          and addr = cast($2 as macaddr)
-          and raw = decode($3, 'hex')
-          and scanned_at = cast($4 as timestamptz)
-        """,
-            database_url,
-            engine="adbc",
-            execute_options={"parameters": [blob_uri, addr, raw, scanned_at]},
-        )
-        .select("id")
-        .item()
-    )
-    if scan_id is None:
-        raise RuntimeError("scan insert did not return an id")
-    return int(scan_id)
-
-
-def _advs_scans_through_id(database_url: str) -> int:
-    return int(
-        pl.read_database_uri(
-            """
-            select scans_through_id
-            from projection_state
-            where name = 'advs'
-            """,
-            database_url,
-            engine="adbc",
-        )
-        .select("scans_through_id")
-        .item()
-    )
 
 
 def test_prepare_scan_jsonl_bytes() -> None:
@@ -229,541 +157,111 @@ def test_prepare_legacy_scan_jsonl_bytes_trims_name_null_padding() -> None:
 
 
 def test_insert_prepared_scans(database_url: str) -> None:
-    project_advs(database_url)
-    projection_before = _advs_scans_through_id(database_url)
     scans = prepare_scan_jsonl_bytes(SCAN_FIXTURE_PATH.read_bytes(), SCAN_FIXTURE_URI)
 
     inserted = insert_prepared_scans(database_url, scans)
 
     assert inserted == 2
-    inserted_scans = pl.read_database_uri(
+
+    minutes = pl.read_database_uri(
         """
         select
-          blob,
-          addr::text as addr,
-          local_name
-        from scans
-        where blob = $1
-        order by addr::text
+          m.minute,
+          m.addr::text as addr,
+          m.sightings,
+          m.first_seen,
+          m.last_seen,
+          m.rssi_min,
+          m.rssi_max,
+          m.best_accuracy,
+          m.tx_power,
+          m.is_connectable,
+          st_y(m.location::geometry) as lat,
+          st_x(m.location::geometry) as lon,
+          f.local_name,
+          m.blob_counts::text as blob_counts,
+          m.uploader_id,
+          m.session_id
+        from sighting_minutes m
+        join payload_fields f on f.payload_id = m.payload_id
+        where m.addr in ('2c:fe:8b:28:bb:05', '45:31:31:24:54:cb')
+          and m.minute >= timestamp '2025-06-12 22:00:00+00'
+          and m.minute < timestamp '2025-06-13 00:00:00+00'
+        order by m.addr::text
         """,
         database_url,
         engine="adbc",
-        execute_options={"parameters": [SCAN_FIXTURE_URI]},
-    )
+    ).to_dicts()
 
-    assert inserted_scans.to_dicts() == [
+    for row in minutes:
+        provenance = json.loads(row.pop("blob_counts"))
+        assert len(provenance) == 1
+        assert sum(provenance.values()) == row["sightings"]
+    assert [row.pop("uploader_id") for row in minutes] == [None, None]
+    assert [row.pop("session_id") for row in minutes] == [None, None]
+    assert minutes == [
         {
-            "blob": SCAN_FIXTURE_URI,
+            "minute": _utc(2025, 6, 12, 22, 47),
             "addr": "2c:fe:8b:28:bb:05",
+            "sightings": 1,
+            "first_seen": _utc(2025, 6, 12, 22, 47, 48, 989000),
+            "last_seen": _utc(2025, 6, 12, 22, 47, 48, 989000),
+            "rssi_min": -97,
+            "rssi_max": -97,
+            "best_accuracy": pytest.approx(2.383),
+            "tx_power": -4,
+            "is_connectable": True,
+            "lat": pytest.approx(32.7441436),
+            "lon": pytest.approx(-117.1615848),
             "local_name": "QT 8B28BB05",
         },
         {
-            "blob": SCAN_FIXTURE_URI,
+            "minute": _utc(2025, 6, 12, 23, 1),
             "addr": "45:31:31:24:54:cb",
+            "sightings": 1,
+            "first_seen": _utc(2025, 6, 12, 23, 1, 2),
+            "last_seen": _utc(2025, 6, 12, 23, 1, 2),
+            "rssi_min": -84,
+            "rssi_max": -84,
+            "best_accuracy": pytest.approx(2.266),
+            "tx_power": None,
+            "is_connectable": None,
+            "lat": pytest.approx(32.74408),
+            "lon": pytest.approx(-117.1616317),
             "local_name": None,
         },
     ]
 
-    enrichment_count = pl.read_database_uri(
-        """
-        select count(*)::int as count
-        from adv_enrichments e
-        join (
-          select distinct addr, raw
-          from scans
-          where blob = $1
-        ) s
-          on s.addr = e.addr
-         and s.raw = e.raw
-        """,
+    ledger = pl.read_database_uri(
+        "select uri, success, uploader_id from blobs where uri = $1",
         database_url,
         engine="adbc",
         execute_options={"parameters": [SCAN_FIXTURE_URI]},
-    )
-    assert enrichment_count.select("count").item() == 0
-
-    caught_up_advs = pl.read_database_uri(
-        """
-        select count(*)::int as count
-        from advs a
-        join scans s
-          on s.addr = a.addr
-         and s.raw = a.raw
-        where s.blob = $1
-          and a.scans_through_id >= s.id
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [SCAN_FIXTURE_URI]},
-    )
-    assert projection_before < (
-        pl.read_database_uri(
-            "select max(id)::bigint as id from scans where blob = $1",
-            database_url,
-            engine="adbc",
-            execute_options={"parameters": [SCAN_FIXTURE_URI]},
-        )
-        .select("id")
-        .item()
-    )
-    assert caught_up_advs.select("count").item() == 0
-
-    blobs = pl.read_database_uri(
-        "select uri, success from blobs where uri = $1",
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [SCAN_FIXTURE_URI]},
-    )
-    assert blobs.to_dicts() == [{"uri": SCAN_FIXTURE_URI, "success": True}]
-
-
-def test_insert_builtin_ad_structures(database_url: str) -> None:
-    fixture_uri = "gs://test-bucket/enrichment-scans.jsonl"
-    scans = prepare_scan_jsonl_bytes(SCAN_FIXTURE_PATH.read_bytes(), fixture_uri)
-    inserted = insert_prepared_scans(database_url, scans)
-
-    assert inserted == 2
-
-    insert_builtin_ad_structures(database_url)
-
-    inserted_scans = pl.read_database_uri(
-        """
-        select
-          s.blob,
-          s.addr::text as addr,
-          s.local_name,
-          e.data::text as adv
-        from scans s
-        join adv_enrichments e
-          on e.addr = s.addr
-         and e.raw = s.raw
-         and e.enrichment_kind = 'builtin'
-         and e.enrichment_id = 'ad_structures'
-        where s.blob = $1
-        order by s.addr::text
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [fixture_uri]},
-    )
-    inserted_scan_rows = inserted_scans.to_dicts()
-    for row in inserted_scan_rows:
-        row["adv"] = json.loads(row["adv"])
-
-    assert inserted_scan_rows == [
-        {
-            "blob": fixture_uri,
-            "addr": "2c:fe:8b:28:bb:05",
-            "local_name": "QT 8B28BB05",
-            "adv": [
-                {"type": 9, "data": "5154203842323842423035"},
-                {"type": 1, "data": "06"},
-                {"type": 255, "data": "7335f9b833cc"},
-            ],
-        },
-        {
-            "blob": fixture_uri,
-            "addr": "45:31:31:24:54:cb",
-            "local_name": None,
-            "adv": [
-                {"type": 1, "data": "02"},
-                {
-                    "type": 255,
-                    "data": "7500021862a1ef88b77116fda9718ed8cc074742a3da5d66a6fa",
-                },
-                {"type": 255, "data": "7500f9de6daffc64"},
-            ],
-        },
-    ]
-
-    insert_builtin_ad_structures(database_url)
-    enrichment_count = pl.read_database_uri(
-        """
-        select count(*)::int as count
-        from adv_enrichments e
-        join (
-          select distinct addr, raw
-          from scans
-          where blob = $1
-        ) s
-          on s.addr = e.addr
-         and s.raw = e.raw
-        where e.enrichment_kind = 'builtin'
-          and e.enrichment_id = 'ad_structures'
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [fixture_uri]},
-    )
-    assert enrichment_count.select("count").item() == 2
-
-
-def test_advs_exposes_sig_query_fields(database_url: str) -> None:
-    fixture_uri = "gs://test-bucket/adv-query-fields.jsonl"
-    scans = prepare_scan_jsonl_bytes(SCAN_FIXTURE_PATH.read_bytes(), fixture_uri)
-    inserted = insert_prepared_scans(database_url, scans)
-
-    assert inserted == 2
-
-    project_advs(database_url)
-
-    rows = pl.read_database_uri(
-        """
-        select
-          a.addr::text as addr,
-          to_json(a.adv_types)::text as adv_types,
-          to_json(a.manufacturer_ids)::text as manufacturer_ids,
-          to_json(a.service_uuids)::text as service_uuids,
-          to_json(a.service_data_uuids)::text as service_data_uuids
-        from advs a
-        join (
-          select distinct addr, raw
-          from scans
-          where blob = $1
-        ) s
-          on s.addr = a.addr
-         and s.raw = a.raw
-        order by a.addr::text
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [fixture_uri]},
     ).to_dicts()
+    assert ledger == [{"uri": SCAN_FIXTURE_URI, "success": True, "uploader_id": None}]
 
-    for row in rows:
-        row["adv_types"] = json.loads(row["adv_types"])
-        row["manufacturer_ids"] = json.loads(row["manufacturer_ids"])
-        row["service_uuids"] = json.loads(row["service_uuids"])
-        row["service_data_uuids"] = json.loads(row["service_data_uuids"])
-
-    assert rows == [
-        {
-            "addr": "2c:fe:8b:28:bb:05",
-            "adv_types": [9, 1, 255],
-            "manufacturer_ids": [13683],
-            "service_uuids": [],
-            "service_data_uuids": [],
-        },
-        {
-            "addr": "45:31:31:24:54:cb",
-            "adv_types": [1, 255, 255],
-            "manufacturer_ids": [117],
-            "service_uuids": [],
-            "service_data_uuids": [],
-        },
-    ]
-
-
-def test_project_advs_high_watermark_and_catchup(database_url: str) -> None:
-    project_advs(database_url)
-    initial_scans_through_id = _advs_scans_through_id(database_url)
-    blob_uri = "gs://test-bucket/projection/high-watermark.jsonl"
-    addr = "AA:BB:CC:00:00:01"
-    raw = APPLE_ADV_RAW
-
-    first_id = _insert_scan(
-        database_url,
-        blob_uri=blob_uri,
-        addr=addr,
-        raw=raw,
-        scanned_at="2026-01-01T00:00:00Z",
-        rssi=-50,
-        local_name="Old Name",
-    )
-
-    project_advs(database_url)
-    first_scans_through_id = _advs_scans_through_id(database_url)
-
-    assert first_scans_through_id >= first_id
-    assert first_scans_through_id > initial_scans_through_id
-
-    first_row = pl.read_database_uri(
+    structures = pl.read_database_uri(
         """
-        select
-          scans_through_id,
-          scans_count,
-          rssi_min,
-          local_name
-        from advs
-        where addr = cast($1 as macaddr)
-          and raw = decode($2, 'hex')
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [addr, raw]},
-    ).to_dicts()[0]
-
-    assert first_row == {
-        "scans_through_id": first_scans_through_id,
-        "scans_count": 1,
-        "rssi_min": -50,
-        "local_name": "Old Name",
-    }
-
-    second_id = _insert_scan(
-        database_url,
-        blob_uri=blob_uri,
-        addr=addr,
-        raw=raw,
-        scanned_at="2026-01-01T00:01:00Z",
-        rssi=-80,
-        local_name="New Name",
-    )
-
-    stale_row = pl.read_database_uri(
-        """
-        select
-          scans_through_id,
-          scans_count
-        from advs
-        where addr = cast($1 as macaddr)
-          and raw = decode($2, 'hex')
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [addr, raw]},
-    ).to_dicts()[0]
-
-    assert stale_row == {
-        "scans_through_id": first_scans_through_id,
-        "scans_count": 1,
-    }
-    assert stale_row["scans_through_id"] < second_id
-
-    project_advs(database_url)
-    second_scans_through_id = _advs_scans_through_id(database_url)
-
-    assert second_scans_through_id >= second_id
-    assert second_scans_through_id > first_scans_through_id
-
-    caught_up_row = pl.read_database_uri(
-        """
-        select
-          scans_through_id,
-          scans_count,
-          rssi_min,
-          local_name
-        from advs
-        where addr = cast($1 as macaddr)
-          and raw = decode($2, 'hex')
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [addr, raw]},
-    ).to_dicts()[0]
-
-    assert caught_up_row == {
-        "scans_through_id": second_scans_through_id,
-        "scans_count": 2,
-        "rssi_min": -80,
-        "local_name": "New Name",
-    }
-
-
-def test_project_advs_no_op_when_no_new_scans(database_url: str) -> None:
-    project_advs(database_url)
-    first_scans_through_id = _advs_scans_through_id(database_url)
-    first_adv_count = (
-        pl.read_database_uri(
-            "select count(*)::int as count from advs",
-            database_url,
-            engine="adbc",
+        select s.ad_type, encode(s.data, 'hex') as data
+        from ad_structures s
+        where s.id in (
+          select unnest(p.structure_ids)
+          from payloads p
+          join sighting_minutes m on m.payload_id = p.id
+          where m.addr = '2c:fe:8b:28:bb:05'
+            and m.minute >= timestamp '2025-06-12 22:00:00+00'
+            and m.minute < timestamp '2025-06-13 00:00:00+00'
         )
-        .select("count")
-        .item()
-    )
-
-    project_advs(database_url)
-    second_scans_through_id = _advs_scans_through_id(database_url)
-    second_adv_count = (
-        pl.read_database_uri(
-            "select count(*)::int as count from advs",
-            database_url,
-            engine="adbc",
-        )
-        .select("count")
-        .item()
-    )
-
-    assert second_scans_through_id == first_scans_through_id
-    assert second_adv_count == first_adv_count
-
-
-def test_project_advs_extracts_apple_and_service_uuid_fields(
-    database_url: str,
-) -> None:
-    project_advs(database_url)
-    blob_uri = "gs://test-bucket/projection/sig-fields.jsonl"
-    apple_addr = "AA:BB:CC:00:00:02"
-    service_addr = "AA:BB:CC:00:00:03"
-
-    _insert_scan(
-        database_url,
-        blob_uri=blob_uri,
-        addr=apple_addr,
-        raw=APPLE_ADV_RAW,
-        scanned_at="2026-01-02T00:00:00Z",
-        rssi=-40,
-    )
-    _insert_scan(
-        database_url,
-        blob_uri=blob_uri,
-        addr=service_addr,
-        raw=SERVICE_ADV_RAW,
-        scanned_at="2026-01-02T00:00:01Z",
-        rssi=-41,
-    )
-
-    project_advs(database_url)
-
-    rows = pl.read_database_uri(
-        """
-        select
-          addr::text as addr,
-          to_json(adv_types)::text as adv_types,
-          to_json(manufacturer_ids)::text as manufacturer_ids,
-          to_json(service_uuids)::text as service_uuids,
-          to_json(service_data_uuids)::text as service_data_uuids
-        from advs
-        where addr in (cast($1 as macaddr), cast($2 as macaddr))
-        order by addr::text
+        order by s.ad_type, s.data
         """,
         database_url,
         engine="adbc",
-        execute_options={"parameters": [apple_addr, service_addr]},
     ).to_dicts()
-
-    for row in rows:
-        row["adv_types"] = json.loads(row["adv_types"])
-        row["manufacturer_ids"] = json.loads(row["manufacturer_ids"])
-        row["service_uuids"] = json.loads(row["service_uuids"])
-        row["service_data_uuids"] = json.loads(row["service_data_uuids"])
-
-    assert rows == [
-        {
-            "addr": "aa:bb:cc:00:00:02",
-            "adv_types": [1, 9, 255],
-            "manufacturer_ids": [76],
-            "service_uuids": [],
-            "service_data_uuids": [],
-        },
-        {
-            "addr": "aa:bb:cc:00:00:03",
-            "adv_types": [3, 5, 7, 22, 32, 33],
-            "manufacturer_ids": [],
-            "service_uuids": [
-                "0000180d-0000-1000-8000-00805f9b34fb",
-                "12345678",
-                "180d",
-            ],
-            "service_data_uuids": [
-                "0000180d-0000-1000-8000-00805f9b34fb",
-                "11223344",
-                "180f",
-            ],
-        },
+    assert structures == [
+        {"ad_type": 1, "data": "06"},
+        {"ad_type": 9, "data": "5154203842323842423035"},
+        {"ad_type": 255, "data": "7335f9b833cc"},
     ]
-
-
-def test_project_advs_location_and_local_name_rollup(database_url: str) -> None:
-    project_advs(database_url)
-    blob_uri = "gs://test-bucket/projection/location.jsonl"
-    addr = "AA:BB:CC:00:00:04"
-    raw = "020106"
-
-    _insert_scan(
-        database_url,
-        blob_uri=blob_uri,
-        addr=addr,
-        raw=raw,
-        scanned_at="2026-01-03T00:00:00Z",
-        rssi=-50,
-        local_name="Old",
-        lat=0.0,
-        lon=0.0,
-        accuracy=5.0,
-    )
-    _insert_scan(
-        database_url,
-        blob_uri=blob_uri,
-        addr=addr,
-        raw=raw,
-        scanned_at="2026-01-03T00:01:00Z",
-        rssi=-60,
-        lat=0.0,
-        lon=0.002,
-        accuracy=5.0,
-    )
-    _insert_scan(
-        database_url,
-        blob_uri=blob_uri,
-        addr=addr,
-        raw=raw,
-        scanned_at="2026-01-03T00:02:00Z",
-        rssi=-55,
-        local_name="New",
-    )
-
-    project_advs(database_url)
-
-    row = pl.read_database_uri(
-        """
-        select
-          scans_count,
-          rssi_min,
-          centroid_lat,
-          centroid_lon,
-          st_y(centroid) as centroid_lat_from_geom,
-          st_x(centroid) as centroid_lon_from_geom,
-          min_lat,
-          max_lat,
-          min_lon,
-          max_lon,
-          st_ymin(box3d(bbox)) as min_lat_from_bbox,
-          st_ymax(box3d(bbox)) as max_lat_from_bbox,
-          st_xmin(box3d(bbox)) as min_lon_from_bbox,
-          st_xmax(box3d(bbox)) as max_lon_from_bbox,
-          local_name
-        from advs
-        where addr = cast($1 as macaddr)
-          and raw = decode($2, 'hex')
-        """,
-        database_url,
-        engine="adbc",
-        execute_options={"parameters": [addr, raw]},
-    ).to_dicts()[0]
-
-    assert row["scans_count"] == 3
-    assert row["rssi_min"] == -60
-    assert row["centroid_lat"] == pytest.approx(0.0)
-    assert row["centroid_lon"] == pytest.approx(0.001)
-    assert row["centroid_lat_from_geom"] == pytest.approx(row["centroid_lat"])
-    assert row["centroid_lon_from_geom"] == pytest.approx(row["centroid_lon"])
-    assert row["min_lat"] == pytest.approx(0.0)
-    assert row["max_lat"] == pytest.approx(0.0)
-    assert row["min_lon"] == pytest.approx(0.0)
-    assert row["max_lon"] == pytest.approx(0.002)
-    assert row["min_lat_from_bbox"] == pytest.approx(row["min_lat"])
-    assert row["max_lat_from_bbox"] == pytest.approx(row["max_lat"])
-    assert row["min_lon_from_bbox"] == pytest.approx(row["min_lon"])
-    assert row["max_lon_from_bbox"] == pytest.approx(row["max_lon"])
-    assert row["local_name"] == "New"
-
-    removed_column_count = (
-        pl.read_database_uri(
-            """
-        select count(*)::int as count
-        from information_schema.columns
-        where table_name = 'advs'
-          and column_name in ('radius', 'location_count')
-        """,
-            database_url,
-            engine="adbc",
-        )
-        .select("count")
-        .item()
-    )
-    assert removed_column_count == 0
 
 
 def test_ingest_scan_jsonl_bytes(database_url: str) -> None:
@@ -785,61 +283,90 @@ def test_ingest_legacy_sample_to_new_db(database_url: str) -> None:
 
     assert inserted == 2
 
-    insert_builtin_ad_structures(database_url)
-    project_advs(database_url)
-
     counts = pl.read_database_uri(
         """
-        with legacy_scans as (
-          select addr, raw
-          from scans
-          where blob = $1
-        )
+        with legacy_minutes as (
+          select m.*
+          from sighting_minutes m
+          join blobs b on b.id = any (m.blob_ids)
+          where b.uri = $1
+        ),
+        legacy_payloads as (select distinct payload_id from legacy_minutes)
         select
+          (select count(*)::int from legacy_minutes) as minute_count,
+          (select coalesce(sum(sightings), 0)::int from legacy_minutes) as sighting_count,
+          (select count(*)::int from legacy_payloads) as payload_count,
           (
-            select count(*)::int
-            from scans
-            where blob = $1
-          ) as scan_count,
+            select count(distinct s.id)::int
+            from legacy_payloads lp
+            join payloads p on p.id = lp.payload_id
+            cross join lateral unnest(p.structure_ids) as structure(structure_id)
+            join ad_structures s on s.id = structure.structure_id
+          ) as structure_count,
           (
-            select count(*)::int
-            from adv_enrichments e
-            join legacy_scans s
-              on s.addr = e.addr
-             and s.raw = e.raw
-            where e.enrichment_kind = 'builtin'
-              and e.enrichment_id = 'ad_structures'
-          ) as builtin_enrichment_count,
-          (
-            select count(*)::int
-            from advs a
-            join (select distinct addr, raw from legacy_scans) s
-              on s.addr = a.addr
-             and s.raw = a.raw
-          ) as adv_count,
-          (
-            select count(*)::int
-            from advs a
-            join (select distinct addr, raw from legacy_scans) s
-              on s.addr = a.addr
-             and s.raw = a.raw
-            where a.scans_through_id >= (
-              select max(id)
-              from scans
-              where blob = $1
-            )
-          ) as caught_up_adv_count
+            select uploader
+            from blobs b
+            join uploaders u on u.id = b.uploader_id
+            where b.uri = $1
+          ) as uploader
         """,
         database_url,
         engine="adbc",
         execute_options={"parameters": [LEGACY_FIXTURE_URI]},
-    )
+    ).to_dicts()
 
-    assert counts.to_dicts() == [
+    assert counts == [
         {
-            "scan_count": 2,
-            "builtin_enrichment_count": 2,
-            "adv_count": 2,
-            "caught_up_adv_count": 2,
+            "minute_count": 2,
+            "sighting_count": 2,
+            "structure_count": 6,
+            "payload_count": 2,
+            "uploader": "balexfbQ4yvHMTOqdix2cmS61Y-",
         }
     ]
+
+    app_versions = pl.read_database_uri(
+        "select app_version, success from blobs where uri = $1",
+        database_url,
+        engine="adbc",
+        execute_options={"parameters": [LEGACY_FIXTURE_URI]},
+    ).to_dicts()
+    assert app_versions == [{"app_version": "0.0.3", "success": True}]
+
+
+def test_legacy_ingest_derives_the_name_from_raw(database_url: str) -> None:
+    """Names come from the raw advertisement, not from a stored per-row name."""
+    blob_uri = "gs://test-bucket/scans/2026-04-11T00-00-00.000Z_masked_0.0.4.jsonl.zst.encrypted"
+    raw = bytes.fromhex("0c09515420384232384242424202")
+    payload = (
+        json.dumps(
+            {
+                "mac": "AA:BB:CC:DD:EE:01",
+                "rssi": -50,
+                "timestamp": "2026-04-11T00:00:00.000Z",
+                "lat": None,
+                "lon": None,
+                "accuracy": None,
+                # Legacy objects carry the advertisement as base64.
+                "raw": base64.b64encode(raw).decode(),
+            }
+        ).encode()
+        + b"\n"
+    )
+
+    assert ingest_scan_jsonl_bytes(database_url, payload, blob_uri) == 1
+
+    names = pl.read_database_uri(
+        """
+        select f.local_name
+        from sighting_minutes m
+        join payload_fields f on f.payload_id = m.payload_id
+        join blobs b on b.id = any (m.blob_ids)
+        where b.uri = $1
+        """,
+        database_url,
+        engine="adbc",
+        execute_options={"parameters": [blob_uri]},
+    ).to_dicts()
+
+    assert names == [{"local_name": "QT 8B28BBBB"}]

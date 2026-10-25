@@ -37,6 +37,9 @@ SCAN_POLARS_SCHEMA: SchemaDict = {
 }
 MAX_INSERT_ATTEMPTS = 5
 RETRYABLE_SQLSTATES = ("40P01", "40001")
+# The ADBC driver cannot bind a null parameter, so callers send these sentinels
+# and the SQL restores the null (see blobs/ensure_ingest.sql).
+NO_UPLOADER_ID = -1
 
 
 def ingest_scan_jsonl_bytes(
@@ -169,7 +172,7 @@ def load_stage_batch(
     batch = create_batch_table(session)
     session.cursor.execute(
         stage_query("sightings/batch_from_stage.sql", batch=batch, stage=staging_table),
-        [blob_id, uploader_id],
+        [blob_id, NO_UPLOADER_ID if uploader_id is None else uploader_id],
     )
     loaded = batch_count(session, batch)
     if loaded != stage.height:
@@ -225,7 +228,12 @@ def ensure_blob(
 ) -> tuple[int, bool]:
     session.cursor.execute(
         read_query("blobs/ensure_ingest.sql"),
-        [gcs_blob_uri, uploader_id, app_version, session_id],
+        [
+            gcs_blob_uri,
+            NO_UPLOADER_ID if uploader_id is None else uploader_id,
+            app_version or "",
+            session_id or "",
+        ],
     )
     row = session.cursor.fetch_polars()
     return int(row.item(0, "id")), row.item(0, "success") is True
