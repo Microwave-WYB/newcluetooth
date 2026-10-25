@@ -5,9 +5,11 @@ import math
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TextIO
 
 import google.cloud.storage as gcs
 import typer
@@ -27,7 +29,11 @@ from cluetooth_sync.pipeline import (
     MirroredStorageClient,
     StorageClient,
     SyncStatus,
+    blobs_in_range,
     check_heartbeat,
+    rebuild_minutes,
+    replay_sightings,
+    run_backfill,
     run_pipeline,
     survey_blobs,
     write_heartbeat,
@@ -419,6 +425,284 @@ def health(
     typer.echo(message)
     if not healthy:
         raise typer.Exit(code=1)
+
+
+@app.command("backfill")
+def backfill(
+    database_url: Annotated[
+        str,
+        typer.Option(
+            "--database-url",
+            envvar="CLUETOOTH_DATABASE_URL",
+            help="PostgreSQL URL for the target database.",
+        ),
+    ],
+    batch_size: Annotated[
+        int,
+        typer.Option(
+            "--batch-size",
+            min=1,
+            help="scans_old id range handled by one transaction.",
+        ),
+    ] = 100_000,
+    verify_only: Annotated[
+        bool,
+        typer.Option(
+            "--verify-only",
+            help="Skip the aggregation and only run the verification checks.",
+        ),
+    ] = False,
+) -> None:
+    """Aggregate the old per-sighting table into sighting_minutes, then verify."""
+    result = run_backfill(database_url, batch_size=batch_size, verify_only=verify_only)
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+def _parse_timestamp(value: str, option: str) -> datetime:
+    """Parse an ISO timestamp; a value without an offset is read as UTC."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{option} must be an ISO timestamp") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _select_blob_uris(
+    database_url: str,
+    blob: list[str] | None,
+    uploader: str | None,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[str]:
+    """Objects to read: explicit --blob URIs, or those behind a minute range."""
+    if blob:
+        if uploader is not None or since is not None or until is not None:
+            raise typer.BadParameter(
+                "--blob cannot be combined with --uploader, --since or --until"
+            )
+        return list(blob)
+    if since is None or until is None:
+        raise typer.BadParameter("give --blob, or both --since and --until")
+    return blobs_in_range(database_url, since, until, uploader)
+
+
+def _write_replay(
+    frames: Iterator[pl.DataFrame],
+    output: Path | None,
+    output_format: str,
+) -> int:
+    if output_format == "parquet":
+        if output is None:
+            raise typer.BadParameter("--format parquet needs --output")
+        collected = [frame for frame in frames if not frame.is_empty()]
+        frame = pl.concat(collected, how="diagonal") if collected else pl.DataFrame()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        frame.write_parquet(output)
+        return frame.height
+
+    if output is None:
+        return _write_replay_stream(frames, sys.stdout, output_format)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8", newline="") as handle:
+        return _write_replay_stream(frames, handle, output_format)
+
+
+def _write_replay_stream(
+    frames: Iterator[pl.DataFrame],
+    handle: TextIO,
+    output_format: str,
+) -> int:
+    rows = 0
+    wrote_header = False
+    for frame in frames:
+        if frame.is_empty():
+            continue
+        if output_format == "csv":
+            frame.write_csv(handle, include_header=not wrote_header)
+            wrote_header = True
+        else:
+            frame.write_ndjson(handle)
+        rows += frame.height
+    return rows
+
+
+@app.command("replay")
+def replay(
+    database_url: Annotated[
+        str,
+        typer.Option(
+            "--database-url",
+            envvar="CLUETOOTH_DATABASE_URL",
+            help="PostgreSQL URL of the ledger and minute tables.",
+        ),
+    ],
+    private_key_path: Annotated[
+        Path,
+        typer.Option(
+            "--private-key",
+            envvar="CLUETOOTH_PRIVATE_KEY_PATH",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Base64 or raw 32-byte private key for decrypting blobs.",
+        ),
+    ],
+    blob: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--blob",
+            help="Stored object URI to replay; repeat for several objects.",
+        ),
+    ] = None,
+    uploader: Annotated[
+        str | None,
+        typer.Option(
+            "--uploader",
+            help="Only objects from this producer token.",
+        ),
+    ] = None,
+    since: Annotated[
+        str | None,
+        typer.Option("--since", help="Range start (UTC when no offset)."),
+    ] = None,
+    until: Annotated[
+        str | None,
+        typer.Option("--until", help="Range end, exclusive."),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            dir_okay=False,
+            writable=True,
+            help="Output file; stdout when omitted (ndjson and csv).",
+        ),
+    ] = None,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="ndjson, csv or parquet."),
+    ] = "ndjson",
+    service_account_key: Annotated[
+        Path | None,
+        typer.Option(
+            "--service-account-key",
+            envvar="GOOGLE_APPLICATION_CREDENTIALS",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Optional Google service account JSON key.",
+        ),
+    ] = None,
+    mirror_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--mirror-dir",
+            envvar="CLUETOOTH_MIRROR_DIR",
+            file_okay=False,
+            dir_okay=True,
+            writable=True,
+            help="Optional local mirror directory for cached blobs.",
+        ),
+    ] = None,
+) -> None:
+    """Read raw sightings back from the archived objects."""
+    if output_format not in ("ndjson", "csv", "parquet"):
+        raise typer.BadParameter("--format must be ndjson, csv or parquet")
+    since_time = None if since is None else _parse_timestamp(since, "--since")
+    until_time = None if until is None else _parse_timestamp(until, "--until")
+    blob_uris = _select_blob_uris(database_url, blob, uploader, since_time, until_time)
+    storage_client = _build_storage_client(service_account_key, mirror_dir)
+    private_key = _read_private_key(private_key_path)
+
+    rows = _write_replay(
+        replay_sightings(
+            storage_client,
+            private_key,
+            blob_uris,
+            since=since_time,
+            until=until_time,
+        ),
+        output,
+        output_format,
+    )
+    print(
+        f"replayed {rows} sightings from {len(blob_uris)} objects",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+@app.command("rebuild")
+def rebuild(
+    database_url: Annotated[
+        str,
+        typer.Option(
+            "--database-url",
+            envvar="CLUETOOTH_DATABASE_URL",
+            help="PostgreSQL URL for the target database.",
+        ),
+    ],
+    private_key_path: Annotated[
+        Path,
+        typer.Option(
+            "--private-key",
+            envvar="CLUETOOTH_PRIVATE_KEY_PATH",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Base64 or raw 32-byte private key for decrypting blobs.",
+        ),
+    ],
+    since: Annotated[
+        str, typer.Option("--since", help="Range start (UTC when no offset).")
+    ],
+    until: Annotated[str, typer.Option("--until", help="Range end, exclusive.")],
+    uploader: Annotated[
+        str | None,
+        typer.Option("--uploader", help="Only minutes of this producer token."),
+    ] = None,
+    service_account_key: Annotated[
+        Path | None,
+        typer.Option(
+            "--service-account-key",
+            envvar="GOOGLE_APPLICATION_CREDENTIALS",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Optional Google service account JSON key.",
+        ),
+    ] = None,
+    mirror_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--mirror-dir",
+            envvar="CLUETOOTH_MIRROR_DIR",
+            file_okay=False,
+            dir_okay=True,
+            writable=True,
+            help="Optional local mirror directory for cached blobs.",
+        ),
+    ] = None,
+) -> None:
+    """Regenerate minute rows of a range from the archived objects."""
+    result = rebuild_minutes(
+        database_url,
+        _build_storage_client(service_account_key, mirror_dir),
+        _read_private_key(private_key_path),
+        since=_parse_timestamp(since, "--since"),
+        until=_parse_timestamp(until, "--until"),
+        uploader=uploader,
+    )
+    typer.echo(f"rebuilt {result.sightings} sightings from {result.blobs} objects")
 
 
 @wigle_app.command("export")

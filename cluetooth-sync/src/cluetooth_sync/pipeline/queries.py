@@ -4,13 +4,21 @@ from importlib.resources import files
 import cluetooth_sync.queries as query_resources
 
 
-
 @functools.cache
 def read_query(relative_path: str) -> str:
     return (
         files(query_resources)
         .joinpath(*relative_path.split("/"))
         .read_text(encoding="utf-8")
+    )
+
+
+def query_names(relative_dir: str) -> list[str]:
+    """Sorted `.sql` file names in one query directory."""
+    return sorted(
+        entry.name
+        for entry in files(query_resources).joinpath(*relative_dir.split("/")).iterdir()
+        if entry.name.endswith(".sql")
     )
 
 

@@ -32,10 +32,22 @@ def ensure_partitions(database_url: str, months: set[date]) -> None:
         return
     with db.session(database_url, autocommit=True) as session:
         for month in missing:
-            session.cursor.execute(read_query("sightings/ensure_partition.sql"), [month])
+            session.cursor.execute(
+                read_query("sightings/ensure_partition.sql"), [month]
+            )
             session.cursor.fetch_polars()
     with _ENSURED_MONTHS_LOCK:
         _ENSURED_MONTHS.update(missing)
+
+
+def months_between(first_day: date, last_day: date) -> set[date]:
+    """First-of-month dates from `first_day` through `last_day`."""
+    months: set[date] = set()
+    month = date(first_day.year, first_day.month, 1)
+    while month <= last_day:
+        months.add(month)
+        month = date(month.year + month.month // 12, month.month % 12 + 1, 1)
+    return months
 
 
 def frame_months(frame: pl.DataFrame) -> set[date]:

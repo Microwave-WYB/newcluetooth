@@ -7,7 +7,7 @@ via the local mirror) and parse them with the same code as ingest.
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 
 import polars as pl
 
@@ -16,7 +16,11 @@ from cluetooth_sync.pipeline.download import read_blob_bytes
 from cluetooth_sync.pipeline.ingest import load_stage_batch, stage_frame
 from cluetooth_sync.pipeline.orchestrate import BlobBytes, parse_blob
 from cluetooth_sync.pipeline.queries import read_query
-from cluetooth_sync.pipeline.sightings import ensure_partitions, merge_batch
+from cluetooth_sync.pipeline.sightings import (
+    ensure_partitions,
+    merge_batch,
+    months_between,
+)
 from cluetooth_sync.pipeline.storage import StorageClient
 
 
@@ -24,15 +28,6 @@ from cluetooth_sync.pipeline.storage import StorageClient
 class RebuildResult:
     blobs: int
     sightings: int
-
-
-def _months_between(since: datetime, until: datetime) -> set[date]:
-    months: set[date] = set()
-    month = date(since.year, since.month, 1)
-    while month <= until.date():
-        months.add(month)
-        month = date(month.year + month.month // 12, month.month % 12 + 1, 1)
-    return months
 
 
 def blobs_in_range(
@@ -91,7 +86,7 @@ def rebuild_minutes(
     uploader_filter = uploader or ""
     # Partitions first, outside the locked transaction: creating one waits on
     # the parent table, which that transaction already holds.
-    ensure_partitions(database_url, _months_between(since, until))
+    ensure_partitions(database_url, months_between(since.date(), until.date()))
     with db.session(database_url) as session:
         session.cursor.execute(read_query("sightings/rebuild_lock.sql"))
         session.cursor.fetch_polars()
