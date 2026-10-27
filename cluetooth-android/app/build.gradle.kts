@@ -78,8 +78,8 @@ android {
         applicationId = "edu.ucsd.sysnet.cluetoothscanner"
         minSdk = 24
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.0.5"
+        versionCode = 12
+        versionName = "0.1.0"
         buildConfigField("boolean", "V2_UPLOADER_ENABLED", v2UploaderEnabled.toString())
         buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
         manifestPlaceholders["CLUETOOTH_MAPS_API_KEY"] = mapsApiKey
@@ -234,8 +234,10 @@ val buildCluetoothCoreAndroid by tasks.registering(Exec::class) {
     outputs.dir(layout.buildDirectory.dir("generated/jniLibs"))
 }
 
-if (android.defaultConfig.versionName?.startsWith("0.0.5") == true && !v2UploaderEnabled) {
-    throw GradleException("Android 0.0.5 release requires the Rust v2 uploader")
+// Releases since 0.0.5 only upload through the Rust v2 Parquet path; the legacy
+// JSONL producer is no longer accepted by the sync pipeline for new versions.
+if (!v2UploaderEnabled) {
+    throw GradleException("Android releases require the Rust v2 uploader")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
