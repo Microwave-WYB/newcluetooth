@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: cluetooth
       POSTGRES_PASSWORD: infra_wireless_scanning
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"   # loopback only; remote access via db.wirelesswiki.org (Cloudflare Access)
     volumes:
       - ${CLUETOOTH_POSTGRES_DATA_SOURCE:-postgres-data}:/var/lib/postgresql
     healthcheck:

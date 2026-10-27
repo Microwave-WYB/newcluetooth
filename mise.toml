@@ -8,6 +8,7 @@ python = "3.14"
 uv = "latest"
 dbmate = "2.32.0"
 gcloud = "587.0.0"
+"aqua:cloudflare/cloudflared" = "2026.10.0"   # db:connect
 java = "temurin-17.0.20+8"
 android-sdk = "19.0"
 rust = { version = "1.96.1", profile = "minimal", components = ["clippy", "rustfmt"] }
@@ -23,6 +24,11 @@ CARGO_BUILD_JOBS = "2"
 # sdkmanager packages/licenses belong to this project, not a shared SDK install.
 ANDROID_HOME = "{{env.HOME}}/.local/share/mise/newcluetooth/android-sdk"
 ANDROID_SDK_ROOT = "{{env.HOME}}/.local/share/mise/newcluetooth/android-sdk"
+
+[tasks."db:connect"]
+description = "Forward the scan database to 127.0.0.1:${DB_LOCAL_PORT:-15432} through Cloudflare Access (browser login on first use)"
+raw = true
+run = 'cloudflared access tcp --hostname db.wirelesswiki.org --url "127.0.0.1:${DB_LOCAL_PORT:-15432}"'
 
 [tasks.install]
 description = "Install locked Python dependencies (run mise install for tool binaries first)"

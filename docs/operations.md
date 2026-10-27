@@ -14,6 +14,10 @@
 - Host: `ssh simi` (jumps through trolley).
 - Compose project `newcluetooth`: `/home/y2wei/Projects/newcluetooth`.
 - Database container: `cluetooth-db`. Data is at `/data/newcluetooth/postgres-data`.
+  Port 5432 is published on simi's loopback only. From elsewhere, `mise run db:connect`
+  forwards it to `127.0.0.1:15432` through `db.wirelesswiki.org` (Cloudflare Tunnel, TCP,
+  behind an Access app for the owner and advisor); the first connection opens a browser login.
+  Containers on the `newcluetooth_default` network reach it as `postgres` / `cluetooth-db`.
 - Blob mirror: `/data/newcluetooth/gcs-mirror`, a symlink to `/data/cluetooth/downloads`.
 - Secrets: compose secrets from `./secrets/`, mounted only into sync containers.
   Never print or copy them.
