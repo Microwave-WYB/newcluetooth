@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
@@ -205,7 +206,7 @@ class BleScanService(
 
         val activeRequest = scanRequestState.begin(::scanCallbackForGeneration)
         return try {
-            scanner.startScan(null, settings, activeRequest.callback)
+            scanner.startScan(scanFilters(), settings, activeRequest.callback)
             isScanning = true
             _scanStatus.value = ScanStatus(ScanOperatingState.SCANNING)
             Log.i(TAG, "BLE scan started (generation ${activeRequest.generation})")
@@ -441,7 +442,7 @@ class BleScanService(
                 bluetoothAdapter()?.let { adapter ->
                     repository.configureScan(scanEnvironment(adapter, codedPhyEnabled))
                 }
-                scanner.startScan(null, settings, nextRequest.callback)
+                scanner.startScan(scanFilters(), settings, nextRequest.callback)
                 Log.i(TAG, "BLE scan restarted (generation ${nextRequest.generation})")
                 schedulePeriodicScanRestart()
             } catch (error: SecurityException) {
@@ -534,6 +535,11 @@ class BleScanService(
         private const val TAG = "BleScanService"
         private const val DEFERRED_RECOVERY_RETRY_MS = 1_000L
     }
+
+    // Android pauses *unfiltered* scans while the screen is off (8.1+). One empty filter
+    // matches every advertisement but makes this a filtered scan, so it keeps running with
+    // the screen off where the platform allows it.
+    private fun scanFilters(): List<ScanFilter> = listOf(ScanFilter.Builder().build())
 
     // Receive extended advertisements as well as legacy ones where supported (API 26+),
     // on every PHY the controller can scan unless the Coded PHY switch is off.
