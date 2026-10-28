@@ -23,6 +23,15 @@ service firebase.storage {
       allow get: if true;
       allow list, update, delete: if false;
     }
+    // Manual GATT discoveries (docs/payload-schema-v3.md) use the same upload path and
+    // need the same rule; without it the app records `StorageException code=-13021
+    // http=403` and the object stays pending on the phone. Verified on a phone against
+    // the debug bucket (issue #24); not yet deployed anywhere by this change.
+    match /gatt/{path=**} {
+      allow create: if request.resource.size < 50 * 1024 * 1024;
+      allow get: if true;
+      allow list, update, delete: if false;
+    }
   }
 }
 ```

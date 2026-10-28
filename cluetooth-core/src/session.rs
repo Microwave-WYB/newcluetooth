@@ -7,7 +7,7 @@ use polars::prelude::{ParquetReader, SerReader};
 use serde::{Deserialize, Serialize};
 
 use crate::CoreError;
-use crate::payload::{PayloadFile, SchemaV2Row};
+use crate::payload::{PayloadFile, SchemaV3Row};
 use crate::payload_identity::parse_canonical_uuid_v7;
 
 type ClusterSignature = (Vec<u8>, Vec<i32>);
@@ -204,7 +204,7 @@ pub(crate) fn build_session_summaries(
     payloads: &[PayloadFile],
     failed_ids: &HashSet<String>,
     active_session_id: Option<&str>,
-    active_rows: &[SchemaV2Row],
+    active_rows: &[SchemaV3Row],
 ) -> Result<Vec<ScanSession>, CoreError> {
     let mut grouped: BTreeMap<String, Vec<&PayloadFile>> = BTreeMap::new();
     for payload in payloads {
@@ -299,7 +299,7 @@ struct Aggregate {
 
 fn aggregate_payloads(
     chunks: &[&PayloadFile],
-    active_rows: &[SchemaV2Row],
+    active_rows: &[SchemaV3Row],
 ) -> Result<Aggregate, CoreError> {
     let mut chunks = chunks.to_vec();
     chunks.sort_by_key(|chunk| (chunk.created_at_ms, chunk.payload_id.clone()));

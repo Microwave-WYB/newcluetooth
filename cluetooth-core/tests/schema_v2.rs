@@ -104,7 +104,7 @@ fn assert_required_null_rejected(column: &str) {
 
 #[test]
 fn ffi_api_version_is_stable() {
-    assert_eq!(api_version(), 6);
+    assert_eq!(api_version(), 7);
 }
 
 #[test]

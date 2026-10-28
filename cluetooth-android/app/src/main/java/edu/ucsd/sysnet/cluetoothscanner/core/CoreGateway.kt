@@ -5,13 +5,15 @@ import edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreConfig
 import edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEffect
 import edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.core.generated.LocationFix
+import edu.ucsd.sysnet.cluetoothscanner.core.generated.GattDiscoveryFile
+import edu.ucsd.sysnet.cluetoothscanner.core.generated.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.core.generated.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.core.generated.SchemaV2Row
 import edu.ucsd.sysnet.cluetoothscanner.core.generated.LegacySessionRows
 import edu.ucsd.sysnet.cluetoothscanner.core.generated.ExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.core.generated.defaultCoreConfig
 
-const val EXPECTED_CORE_API_VERSION: UInt = 6u
+const val EXPECTED_CORE_API_VERSION: UInt = 7u
 
 interface CoreGateway : AutoCloseable {
     fun apiVersion(): UInt
@@ -32,6 +34,11 @@ interface CoreGateway : AutoCloseable {
     fun updateLocation(fix: CoreLocationInput): GatewayCoreUpdate
     fun clearLocation(): GatewayCoreUpdate
     fun recordObservations(observations: List<CoreScanInput>): GatewayRecordResult
+    /** Declares the footer facts of following v3 payloads; required before observations. */
+    fun configureScan(environment: CoreScanEnvironment): GatewayCoreUpdate = refresh()
+    fun newGattDiscoveryId(): String = error("GATT storage is unavailable")
+    fun saveGattDiscovery(json: String): GatewayCoreUpdate = error("GATT storage is unavailable")
+    fun gattDiscoveries(): List<GatewayGattDiscoveryFile> = emptyList()
     fun checkpointActivePayload(): Boolean = false
     fun flushPayload(): Boolean
     fun pendingUploads(): List<GatewayPendingUpload>
@@ -57,6 +64,37 @@ data class CoreScanInput(
     val localName: String?,
     val txPower: Int?,
     val isConnectable: Boolean?,
+    val isLegacy: Boolean? = null,
+    val primaryPhy: Int? = null,
+    val secondaryPhy: Int? = null,
+    val advSid: Int? = null,
+    val advTxPower: Int? = null,
+    val periodicInterval: Int? = null,
+    val dataStatus: Int? = null,
+    val addrType: Int? = null,
+)
+
+/** Scanner facts stored once in the footer of every v3 payload (docs/payload-schema-v3.md). */
+data class CoreScanEnvironment(
+    val deviceModel: String,
+    val androidRelease: String,
+    val androidSdk: Int,
+    val appVersion: String,
+    val capExtAdv: Boolean,
+    val capCodedPhy: Boolean,
+    val capMaxAdvLen: Int,
+    /** `all_supported` or `1m`. */
+    val scanPhy: String,
+    val scanLegacyOnly: Boolean,
+)
+
+data class GatewayGattDiscoveryFile(
+    val discoveryId: String,
+    val localPath: String,
+    val objectPath: String,
+    val createdAtMs: Long,
+    val sizeBytes: ULong,
+    val uploaded: Boolean,
 )
 
 data class GatewayCoreState(
@@ -264,6 +302,14 @@ class NativeCoreGateway private constructor(
                 localName = observation.localName,
                 txPower = observation.txPower?.toShort(),
                 isConnectable = observation.isConnectable,
+                isLegacy = observation.isLegacy,
+                primaryPhy = observation.primaryPhy,
+                secondaryPhy = observation.secondaryPhy,
+                advSid = observation.advSid,
+                advTxPower = observation.advTxPower,
+                periodicInterval = observation.periodicInterval,
+                dataStatus = observation.dataStatus,
+                addrType = observation.addrType,
             )
         }
         val update = try {
@@ -283,6 +329,38 @@ class NativeCoreGateway private constructor(
         // failure here remains terminal to the caller and is never classified replayable.
         return GatewayRecordResult.Committed(update.toGatewayUpdate())
     }
+
+    override fun configureScan(environment: CoreScanEnvironment): GatewayCoreUpdate =
+        core.configureScan(
+            ScanEnvironment(
+                deviceModel = environment.deviceModel,
+                androidRelease = environment.androidRelease,
+                androidSdk = environment.androidSdk.toUInt(),
+                appVersion = environment.appVersion,
+                capExtAdv = environment.capExtAdv,
+                capCodedPhy = environment.capCodedPhy,
+                capMaxAdvLen = environment.capMaxAdvLen.toUInt(),
+                scanPhy = environment.scanPhy,
+                scanLegacyOnly = environment.scanLegacyOnly,
+            ),
+        ).toGatewayUpdate()
+
+    override fun newGattDiscoveryId(): String = core.newGattDiscoveryId()
+
+    override fun saveGattDiscovery(json: String): GatewayCoreUpdate =
+        core.saveGattDiscovery(json).toGatewayUpdate()
+
+    override fun gattDiscoveries(): List<GatewayGattDiscoveryFile> =
+        core.gattDiscoveries().map { file: GattDiscoveryFile ->
+            GatewayGattDiscoveryFile(
+                discoveryId = file.discoveryId,
+                localPath = file.localPath,
+                objectPath = file.objectPath,
+                createdAtMs = file.createdAtMs,
+                sizeBytes = file.sizeBytes,
+                uploaded = file.uploaded,
+            )
+        }
 
     override fun checkpointActivePayload(): Boolean =
         core.checkpointActivePayload().sealed != null

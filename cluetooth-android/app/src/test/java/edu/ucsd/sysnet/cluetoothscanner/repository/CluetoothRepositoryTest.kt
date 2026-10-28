@@ -1,6 +1,8 @@
 package edu.ucsd.sysnet.cluetoothscanner.repository
 
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreGateway
+import edu.ucsd.sysnet.cluetoothscanner.core.CoreScanEnvironment
+import edu.ucsd.sysnet.cluetoothscanner.core.EXPECTED_CORE_API_VERSION
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreLocationInput
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreScanInput
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayCoreEffect
@@ -85,6 +87,44 @@ class CluetoothRepositoryTest {
         runCurrent()
         assertEquals(3uL, repository.uiState.value.totalObservations)
         assertFalse(repository.uiState.value.hasLocation)
+        repository.closeAndJoin()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun scanEnvironmentReachesTheCoreBeforeTheObservationsItDescribes() = runTest {
+        val fake = FakeCoreGateway()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repository = CluetoothRepository(
+            gatewayFactory = { fake },
+            parentScope = this,
+            nativeDispatcher = dispatcher,
+            scanBatchWindowMs = 0,
+            scanPublicationIntervalMs = 0,
+        )
+        val oneMegabit = CoreScanEnvironment(
+            deviceModel = "Pixel 8",
+            androidRelease = "15",
+            androidSdk = 35,
+            appVersion = "0.1.0",
+            capExtAdv = true,
+            capCodedPhy = true,
+            capMaxAdvLen = 1650,
+            scanPhy = "1m",
+            scanLegacyOnly = false,
+        )
+        runCurrent()
+        repository.configureScan(oneMegabit.copy(scanPhy = "all_supported"))
+        repository.recordObservation(observation(1))
+        repository.configureScan(oneMegabit)
+        repository.recordObservation(observation(2))
+        runCurrent()
+
+        assertEquals(
+            listOf("configure", "scan", "configure", "scan"),
+            fake.calls.filter { it == "configure" || it == "scan" },
+        )
+        assertEquals(listOf("all_supported", "1m"), fake.configuredEnvironments.map { it.scanPhy })
         repository.closeAndJoin()
     }
 
@@ -700,7 +740,7 @@ private class FakeCoreGateway(
     private val finishEffects: List<GatewayCoreEffect> = emptyList(),
     private val throwAfterRecordCommit: Boolean = false,
     private val failOnFinish: Boolean = false,
-    private val apiVersion: UInt = 6u,
+    private val apiVersion: UInt = EXPECTED_CORE_API_VERSION,
 ) : CoreGateway {
     private var state = GatewayCoreState(
         totalObservations = 0u,
@@ -752,6 +792,14 @@ private class FakeCoreGateway(
     override fun updateLocation(fix: CoreLocationInput): GatewayCoreUpdate {
         calls += "location"
         state = state.copy(recentLocationFixCount = 1u, hasLocation = true)
+        return update()
+    }
+
+    val configuredEnvironments = mutableListOf<CoreScanEnvironment>()
+
+    override fun configureScan(environment: CoreScanEnvironment): GatewayCoreUpdate {
+        calls += "configure"
+        configuredEnvironments += environment
         return update()
     }
 
@@ -874,7 +922,7 @@ private class ThrowingCoreGateway : CoreGateway {
         latestLocalName = null,
     )
 
-    override fun apiVersion(): UInt = 6u
+    override fun apiVersion(): UInt = EXPECTED_CORE_API_VERSION
     override fun state(): GatewayCoreState = state
     override fun refresh(): GatewayCoreUpdate = throw LinkageError("native linkage failed")
     override fun updateLocation(fix: CoreLocationInput): GatewayCoreUpdate = error("unexpected")

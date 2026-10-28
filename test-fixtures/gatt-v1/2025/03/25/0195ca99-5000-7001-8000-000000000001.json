@@ -1,0 +1,58 @@
+{
+  "schema": "gatt/v1",
+  "id": "0195ca99-5000-7001-8000-000000000001",
+  "session_id": "0195ca99-4fff-7555-9555-555555555555",
+  "app_version": "0.1.0",
+  "device": {"model": "Pixel 8", "android": "15 (API 35)"},
+  "target": {
+    "addr": "AA:BB:CC:DD:EE:FF",
+    "addr_type": "random",
+    "name": "sensor",
+    "trigger_adv": {
+      "raw": "0201060302f0fe",
+      "rssi": -61,
+      "scanned_at": "2025-03-25T00:00:00.000Z",
+      "is_legacy": false,
+      "primary_phy": 1,
+      "secondary_phy": 2,
+      "adv_sid": 1
+    }
+  },
+  "started_at": "2025-03-25T00:00:01.000Z",
+  "ended_at": "2025-03-25T00:00:09.500Z",
+  "location": {"lat": 32.88, "lon": -117.23, "accuracy": 4.5},
+  "outcome": "complete",
+  "stage_reached": "disconnect",
+  "error": null,
+  "disconnect": {"initiator": "local", "status": 0},
+  "mtu": 247,
+  "phy": {"tx": 2, "rx": 2},
+  "timings_ms": {"connect": 800, "mtu": 120, "discover": 1500, "read": 4000},
+  "services": [
+    {
+      "uuid": "180A", "primary": true, "instance": 12,
+      "characteristics": [
+        {
+          "uuid": "2A29", "instance": 14, "properties": ["read"],
+          "value": {"hex": "4d6963726f", "status": "ok"},
+          "descriptors": [{"uuid": "2901", "instance": null, "value": {"hex": "", "status": "ok"}}]
+        }
+      ]
+    },
+    {
+      "uuid": "180F", "primary": true, "instance": 20,
+      "characteristics": [
+        {
+          "uuid": "2A19", "instance": 22, "properties": ["read", "notify"],
+          "value": {"hex": "5a", "status": "ok"},
+          "descriptors": [{"uuid": "2902", "instance": null, "value": {"hex": null, "status": "insufficient_authentication"}}]
+        },
+        {
+          "uuid": "6e400002-b5a3-f393-e0a9-e50e24dcca9e", "instance": 24, "properties": ["write"],
+          "value": {"hex": null, "status": "not_read"},
+          "descriptors": []
+        }
+      ]
+    }
+  ]
+}

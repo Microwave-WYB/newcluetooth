@@ -35,5 +35,5 @@ def test_production_rust_sealed_box_decrypts_with_pynacl(tmp_path: Path) -> None
     assert len(ciphertext) == len(plaintext) + 48
     assert SealedBox(private_key).decrypt(ciphertext) == plaintext
     assert plaintext.startswith(b"PAR1") and plaintext.endswith(b"PAR1")
-    assert object_path.startswith("scans/v2/")
+    assert object_path.startswith("scans/v3/")
     assert object_path.endswith(".parquet.encrypted")

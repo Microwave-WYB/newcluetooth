@@ -74,6 +74,10 @@ fun UploadStatusScreen(
     var exportTarget by remember { mutableStateOf<ScanSessionListItem?>(null) }
     var chooseFullExport by remember { mutableStateOf(false) }
     var wifiOnly by remember { mutableStateOf(uploadService.isWifiOnlyUpload()) }
+    val appContext = androidx.compose.ui.platform.LocalContext.current
+    var codedPhy by remember {
+        mutableStateOf(edu.ucsd.sysnet.cluetoothscanner.utils.AppSettings.isCodedPhyEnabled(appContext))
+    }
 
     LaunchedEffect(uploadStatus) {
         if (uploadStatus == WorkInfo.State.SUCCEEDED || uploadStatus == WorkInfo.State.FAILED) {
@@ -140,6 +144,22 @@ fun UploadStatusScreen(
                 Switch(checked = wifiOnly, onCheckedChange = {
                     wifiOnly = it
                     uploadService.setWifiOnlyUpload(it)
+                })
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Scan LE Coded PHY", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Long-range advertising where the phone supports it · applies within a minute",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = codedPhy, onCheckedChange = {
+                    codedPhy = it
+                    edu.ucsd.sysnet.cluetoothscanner.utils.AppSettings.setCodedPhyEnabled(appContext, it)
                 })
             }
             Row(
