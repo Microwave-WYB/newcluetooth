@@ -143,7 +143,11 @@ android {
     lint {
         abortOnError = true
     }
+
+    // The screenshot plugin refuses to apply unless this is set first, so it is applied below.
+    experimentalProperties["android.experimental.enableScreenshotTest"] = true
 }
+apply(plugin = "com.android.compose.screenshot")
 
 // Process only Firebase metadata: no app compilation, native build, APK or network calls.
 if (hostCheckFlag == null) {
@@ -267,6 +271,20 @@ val connectedCluetoothCoreSmokeTest by tasks.registering {
     dependsOn("connectedDebugAndroidTest")
 }
 
+// The preview-test API is built with Kotlin 2.2; keep its stdlib at the project's Kotlin.
+configurations.matching { it.name.contains("screenshotTest", ignoreCase = true) }.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.jetbrains.kotlin" && requested.name.startsWith("kotlin-stdlib")) {
+            useVersion(libs.versions.kotlin.get())
+        }
+    }
+}
+
+// Rendering 58 phone-size previews in one JVM exhausts the default test heap.
+tasks.withType<Test>().configureEach {
+    if (name.contains("ScreenshotTest")) maxHeapSize = "4g"
+}
+
 dependencies {
 
     implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
@@ -322,6 +340,8 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
+    screenshotTestImplementation(libs.androidx.ui.tooling)
+    screenshotTestImplementation("com.android.tools.screenshot:screenshot-validation-api:0.0.1-alpha12")
     debugImplementation(libs.androidx.ui.test.manifest)
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }

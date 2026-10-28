@@ -18,6 +18,10 @@ Rust prepares one combined JSONL or Parquet artifact for a v2 session and a ZIP 
 
 Maps Compose renders only Rust-derived local route and observation overlays. No Routes, reverse-geocoding, or Static Maps route API is used. Google still receives normal viewport/tile requests. Supply `CLUETOOTH_MAPS_API_KEY` through a Gradle property or environment variable; never check it in. Restrict it to the Android package/signing certificate and enable only Maps SDK for Android. With no key, the detail screen safely shows a map-unavailable message. A future renderer seam is retained if viewport disclosure later requires MapLibre/offline tiles.
 
+## v3 UI previews
+
+`app/src/main/.../ui/v3/` holds the v3 Compose screens (scan, device detail, nearby, recordings, maps) built on plain UI state classes in `ui/v3/model/` and fake data in `FakeData`; nothing there is wired to the repository, GATT engine or MapLibre yet. `app/src/screenshotTest/` renders every screen in light and dark at phone size with the Compose Preview Screenshot Testing plugin. Run `mise run //cluetooth-android:ui-shots /some/dir` to write the PNGs and an `index.html` gallery; layoutlib needs JDK 21, so the task selects `temurin-21` (`mise install java@temurin-21`). The reference PNGs under `app/src/screenshotTestDebug/` are build output and are git-ignored. These tasks are not part of `mise run check`.
+
 ## Local setup (from the repository root)
 
 AGP 8.10 requires JDK **17**, Gradle 8.11.1 (the retained wrapper), SDK platform 35 and build-tools 35.0.0. Native packaging additionally requires NDK 27.2.12479018, cargo-ndk 4.1.2 and all four Android Rust targets.
