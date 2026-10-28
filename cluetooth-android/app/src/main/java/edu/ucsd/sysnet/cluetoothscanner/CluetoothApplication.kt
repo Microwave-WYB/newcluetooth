@@ -36,7 +36,10 @@ class CluetoothApplication : Application() {
         repository = CluetoothRepository(
             gatewayFactory = { NativeCoreGateway.open(coreDirectory.absolutePath) },
             parentScope = applicationScope,
-            onUploadNeeded = { uploadService.autoUploadNow() },
+            onUploadNeeded = {
+                uploadService.autoUploadNow()
+                uploadService.autoGattUploadNow()
+            },
         )
         gattManager = GattDiscoveryManager(
             scope = applicationScope,
@@ -49,5 +52,6 @@ class CluetoothApplication : Application() {
         applicationScope.launch { gattManager.recoverStale() }
         uploadService.startPeriodicUpload()
         uploadService.autoUploadNow()
+        uploadService.autoGattUploadNow()
     }
 }

@@ -53,6 +53,8 @@ class UploadWorker(
                 AppSettings.setLastUploadAtMs(context, System.currentTimeMillis())
             }
 
+            // Denied objects (authorization) stay pending with their recorded error and do not
+            // push the whole job into backoff; transient failures do.
             if (failCount > 0) {
                 Result.retry()
             } else {
@@ -175,5 +177,38 @@ class UploadWorker(
     companion object {
         private const val TAG = "UploadWorker"
         const val WORK_NAME = "upload_ble_data"
+    }
+}
+
+/**
+ * Uploads manual GATT discoveries only. It has its own unique work and backoff, so a `gatt/`
+ * prefix the Storage rules do not allow yet (HTTP 403) can neither delay nor drop scan uploads.
+ */
+class GattUploadWorker(
+    private val context: Context,
+    params: WorkerParameters,
+) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        try {
+            val application = context.applicationContext as? CluetoothApplication
+                ?: error("CluetoothApplication is required for the process-owned core")
+            val summary = application.repository.uploadPendingV2(
+                FirebaseObjectFileUploader(),
+                UploadResume(PrefsUploadSessionStore(context), File(context.filesDir, "upload-cache")),
+                UploadKind.GATT,
+            )
+            Log.i(TAG, "GATT upload: ${summary.succeeded} stored, ${summary.failed} failed, ${summary.denied} denied")
+            if (summary.failed + summary.denied > 0) Result.retry() else Result.success()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            Log.e(TAG, "GATT upload worker failed", e)
+            Result.retry()
+        }
+    }
+
+    companion object {
+        private const val TAG = "GattUploadWorker"
+        const val WORK_NAME = "upload_gatt_objects"
     }
 }
