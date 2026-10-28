@@ -27,10 +27,7 @@ class ScanTransitionOwnershipTest {
         assertFalse(viewModel.contains("stopScanningAfterCallbackFence"))
         assertFalse(activity.contains(".startScanning()"))
         assertFalse(activity.contains(".stopScanning()"))
-        assertEquals(1, "_isScanning.value =".toRegex().findAll(viewModel).count())
-        assertTrue(viewModel.contains("_isScanning.value = transition.isRequested"))
         // The process owns the one coordinator; the ViewModel only uses the recording API.
-        assertTrue(viewModel.contains("recording.start()"))
         assertTrue(viewModel.contains("recording.stop()"))
         assertFalse(viewModel.contains("ScanTransitionCoordinator("))
         assertEquals(1, "ScanTransitionCoordinator\\(".toRegex().findAll(application).count())

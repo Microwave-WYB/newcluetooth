@@ -41,6 +41,19 @@ class LiveDeviceTrackerTest {
     }
 
     @Test
+    fun theLastPointOfTheSparklineAndChartIsTheCurrentRssi() {
+        val t = LiveDeviceTracker()
+        // Two seconds ago strong, now weak, with the weak sample in a fresh second.
+        t.onSample(sample(rssi = -50, t = 1_000_000))
+        t.onSample(sample(rssi = -82, t = 1_001_900))
+        val now = 1_002_000L
+        val row = t.row("AA:BB:CC:DD:EE:01", now)!!
+        assertEquals(-82, row.rssi)
+        assertEquals(-82, row.history.last())
+        assertEquals(-82, t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).last())
+    }
+
+    @Test
     fun rssiOf127IsAbsentAndKeepsTheLastValue() {
         val t = LiveDeviceTracker()
         t.onSample(sample(rssi = -70))

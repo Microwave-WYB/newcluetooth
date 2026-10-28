@@ -122,7 +122,6 @@ class MainActivity : ComponentActivity() {
         val cluetoothApplication = remember { application as CluetoothApplication }
         // Process-owned (see CluetoothApplication) so a recording outlives this Activity.
         val locationService = cluetoothApplication.locationService
-        val bleScanService = cluetoothApplication.bleScanService
         val uploadService = remember { UploadService(context) }
         val storageService = remember { StorageService(context, serviceScope, uploadService) }
         val exportScope = rememberCoroutineScope()
@@ -163,7 +162,6 @@ class MainActivity : ComponentActivity() {
 
         val scanViewModel: ScanViewModel = viewModel {
             ScanViewModel(
-                bleScanService,
                 locationService,
                 storageService,
                 uploadService,

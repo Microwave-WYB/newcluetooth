@@ -40,7 +40,6 @@ import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionUploadState
 import edu.ucsd.sysnet.cluetoothscanner.service.StorageService
 import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanViewModel
-import edu.ucsd.sysnet.cluetoothscanner.ui.components.ScanFab
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -58,7 +57,6 @@ fun UploadStatusScreen(
     val legacyFiles by storageService.generatedFiles.collectAsState()
     val legacyObservationCounts by storageService.legacyObservationCounts.collectAsState()
     val coreState by scanViewModel.coreUiState.collectAsState()
-    val isScanning by scanViewModel.isScanning.collectAsState()
     val uploadStatus by uploadService.getUploadStatus().collectAsState(initial = null)
     val sessions = remember(coreState.sessions, legacyFiles, legacyObservationCounts) {
         combinedChronologicalSessions(coreState.sessions, legacyFiles, legacyObservationCounts)
@@ -106,9 +104,6 @@ fun UploadStatusScreen(
                     }
                 },
             )
-        },
-        floatingActionButton = {
-            ScanFab(isScanning = isScanning, onToggleScanning = scanViewModel::toggleScanning)
         },
     ) { padding ->
         Column(modifier.padding(padding).fillMaxSize()) {

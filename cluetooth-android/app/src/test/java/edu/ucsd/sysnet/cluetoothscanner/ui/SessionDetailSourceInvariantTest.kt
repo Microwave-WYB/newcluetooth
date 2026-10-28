@@ -7,37 +7,6 @@ import org.junit.Test
 
 class SessionDetailSourceInvariantTest {
     @Test
-    fun mainScreenShowsOnlyScanStatusExceptionNotices() {
-        val source = mainSource("edu/ucsd/sysnet/cluetoothscanner/ui/screen/MainScreen.kt").readText()
-
-        assertTrue(source.contains("viewModel.scanStatus.collectAsState()"))
-        assertTrue(source.contains("scanNoticeText(scanStatus.state)"))
-        assertTrue(source.contains("Location unavailable"))
-        assertTrue(source.contains("ScanFab("))
-
-        assertFalse(source.contains("ID: \$deviceId"))
-        assertFalse(source.contains("DeviceIdManager"))
-        assertFalse(source.contains("BLE:"))
-        assertFalse(source.contains("Core ready"))
-        assertFalse(source.contains("Core initializing"))
-        assertFalse(source.contains("Core error:"))
-        assertFalse(source.contains("Scan storage unavailable"))
-        assertFalse(source.contains("coreState"))
-        assertFalse(source.contains("scanStatus.state.name"))
-    }
-
-    @Test
-    fun scanNoticeCopyIsExactAndCentralized() {
-        val source = mainSource("edu/ucsd/sysnet/cluetoothscanner/ui/screen/ScanStatusPresentation.kt").readText()
-
-        assertTrue(source.contains("\"Turn on Bluetooth to continue scanning.\""))
-        assertTrue(source.contains("\"Bluetooth scanning is temporarily unavailable. Retrying…\""))
-        assertTrue(source.contains("\"Saving scans. Scanning will resume automatically.\""))
-        assertTrue(source.contains("\"Scanning could not start. Check Bluetooth permissions.\""))
-        assertFalse(source.contains("BLE:"))
-    }
-
-    @Test
     fun uploadStatusScreenUsesPlainLanguageExceptionalStatesOnly() {
         val source = mainSource("edu/ucsd/sysnet/cluetoothscanner/ui/screen/UploadStatusScreen.kt").readText()
 

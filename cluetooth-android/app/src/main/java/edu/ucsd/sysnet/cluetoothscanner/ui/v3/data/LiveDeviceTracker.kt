@@ -126,10 +126,17 @@ class LiveDeviceTracker {
             advKind = if (d.legacy) AdvKind.Legacy else AdvKind.Extended,
             connectable = d.connectable,
             rssi = d.rssi ?: -100,
-            history = sparkline(d, nowMs),
+            history = withCurrent(sparkline(d, nowMs), d.rssi),
             stale = nowMs - d.lastSeenMs > STALE_AFTER_MS,
         )
     }
+
+    /**
+     * The last point of every series is the value shown as the number, so the number's colour and
+     * the last point's colour always agree (bins are averages and may lag by a second or two).
+     */
+    private fun withCurrent(series: List<Int>, current: Int?): List<Int> =
+        if (current == null || series.isEmpty()) series else series.dropLast(1) + current
 
     /** About 24 points covering the last 60 seconds, averaged per bin; empty bins are skipped. */
     private fun sparkline(d: Device, nowMs: Long): List<Int> = binned(d, nowMs / 1000, 60, 24)
@@ -142,7 +149,7 @@ class LiveDeviceTracker {
             ChartWindow.FiveMinutes -> 300
             ChartWindow.FifteenMinutes -> 900
         }
-        return binned(d, nowMs / 1000, seconds, minOf(seconds, CHART_POINTS))
+        return withCurrent(binned(d, nowMs / 1000, seconds, minOf(seconds, CHART_POINTS)), d.rssi)
     }
 
     private fun binned(d: Device, nowSec: Long, windowSec: Int, bins: Int): List<Int> {
