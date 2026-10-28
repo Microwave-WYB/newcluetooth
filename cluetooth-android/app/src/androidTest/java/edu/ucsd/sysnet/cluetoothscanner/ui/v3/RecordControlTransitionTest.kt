@@ -40,7 +40,7 @@ class RecordControlTransitionTest {
     private data class Page(val name: String, val tab: AppTab?)
 
     private val scan = Page("Scan", AppTab.Scan)
-    private val pages = listOf(Page("Nearby", AppTab.Nearby), Page("History", AppTab.History), Page("Category", null), Page("Map", null))
+    private val pages = listOf(Page("Nearby", AppTab.Discover), Page("History", AppTab.History), Page("Category", null), Page("Map", null))
 
     private var phase by mutableStateOf(RecorderPhase.Idle)
     private var page by mutableStateOf(Page("Scan", AppTab.Scan))

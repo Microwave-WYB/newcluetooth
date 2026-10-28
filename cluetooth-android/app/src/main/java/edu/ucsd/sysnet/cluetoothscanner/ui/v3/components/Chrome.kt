@@ -11,7 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.BluetoothSearching
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Place
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -96,7 +96,7 @@ fun SearchButton(onClick: () -> Unit = {}) = TopBarIconButton(Icons.Filled.Searc
 
 private fun tabIcon(tab: AppTab): ImageVector = when (tab) {
     AppTab.Scan -> Icons.AutoMirrored.Outlined.BluetoothSearching
-    AppTab.Nearby -> Icons.Outlined.Place
+    AppTab.Discover -> Icons.Outlined.Explore
     AppTab.History -> Icons.Outlined.History
 }
 

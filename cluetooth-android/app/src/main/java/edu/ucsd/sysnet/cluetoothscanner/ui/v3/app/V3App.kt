@@ -12,8 +12,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.filterScanRows
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryTopBar
@@ -22,8 +22,8 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapLibreMap
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapOverlay
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapTopBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanDeviceSheet
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanTopBar
@@ -110,15 +110,16 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
         val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
         val onScan = route == Route.Tab(AppTab.Scan)
-        val sheetOpen = onScan && selected != null && detail != null
+        // The device sheet opens over the Scan list and over a product page's devices.
+        val sheetOpen = (onScan || route is Route.Product) && selected != null && detail != null
         val tab = when (route) {
             is Route.Tab -> route.tab
-            is Route.Category -> AppTab.Nearby
+            is Route.Product -> AppTab.Discover
             else -> null
         }
 
         // Back: the control bar (closed in AppShell, composed last), the sheet, the selection, then pages;
-        // on the Nearby and History tabs it goes to the Scan tab before leaving the app.
+        // on the Discover and History tabs it goes to the Scan tab before leaving the app.
         BackHandler(enabled = stack.size > 1) { vm.back() }
         BackHandler(enabled = stack.size == 1 && tab != null && tab != AppTab.Scan) { vm.selectTab(AppTab.Scan) }
 
@@ -141,7 +142,8 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
         var searching by rememberSaveable { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf("") }
         val mapState by vm.mapState.collectAsStateWithLifecycle()
-        val nearby by vm.nearby.collectAsStateWithLifecycle()
+        val discover by vm.discover.collectAsStateWithLifecycle()
+        val discoverMode by vm.discoverMode.collectAsStateWithLifecycle()
         val rec by vm.recordings.collectAsStateWithLifecycle()
         val mapActions = MapActions(
             onBack = { vm.back() },
@@ -154,7 +156,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             onLayerToggle = vm::toggleHeat,
             detail = detailActions,
         )
-        val category = (route as? Route.Category)?.let { r -> (nearby.categories + nearby.unrecognized).firstOrNull { it.id == r.id } }
+        val product = (route as? Route.Product)?.let { vm.productHeader(it.pageId) }
 
         AppShell(
             recorder = recorder,
@@ -173,10 +175,10 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                             onSearchToggle = { searching = !searching; if (!searching) query = "" },
                             onSettings = { vm.open(Route.Legacy) },
                         )
-                        AppTab.Nearby -> NearbyTopBar(nearby, notice)
+                        AppTab.Discover -> DiscoverTopBar(discover, discoverMode, notice)
                         AppTab.History -> HistoryTopBar(rec, notice)
                     }
-                    is Route.Category -> if (category != null) CategoryTopBar(category, onBack = { vm.back() })
+                    is Route.Product -> ProductTopBar(product?.title.orEmpty(), onBack = { vm.back() })
                     is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> mapState?.let { MapTopBar(it, mapActions) }
                     Route.Legacy -> Unit
                 }
@@ -202,9 +204,9 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                         query = query,
                         onQueryChange = { query = it },
                     )
-                    AppTab.Nearby -> NearbyContent(
-                        nearby, padding,
-                        onOpenCategory = { vm.open(Route.Category(it.id)) },
+                    AppTab.Discover -> DiscoverContent(
+                        discover, discoverMode, padding,
+                        onMode = vm::setDiscoverMode,
                         onOpenProduct = { vm.openProduct(it.id) },
                     )
                     AppTab.History -> HistoryContent(
@@ -213,7 +215,19 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                         onEditNote = { vm.addNote(it.id) },
                     )
                 }
-                is Route.Category -> if (category != null) CategoryContent(category, padding, onOpenProduct = { vm.openProduct(it.id) }) else Box(Modifier.fillMaxSize())
+                is Route.Product -> if (product != null) {
+                    // The map state of a product page has no selection of its own: the sheet shows the device.
+                    val state = mapState
+                    ProductContent(
+                        product, state, padding,
+                        onOpenMap = { vm.openProductMap(product.id) },
+                        onDevice = { vm.select(it.id) },
+                    ) {
+                        if (state != null) ProductMapPreview(state, route)
+                    }
+                } else {
+                    Box(Modifier.fillMaxSize())
+                }
                 is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap ->
                     mapState?.let { MapRoute(it, vm, mapActions, padding) } ?: Box(Modifier.fillMaxSize())
                 Route.Legacy -> Unit
@@ -253,6 +267,17 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, actions: MapActions, pa
             onOffline = { offline = it },
         )
     }
+}
+
+/** The product page's map: the product's points, framed once; it takes no gestures (the card above it opens the full map). */
+@Composable
+private fun ProductMapPreview(state: MapUiState, route: Route) {
+    MapLibreMap(
+        overlay = MapOverlay(route = emptyList(), points = state.productPoints, estimate = null, heat = emptyList(), fitKey = route to state.productPoints.isNotEmpty()),
+        coveredFraction = { 0f },
+        onGesture = {},
+        onViewport = {},
+    )
 }
 
 @Composable

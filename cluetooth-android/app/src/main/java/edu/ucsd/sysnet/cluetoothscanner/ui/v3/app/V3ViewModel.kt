@@ -8,11 +8,8 @@ import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
-import edu.ucsd.sysnet.cluetoothscanner.local.CategoryProducts
-import edu.ucsd.sysnet.cluetoothscanner.local.InRangeSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.local.GeoBounds as LocalBounds
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataHub
-import edu.ucsd.sysnet.cluetoothscanner.local.WikiCatalog
 import edu.ucsd.sysnet.cluetoothscanner.local.RecordedDevice
 import edu.ucsd.sysnet.cluetoothscanner.local.Sighting
 import edu.ucsd.sysnet.cluetoothscanner.service.LiveScan
@@ -29,7 +26,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSpot
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.DiscoverMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveScanList
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiSeries
@@ -49,7 +46,9 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.LatLon
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapListRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapMode
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.NearbyUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverMode
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductHeaderState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderPhase
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingsUiState
@@ -473,23 +472,24 @@ class V3ViewModel(
         open(Route.DeviceMap(addr))
     }
 
-    // ---- nearby ---------------------------------------------------------------------------
+    // ---- discover ------------------------------------------------------------------------
 
-    val nearby: StateFlow<NearbyUiState> = combine(
-        combine(recorder, localData.productsInRange(), localData.previouslySeenProducts(), localData.catalog) { rec, inRange, seen, catalog ->
-            listOf(rec, inRange, seen, catalog)
-        },
-        localData.unknownStructuresInRange(),
-        localData.previouslySeenUnknownStructures(),
-    ) { products, unknownNow, unknownSeen ->
-        @Suppress("UNCHECKED_CAST")
-        NearbyMapper.map(
-            products[0] as RecorderUiState, products[1] as InRangeSnapshot, products[2] as List<CategoryProducts>,
-            products[3] as WikiCatalog?, texts, unknownNow = unknownNow, unknownSeen = unknownSeen,
-        )
-    }
-        .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NearbyMapper.map(RecorderUiState(), null, emptyList(), null, texts))
+    private val _discoverMode = MutableStateFlow(DiscoverMode.Nearby)
+    val discoverMode: StateFlow<DiscoverMode> = _discoverMode
+    fun setDiscoverMode(mode: DiscoverMode) { _discoverMode.value = mode }
+
+    /** Re-read once a minute for the "Last seen 5 min ago" lines. */
+    private val minute: Flow<Long> = _tick.map { it / 60_000 }.distinctUntilChanged()
+
+    val discover: StateFlow<DiscoverUiState> =
+        combine(recorder, localData.productsInRange(), localData.previouslySeenProducts(), minute) { rec, inRange, seen, _ ->
+            DiscoverMapper.map(rec, inRange, seen, texts, System.currentTimeMillis())
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DiscoverUiState(RecorderUiState(), emptyList(), emptyList()))
+
+    /** The wiki's word on a product, for its page; null until the catalog is loaded. */
+    fun productHeader(pageId: String): ProductHeaderState? = localData.catalog.value?.page(pageId)?.let(DiscoverMapper::header)
 
     // ---- recordings -----------------------------------------------------------------------
 
@@ -523,6 +523,7 @@ class V3ViewModel(
     val mapState: StateFlow<MapUiState?> = _stack.map { it.last() }.distinctUntilChanged().flatMapLatest { route ->
         when (route) {
             is Route.RecordingMap -> recordingMap(route.id)
+            is Route.Product -> sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), _tick.map { liveOfProduct(route.pageId) }, productTitle = route.pageId)
             is Route.ProductMap ->
                 if (route.pageId.startsWith(DEMO_PREFIX)) demoMap(route.pageId.removePrefix(DEMO_PREFIX))
                 else sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), _tick.map { liveOfProduct(route.pageId) }, productTitle = route.pageId)
@@ -732,19 +733,11 @@ class V3ViewModel(
         _stack.value = listOf(Route.Tab(AppTab.Scan), Route.ProductMap(DEMO_PREFIX + variant))
     }
 
-    /**
-     * Opens the product map for a Nearby tile; the "unidentified" tile has no map. When exactly one device
-     * of it is heard now, that device is opened right away: what it is, where, and what it advertises.
-     */
-    fun openProduct(pageId: String) {
-        if (pageId.startsWith(NearbyMapper.UNKNOWN_PREFIX)) return
-        val route = Route.ProductMap(pageId)
-        open(route)
-        viewModelScope.launch(Dispatchers.Default) {
-            val only = liveOfProduct(pageId).singleOrNull() ?: return@launch
-            if (_stack.value.lastOrNull() == route && _selected.value == null) select(only.addr)
-        }
-    }
+    /** Opens a product's page from Discover. */
+    fun openProduct(pageId: String) = open(Route.Product(pageId))
+
+    /** From the product page's map preview: the full product map. */
+    fun openProductMap(pageId: String) = open(Route.ProductMap(pageId))
 
     override fun onCleared() {
         toasts.close()

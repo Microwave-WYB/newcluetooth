@@ -28,7 +28,7 @@ data class RecorderUiState(
 
 enum class AppTab(@StringRes val label: Int) {
     Scan(R.string.tab_scan),
-    Nearby(R.string.tab_nearby),
+    Discover(R.string.tab_discover),
     History(R.string.tab_history),
 }
 
@@ -142,30 +142,44 @@ enum class DetailTab(@StringRes val label: Int) {
     Gatt(R.string.detail_tab_gatt),
 }
 
-// ---- Nearby --------------------------------------------------------------------------------
+// ---- Discover ------------------------------------------------------------------------------
 
-enum class CategoryIcon { Headphones, Watch, Beacon, Home, Car, Medical, Tracker, Unknown }
+/** One Material icon per wiki category (the product's first); the stand-in until the wiki has images. */
+enum class CategoryIcon { Headphones, Watch, Beacon, Home, Light, Sensor, Power, Car, Medical, Tracker, Unknown }
 
-data class ProductItemState(
+/** The Discover page's two lists. */
+enum class DiscoverMode(@StringRes val label: Int) {
+    Nearby(R.string.discover_mode_nearby),
+    All(R.string.discover_mode_all),
+}
+
+/** One product, once, whatever its categories. */
+data class ProductRowState(
+    /** The wiki page id. */
     val id: String,
     val name: String,
-    val subtitle: String,
-    /** Strongest RSSI right now, or null for a product seen earlier but not in range. */
+    val icon: CategoryIcon,
+    /** "In range · 3 devices" or "Last seen 2 h ago". */
+    val supporting: String,
+    /** Strongest RSSI right now, or null when not in range. */
     val strongestRssi: Int?,
 )
 
-data class NearbyCategoryState(
-    val id: String,
-    val title: String,
-    val icon: CategoryIcon,
-    val items: List<ProductItemState>,
+data class DiscoverUiState(
+    val recorder: RecorderUiState,
+    /** In range now, strongest first. */
+    val nearby: List<ProductRowState>,
+    /** Everything seen, most recent first. */
+    val all: List<ProductRowState>,
 )
 
-data class NearbyUiState(
-    val recorder: RecorderUiState,
-    val categories: List<NearbyCategoryState>,
-    /** Last row, unknown structures. */
-    val unrecognized: NearbyCategoryState,
+/** The product page's header: what the wiki says about it. */
+data class ProductHeaderState(
+    val id: String,
+    val title: String,
+    /** The wiki's one-line description. */
+    val description: String,
+    val icon: CategoryIcon,
 )
 
 // ---- Recordings ----------------------------------------------------------------------------

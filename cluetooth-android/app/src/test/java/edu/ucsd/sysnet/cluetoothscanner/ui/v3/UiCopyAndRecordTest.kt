@@ -53,7 +53,7 @@ class UiCopyTest {
     @Test
     fun theThirdTabIsHistory() {
         assertEquals("History", TestTexts.string(AppTab.History.label))
-        assertEquals(listOf("Scan", "Nearby", "History"), AppTab.entries.map { TestTexts.string(it.label) })
+        assertEquals(listOf("Scan", "Discover", "History"), AppTab.entries.map { TestTexts.string(it.label) })
     }
 
     @Test
