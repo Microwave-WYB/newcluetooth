@@ -110,13 +110,14 @@ surfaces in `status` and the hub retries (5 s, doubling to 5 min), queueing even
 
 | Table | What |
 |---|---|
-| `seen_payload` | one row per distinct advertisement: SHA-256 (hex), raw (any length, extended advertising included), first/last seen, count, `match_version` (the rules version) |
+| `seen_payload` | one row per distinct advertisement: SHA-256 (hex), raw (any length, extended advertising included), first/last seen, count, `match_version` (the rules version), `structure_key` (the coarse group of an unidentified payload, schema 3) |
 | `payload_match` | pages the payload matched (payload-level; address rules cannot match here) |
 | `seen_product` | per page, forever: first/last seen, seen count, payload count, last payload id (may have expired) |
 | `rematch_run`, `newly_identified` | a rules/engine update: cursor, payloads checked, payloads that went from unmatched to matched; kept until acknowledged (90 days at most) |
 | `recording` | a core scan session: start, end, distance, device count |
 | `sighting_minute` | per recording, address, minute, payload: best RSSI, location of the best sample, sample count, first/last ms |
 | `recording_route` | location samples per recording |
+| `recording_note` | the user's note per recording (schema 3); deleted with the recording |
 
 ### Decisions
 
@@ -187,10 +188,31 @@ surfaces in `status` and the hub retries (5 s, doubling to 5 min), queueing even
   history even though the live stream saw them.
 * Debug variant only for now; nothing here changes `versionName` or uploads.
 
+* **Unknown structures (schema 3).** An advertisement no page matches is grouped by a coarse
+  `StructureKey` derived from the bytes alone (the same AD split as everywhere: stop at a zero length
+  or truncation): the first manufacturer-data company field (`company:76`, decimal), else the first
+  16-bit service UUID of a service list or service data (`uuid:FEA0`), else the leading letters of the
+  local name (`name:ELK`; the first 3 characters when it starts with a non-letter), else the AD shape in wiki
+  notation (`shape:01/1,2A/2`, at most 16 items). `seen_payload.structure_key` is written on insert; the
+  migration only adds the column, and the hub fills it for older rows in batches of 500 after startup
+  (rows without a key are not listed until then). "In range now" comes from the live view (devices with no
+  identified payload in the window; a device alternating unidentified structures counts in each group).
+  "Previously seen" is a grouping of the *unmatched* stored payloads, so it covers the 30-day payload
+  retention and a bundle update that identifies a payload takes it out of its group; unlike
+  `seen_product` it is not a forever summary.
+* **Recording notes (schema 3).** `recording_note(recording_id, note, updated_ms)`, its own table so
+  typing a note invalidates only note queries and a note can be written before the recording row exists.
+  Written through the single writer; `setRecordingNote` returns after the commit and throws when the
+  database is unavailable (a note is never dropped silently). A blank note deletes the row. A note is
+  removed with its recording (an orphan only after it is itself 30 days old).
+* **Recording-wide sightings.** `sightingsInRecording(id, bounds?, limit)` reads the recording's minute rows
+  (newest first, `limit` default 50 000, applied after the box). With a `GeoBounds` only rows with a located
+  best sample inside it (inclusive; `minLon > maxLon` crosses the antimeridian) are returned.
+
 ### Queries and invalidation
 
 Writers bump a version per table group (payloads, recordings, sightings, route,
-re-match); a query depends on the groups it reads, so a flush that only added
+re-match, notes); a query depends on the groups it reads, so a flush that only added
 sightings does not re-run `previouslySeenProducts`. A query re-runs at most once
 a second, heavy ones (devices of a recording, sightings of a device or product)
 once every 5 s. The versions replay to new collectors, so a change made before
@@ -208,6 +230,10 @@ the first query ran is not missed. Queries run on the IO dispatcher (also
 | `previouslySeenProducts()` | `List<CategoryProducts>` (category order of the wiki, then uncategorized) |
 | `previouslySeenProducts(categoryId)` | `List<SeenProduct>` newest first |
 | `recordings()` / `recording(id)` | `Recording`: start, end, duration, distance, device count, active |
+| `unknownStructuresInRange(windowMs = 30 000)` | `List<UnknownInRange>`: structure, device count, strongest current RSSI, last seen; strongest first |
+| `previouslySeenUnknownStructures()` | `List<SeenUnknown>`: structure, payload count, heard count, first/last seen; newest first |
+| `observeRecordingNote(id)` / `getRecordingNote(id)` / `setRecordingNote(id, note)` | the note (`""` when none) as a flow / once / saved |
+| `sightingsInRecording(id, bounds?, limit = 50 000)` | `Sighting` minute rows of the recording, optionally inside a `GeoBounds`, newest first |
 | `devicesInRecording(id)` | `RecordedDevice`: address, first/last seen, strongest RSSI, minutes, matched pages, best location |
 | `route(id)` | `RoutePoint` list, oldest first |
 | `sightingsOfDevice(addr, limit)` | `Sighting` minute rows across recordings, newest first |
@@ -215,4 +241,4 @@ the first query ran is not missed. Queries run on the IO dispatcher (also
 | `pendingRematchReport()` + `acknowledgeRematch(id)` | the newest unacknowledged re-match with `newlyIdentified` |
 
 Models are in `local/Models.kt`; the interface is `local/LocalData.kt` and can
-be faked for previews (`status` has a default, so existing fakes keep compiling).
+be faked for previews (`status` and the schema-3 additions have defaults, so existing fakes keep compiling).

@@ -9,8 +9,11 @@ package edu.ucsd.sysnet.cluetoothscanner.local
  * reports as unavailable and retries; the file is deleted only when SQLite says it is corrupt.
  */
 object LocalSchema {
-    /** 2: seen_product, rules-version re-match cursor, prune indexes (1 never shipped). */
-    const val VERSION = 2
+    /**
+     * 2: seen_product, rules-version re-match cursor, prune indexes (1 never shipped).
+     * 3: seen_payload.structure_key (unknown-structure groups), recording_note.
+     */
+    const val VERSION = 3
 
     val CREATE: List<String> = listOf(
         // Key/value bookkeeping: rules_version = the rules the stored matches belong to.
@@ -26,9 +29,13 @@ object LocalSchema {
             first_seen_ms INTEGER NOT NULL,
             last_seen_ms INTEGER NOT NULL,
             seen_count INTEGER NOT NULL,
-            match_version TEXT
+            match_version TEXT,
+            structure_key TEXT
         )""",
         """CREATE INDEX seen_payload_last_seen ON seen_payload(last_seen_ms)""",
+
+        // structure_key = StructureKey.of(raw).key, the coarse group of an unidentified payload; null only
+        // for rows from before version 3 until LocalStore.backfillStructureKeys has visited them.
 
         // The pages a payload matched (payload-level: address rules cannot match here).
         """CREATE TABLE payload_match (
@@ -110,6 +117,14 @@ object LocalSchema {
             PRIMARY KEY (recording_id, time_ms)
         ) WITHOUT ROWID""",
         """CREATE INDEX recording_route_time ON recording_route(time_ms)""",
+
+        // The user's note on a recording. Not a column of recording: it changes on its own, and a
+        // note can be written before the recording row exists (pruned with the recording, see pruneStep).
+        """CREATE TABLE recording_note (
+            recording_id TEXT PRIMARY KEY,
+            note TEXT NOT NULL,
+            updated_ms INTEGER NOT NULL
+        ) WITHOUT ROWID""",
     )
 
     /**
@@ -136,6 +151,15 @@ object LocalSchema {
             """CREATE INDEX seen_payload_last_seen ON seen_payload(last_seen_ms)""",
             """CREATE INDEX newly_identified_payload ON newly_identified(payload_id)""",
             """CREATE INDEX recording_route_time ON recording_route(time_ms)""",
+        ),
+        2 to listOf(
+            // Existing rows get their key from LocalStore.backfillStructureKeys (it needs the bytes parsed).
+            """ALTER TABLE seen_payload ADD COLUMN structure_key TEXT""",
+            """CREATE TABLE recording_note (
+                recording_id TEXT PRIMARY KEY,
+                note TEXT NOT NULL,
+                updated_ms INTEGER NOT NULL
+            ) WITHOUT ROWID""",
         ),
     )
 
