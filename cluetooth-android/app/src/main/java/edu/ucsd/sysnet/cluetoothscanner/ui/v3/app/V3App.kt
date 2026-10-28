@@ -77,7 +77,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
         val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
         val onScan = route == Route.Tab(AppTab.Scan)
-        val isMap = route is Route.RecordingMap || route is Route.ProductMap || route is Route.DeviceMap
+        val isMap = route is Route.RecordingMap || route is Route.ProductMap || route is Route.DeviceMap || route is Route.DemoMap
         val sheetOpen = onScan && selected != null && detail != null
         val tab = when (route) {
             is Route.Tab -> route.tab
@@ -161,7 +161,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                         CategoryListPage(category, onBack = { vm.back() }, onOpenProduct = { vm.openProduct(it.id) })
                     }
                 }
-                is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> {
+                is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap, is Route.DemoMap -> {
                     val state by vm.mapState.collectAsState()
                     state?.let { MapRoute(it, vm, detailActions) } ?: Box(Modifier.fillMaxSize())
                 }

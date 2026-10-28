@@ -275,6 +275,10 @@ class MainActivity : ComponentActivity() {
 
         if (allPermissionsGranted) {
             val v3: V3ViewModel = viewModel { V3ViewModel(cluetoothApplication) }
+            // Debug builds: `am start ... --es v3_demo_map selected` opens the map page over fake data.
+            LaunchedEffect(Unit) {
+                if (BuildConfig.DEBUG) intent?.getStringExtra("v3_demo_map")?.let(v3::openDemoMap)
+            }
             V3App(v3) { onBack ->
                 UploadStatusScreen(
                                 storageService = storageService,

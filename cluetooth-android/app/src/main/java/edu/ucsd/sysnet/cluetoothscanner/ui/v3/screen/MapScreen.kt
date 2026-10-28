@@ -56,6 +56,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.BackButton
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.DragSheet
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.MiniRecordSlotWidth
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiText
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SearchField
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.appendMac
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.rememberDragSheetState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapListRowState
@@ -265,24 +266,7 @@ private fun DeviceListSheet(state: MapUiState, actions: MapActions) {
         }
     }
     if (state.searching) {
-        val focus = remember { FocusRequester() }
-        LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-        Box(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp).clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainer).padding(horizontal = 14.dp, vertical = 10.dp),
-        ) {
-            if (state.query.isEmpty()) {
-                Text("搜索名称、MAC 或产品", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
-            }
-            BasicTextField(
-                value = state.query,
-                onValueChange = actions.onQueryChange,
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
-            )
-        }
+        SearchField(state.query, actions.onQueryChange, "搜索名称、MAC 或产品", Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
     }
     LazyColumn(Modifier.fillMaxWidth().navigationBarsPadding()) {
         items(state.rows, key = { it.id }) { row ->

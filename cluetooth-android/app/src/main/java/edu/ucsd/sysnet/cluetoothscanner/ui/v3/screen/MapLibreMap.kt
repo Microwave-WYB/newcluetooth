@@ -31,7 +31,6 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
-import org.maplibre.android.style.layers.HeatmapLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
@@ -51,6 +50,8 @@ data class MapOverlay(
 
 private const val STYLE_LIGHT = "https://tiles.openfreemap.org/styles/liberty"
 private const val STYLE_DARK = "https://tiles.openfreemap.org/styles/dark"
+
+private const val MIN_SPAN_DEGREES = 0.0014
 
 private const val SRC_ROUTE = "v3-route"
 private const val SRC_ENDS = "v3-ends"
@@ -165,12 +166,18 @@ fun MapLibreMap(
         if (all.isEmpty()) return@LaunchedEffect
         val height = mapView.height.takeIf { it > 0 } ?: 1600
         val bottom = (height * currentCovered).toInt() + 48
-        if (all.size == 1 || all.all { it == all.first() }) {
-            m.easeCamera(CameraUpdateFactory.newLatLngZoom(all.first(), 17.0), 500)
-        } else {
-            val bounds = LatLngBounds.Builder().includes(all).build()
-            m.easeCamera(CameraUpdateFactory.newLatLngBounds(bounds, 56, 220, 56, bottom), 600)
-        }
+        // Never frame tighter than about 150 m, so a stationary recording still shows the streets.
+        val south = all.minOf { it.latitude }
+        val north = all.maxOf { it.latitude }
+        val west = all.minOf { it.longitude }
+        val east = all.maxOf { it.longitude }
+        val padLat = ((MIN_SPAN_DEGREES - (north - south)) / 2).coerceAtLeast(0.0)
+        val padLon = ((MIN_SPAN_DEGREES - (east - west)) / 2).coerceAtLeast(0.0)
+        val bounds = LatLngBounds.Builder()
+            .include(LatLng(south - padLat, west - padLon))
+            .include(LatLng(north + padLat, east + padLon))
+            .build()
+        m.easeCamera(CameraUpdateFactory.newLatLngBounds(bounds, 56, 220, 56, bottom), 600)
     }
 
     AndroidView({ mapView }, modifier.fillMaxSize())
@@ -179,18 +186,19 @@ fun MapLibreMap(
 private fun addLayers(style: Style) {
     val empty = FeatureCollection.fromFeatures(emptyList<Feature>())
     listOf(SRC_HEAT, SRC_ROUTE, SRC_ENDS, SRC_POINTS, SRC_ESTIMATE).forEach { style.addSource(GeoJsonSource(it, empty)) }
+    // Density: many large, blurred, translucent circles add up where sightings are dense. (MapLibre's
+    // HeatmapLayer segfaulted intermittently on an Adreno 640 test phone.)
     style.addLayer(
-        HeatmapLayer("v3-heat-layer", SRC_HEAT).withProperties(
-            PropertyFactory.heatmapRadius(26f),
-            PropertyFactory.heatmapOpacity(0.75f),
-            PropertyFactory.heatmapColor(
+        CircleLayer("v3-heat-layer", SRC_HEAT).withProperties(
+            PropertyFactory.circleRadius(
                 Expression.interpolate(
-                    Expression.linear(), Expression.heatmapDensity(),
-                    Expression.literal(0), Expression.rgba(255, 138, 0, 0.0),
-                    Expression.literal(0.3), Expression.rgba(255, 138, 0, 0.3),
-                    Expression.literal(1), Expression.rgba(235, 60, 0, 0.8),
+                    Expression.exponential(2), Expression.zoom(),
+                    Expression.stop(12, 14), Expression.stop(16, 30), Expression.stop(19, 60),
                 ),
             ),
+            PropertyFactory.circleColor(Color.rgb(255, 120, 0)),
+            PropertyFactory.circleBlur(1f),
+            PropertyFactory.circleOpacity(0.16f),
         ),
     )
     style.addLayer(

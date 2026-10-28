@@ -31,6 +31,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ChartWindow
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceSort
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.FakeData
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.LatLon
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapListRowState
@@ -427,6 +428,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             is Route.RecordingMap -> recordingMap(route.id)
             is Route.ProductMap -> sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), productTitle = route.pageId)
             is Route.DeviceMap -> sightingMap(localData.sightingsOfDevice(route.addr, 2_000), deviceAddr = route.addr)
+            is Route.DemoMap -> demoMap(route.variant)
             else -> flowOf(null)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -546,6 +548,20 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 emptyNote = if (located.isEmpty()) "还没有带位置的记录" else null,
             )
         }
+
+    /** Debug only: fake map data (FakeData) behind a real map; [variant] is route, selected, heat or product. */
+    private fun demoMap(variant: String): Flow<MapUiState?> = combine(_mapLocal, recorder) { local, rec ->
+        val base = when (variant) {
+            "selected" -> FakeData.recordingMapSelected
+            "product" -> FakeData.productMap
+            else -> FakeData.recordingMap
+        }
+        base.copy(recorder = rec, heatmap = local.heat || variant == "heat", heat = if (local.heat || variant == "heat") FakeData.recordingMapPanned.heat else emptyList(), showAreaChip = local.panned)
+    }
+
+    fun openDemoMap(variant: String) {
+        _stack.value = listOf(Route.Tab(AppTab.Scan), Route.DemoMap(variant))
+    }
 
     /** Opens the product map for a Nearby tile; the "unidentified" tile has no map. */
     fun openProduct(pageId: String) {

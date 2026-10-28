@@ -17,7 +17,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SearchField
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.TopBarIconButton
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.appendMac
 import androidx.compose.material3.MaterialTheme
@@ -157,7 +162,7 @@ fun ScanList(
     }
 }
 
-/** Scan page content: top bar and the list. The shell around it draws the record button and nav. */
+/** Scan page content: top bar, optional search, and the list. The shell around it draws the record button and nav. */
 @Composable
 fun ScanPage(
     rows: List<DeviceRowState>,
@@ -167,11 +172,14 @@ fun ScanPage(
     refreshing: Boolean = false,
     onRefresh: () -> Unit = {},
     onRowClick: (DeviceRowState) -> Unit = {},
-    onSearch: () -> Unit = {},
     onSettings: (() -> Unit)? = null,
     /** A scanner problem (Bluetooth off, no permission), shown under the status line. */
     notice: String? = null,
 ) {
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val q = query.trim().lowercase()
+    val shown = if (!searching || q.isEmpty()) rows else rows.filter { (it.name.orEmpty() + " " + it.mac).lowercase().contains(q) }
     Column(modifier.fillMaxSize()) {
         V3TopBar(
             title = "扫描",
@@ -182,10 +190,17 @@ fun ScanPage(
                 }
             },
             actions = {
-                SearchButton(onSearch)
+                if (searching) {
+                    TopBarIconButton(Icons.Filled.Close, "关闭搜索", { searching = false; query = "" })
+                } else {
+                    SearchButton { searching = true }
+                }
                 if (onSettings != null) TopBarIconButton(Icons.Filled.Settings, "设置", onSettings)
             },
         )
-        ScanList(rows, listState, refreshing, onRefresh, onRowClick, Modifier.weight(1f))
+        if (searching) {
+            SearchField(query, { query = it }, "搜索名称或 MAC", Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        }
+        ScanList(shown, listState, refreshing, onRefresh, onRowClick, Modifier.weight(1f))
     }
 }
