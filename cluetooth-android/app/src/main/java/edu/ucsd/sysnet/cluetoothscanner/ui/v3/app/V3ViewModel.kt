@@ -192,6 +192,10 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         .flatMapLatest<String?, String?> { id -> if (id == null) flowOf(null) else localData.observeRecordingNote(id) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /** False while the local database is unavailable: the editor is then read-only, as saving would fail. */
+    val noteEditable: StateFlow<Boolean> = localData.status.map { it.state != LocalDataStatus.State.UNAVAILABLE }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     fun addNote(recordingId: String?) { if (recordingId != null) _noteTarget.value = recordingId }
     fun dismissNote() { _noteTarget.value = null }
     fun saveNote(text: String) {

@@ -62,7 +62,7 @@ object NearbyMapper {
         StructureKind.COMPANY -> key.companyId?.let { String.format(java.util.Locale.US, "公司 0x%04X", it) } ?: "公司 ${key.value}"
         StructureKind.SERVICE_UUID -> "服务 ${key.value}"
         StructureKind.LOCAL_NAME -> "名称 ${key.value}…"
-        StructureKind.AD_SHAPE -> "形状 ${key.value}"
+        StructureKind.AD_SHAPE -> if (key.value == "-") "无广播结构" else "形状 ${key.value}"
     }
 
     fun map(
