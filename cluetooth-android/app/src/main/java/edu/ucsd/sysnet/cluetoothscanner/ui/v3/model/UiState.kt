@@ -126,7 +126,7 @@ data class DeviceDetailUiState(
     val variants: List<AdVariantState>,
     /** RSSI over the last minute in 1 s buckets, oldest first; null marks a bucket with no samples. */
     val chartSamples: List<Int?>,
-    /** How long the device has been heard, for the "Heard for ..." caption on short-lived devices; null when unknown. */
+    /** How long the device has been heard, for the "Scanned for ..." caption on short-lived devices; null when unknown. */
     val chartHeardSeconds: Int? = null,
     val gatt: GattUiState,
     /** The matched wiki page (`<kind>--<slug>`, the wiki directory name); null when the device is not recognized. */

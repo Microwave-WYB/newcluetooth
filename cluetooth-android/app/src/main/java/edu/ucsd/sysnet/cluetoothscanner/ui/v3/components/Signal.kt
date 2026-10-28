@@ -126,7 +126,7 @@ private fun chartFraction(rssi: Float) = (CHART_HI - rssi) / (CHART_HI - CHART_L
 /**
  * The detail chart: always the last minute, ending at now on the right edge ("−1 min … now"), labelled on
  * the left, 60 buckets of the strongest RSSI, faint -65 / -80 lines with labels, and one end marker.
- * A device heard for less than a tenth of the minute gets a "Heard for ..." caption.
+ * A device heard for less than a tenth of the minute gets a "Scanned for ..." caption.
  */
 @Composable
 fun RssiChart(

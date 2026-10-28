@@ -170,7 +170,7 @@ object FakeData {
         device = row(40, "S4769cb42f57a394-WH-1000XM5-Bluetooth-Headphones", "10:CA:BF:0B:C1:20", -101),
     )
     val detailHalf = detail()
-    /** First heard 4 s ago: a handful of buckets at the right edge and the "Heard for 20 s" caption. */
+    /** First heard 4 s ago: a handful of buckets at the right edge and the "Scanned for 20 s" caption. */
     val detailShortLived = detail(firstBucket = 56, heardSeconds = 4, wikiPageId = null)
     val detailGattProgress = detail(gatt = GattUiState.InProgress(progressSteps))
     val detailGattDone = detail(gatt = GattUiState.Done(doneSteps, gattServices))

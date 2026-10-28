@@ -102,9 +102,9 @@
     <string name="action_turn_on">Turn on</string>
     <string name="permission_granted">Allowed</string>
     <string name="permission_nearby">Nearby devices</string>
-    <string name="permission_nearby_why">To hear Bluetooth advertisements and read a device\'s services.</string>
+    <string name="permission_nearby_why">To scan Bluetooth advertisements and read a device\'s services.</string>
     <string name="permission_location">Precise location</string>
-    <string name="permission_location_why">To put what you hear on the map. Android also needs it for Bluetooth scanning.</string>
+    <string name="permission_location_why">To put what you scan on the map. Android also needs it for Bluetooth scanning.</string>
     <string name="permission_notifications">Notifications</string>
     <string name="permission_notifications_why">To show that a recording is running. Optional.</string>
     <string name="onboarding_permissions_title">Permissions</string>
@@ -112,14 +112,14 @@
     <string name="onboarding_permissions_denied">Some permissions were denied. Allow them in the app\'s system settings.</string>
     <string name="onboarding_bluetooth_title">Bluetooth</string>
     <string name="onboarding_bluetooth_on">Bluetooth is on.</string>
-    <string name="onboarding_bluetooth_off">Bluetooth is off. Turn it on so Cluetooth can hear devices.</string>
+    <string name="onboarding_bluetooth_off">Bluetooth is off. Turn it on so Cluetooth can scan devices.</string>
     <string name="onboarding_user_id_title">Your user ID</string>
     <string name="onboarding_user_id_text">It marks your uploads. You can change it later in Settings.</string>
     <string name="onboarding_auto_record_title">Record automatically?</string>
     <string name="onboarding_auto_record_text">Scan shows what is around you. A recording also saves it, with your route, and uploads it.</string>
     <string name="onboarding_auto_record_detail">Start recording automatically when the app opens. You can turn this off in Settings.</string>
     <string name="missing_permissions_title">Cluetooth needs this permission again</string>
-    <string name="bluetooth_off_banner">Bluetooth is off. Cluetooth can\'t hear devices.</string>
+    <string name="bluetooth_off_banner">Bluetooth is off. Cluetooth can\'t scan devices.</string>
     <string name="settings_title">Settings</string>
     <string name="settings_user_id">User ID</string>
     <string name="settings_user_id_unset">Not set</string>
@@ -127,7 +127,7 @@
     <string name="settings_auto_record_detail">Starts a recording each time Cluetooth opens</string>
     <string name="settings_wifi_only">Upload over Wi-Fi only</string>
     <string name="settings_coded_phy">Scan LE Coded PHY</string>
-    <string name="settings_coded_phy_detail">Also hear long-range devices; applies within a minute</string>
+    <string name="settings_coded_phy_detail">Also scan long-range devices; applies within a minute</string>
     <string name="settings_filters">Filters</string>
     <string name="settings_hide_unnamed_apple">Hide unnamed Apple devices</string>
     <string name="settings_hide_unnamed_apple_detail">Only what you see; scanning and recording keep everything</string>
@@ -162,7 +162,7 @@
     <string name="product_map_empty">Record to put it on the map</string>
     <string name="product_map_open">Open the map</string>
     <string name="product_devices">Devices</string>
-    <string name="product_no_devices">No devices of this product heard yet.</string>
+    <string name="product_no_devices">No devices of this product scanned yet.</string>
     <string name="tab_history">History</string>
     <string name="search_hint_scan">Search name or MAC</string>
     <string name="search_hint_map">Search name, MAC or product</string>
@@ -183,7 +183,7 @@
     <string name="adv_extended">Extended</string>
     <string name="chart_axis_start">−1 min</string>
     <string name="chart_axis_now">now</string>
-    <string name="chart_heard_for">Heard for %1$s</string>
+    <string name="chart_heard_for">Scanned for %1$s</string>
     <string name="detail_tab_advertising">Advertising</string>
     <string name="detail_tab_gatt">GATT</string>
     <string name="ad_decoded">Details</string>
@@ -283,9 +283,9 @@
     <string name="recording_summary">%1$s · %2$s</string>
     <string name="map_recording_title">%1$s · %2$s</string>
     <string name="recording_no_location">This recording has no location data</string>
-    <string name="sightings_no_location">No position yet. It shows here once your phone hears it with a location fix.</string>
-    <string name="map_row_heard_now">Heard now</string>
-    <string name="map_row_heard_ago">Heard %1$s ago</string>
+    <string name="sightings_no_location">No position yet. It shows here once your phone scans it with a location fix.</string>
+    <string name="map_row_heard_now">Scanned now</string>
+    <string name="map_row_heard_ago">Scanned %1$s ago</string>
 
     <!-- Maps -->
     <string name="map_show_all">Show all</string>
@@ -295,7 +295,7 @@
     <string name="map_estimated_position">Estimated position</string>
     <string name="map_estimated_position_accuracy">Estimated position ±%1$d m</string>
     <string name="map_attribution" translatable="false">© OpenMapTiles · © OpenStreetMap contributors · OpenFreeMap</string>
-    <string name="map_heard_now_count">%1$d heard now</string>
+    <string name="map_heard_now_count">%1$d scanned now</string>
     <string name="map_from_recordings">From %1$s</string>
     <string name="map_row_detail">%1$s, last %2$s</string>
     <string name="map_sort_by_signal">By signal</string>
