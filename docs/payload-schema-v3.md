@@ -190,7 +190,8 @@ Rules:
 - The producer never writes, subscribes to notifications, or bonds. A read the
   peer rejects for security is recorded with the matching status and the next
   attribute is read. The Android stack may still show a pairing dialog on an
-  authentication failure; the operator cancels it. See the engine notes in
+  authentication failure and there is no public API to forbid it; the operator cancels it.
+  The app's code never bonds. See `docs/recording-model.md` and the engine notes in
   `cluetooth-android/README.md`.
 
 ### Validation rules

@@ -33,15 +33,14 @@ import edu.ucsd.sysnet.cluetoothscanner.data.BleRecord
 import edu.ucsd.sysnet.cluetoothscanner.repository.CluetoothRepository
 import edu.ucsd.sysnet.cluetoothscanner.repository.ObservationAdmission
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
-import java.time.Instant
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.map
 
 class BleScanService(
     private val context: Context,
@@ -57,10 +56,20 @@ class BleScanService(
     private var pausedByBackpressure = false
     private var scanLifecycleListener: ((ScanLifecycleEvent) -> Unit)? = null
 
-    private val scanResults = Channel<BleRecord>(
-        capacity = 64,
+    // Every advertisement while the scanner runs, for the UI and the matcher's in-memory stores.
+    // A slow collector loses the oldest items; the scanner never waits for it.
+    private val _liveScans = MutableSharedFlow<LiveScan>(
+        replay = 0,
+        extraBufferCapacity = LIVE_SCAN_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+
+    /**
+     * Rows are written to the core only while a recording is active. Live scanning (app in the
+     * foreground) feeds [liveScans] and nothing else: no session, no Parquet, no upload.
+     */
+    @Volatile
+    private var rowWriting = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val callbackFence = CallbackFence(mainHandler::post)
     private var scanRestartRunnable: Runnable? = null
@@ -103,7 +112,11 @@ class BleScanService(
         }
     }
 
-    val scanFlow: Flow<BleRecord> = scanResults.receiveAsFlow()
+    /** The live ScanResult stream. Collect it from the UI or a store; it never blocks scanning. */
+    val liveScans: SharedFlow<LiveScan> = _liveScans.asSharedFlow()
+
+    /** The same stream as UI records (kept for the nearby list). */
+    val scanFlow: Flow<BleRecord> = liveScans.map { it.toBleRecord() }
     val scanStatus: StateFlow<ScanStatus> = _scanStatus.asStateFlow()
 
     init {
@@ -301,6 +314,25 @@ class BleScanService(
 
     fun isScanning(): Boolean = isScanning
 
+    /**
+     * Starts or stops writing rows. Enabling declares the footer environment first (ordered ahead
+     * of the first row); disabling is followed by [fenceCallbacks] so that no row of this
+     * recording is queued after the caller continues.
+     */
+    internal fun setRowWriting(enabled: Boolean) {
+        if (enabled && !rowWriting) {
+            bluetoothAdapter()?.let { adapter ->
+                repository.configureScan(scanEnvironment(adapter, AppSettings.isCodedPhyEnabled(context)))
+            }
+        }
+        rowWriting = enabled
+    }
+
+    /** Returns once every scan callback queued so far has been processed. */
+    internal suspend fun fenceCallbacks() {
+        callbackFence.await()
+    }
+
     private fun scanCallbackForGeneration(generation: Long) = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             if (!scanRequestState.accepts(generation)) return
@@ -346,23 +378,11 @@ class BleScanService(
             val mac = device.address
             val rssi = scanResult.rssi
             val scannedAtMs = scanWallClockMillis(scanResult.timestampNanos, snapshot)
-            val timestamp = Instant.ofEpochMilli(scannedAtMs).atOffset(ZoneOffset.UTC)
-                .format(DateTimeFormatter.ISO_INSTANT)
 
             val location = locationService.getLastKnownLocation()
             val scanRecord = scanResult.scanRecord
             val advertisementData = scanRecord?.bytes?.copyOf() ?: byteArrayOf()
             val v3 = scanV3Fields(scanResult, device)
-
-            val bleRecord = BleRecord(
-                mac = mac,
-                rssi = rssi,
-                timestamp = timestamp,
-                lat = location?.latitude,
-                lon = location?.longitude,
-                accuracy = location?.accuracy,
-                raw = advertisementData
-            )
 
             if (!scanRequestState.accepts(generation)) return
             triggerCache.put(
@@ -377,9 +397,24 @@ class BleScanService(
                     fields = v3,
                 ),
             )
-            // Preserve the current UI record stream; 0.0.5 persistence is owned by Rust.
-            scanResults.trySend(bleRecord)
-            val admission = repository.recordObservation(
+            _liveScans.tryEmit(
+                LiveScan(
+                    addr = mac,
+                    rssi = rssi.takeUnless { it == 127 },
+                    scannedAtMs = scannedAtMs,
+                    elapsedRealtimeNanos = scanResult.timestampNanos,
+                    raw = advertisementData,
+                    localName = scanRecord?.deviceName,
+                    txPower = scanRecord?.txPowerLevel?.takeUnless { it == 127 || it == Int.MIN_VALUE },
+                    isConnectable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) scanResult.isConnectable else null,
+                    v3 = v3,
+                    lat = location?.latitude,
+                    lon = location?.longitude,
+                    accuracyMeters = location?.accuracy,
+                ),
+            )
+            // Durable rows exist only for a recording; live scanning stops here.
+            val admission = if (!rowWriting) ObservationAdmission.ACCEPTED else repository.recordObservation(
                 CoreScanInput(
                     addr = mac,
                     rssi = rssi.takeUnless { it == 127 },
@@ -578,12 +613,13 @@ class BleScanService(
                 // Cleanup may be called more than once by lifecycle teardown.
             }
         }
-        scanResults.close()
+        // liveScans is a SharedFlow: it has no terminal state to close.
     }
 
     companion object {
         private const val TAG = "BleScanService"
         private const val DEFERRED_RECOVERY_RETRY_MS = 1_000L
+        private const val LIVE_SCAN_BUFFER = 512
     }
 
     // Android pauses *unfiltered* scans while the screen is off (8.1+). One empty filter is

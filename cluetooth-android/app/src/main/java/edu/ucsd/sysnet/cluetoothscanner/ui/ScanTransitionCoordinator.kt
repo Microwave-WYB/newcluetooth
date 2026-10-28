@@ -30,7 +30,7 @@ enum class ScanTransitionState {
  */
 internal class ScanTransitionCoordinator(
     private val startSession: suspend () -> Boolean,
-    private val startScanner: () -> ScannerStartOutcome,
+    private val startScanner: suspend () -> ScannerStartOutcome,
     private val stopScannerAndFence: suspend () -> Unit,
     private val finishSession: suspend () -> Boolean,
     private val onRequestRejected: () -> Unit = {},

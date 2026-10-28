@@ -12,7 +12,10 @@ import edu.ucsd.sysnet.cluetoothscanner.repository.CluetoothRepository
 import edu.ucsd.sysnet.cluetoothscanner.service.AndroidRecordingHost
 import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
 import edu.ucsd.sysnet.cluetoothscanner.service.LocationService
+import edu.ucsd.sysnet.cluetoothscanner.service.LocationPort
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingController
+import edu.ucsd.sysnet.cluetoothscanner.service.ScanSupervisor
+import edu.ucsd.sysnet.cluetoothscanner.service.ScannerPort
 import edu.ucsd.sysnet.cluetoothscanner.service.ScanLifecycleEvent
 import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionCoordinator
@@ -38,6 +41,10 @@ class CluetoothApplication : Application() {
     lateinit var locationService: LocationService
         private set
     lateinit var bleScanService: BleScanService
+        private set
+
+    /** Decides when the scanner runs; the Activity reports foreground/background to it. */
+    lateinit var scanSupervisor: ScanSupervisor
         private set
 
     /** The recording API (state plus start/pause/resume/stop); see [RecordingController]. */
@@ -71,10 +78,26 @@ class CluetoothApplication : Application() {
         applicationScope.launch { gattManager.recoverStale() }
         locationService = LocationService(this, repository)
         bleScanService = BleScanService(this, locationService, repository, triggerCache)
+        // Live scanning (foreground) and recording (session + rows) are separate; the supervisor
+        // decides when the scanner runs and when rows are written.
+        val supervisor = ScanSupervisor(
+            scanner = object : ScannerPort {
+                override fun start() = bleScanService.startScanning()
+                override suspend fun stopAndWait() = bleScanService.stopScanningAndWait()
+                override fun isScanning() = bleScanService.isScanning()
+                override fun setRowWriting(enabled: Boolean) = bleScanService.setRowWriting(enabled)
+                override suspend fun fence() = bleScanService.fenceCallbacks()
+            },
+            location = object : LocationPort {
+                override fun start() = locationService.startLocationUpdates()
+                override fun stop() = locationService.stopLocationUpdates()
+            },
+        )
+        scanSupervisor = supervisor
         val coordinator = ScanTransitionCoordinator(
             startSession = repository::startScanSessionAndWait,
-            startScanner = bleScanService::startScanning,
-            stopScannerAndFence = bleScanService::stopScanningAndWait,
+            startScanner = supervisor::beginRowWriting,
+            stopScannerAndFence = supervisor::endRowWriting,
             finishSession = repository::finishScanSessionAndWait,
             onRequestRejected = { recordingController.wantsRecording = false },
         )
@@ -91,7 +114,9 @@ class CluetoothApplication : Application() {
             applicationScope.launch {
                 when (event) {
                     ScanLifecycleEvent.DEFERRED_INTENT_RETAINED -> coordinator.scannerDeferred()
-                    ScanLifecycleEvent.RECOVERY_AVAILABLE -> coordinator.resumeDeferred()
+                    ScanLifecycleEvent.RECOVERY_AVAILABLE ->
+                        // A recording owns its own recovery; otherwise live scanning resumes.
+                        if (!coordinator.resumeDeferred()) supervisor.liveRecoveryAvailable()
                     ScanLifecycleEvent.REJECTED -> coordinator.scannerRejected()
                 }
             }

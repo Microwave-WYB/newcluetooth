@@ -37,7 +37,9 @@ internal interface RecordingHost {
  * upload). While a recording is active (recording or paused) the [RecordingHost] keeps the
  * process alive as a foreground service, so scanning and collection continue with the screen off.
  *
- * It owns nothing about the screen: the UI observes [state] and calls these four functions.
+ * Recording is separate from live scanning (see [ScanSupervisor] and docs/recording-model.md):
+ * the core session opens when a recording starts and closes when it stops; rows are written
+ * only in between. The UI observes [state] and calls these four functions.
  */
 class RecordingController internal constructor(
     internal val coordinator: ScanTransitionCoordinator,
@@ -50,9 +52,9 @@ class RecordingController internal constructor(
     private val _state = MutableStateFlow(RecordingState())
     val state: StateFlow<RecordingState> = _state.asStateFlow()
 
-    /** The user's intent: a recording is wanted unless they stopped it (or it was rejected). */
+    /** The user's intent. A recording never starts by itself: live scanning is separate. */
     @Volatile
-    var wantsRecording: Boolean = true
+    var wantsRecording: Boolean = false
         internal set
 
     private var activeSinceMs: Long? = null

@@ -8,6 +8,7 @@ import edu.ucsd.sysnet.cluetoothscanner.data.BleRecord
 import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
 import edu.ucsd.sysnet.cluetoothscanner.service.LocationService
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingController
+import edu.ucsd.sysnet.cluetoothscanner.service.ScanSupervisor
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingState
 import edu.ucsd.sysnet.cluetoothscanner.service.ScanStatus
 import edu.ucsd.sysnet.cluetoothscanner.service.StorageService
@@ -61,6 +62,7 @@ class ScanViewModel(
     private val uploadService: UploadService,
     private val repository: CluetoothRepository,
     private val recording: RecordingController,
+    private val supervisor: ScanSupervisor,
 ) : ViewModel() {
     val coreUiState: StateFlow<AppUiState> = repository.uiState
 
@@ -103,8 +105,15 @@ class ScanViewModel(
     internal fun startWhenReady(readiness: ScanReadiness) {
         if (readiness.permissionsGranted) startLocationUpdates()
         viewModelScope.launch {
+            // Live scanning follows the foreground; it writes nothing (see ScanSupervisor).
+            supervisor.setForeground(readiness.permissionsGranted)
             reconcileScanReadiness(readiness, recording.wantsRecording, scanTransitionCoordinator)
         }
+    }
+
+    /** The Activity left the foreground: live scanning stops unless a recording is active. */
+    internal fun onActivityStopped() {
+        viewModelScope.launch { supervisor.setForeground(false) }
     }
 
     internal fun onPermissionsPermanentlyRejected() {

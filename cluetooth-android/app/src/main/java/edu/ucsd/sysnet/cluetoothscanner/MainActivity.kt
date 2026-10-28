@@ -175,6 +175,7 @@ class MainActivity : ComponentActivity() {
                 uploadService,
                 repository,
                 cluetoothApplication.recordingController,
+                cluetoothApplication.scanSupervisor,
             )
         }
 
@@ -248,7 +249,8 @@ class MainActivity : ComponentActivity() {
                         requestMissingPermissions = false,
                         requestBluetoothEnable = false,
                     )
-                    Lifecycle.Event.ON_STOP -> Unit // Preserve best-effort background scan intent.
+                    // Live scanning is for the foreground; a recording (foreground service) goes on.
+                    Lifecycle.Event.ON_STOP -> scanViewModel.onActivityStopped()
                     else -> Unit
                 }
             }
