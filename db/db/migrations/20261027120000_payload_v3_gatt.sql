@@ -46,6 +46,49 @@ alter table sighting_minutes
       addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status
     );
 
+-- adv_shapes.minutes counted minute rows; with the PDU fields in the key one
+-- address-minute can have several rows, so count the distinct minutes.
+create or replace view adv_shapes as
+select
+  m.addr,
+  m.payload_id,
+  f.sha256,
+  m.first_seen,
+  m.last_seen,
+  m.sightings,
+  m.minutes,
+  m.rssi_min,
+  m.rssi_max,
+  f.local_name,
+  f.adv_types,
+  f.manufacturer_ids,
+  f.service_uuids,
+  f.service_data_uuids,
+  m.min_lat,
+  m.max_lat,
+  m.min_lon,
+  m.max_lon,
+  f.adv_types as ad_types_ordered,
+  f.ad_data_lengths
+from (
+  select
+    addr,
+    payload_id,
+    min(first_seen) as first_seen,
+    max(last_seen) as last_seen,
+    sum(sightings)::bigint as sightings,
+    count(distinct minute)::bigint as minutes,
+    min(rssi_min) as rssi_min,
+    max(rssi_max) as rssi_max,
+    min(min_lat) as min_lat,
+    max(max_lat) as max_lat,
+    min(min_lon) as min_lon,
+    max(max_lon) as max_lon
+  from sighting_minutes
+  group by addr, payload_id
+) m
+join payload_fields f on f.payload_id = m.payload_id;
+
 drop table gatt_attributes;
 drop trigger gatt_discoveries_set_location on gatt_discoveries;
 drop table gatt_discoveries;
@@ -177,9 +220,31 @@ create index gatt_attributes_kind_uuid_idx on gatt_attributes (kind, uuid);
 create index gatt_attributes_uuid_idx on gatt_attributes (uuid);
 
 -- migrate:down
--- Destroys every GATT discovery, and the minute rows that carry v3 key fields
--- (they can be regenerated from the archived objects with `cluetooth rebuild`).
+-- Destroys every GATT discovery and the minute rows that carry a v3 key field,
+-- and puts the ledger back so they can be ingested again:
+--   * the scans/v3/ and gatt/v1/ blobs are reset (success null, no attempts);
+--     a sync of the older code rejects them (unsupported path) until this
+--     migration is applied again, after which they are ingested afresh;
+--   * the stats of the payloads those rows pointed at are recomputed from the
+--     remaining rows, so ingesting again does not count them twice.
+-- A v3 file whose rows carried no PDU field at all lands in rows that also hold
+-- other blobs; those cannot be taken apart, so the rollback refuses then.
 -- A minute row a WiGLE batch already claims blocks the delete and aborts.
+do $$
+begin
+  if exists (
+    select 1
+    from sighting_minutes m
+    join blobs b on b.id = any (m.blob_ids)
+    where b.uri ~ '^gs://[^/]+/scans/v3/'
+      and m.addr_type is null and m.is_legacy is null and m.primary_phy is null
+      and m.secondary_phy is null and m.adv_sid is null and m.data_status is null
+  ) then
+    raise exception 'a scans/v3 blob also contributed to minute rows without v3 key fields; rebuild those minutes first';
+  end if;
+end;
+$$;
+
 drop table gatt_attributes;
 drop trigger gatt_discoveries_set_location on gatt_discoveries;
 drop table gatt_discoveries;
@@ -235,6 +300,16 @@ alter table gatt_discoveries
       and (accuracy is null or (accuracy >= 0 and accuracy < 'Infinity'::float4))
     ) not valid;
 
+create temporary table v3_rollback_payloads on commit drop as
+select distinct payload_id
+from sighting_minutes
+where addr_type is not null
+  or is_legacy is not null
+  or primary_phy is not null
+  or secondary_phy is not null
+  or adv_sid is not null
+  or data_status is not null;
+
 delete from sighting_minutes
 where addr_type is not null
   or is_legacy is not null
@@ -243,10 +318,68 @@ where addr_type is not null
   or adv_sid is not null
   or data_status is not null;
 
+update payloads p
+set first_seen = rest.first_seen,
+    last_seen = rest.last_seen,
+    sightings = coalesce(rest.sightings, 0)
+from v3_rollback_payloads r
+left join lateral (
+  select min(m.first_seen) as first_seen, max(m.last_seen) as last_seen,
+         sum(m.sightings)::bigint as sightings
+  from sighting_minutes m
+  where m.payload_id = r.payload_id
+) rest on true
+where p.id = r.payload_id;
+
+update blobs
+set success = null, error = null, attempts = 0, next_attempt_at = null, synced_at = null
+where uri ~ '^gs://[^/]+/(scans/v3|gatt/v1)/';
+
 alter table sighting_minutes
   drop constraint sighting_minutes_key,
   add constraint sighting_minutes_key
     unique nulls not distinct (minute, addr, payload_id, uploader_id, session_id);
+
+create or replace view adv_shapes as
+select
+  m.addr,
+  m.payload_id,
+  f.sha256,
+  m.first_seen,
+  m.last_seen,
+  m.sightings,
+  m.minutes,
+  m.rssi_min,
+  m.rssi_max,
+  f.local_name,
+  f.adv_types,
+  f.manufacturer_ids,
+  f.service_uuids,
+  f.service_data_uuids,
+  m.min_lat,
+  m.max_lat,
+  m.min_lon,
+  m.max_lon,
+  f.adv_types as ad_types_ordered,
+  f.ad_data_lengths
+from (
+  select
+    addr,
+    payload_id,
+    min(first_seen) as first_seen,
+    max(last_seen) as last_seen,
+    sum(sightings)::bigint as sightings,
+    count(*)::bigint as minutes,
+    min(rssi_min) as rssi_min,
+    max(rssi_max) as rssi_max,
+    min(min_lat) as min_lat,
+    max(max_lat) as max_lat,
+    min(min_lon) as min_lon,
+    max(max_lon) as max_lon
+  from sighting_minutes
+  group by addr, payload_id
+) m
+join payload_fields f on f.payload_id = m.payload_id;
 
 alter table sighting_minutes
   drop constraint sighting_minutes_v3_ranges,

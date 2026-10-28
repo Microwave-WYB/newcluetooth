@@ -92,30 +92,52 @@ def test_migration_rolls_back_and_reapplies(scratch_url: str, tmp_path: Path) ->
     )
     [(payload_id,)] = _sql(
         scratch_url,
-        "insert into payloads (sha256, structure_ids) values ('\\x01', '{}') returning id",
+        "insert into payloads (sha256, structure_ids, first_seen, last_seen, sightings) "
+        "values ('\\x01', '{}', '2031-03-01 00:00:10+00', '2031-03-01 00:00:50+00', 3) "
+        "returning id",
+    )
+    [(v2_blob,)] = _sql(
+        scratch_url,
+        "insert into blobs (uri, success, attempts) "
+        "values ('gs://b/scans/v2/2031/03/01/old.parquet.encrypted', true, 0) returning id",
+    )
+    [(v3_blob,)] = _sql(
+        scratch_url,
+        "insert into blobs (uri, success, attempts, error, synced_at) "
+        "values ('gs://b/scans/v3/2031/03/01/new.parquet.encrypted', true, 2, 'old', now()) "
+        "returning id",
     )
 
-    def insert_minute(is_legacy: str, adv_sid: str) -> str:
+    def insert_minute(is_legacy: str, adv_sid: str, blob: int, seen: str) -> str:
         return (
             "insert into sighting_minutes (minute, addr, payload_id, blob_counts, "
-            "sightings, is_legacy, adv_sid) values ('2031-03-01 00:00:00+00', "
-            f"'aa:00:00:00:00:01', {payload_id}, '{{}}', 1, {is_legacy}, {adv_sid})"
+            "sightings, first_seen, last_seen, is_legacy, adv_sid) "
+            "values ('2031-03-01 00:00:00+00', "
+            f"'aa:00:00:00:00:01', {payload_id}, '{{\"{blob}\": 1}}', 1, "
+            f"'2031-03-01 00:00:{seen}+00', '2031-03-01 00:00:{seen}+00', "
+            f"{is_legacy}, {adv_sid})"
         )
 
-    _sql(scratch_url, insert_minute("null", "null"))
-    _sql(scratch_url, insert_minute("true", "1"))
-    _sql(scratch_url, insert_minute("true", "2"))
+    _sql(scratch_url, insert_minute("null", "null", v2_blob, "10"))
+    _sql(scratch_url, insert_minute("true", "1", v3_blob, "30"))
+    _sql(scratch_url, insert_minute("true", "2", v3_blob, "50"))
     assert _sql(scratch_url, "select count(*) from sighting_minutes") == [(3,)]
+    # adv_shapes counts distinct minutes, not minute rows.
+    assert _sql(
+        scratch_url,
+        "select minutes, sightings from adv_shapes where addr = 'aa:00:00:00:00:01'",
+    ) == [(1, 3)]
     # The same key twice is refused (nulls compare equal).
     with pytest.raises(
         Exception, match="duplicate key value violates unique constraint"
     ):
-        _sql(scratch_url, insert_minute("null", "null"))
+        _sql(scratch_url, insert_minute("null", "null", v2_blob, "10"))
 
     # GATT side.
     [(blob_id,)] = _sql(
         scratch_url,
-        "insert into blobs (uri) values ('gs://b/gatt/v1/x') returning id",
+        "insert into blobs (uri, success) "
+        "values ('gs://b/gatt/v1/2031/03/01/x.json.encrypted', true) returning id",
     )
     [(discovery_id,)] = _sql(
         scratch_url,
@@ -153,6 +175,27 @@ def test_migration_rolls_back_and_reapplies(scratch_url: str, tmp_path: Path) ->
     } & _columns(scratch_url, "sighting_minutes")
     # Only the row without v3 key fields survives; the old key is back.
     assert _sql(scratch_url, "select count(*) from sighting_minutes") == [(1,)]
+    # The ledger is put back: v3 and GATT objects are pending again, others are not.
+    ledger = {
+        uri.rsplit("/", 1)[-1]: row
+        for uri, *row in _sql(
+            scratch_url,
+            "select uri, success, attempts, error, synced_at is null from blobs",
+        )
+    }
+    assert ledger == {
+        "old.parquet.encrypted": [True, 0, None, True],
+        "new.parquet.encrypted": [None, 0, None, True],
+        "x.json.encrypted": [None, 0, None, True],
+    }
+    # Payload stats no longer count the deleted rows, so a re-ingest is exact.
+    assert _sql(
+        scratch_url, "select sightings, first_seen::text, last_seen::text from payloads"
+    ) == [(1, "2031-03-01 00:00:10+00", "2031-03-01 00:00:10+00")]
+    assert _sql(
+        scratch_url,
+        "select minutes, sightings from adv_shapes where addr = 'aa:00:00:00:00:01'",
+    ) == [(1, 1)]
     with pytest.raises(
         Exception, match="duplicate key value violates unique constraint"
     ):
@@ -195,3 +238,35 @@ def test_migration_refuses_to_replace_non_empty_legacy_gatt_tables(
     assert _sql(scratch_url, "select count(*) from gatt_discoveries") == [(1,)]
     assert "discovered_at" in _columns(scratch_url, "gatt_discoveries")
     assert "adv_sid" not in _columns(scratch_url, "sighting_minutes")
+
+
+def test_rollback_refuses_when_a_v3_blob_also_fed_rows_without_v3_fields(
+    scratch_url: str, tmp_path: Path
+) -> None:
+    directory = _migrations_up_to(tmp_path, include_this=True)
+    assert _dbmate(scratch_url, directory, "up").returncode == 0
+    [(payload_id,)] = _sql(
+        scratch_url,
+        "insert into payloads (sha256, structure_ids) values ('\\x02', '{}') returning id",
+    )
+    [(v3_blob,)] = _sql(
+        scratch_url,
+        "insert into blobs (uri, success) "
+        "values ('gs://b/scans/v3/2031/03/01/mixed.parquet.encrypted', true) returning id",
+    )
+    # A v3 file whose rows reported no PDU field: its minute row is a null-key row.
+    _sql(
+        scratch_url,
+        "insert into sighting_minutes (minute, addr, payload_id, blob_counts, sightings) "
+        "values ('2031-03-01 00:00:00+00', 'aa:00:00:00:00:02', "
+        f"{payload_id}, '{{\"{v3_blob}\": 1}}', 1)",
+    )
+
+    result = _dbmate(scratch_url, directory, "rollback")
+    assert result.returncode != 0
+    assert "also contributed to minute rows without v3 key fields" in (
+        result.stdout + result.stderr
+    )
+    # Nothing changed: still migrated, ledger untouched.
+    assert "adv_sid" in _columns(scratch_url, "sighting_minutes")
+    assert _sql(scratch_url, "select success from blobs") == [(True,)]
