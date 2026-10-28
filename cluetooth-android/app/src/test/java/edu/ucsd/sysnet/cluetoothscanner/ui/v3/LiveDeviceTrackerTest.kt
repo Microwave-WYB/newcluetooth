@@ -4,9 +4,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBuckets
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ScanOrder
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AddressType
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdvKind
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ChartWindow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -53,7 +51,7 @@ class LiveDeviceTrackerTest {
         assertEquals(30, row.history.size) // 60 s in 2 s buckets
         // the newest bucket holds the strongest sample of its second(s); the displayed number is the latest
         assertEquals(-82, row.history.last())
-        assertEquals(-82, t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).buckets[58])
+        assertEquals(-82, t.chart("AA:BB:CC:DD:EE:01", now).buckets[58])
         assertEquals(-82, RssiBuckets.plan(row.history, row.rssi).end!!.rssi)
     }
 
@@ -68,13 +66,12 @@ class LiveDeviceTrackerTest {
     @Test
     fun chartTakesTheStrongestPerBucketAndHonoursTheWindow() {
         val t = LiveDeviceTracker()
-        // Two samples in one second give the stronger, -50; an old sample leaves the 1 minute window.
+        // An old sample leaves the one-minute window.
         t.onSample(sample(rssi = -50, t = 1_000_000))
         t.onSample(sample(rssi = -60, t = 1_000_400))
         t.onSample(sample(rssi = -80, t = 1_100_000))
         val now = 1_100_500L
-        assertEquals(listOf(-80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).buckets.filterNotNull())
-        assertEquals(listOf(-50, -80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FiveMinutes, now).buckets.filterNotNull())
+        assertEquals(listOf(-80), t.chart("AA:BB:CC:DD:EE:01", now).buckets.filterNotNull())
     }
 
     @Test
@@ -101,7 +98,7 @@ class LiveDeviceTrackerTest {
         val t = LiveDeviceTracker()
         t.onSample(sample(rssi = -50, t = 1_000_000))
         t.onSample(sample(rssi = -60, t = 1_030_000))
-        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, 1_030_500).buckets
+        val series = t.chart("AA:BB:CC:DD:EE:01", 1_030_500).buckets
         assertEquals(60, series.size)
         assertEquals(-60, series.last())
         assertEquals(-50, series[29])
@@ -128,11 +125,10 @@ class LiveDeviceTrackerTest {
         // More seconds than the ring holds: the oldest are overwritten, the chart still sees the newest.
         for (i in 0 until 1_000) t.onSample(sample(rssi = -40 - (i % 50), t = 1_000_000L + i * 1_000L))
         val now = 1_000_000L + 999 * 1_000L
-        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FifteenMinutes, now).buckets
-        assertEquals(60, series.size) // 15 s buckets
+        val series = t.chart("AA:BB:CC:DD:EE:01", now).buckets
+        assertEquals(60, series.size) // the last minute in 1 s buckets
         assertTrue(series.all { it != null })
-        // the last bucket holds seconds 985..999: the strongest of them is i = 985 (985 % 50 = 35)
-        assertEquals(-40 - 35, series.last())
+        assertEquals(-40 - (999 % 50), series.last())
     }
 
     @Test
@@ -164,15 +160,6 @@ class LiveDeviceTrackerTest {
         assertTrue(t.prune(1_000_000 + 60_000).isEmpty())
         assertEquals(listOf("AA:BB:CC:DD:EE:01"), t.prune(1_000_000 + LiveDeviceTracker.FORGET_AFTER_MS + 1))
         assertNull(t.row("AA:BB:CC:DD:EE:01", 0))
-    }
-
-    @Test
-    fun addressClassification() {
-        assertEquals(AddressType.Public, LiveDeviceTracker.classifyAddress("C8:0F:10:3A:91:5E", 0))
-        assertEquals(AddressType.RandomStatic, LiveDeviceTracker.classifyAddress("C8:0F:10:3A:91:5E", 1))
-        assertEquals(AddressType.ResolvablePrivate, LiveDeviceTracker.classifyAddress("5B:21:7C:E0:19:A4", 1))
-        assertEquals(AddressType.NonResolvablePrivate, LiveDeviceTracker.classifyAddress("2B:21:7C:E0:19:A4", 1))
-        assertEquals(AddressType.Unknown, LiveDeviceTracker.classifyAddress("C8:0F:10:3A:91:5E", null))
     }
 
     @Test

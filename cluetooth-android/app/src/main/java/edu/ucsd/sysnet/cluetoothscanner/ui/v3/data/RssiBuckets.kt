@@ -28,6 +28,10 @@ class RssiBucketer(private val nowSec: Long, private val windowSec: Int, private
 }
 
 object RssiBuckets {
+    /** The detail chart always shows the last minute, in 1 s buckets (60 of them). */
+    const val CHART_WINDOW_SEC = 60
+    const val CHART_BUCKET_SEC = 1
+
     /** The line is broken where more than this many empty buckets lie between two with data. */
     const val MAX_GAP_BUCKETS = 3
 

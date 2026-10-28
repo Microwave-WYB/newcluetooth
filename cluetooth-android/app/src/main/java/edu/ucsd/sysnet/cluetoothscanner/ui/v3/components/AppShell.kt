@@ -1,6 +1,5 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.components
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -8,18 +7,21 @@ import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Stable
@@ -31,6 +33,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.LocalWindowHeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
@@ -40,45 +45,39 @@ import kotlin.math.roundToInt
 
 /**
  * How far the floating pill reaches in from the right edge of the screen, or 0 while it is not
- * shown. Top bars and floating page chrome end this far from the edge so their actions shift left
- * only while the pill is there.
+ * shown. [PageTopBar] ends its actions this far from the edge so they shift left only while the
+ * pill is there.
  */
 val LocalRecordPillInset = compositionLocalOf { 0.dp }
 
 /** Pill width for a time with or without an hour part, plus a gap. */
-private fun pillInset(elapsedSeconds: Int): Dp = if (elapsedSeconds >= 3600) 108.dp else 92.dp
-
-/** The page's snackbar is 52 dp tall and sits 12 dp above the navigation; the button clears it by 8 dp more. */
-private val SnackbarClearance = 52.dp + 12.dp - 16.dp + 8.dp
+private fun pillInset(elapsedSeconds: Int): Dp = if (elapsedSeconds >= 3600) 116.dp else 100.dp
 
 /**
- * A page with its own bottom sheet (the map pages) reports the sheet's height here, so the
- * bottom-right record button rides above it instead of covering its rows.
+ * A page with its own persistent bottom sheet (the map pages) reports how tall the sheet is on
+ * screen, so the bottom-right record button rides above it.
  */
 @Stable
 class RecordButtonLift {
-    /** Height of whatever the page has pinned to the bottom, in pixels. */
+    /** Visible height of the page's sheet, in pixels. */
     var px by mutableStateOf(0f)
 
-    /** The page is covered by its sheet; the bottom button steps aside. */
+    /** The sheet is up; the bottom button steps aside. */
     var hidden by mutableStateOf(false)
 }
 
 val LocalRecordButtonLift = compositionLocalOf { RecordButtonLift() }
 
 /**
- * The frame of the whole app: pages, bottom navigation and the one record control. There is a
- * single [SharedTransitionLayout] at the top, so the control moves between the bottom-right
- * corner and a floating pill at the top-right with a shared-bounds transition, whichever page
- * is showing.
+ * The frame of the whole app, a stock [Scaffold]: the page's [topBar], the stock navigation bar
+ * on the tabs, the snackbar host (errors only) and the record control in the FAB slot. The
+ * control moves between that slot and a floating pill at the top-right with a shared-bounds
+ * transition (one [SharedTransitionLayout] around everything). The pill floats over the top app
+ * bar inside the status-bar inset; the bars reserve no room for it.
  *
- * Draw order, bottom to top: [content] and navigation, the bottom-right record control,
- * [overlay] (sheets and their scrim), the floating pill, the control bar, [snackbar].
- *
- * The pill floats over the top-right corner inside the status-bar inset; pages reserve no room
- * for it. While it shows, top bars end [LocalRecordPillInset] away from the edge.
+ * The control sheet opened from the pill is a stock [ModalBottomSheet].
  */
-@OptIn(ExperimentalSharedTransitionApi::class)
+@OptIn(ExperimentalSharedTransitionApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun AppShell(
     recorder: RecorderUiState,
@@ -87,72 +86,80 @@ fun AppShell(
     modifier: Modifier = Modifier,
     tab: AppTab? = null,
     onTab: (AppTab) -> Unit = {},
+    topBar: @Composable () -> Unit = {},
     showScrollToTop: Boolean = false,
     onScrollToTop: () -> Unit = {},
-    /** A snackbar is up at the bottom; the bottom-right button moves above it instead of sitting under it. */
-    snackbarShown: Boolean = false,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     controlBarOpen: Boolean = false,
     onDismissControlBar: () -> Unit = {},
-    overlay: @Composable BoxScope.() -> Unit = {},
-    snackbar: @Composable BoxScope.() -> Unit = {},
-    content: @Composable () -> Unit,
+    content: @Composable (PaddingValues) -> Unit,
 ) {
     val lift = remember { RecordButtonLift() }
     val pillShown = placement == RecordPlacement.Pill
     val target = if (pillShown) pillInset(recorder.elapsedSeconds) else 0.dp
     val inset = if (LocalStaticRender.current) target else animateDpAsState(target, label = "pill-inset").value
-    // Snackbar height plus the gap the page puts around it, so the button clears it.
-    val snackbarTarget = if (snackbarShown) SnackbarClearance else 0.dp
-    val snackbarLift = if (LocalStaticRender.current) snackbarTarget else animateDpAsState(snackbarTarget, label = "snackbar-lift").value
 
-    SharedTransitionLayout(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    SharedTransitionLayout(modifier.fillMaxSize()) {
         val scope = this
+        var windowHeight by remember { mutableStateOf(800.dp) }
+        val density = LocalDensity.current
 
         @Composable
         fun Shared(visibility: AnimatedVisibilityScope): Modifier = with(scope) {
             Modifier.sharedBounds(rememberSharedContentState("record-control"), visibility)
         }
 
-        CompositionLocalProvider(LocalRecordPillInset provides inset, LocalRecordButtonLift provides lift) {
-            Box(Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f)) { content() }
-                    if (tab != null) V3BottomNav(tab, onTab)
-                }
-                // Bottom-right record control, with the scroll-to-top button stacked directly above it.
-                val navBottom = WindowInsets.navigationBars
-                val tabHeight = (if (tab != null) 64.dp else 0.dp) + snackbarLift
-                Column(
-                    Modifier.align(Alignment.BottomEnd).navigationBarsPadding()
-                        .padding(end = 16.dp, bottom = tabHeight + 16.dp)
-                        .offset {
-                            // Above a page's own bottom sheet, measured from the screen edge.
-                            val base = navBottom.getBottom(this) + (tabHeight + 16.dp).roundToPx()
-                            val want = if (lift.px > 0f) lift.px + 16.dp.toPx() else 0f
-                            IntOffset(0, -(want - base).coerceAtLeast(0f).roundToInt())
-                        },
-                    horizontalAlignment = Alignment.End,
-                ) {
-                    val bottomShown = !pillShown && !lift.hidden
-                    AnimatedVisibility(showScrollToTop && bottomShown, enter = fadeIn(), exit = fadeOut()) {
-                        ScrollToTopButton(onScrollToTop, Modifier.padding(end = 10.dp, bottom = 12.dp))
+        CompositionLocalProvider(LocalRecordPillInset provides inset, LocalRecordButtonLift provides lift, LocalWindowHeight provides windowHeight) {
+            Box(Modifier.fillMaxSize().onSizeChanged { windowHeight = with(density) { it.height.toDp() } }) {
+                Scaffold(
+                    topBar = topBar,
+                    bottomBar = { if (tab != null) V3NavigationBar(tab, onTab) },
+                    snackbarHost = { SnackbarHost(snackbarHostState) },
+                    floatingActionButton = {
+                        val bottomShown = !pillShown && !lift.hidden
+                        val navBottom = WindowInsets.navigationBars
+                        Column(
+                            // Above a page's own bottom sheet (map pages), measured from the screen edge.
+                            Modifier.offset {
+                                val base = navBottom.getBottom(this) + 16.dp.roundToPx()
+                                // Never higher than mid-screen, so it cannot reach the top app bar while a sheet is dragged up.
+                                val maxLift = windowHeight.toPx() * 0.5f
+                                val want = if (lift.px > 0f) lift.px.coerceAtMost(maxLift) + 16.dp.toPx() else 0f
+                                IntOffset(0, -(want - base).coerceAtLeast(0f).roundToInt())
+                            },
+                            horizontalAlignment = Alignment.End,
+                        ) {
+                            AnimatedVisibility(bottomShown, enter = fadeIn(), exit = fadeOut()) {
+                                BottomRecordControl(recorder, callbacks, Shared(this))
+                            }
+                        }
+                    },
+                ) { padding ->
+                    Box(Modifier.fillMaxSize()) {
+                        content(padding)
+                        // Scroll to top floats over the list, horizontally centered just below the top app bar.
+                        // The record pill sits inside the app bar at the right, so they never meet; the record
+                        // control at the bottom-right is untouched.
+                        AnimatedVisibility(
+                            showScrollToTop,
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = padding.calculateTopPadding() + 10.dp),
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                        ) {
+                            ScrollToTopButton(onScrollToTop)
+                        }
                     }
-                    AnimatedVisibility(bottomShown, enter = fadeIn(), exit = fadeOut()) {
-                        BottomRecordControl(recorder, callbacks, Shared(this))
-                    }
                 }
-                overlay()
-                Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 16.dp, end = 8.dp)) {
+                Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 12.dp, end = 8.dp)) {
                     AnimatedVisibility(pillShown, enter = fadeIn(), exit = fadeOut()) {
                         RecordPill(recorder, callbacks, Shared(this))
                     }
                 }
                 if (controlBarOpen) {
-                    // Composed after the sheets, so Back closes the control bar before anything beneath it.
-                    BackHandler(onBack = onDismissControlBar)
-                    SheetLayer(onDismissControlBar, scrimTopInset = 0.dp) { RecordControlBar(recorder, callbacks) }
+                    ModalBottomSheet(onDismissRequest = onDismissControlBar, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+                        RecordControlSheetContent(recorder, callbacks)
+                    }
                 }
-                snackbar()
             }
         }
     }

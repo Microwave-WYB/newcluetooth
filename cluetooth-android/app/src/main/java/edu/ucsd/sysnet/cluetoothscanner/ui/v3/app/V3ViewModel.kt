@@ -31,17 +31,14 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveScanList
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBucketer
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiSeries
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LocationFix
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.scanLocationOf
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.estimatePosition
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.toRecorderUi
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AddressType
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdvKind
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ChartWindow
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceSort
@@ -56,21 +53,16 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingsUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.SightingPoint
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.WikiUiState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SavedRecording
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -96,12 +88,6 @@ data class MapLocal(
     val areaOnly: Boolean = false,
     val viewport: GeoBounds? = null,
 )
-
-/** Why the Scan list was sorted; the page scrolls back to the top for it. */
-enum class ListSort { Initial, Refresh }
-
-/** What the stop snackbar reports, and which recording it is about. */
-data class SavedInfo(val summary: SavedRecording, val recordingId: String?)
 
 /**
  * Everything the v3 UI shows, built from the live scan stream, the recording controller, the
@@ -194,11 +180,6 @@ class V3ViewModel(
     fun retrySave() { recording.stop() }
     fun dismissProblem() { _problem.value = null }
 
-    private val _saved = MutableStateFlow<SavedInfo?>(null)
-    val saved: StateFlow<SavedInfo?> = _saved
-    private var savedJob: Job? = null
-    private var pendingRecordingId: String? = null
-
     private val _noteTarget = MutableStateFlow<String?>(null)
     val noteTarget: StateFlow<String?> = _noteTarget
 
@@ -229,8 +210,6 @@ class V3ViewModel(
         }
     }
 
-    fun dismissSaved() { _saved.value = null }
-
     val toasts = Channel<String>(Channel.BUFFERED)
     val toastFlow: Flow<String> = toasts.receiveAsFlow()
 
@@ -239,23 +218,18 @@ class V3ViewModel(
     private val scanList = LiveScanList()
     private val lock = scanList.lock
     private val tracker = scanList.tracker
-    private val _scanRows = MutableStateFlow<List<DeviceRowState>>(emptyList())
+    /** The rows and the sort they come from, set together (see [ScanUiState.sortVersion]). */
+    private val _scanRows = MutableStateFlow(emptyList<DeviceRowState>() to 0)
     private val _tick = MutableStateFlow(System.currentTimeMillis())
     private val _refreshing = MutableStateFlow(false)
 
-    /**
-     * One event per sort (the first one, then each pull to refresh), so the page can scroll back to
-     * the top. An event, not state: re-entering the composition must not replay it.
-     */
-    private val _sorts = MutableSharedFlow<ListSort>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    val sorts: SharedFlow<ListSort> = _sorts
     val refreshing: StateFlow<Boolean> = _refreshing
 
     private val scanLocation: Flow<ScanLocation> = combine(app.locationService.currentLocation, _tick) { fix, now ->
         scanLocationOf(fix?.let { LocationFix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy else null, it.time) }, now)
     }.distinctUntilChanged()
 
-    val scanState: StateFlow<ScanUiState> = combine(_scanRows, recorder, scanLocation) { rows, rec, location -> ScanUiState(rows, rec, location) }
+    val scanState: StateFlow<ScanUiState> = combine(_scanRows, recorder, scanLocation) { (rows, version), rec, location -> ScanUiState(rows, rec, location, version) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ScanUiState(emptyList(), RecorderUiState()))
 
     // ---- recording lifecycle state (read by onTransition) ----
@@ -264,7 +238,6 @@ class V3ViewModel(
 
     /** This ViewModel saw the start begin; a stop it only joined midway (a new ViewModel during sealing) is not a failed start. */
     private var startSeen = false
-    private var pendingSaved: SavedRecording? = null
 
     private val gattResults = MutableStateFlow<Map<String, GattUiState.Done>>(emptyMap())
 
@@ -328,7 +301,8 @@ class V3ViewModel(
         }
     }
 
-    // The recording's life, seen from the coordinator: the snackbar appears only once sealing succeeded.
+    // The recording's life, seen from the coordinator. A recording that was sealed says nothing; a failed seal, a start that
+    // never ran and a scanner that refused are the cases that tell the user.
     private fun onTransition(state: ScanTransitionState) {
         val previous = previousTransition
         previousTransition = state
@@ -336,28 +310,21 @@ class V3ViewModel(
             ScanTransitionState.SCANNING, ScanTransitionState.DEFERRED, ScanTransitionState.PAUSED -> if (!recordingReached) {
                 startSeen = false
                 recordingReached = true
-                pendingSaved = null
                 _problem.value = null
-                captureRecordingId()
             }
             ScanTransitionState.STOPPED -> {
-                val rec = recording.state.value
-                val summary = pendingSaved ?: if (recordingReached) SavedRecording((rec.elapsedMs / 1000).toInt(), rec.rowCount.toInt()) else null
+                val recorded = recordingReached
                 recordingReached = false
-                pendingSaved = null
                 _problem.value = null
                 val startFailed = startSeen
                 startSeen = false
-                when (RecordingOutcome.atStop(previous, startFailed, summary != null)) {
-                    RecordingOutcome.Kind.Saved -> showSaved(summary!!)
+                when (RecordingOutcome.atStop(previous, startFailed, recorded)) {
                     RecordingOutcome.Kind.StartFailed -> toasts.trySend(texts.string(R.string.record_toast_start_failed))
                     RecordingOutcome.Kind.ScannerRejected -> toasts.trySend(texts.string(R.string.record_toast_scanner_rejected))
                     RecordingOutcome.Kind.None -> Unit
                 }
             }
             ScanTransitionState.FINALIZATION_FAILED -> {
-                val rec = recording.state.value
-                if (recordingReached) pendingSaved = SavedRecording((rec.elapsedMs / 1000).toInt(), rec.rowCount.toInt())
                 recordingReached = false
                 _problem.value = texts.string(R.string.record_problem)
             }
@@ -366,10 +333,10 @@ class V3ViewModel(
         }
     }
 
-    private fun publish(snapshot: LiveScanList.Snapshot? = null, now: Long = System.currentTimeMillis()) {
+    private fun publish(snapshot: LiveScanList.Snapshot? = null, now: Long = System.currentTimeMillis(), resorted: Boolean = false) {
         val snap = snapshot ?: scanList.publish(now)
-        if (snap.sorted) _sorts.tryEmit(ListSort.Initial)
-        _scanRows.value = snap.rows
+        val version = _scanRows.value.second + if (snap.sorted || resorted) 1 else 0
+        _scanRows.value = snap.rows to version
         _tick.value = now
     }
 
@@ -378,8 +345,7 @@ class V3ViewModel(
         viewModelScope.launch {
             _refreshing.value = true
             val now = System.currentTimeMillis()
-            publish(withContextDefault { scanList.refresh(now) }, now)
-            _sorts.tryEmit(ListSort.Refresh)
+            publish(withContextDefault { scanList.refresh(now) }, now, resorted = true)
             delay(500)
             _refreshing.value = false
         }
@@ -387,66 +353,29 @@ class V3ViewModel(
 
     private suspend fun <T> withContextDefault(block: () -> T): T = kotlinx.coroutines.withContext(Dispatchers.Default) { block() }
 
-    private fun captureRecordingId() {
-        pendingRecordingId = null
-        viewModelScope.launch {
-            repeat(30) {
-                app.repository.activeSessionId()?.let { pendingRecordingId = it; return@launch }
-                delay(200)
-            }
-        }
-    }
-
-    private fun showSaved(summary: SavedRecording) {
-        val info = SavedInfo(summary, pendingRecordingId)
-        _saved.value = info
-        savedJob?.cancel()
-        savedJob = viewModelScope.launch {
-            delay(8_000)
-            if (_saved.value === info) _saved.value = null
-        }
-    }
-
-    fun viewSaved() {
-        val id = _saved.value?.recordingId ?: return
-        _saved.value = null
-        selectTab(AppTab.History)
-        open(Route.RecordingMap(id))
-    }
-
     // ---- device detail --------------------------------------------------------------------
 
     private val _selected = MutableStateFlow<String?>(null)
     val selectedAddr: StateFlow<String?> = _selected
-    private val _window = MutableStateFlow(ChartWindow.FiveMinutes)
 
     fun select(addr: String?) { _selected.value = addr }
-    fun setWindow(w: ChartWindow) { _window.value = w }
 
     private val selectedHistory: Flow<List<Sighting>> =
         _selected.flatMapLatest { a -> if (a == null) flowOf(emptyList()) else localData.sightingsOfDevice(a, 600) }
 
     /** Built on the default dispatcher: it reads the tracker, parses and matches advertisements once a second. */
     val detail: StateFlow<DeviceDetailUiState?> = combine(
-        combine(_selected, _window, _tick) { addr, window, now -> Triple(addr, window, now) },
+        combine(_selected, _tick) { addr, now -> addr to now },
         combine(gatt.state, gattResults, selectedHistory) { g, saved, history -> Triple(g, saved, history) },
-    ) { (addr, window, now), (g, saved, history) ->
-        addr?.let { buildDetail(it, window, now, g, saved, history) }
+    ) { (addr, now), (g, saved, history) ->
+        addr?.let { buildDetail(it, now, g, saved, history) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** The detail of the selected device, or null; collected by the maps only while something is selected. */
     private val selectedDetail: Flow<DeviceDetailUiState?> = _selected.flatMapLatest { a -> if (a == null) flowOf(null) else detail }
 
-    /** A device that is not being heard now: its stored minutes (strongest RSSI per minute) on the same time axis. */
-    private fun historySeries(history: List<Sighting>, window: ChartWindow, nowMs: Long): RssiSeries {
-        val bucketer = RssiBucketer(nowMs / 1000, window.seconds, window.bucketSeconds)
-        history.forEach { s -> s.bestRssi?.let { bucketer.add(s.minuteMs / 1000, it) } }
-        return RssiSeries(bucketer.buckets(), null)
-    }
-
     private fun buildDetail(
         addr: String,
-        window: ChartWindow,
         now: Long,
         g: EngineGattState,
         saved: Map<String, GattUiState.Done>,
@@ -457,17 +386,18 @@ class V3ViewModel(
             Quad(
                 tracker.row(addr, now),
                 tracker.variants(addr),
-                tracker.chart(addr, window, now),
+                tracker.chart(addr, now),
                 tracker.latestAdvertisement(addr),
             )
         }
         val pageIds = if (raw != null) pagesFor(addr, raw) else history.firstOrNull()?.pageIds.orEmpty()
         val page = pageIds.firstNotNullOfOrNull { catalog?.page(it) }
         val row = live ?: DeviceRowState(
-            id = addr, name = page?.title, mac = addr, addressType = AddressType.Unknown, advKind = AdvKind.Legacy,
+            id = addr, name = page?.title, mac = addr, advKind = AdvKind.Legacy,
             connectable = false, rssi = history.firstNotNullOfOrNull { it.bestRssi } ?: -100, history = emptyList(), stale = true,
         )
-        val series: RssiSeries = if (live != null) chart else historySeries(history, window, now)
+        // Not heard now (a device opened from a map): an empty minute; the maps do not show the chart anyway.
+        val series: RssiSeries = chart
         val engine = gattFor(addr, g, saved)
         val busyElsewhere = g is EngineGattState.Running && g.request.target.addr != addr
         val reason = when {
@@ -481,26 +411,10 @@ class V3ViewModel(
         return DeviceDetailUiState(
             device = row,
             variants = variants,
-            chartWindow = window,
             chartSamples = series.buckets,
             chartHeardSeconds = series.heardSeconds,
             gatt = engine,
-            wiki = page?.let {
-                WikiUiState(
-                    family = it.title,
-                    summary = it.oneLine,
-                    facts = buildList {
-                        add(texts.string(R.string.wiki_entry) to it.id)
-                        if (it.categories.isNotEmpty()) add(texts.string(R.string.wiki_categories) to it.categories.joinToString(", ") { c -> catalog?.category(c)?.label ?: c })
-                        add(texts.string(R.string.wiki_kind) to when (it.kind) {
-                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.DEVICE -> texts.string(R.string.wiki_kind_device)
-                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.PLATFORM -> texts.string(R.string.wiki_kind_platform)
-                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.IDENTIFIER -> texts.string(R.string.wiki_kind_identifier)
-                        })
-                    },
-                    confidence = texts.string(R.string.wiki_confidence),
-                )
-            },
+            wikiPageId = page?.id,
             gattDisabledReason = reason,
         )
     }

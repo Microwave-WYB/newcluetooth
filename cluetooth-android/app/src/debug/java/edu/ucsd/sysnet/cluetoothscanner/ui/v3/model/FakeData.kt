@@ -35,14 +35,12 @@ object FakeData {
         name: String?,
         mac: String,
         rssi: Int,
-        address: AddressType = AddressType.ResolvablePrivate,
         kind: AdvKind = AdvKind.Legacy,
         connectable: Boolean = true,
     ) = DeviceRowState(
         id = mac,
         name = name,
         mac = mac,
-        addressType = address,
         advKind = kind,
         connectable = connectable,
         rssi = rssi,
@@ -51,21 +49,21 @@ object FakeData {
 
     /** Sorted by RSSI; the last two arrived after the sort and are appended, so they are out of order. */
     val scanRows: List<DeviceRowState> = listOf(
-        row(1, "Mi Smart Band 8", "C8:0F:10:3A:91:5E", -48, AddressType.Public),
-        row(2, "WH-1000XM5", "88:C9:E8:20:4B:D7", -53, AddressType.Public),
+        row(1, "Mi Smart Band 8", "C8:0F:10:3A:91:5E", -48),
+        row(2, "WH-1000XM5", "88:C9:E8:20:4B:D7", -53),
         row(3, null, "5B:21:7C:E0:19:A4", -57),
-        row(4, "Tile", "D4:6E:0E:7F:33:C2", -61, AddressType.RandomStatic),
-        row(5, "JBL Flip 6", "F8:5C:7D:09:AA:16", -66, AddressType.Public),
+        row(4, "Tile", "D4:6E:0E:7F:33:C2", -61),
+        row(5, "JBL Flip 6", "F8:5C:7D:09:AA:16", -66),
         row(6, null, "4F:90:B3:5D:62:0E", -69, kind = AdvKind.Extended, connectable = false),
         row(7, "Galaxy Buds2 Pro", "A0:7D:9C:E4:18:3B", -72),
-        row(8, "Govee_H6159_8C2A", "E3:11:08:8C:2A:7F", -74, AddressType.RandomStatic),
+        row(8, "Govee_H6159_8C2A", "E3:11:08:8C:2A:7F", -74),
         row(9, null, "6D:A3:44:1B:F0:92", -77, connectable = false),
-        row(10, "[TV] Samsung 7 Series", "B4:3A:28:6E:C1:05", -79, AddressType.Public),
+        row(10, "[TV] Samsung 7 Series", "B4:3A:28:6E:C1:05", -79),
         row(11, null, "7C:08:E5:12:AD:63", -82, kind = AdvKind.Extended),
-        row(12, "LE-Bose QC45", "2C:41:A1:9F:50:D8", -85, AddressType.Public),
+        row(12, "LE-Bose QC45", "2C:41:A1:9F:50:D8", -85),
         row(13, null, "52:E6:19:C7:04:BB", -88, connectable = false),
-        row(14, "ELK-BLEDOM", "BE:67:00:21:F4:0A", -91, AddressType.RandomStatic),
-        row(15, "Fitbit Charge 5", "DC:2C:6E:73:08:41", -58, AddressType.Public),
+        row(14, "ELK-BLEDOM", "BE:67:00:21:F4:0A", -91),
+        row(15, "Fitbit Charge 5", "DC:2C:6E:73:08:41", -58),
         row(16, null, "6A:F2:30:BD:97:1C", -63),
     )
 
@@ -153,45 +151,35 @@ object FakeData {
         ),
     )
 
-    private val wiki = WikiUiState(
-        family = "Sony audio advertisements",
-        summary = "Sony over-ear and in-ear headphones share one advertisement layout: company field 301, with Fast Pair service data.",
-        facts = listOf(
-            "Local name" to "WH-1000XM5 / WF-1000XM5",
-            "Company field" to "company field 301",
-            "Service UUID" to "FE2C, 0E0D",
-            "AD shape" to "01/2,09/11,FF/8,03/5",
-        ),
-        confidence = "Candidate, not an authenticated identity",
-    )
-
     fun detail(
         device: DeviceRowState = scanRows[1],
         gatt: GattUiState = GattUiState.NotStarted,
-        window: ChartWindow = ChartWindow.FiveMinutes,
-        wiki: WikiUiState? = this.wiki,
+        wikiPageId: String? = "ecosystem--sony-audio",
         gattDisabledReason: String? = null,
         firstBucket: Int = 0,
         heardSeconds: Int? = null,
     ) = DeviceDetailUiState(
         device = device,
         variants = variants,
-        chartWindow = window,
         chartSamples = chart(device.id.hashCode(), device.rssi, n = 60, firstBucket = firstBucket),
         chartHeardSeconds = heardSeconds,
         gatt = gatt,
-        wiki = wiki,
+        wikiPageId = wikiPageId,
         gattDisabledReason = gattDisabledReason,
     )
 
+    /** A long name and a three-digit reading: the header must still keep each line to one line. */
+    val detailLongName = detail(
+        device = row(40, "S4769cb42f57a394-WH-1000XM5-Bluetooth-Headphones", "10:CA:BF:0B:C1:20", -101),
+    )
     val detailHalf = detail()
-    /** First heard 20 s ago: a handful of buckets at the right edge and the "Heard for 20 s" caption. */
-    val detailShortLived = detail(firstBucket = 56, heardSeconds = 20)
+    /** First heard 4 s ago: a handful of buckets at the right edge and the "Heard for 20 s" caption. */
+    val detailShortLived = detail(firstBucket = 56, heardSeconds = 4, wikiPageId = null)
     val detailGattProgress = detail(gatt = GattUiState.InProgress(progressSteps))
     val detailGattDone = detail(gatt = GattUiState.Done(doneSteps, gattServices))
     val detailNotConnectable = detail(
         device = scanRows[5],
-        wiki = null,
+        wikiPageId = null,
         gattDisabledReason = "This device's advertisements aren't connectable, so GATT can't be discovered",
     )
 

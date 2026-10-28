@@ -276,6 +276,14 @@ class MainActivity : ComponentActivity() {
             // Debug builds: `am start ... --es v3_demo_map selected` opens the map page over fake data.
             LaunchedEffect(Unit) {
                 if (BuildConfig.DEBUG) intent?.getStringExtra("v3_demo_map")?.let(v3::openDemoMap)
+                // Debug builds: `am start ... --ez fake_scan true` feeds about 300 synthetic devices into the live list.
+                if (BuildConfig.DEBUG && intent?.getBooleanExtra("fake_scan", false) == true) {
+                    runCatching {
+                        Class.forName("edu.ucsd.sysnet.cluetoothscanner.ui.v3.app.DebugFakeScan")
+                            .getMethod("start", edu.ucsd.sysnet.cluetoothscanner.service.BleScanService::class.java)
+                            .invoke(null, cluetoothApplication.bleScanService)
+                    }
+                }
             }
             V3App(v3) { onBack ->
                 UploadStatusScreen(

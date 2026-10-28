@@ -3,9 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.ui.v3.data
 import edu.ucsd.sysnet.cluetoothscanner.ble.BleParser
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdStructureRow
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdVariantState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AddressType
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdvKind
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ChartWindow
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceRowState
 import java.time.Instant
 import java.time.ZoneId
@@ -169,7 +167,6 @@ class LiveDeviceTracker {
             id = d.addr,
             name = d.name,
             mac = d.addr,
-            addressType = classifyAddress(d.addr, d.addrType),
             advKind = if (d.legacy) AdvKind.Legacy else AdvKind.Extended,
             connectable = d.connectable,
             rssi = d.rssi ?: -100,
@@ -181,10 +178,12 @@ class LiveDeviceTracker {
     /** The last 60 seconds in 2 s buckets (the strongest RSSI of each; null = nothing heard). */
     private fun sparkline(d: Device, nowMs: Long): List<Int?> = bucketed(d, nowMs, SPARK_WINDOW_SEC, SPARK_BUCKET_SEC)
 
-    /** The detail chart series: 60 buckets of the window size (1 s, 5 s or 15 s each), ending now. */
-    fun chart(addr: String, window: ChartWindow, nowMs: Long): RssiSeries {
-        val d = devices[addr] ?: return RssiSeries(List(window.seconds / window.bucketSeconds) { null }, null)
-        return RssiSeries(bucketed(d, nowMs, window.seconds, window.bucketSeconds), ((nowMs - d.firstSeenMs) / 1000).toInt().coerceAtLeast(0))
+    /** The detail chart series: the last minute in 1 s buckets (60), ending now. */
+    fun chart(addr: String, nowMs: Long): RssiSeries {
+        val window = RssiBuckets.CHART_WINDOW_SEC
+        val bucket = RssiBuckets.CHART_BUCKET_SEC
+        val d = devices[addr] ?: return RssiSeries(List(window / bucket) { null }, null)
+        return RssiSeries(bucketed(d, nowMs, window, bucket), ((nowMs - d.firstSeenMs) / 1000).toInt().coerceAtLeast(0))
     }
 
     private fun bucketed(d: Device, nowMs: Long, windowSec: Int, bucketSec: Int): List<Int?> {
@@ -250,19 +249,6 @@ class LiveDeviceTracker {
                 else -> null
             }
             return if (legacy) "1M" else name(secondary) ?: name(primary) ?: "—"
-        }
-
-        /** Public/random from the platform when it says; random subtypes from the address's top bits. */
-        fun classifyAddress(mac: String, platformType: Int?): AddressType {
-            if (platformType == 0) return AddressType.Public
-            if (platformType != 1) return AddressType.Unknown
-            val top = mac.take(2).toIntOrNull(16)?.let { it shr 6 } ?: return AddressType.Unknown
-            return when (top) {
-                3 -> AddressType.RandomStatic
-                1 -> AddressType.ResolvablePrivate
-                0 -> AddressType.NonResolvablePrivate
-                else -> AddressType.Unknown
-            }
         }
     }
 }

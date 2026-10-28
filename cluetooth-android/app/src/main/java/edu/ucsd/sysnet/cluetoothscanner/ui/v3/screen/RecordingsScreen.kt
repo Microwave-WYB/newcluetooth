@@ -1,49 +1,37 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen
 
+import androidx.annotation.StringRes
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordControlBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordPlacement
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordSavedSnackbar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecorderCallbacks
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SheetLayer
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.V3TopBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.StatusLine
-import androidx.compose.ui.res.stringResource
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
 import edu.ucsd.sysnet.cluetoothscanner.R
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.PageTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatClock
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDistance
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDuration
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingSummaryState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingsUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.UploadStatus
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.MonoFamily
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.extra
-import java.util.Locale
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.TabularNumbers
 
 @Composable
 private fun UploadLabel(status: UploadStatus) {
@@ -58,92 +46,76 @@ private fun UploadLabel(status: UploadStatus) {
     )
 }
 
+/**
+ * One recording as a stock [ListItem]: start time and duration (or "In progress" and the running
+ * time), distance and device count, an optional note, the upload state at the end. Long press edits the note.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DayLabel(text: String) {
-    Text(
-        text,
-        Modifier.padding(start = 20.dp, top = 18.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+fun RecordingRow(
+    rec: RecordingSummaryState,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    live: Boolean = false,
+    liveClock: Int = 0,
+    onLongClick: (() -> Unit)? = null,
+) {
+    val texts = LocalTexts.current
+    ListItem(
+        leadingContent = if (live) {
+            { Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error)) }
+        } else {
+            null
+        },
+        headlineContent = {
+            Text(
+                if (live) "${stringResource(R.string.history_in_progress)} · ${formatClock(liveClock)}"
+                else "${texts.timeOfDay(rec.startedAt)} · ${formatDuration(rec.durationSeconds, texts)}",
+                style = MaterialTheme.typography.bodyLarge.merge(TabularNumbers),
+            )
+        },
+        supportingContent = {
+            Column {
+                Text(stringResource(R.string.recording_summary, formatDistance(rec.distanceMeters), texts.plural(R.plurals.devices, rec.deviceCount, rec.deviceCount)))
+                if (rec.note != null) Text(rec.note, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        },
+        trailingContent = { UploadLabel(rec.upload) },
+        modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
     )
 }
 
-/** Start time, duration, upload status; distance and device count; an optional note. */
 @Composable
-fun RecordingRow(rec: RecordingSummaryState, onClick: () -> Unit, modifier: Modifier = Modifier, live: Boolean = false, liveClock: Int = 0) {
-    Column(modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 11.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (live) {
-                Box(Modifier.padding(end = 8.dp).size(8.dp).clip(CircleShape).background(MaterialTheme.extra.record))
-                Text(stringResource(R.string.history_in_progress), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                Text(" · ", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(formatClock(liveClock), fontFamily = MonoFamily, fontSize = 15.sp)
-            } else {
-                Text(
-                    LocalTexts.current.timeOfDay(rec.startedAt),
-                    fontFamily = MonoFamily, fontSize = 16.sp, fontWeight = FontWeight.Medium,
-                )
-                Text(" · ${formatDuration(rec.durationSeconds, LocalTexts.current)}", style = MaterialTheme.typography.bodyLarge)
-            }
-            Box(Modifier.weight(1f))
-            UploadLabel(rec.upload)
-        }
-        Text(
-            stringResource(
-                R.string.recording_summary,
-                formatDistance(rec.distanceMeters), LocalTexts.current.plural(R.plurals.devices, rec.deviceCount, rec.deviceCount),
-            ),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (rec.note != null) {
-            Text(
-                rec.note,
-                Modifier.padding(top = 2.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
+fun HistoryTopBar(state: RecordingsUiState, @StringRes notice: Int?) {
+    val total = state.days.sumOf { it.recordings.size } + if (state.current != null) 1 else 0
+    PageTopBar(
+        title = stringResource(R.string.tab_history),
+        subtitle = LocalTexts.current.plural(R.plurals.recordings_count, total, total),
+        notice = notice?.let { stringResource(it) },
+    )
 }
 
 @Composable
-fun RecordingsPage(
+fun HistoryContent(
     state: RecordingsUiState,
+    padding: PaddingValues,
     modifier: Modifier = Modifier,
-    notice: Int? = null,
     onOpenRecording: (RecordingSummaryState) -> Unit = {},
+    onEditNote: (RecordingSummaryState) -> Unit = {},
 ) {
-    val total = state.days.sumOf { it.recordings.size } + if (state.current != null) 1 else 0
-    Column(modifier.fillMaxSize()) {
-        V3TopBar(
-            title = stringResource(R.string.tab_history),
-            status = {
-                StatusLine(LocalTexts.current.plural(R.plurals.recordings_count, total, total))
-                HeaderNotice(notice)
-            },
-        )
-        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
-            if (state.current != null) {
-                item(key = "current") {
-                    RecordingRow(state.current, { onOpenRecording(state.current) }, live = true, liveClock = state.recorder.elapsedSeconds)
-                }
+    LazyColumn(modifier.fillMaxSize(), contentPadding = padding) {
+        if (state.current != null) {
+            item(key = "current") {
+                RecordingRow(state.current, { onOpenRecording(state.current) }, live = true, liveClock = state.recorder.elapsedSeconds, onLongClick = { onEditNote(state.current) })
             }
-            state.days.forEach { day ->
-                item(key = "day-${day.label}") { DayLabel(day.label) }
-                items(day.recordings, key = { it.id }) { RecordingRow(it, { onOpenRecording(it) }) }
-            }
-            if (state.current == null && state.days.isEmpty()) {
-                item(key = "empty") {
-                    Text(
-                        stringResource(R.string.history_empty),
-                        Modifier.padding(20.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        }
+        state.days.forEach { day ->
+            item(key = "day-${day.label}") { SectionLabel(day.label) }
+            items(day.recordings, key = { it.id }) { RecordingRow(it, { onOpenRecording(it) }, onLongClick = { onEditNote(it) }) }
+        }
+        if (state.current == null && state.days.isEmpty()) {
+            item(key = "empty") {
+                Text(stringResource(R.string.history_empty), Modifier.padding(24.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

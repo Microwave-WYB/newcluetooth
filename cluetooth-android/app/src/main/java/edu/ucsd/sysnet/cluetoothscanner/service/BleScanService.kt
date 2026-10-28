@@ -121,6 +121,9 @@ class BleScanService(
     /** The live ScanResult stream. Collect it from the UI or a store; it never blocks scanning. */
     val liveScans: SharedFlow<LiveScan> = _liveScans.asSharedFlow()
 
+    /** Where the debug source set's fake scanner (`DebugFakeScan`) pushes synthetic advertisements; unused in release. */
+    internal val liveSink: kotlinx.coroutines.flow.MutableSharedFlow<LiveScan> get() = _liveScans
+
     /** The same stream as UI records (kept for the nearby list). */
     val scanFlow: Flow<BleRecord> = liveScans.map { it.toBleRecord() }
     val scanStatus: StateFlow<ScanStatus> = _scanStatus.asStateFlow()

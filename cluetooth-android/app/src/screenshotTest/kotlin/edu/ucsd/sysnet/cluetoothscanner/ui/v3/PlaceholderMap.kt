@@ -20,7 +20,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.color
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.LatLon
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.SightingPoint
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.signalOf
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.extra
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.signal
 
 // A stand-in for the MapLibre map: a flat background, a few roads and the overlays. Points
 // live in a unit square that is laid out in the part of the map not covered by the sheet.
@@ -62,12 +62,14 @@ fun PlaceholderMap(
     estimate: LatLon? = null,
     heat: List<LatLon> = emptyList(),
 ) {
-    val extra = MaterialTheme.extra
+    // Preview-only stand-in for the map tiles, in the theme's own colors.
+    val colors = MaterialTheme.colorScheme
+    val signal = MaterialTheme.signal
     val primary = MaterialTheme.colorScheme.primary
     val ring = MaterialTheme.colorScheme.surface
     val pointColors = points.map { signalOf(it.rssi).color() }
     Canvas(modifier.fillMaxSize()) {
-        drawRect(extra.mapBackground)
+        drawRect(colors.surfaceVariant)
         // Unit square -> visible area (below the top controls, above the sheet).
         val top = 120.dp.toPx()
         val bottom = size.height * (1f - bottomCovered()) - 28.dp.toPx()
@@ -88,17 +90,17 @@ fun PlaceholderMap(
         fun full(p: RoadPoint) = Offset(p.x * size.width, p.y * size.height)
 
         blocks.forEach { (x, y, w, h) ->
-            drawRoundRect(extra.mapBlock, full(RoadPoint(x, y)), Size(w * size.width, h * size.height), CornerRadius(6.dp.toPx()))
+            drawRoundRect(colors.surfaceContainerHigh, full(RoadPoint(x, y)), Size(w * size.width, h * size.height), CornerRadius(6.dp.toPx()))
         }
         fun road(pts: List<RoadPoint>, width: Float, color: Color) {
             val path = Path()
             pts.forEachIndexed { i, p -> full(p).let { if (i == 0) path.moveTo(it.x, it.y) else path.lineTo(it.x, it.y) } }
             drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
-        minorRoads.forEach { road(it, 7.dp.toPx(), extra.mapRoadCasing) }
-        minorRoads.forEach { road(it, 5.dp.toPx(), extra.mapRoad) }
-        majorRoads.forEach { road(it, 12.dp.toPx(), extra.mapRoadCasing) }
-        majorRoads.forEach { road(it, 10.dp.toPx(), extra.mapRoad) }
+        minorRoads.forEach { road(it, 7.dp.toPx(), colors.outlineVariant) }
+        minorRoads.forEach { road(it, 5.dp.toPx(), colors.surface) }
+        majorRoads.forEach { road(it, 12.dp.toPx(), colors.outlineVariant) }
+        majorRoads.forEach { road(it, 10.dp.toPx(), colors.surface) }
 
         heat.forEach { p ->
             val c = at(p)
@@ -116,8 +118,8 @@ fun PlaceholderMap(
             route.forEachIndexed { i, p -> at(p).let { if (i == 0) path.moveTo(it.x, it.y) else path.lineTo(it.x, it.y) } }
             drawPath(path, ring, style = Stroke(8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             drawPath(path, primary, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-            marker(at(route.first()), extra.signalGreen, ring)
-            marker(at(route.last()), extra.signalRed, ring)
+            marker(at(route.first()), signal.strong, ring)
+            marker(at(route.last()), signal.weak, ring)
         }
 
         points.forEachIndexed { i, p ->

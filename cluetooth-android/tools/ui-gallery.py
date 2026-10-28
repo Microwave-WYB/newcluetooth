@@ -11,39 +11,32 @@ from pathlib import Path
 
 # (preview function, title, what to look at) in review order.
 SCREENS = [
-    ("ScanList", "Scan", "Sorted by signal with a sparkline per row; subtitle is the device count; round red record button, bottom-right"),
-    ("ScanRecording", "Scan, recording", "Expanded button: blinking dot, time, Pause, Stop"),
-    ("ScanPaused", "Scan, paused", "Gray steady dot, frozen dimmed time, Resume instead of Pause"),
-    ("ScanPullToRefresh", "Scan, pull to refresh", "Pulling re-sorts the list"),
-    ("ScanScrolledDown", "Scan, scrolled down", "Scroll-to-top button stacked above the round button"),
-    ("ScanScrolledDownRecording", "Scan, scrolled, recording", "Scroll-to-top above the expanded button"),
-    ("ScanDeviceHalfSheet", "Device sheet, half height", "Shared device-detail component"),
-    ("ScanDeviceHalfSheetShortLived", "Device sheet, short-lived", "First heard 20 s ago: the few buckets at the right edge, the time axis, and the Heard for caption"),
-    ("ScanDeviceHalfSheetNotConnectable", "Device sheet, not connectable", "Disabled button with the reason; the sheet covers Scan, so the recording control is the floating pill"),
-    ("ScanRecordControlBar", "Control bar", "Opens from the pill: time, rows, Pause/Resume, Stop"),
-    ("ScanSavedSnackbar", "After Stop", "Saved, duration, rows; Add note / View"),
-    ("DeviceFullBroadcast", "Device, full screen, Advertising", "One row per variant; expands to the AD structure table"),
-    ("DeviceFullGattInProgress", "Device, full screen, GATT running", "Step progress list"),
-    ("DeviceFullGattDone", "Device, full screen, GATT done", "Services, characteristics, values; errors in red"),
-    ("DeviceFullWiki", "Device, full screen, Wiki", "Identified devices only"),
-    ("DeviceFullNotConnectable", "Device, full screen, not connectable", "Why GATT is disabled"),
-    ("NearbyHome", "Nearby", "Category rows; in range first with a signal dot; seen before with a last-seen date"),
-    ("NearbyRecording", "Nearby, recording", "Floating top-right pill (blinking dot + time)"),
-    ("NearbyPaused", "Nearby, paused", "Pill with a gray steady dot"),
-    ("NearbyControlBar", "Nearby, control bar", "Bottom control bar opened from the pill"),
-    ("NearbyCategoryList", "Nearby, category list", "Opened with the arrow next to a category"),
-    ("RecordingsList", "History", "Grouped by day, the current recording pinned"),
-    ("RecordingsListIdle", "History, idle", "Round record button, bottom-right"),
-    ("RecordingsSavedSnackbar", "History, after Stop", "Saved snackbar"),
-    ("RecordingMapRoute", "Recording map, route", "Same top app bar as the other pages; route and device list"),
-    ("RecordingMapDeviceSelected", "Recording map, device selected", "Ring and dot only; the estimated position is in the sheet"),
-    ("RecordingMapPannedHeatmap", "Recording map, panned, density", "Only this area chip and the density layer"),
-    ("ProductMap", "Product map", "From Nearby; points across recordings; the list is the product's MACs"),
-    ("RecordingMapWithPill", "Recording map, recording", "The same floating pill as every other page; the layer action ends before it"),
-    ("RecordingMapWithPillPaused", "Recording map, paused, device selected", "Gray steady dot in the pill"),
-    ("ProductMapWithPill", "Product map, recording", "Same pill"),
-    ("RecordControlStates", "Record control, every state", "Round button; expanded active and paused; pill active and paused; scroll-to-top; snackbar; control bar"),
-    ("RecordControlBarPaused", "Control bar, paused", "Resume / Stop"),
+    ("ScanList", "Scan", "Stock TopAppBar (count · location), ListItem rows, NavigationBar, stock FAB"),
+    ("ScanNoLocation", "Scan, no location", "Location unavailable in the subtitle"),
+    ("ScanRecording", "Scan, recording", "Expanded control: blinking dot, time, pause, stop"),
+    ("ScanPaused", "Scan, paused, stale fix", "Gray steady dot, dimmed time; Location stale (2 min)"),
+    ("ScanScrolledDown", "Scan, scrolled", "Scroll-to-top small FAB centered just below the top app bar"),
+    ("ScanScrolledDownRecording", "Scan, scrolled, recording", "Same place while recording; the record control stays bottom-right"),
+    ("ScanDeviceSheet", "Device sheet, recognized device", "Modal sheet (drawn in place in previews): wraps its content, ends below the app bar; Wiki button"),
+    ("ScanDeviceSheetLongName", "Device sheet, long name", "Name ellipsizes; -101 dBm inline; each line on one line"),
+    ("ScanDeviceSheetShortLived", "Device sheet, short-lived, not recognized", "Heard for 4 s; no Wiki button"),
+    ("ScanDeviceSheetGattRecording", "Device sheet, GATT, recording", "Pill over the app bar; the sheet stays below it"),
+    ("ScanDeviceSheetNotConnectable", "Device sheet, not connectable", "Why GATT is disabled"),
+    ("ScanControlSheet", "Control sheet", "Opened from the pill: time, rows, Pause/Resume, Stop"),
+    ("NearbyHome", "Nearby", "Category ListItems with rows of stock Cards"),
+    ("NearbyRecording", "Nearby, recording", "Floating pill"),
+    ("NearbyCategoryList", "Nearby, category", "ListItems"),
+    ("HistoryList", "History", "Pinned in-progress recording, then days"),
+    ("HistoryIdle", "History, idle", "Round record button"),
+    ("RecordingMapRoute", "Recording map", "Stock TopAppBar; persistent BottomSheetScaffold sheet peeking"),
+    ("RecordingMapListExpanded", "Recording map, list expanded", "The sheet stops below the app bar"),
+    ("RecordingMapDeviceSelected", "Recording map, device", "Device detail in the sheet"),
+    ("RecordingMapDeviceExpanded", "Recording map, device expanded", "GATT tab; below the app bar"),
+    ("RecordingMapPannedHeatmap", "Recording map, panned, density", "Only this area chip"),
+    ("ProductMap", "Product map", "MACs of one product"),
+    ("RecordingMapWithPill", "Recording map, recording", "The same pill as every page"),
+    ("ProductMapWithPillPaused", "Product map, paused", "Gray dot in the pill"),
+    ("RecordControlStates", "Record control, every state", "Stock FAB; Surface + IconButtons; pill; small FAB; control sheet"),
 ]
 
 
@@ -53,14 +46,14 @@ def main() -> None:
     images: dict[tuple[str, str], Path] = {}
     for png in sorted(src.rglob("*.png")):
         # <Function>_<light|dark>_<hash>_0.png
-        m = re.match(r"([A-Za-z0-9]+)_(light|dark)_", png.name)
+        m = re.match(r"([A-Za-z0-9]+)_(light|dark|narrow)_", png.name)
         if m:
             images[(m.group(1), m.group(2))] = png
     rows = []
     missing = []
     for fn, title, note in SCREENS:
         cells = []
-        for mode in ("light", "dark"):
+        for mode in ("light", "dark", "narrow"):
             png = images.get((fn, mode))
             if png is None:
                 missing.append(f"{fn}/{mode}")
@@ -84,7 +77,7 @@ p{margin:2px 0 10px;color:#62656b}.pair{display:flex;gap:20px;flex-wrap:wrap}
 img{width:300px;height:auto;border:1px solid #d5d7db;border-radius:10px;display:block}
 .miss{width:300px;height:200px;border:1px dashed #d93a35;color:#d93a35;display:flex;align-items:center;justify-content:center}
 </style>
-<h1>Cluetooth v3 UI</h1><p class=sub>Fake data, static previews. Left light, right dark. Click for full size.</p>
+<h1>Cluetooth v3 UI</h1><p class=sub>Fake data, static previews. Left to right: light and dark at 411 dp, light at 360 dp. Click for full size.</p>
 """
         + "\n".join(rows)
     )

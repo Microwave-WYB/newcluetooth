@@ -3,12 +3,35 @@ package edu.ucsd.sysnet.cluetoothscanner.ui.v3.app
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.saveable.rememberSaveable
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.filterScanRows
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapLibreMap
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapOverlay
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanDeviceSheet
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanTopBar
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -28,33 +51,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
 import androidx.compose.ui.res.stringResource
 import edu.ucsd.sysnet.cluetoothscanner.R
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordProblemSnackbar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordSavedSnackbar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryListPage
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapLibreMap
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapOverlay
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapPage
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyPage
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.RecordingsPage
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanDeviceSheet
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanPage
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.V3Theme
 import kotlinx.coroutines.launch
 
 /**
- * The v3 app: one [AppShell] (so the record button can move between pages), the current route's
- * page inside it, and the sheets, snackbar and dialogs the routes need.
+ * The v3 app: one [AppShell] (a stock Scaffold, so the record button can move between pages) with the
+ * current route's top app bar and content in it, the device sheet, the error snackbar and the note dialog.
  *
  * @param legacyContent the pre-v3 sessions/upload screen, shown for [Route.Legacy]
  */
@@ -92,7 +100,6 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
 
         val recorder by vm.recorder.collectAsStateWithLifecycle()
         val controlBarOpen by vm.controlBarOpen.collectAsStateWithLifecycle()
-        val saved by vm.saved.collectAsStateWithLifecycle()
         val selected by vm.selectedAddr.collectAsStateWithLifecycle()
         val detail by vm.detail.collectAsStateWithLifecycle()
         val scan by vm.scanState.collectAsStateWithLifecycle()
@@ -110,22 +117,44 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             else -> null
         }
 
-        // A sort moves the rows under a keyed list, and the list follows the item that was first on screen
-        // to its new place; start again from the top. (Not conditional on where the list is by then: it has
-        // already followed the item when this runs.)
-        LaunchedEffect(vm) { vm.sorts.collect { listState.scrollToItem(0) } }
-
         // Back: the control bar (closed in AppShell, composed last), the sheet, the selection, then pages;
         // on the Nearby and History tabs it goes to the Scan tab before leaving the app.
         BackHandler(enabled = stack.size > 1) { vm.back() }
         BackHandler(enabled = stack.size == 1 && tab != null && tab != AppTab.Scan) { vm.selectTab(AppTab.Scan) }
 
         val detailActions = DeviceDetailActions(
-            onWindowChange = vm::setWindow,
             onDiscoverGatt = vm::discoverGatt,
             onCancelGatt = vm::cancelGatt,
             onShowOnMap = vm::showSelectedOnMap,
         )
+
+        val snackbarHost = remember { SnackbarHostState() }
+        // Only a recording that could not be saved says anything; a saved one is simply in History.
+        val retryLabel = stringResource(R.string.action_retry)
+        LaunchedEffect(problem) {
+            val message = problem ?: return@LaunchedEffect
+            val result = snackbarHost.showSnackbar(message, actionLabel = retryLabel, withDismissAction = true, duration = SnackbarDuration.Indefinite)
+            if (result == SnackbarResult.ActionPerformed) vm.retrySave() else vm.dismissProblem()
+        }
+
+        // Search on the Scan page: it only hides rows, the list keeps its order.
+        var searching by rememberSaveable { mutableStateOf(false) }
+        var query by rememberSaveable { mutableStateOf("") }
+        val mapState by vm.mapState.collectAsStateWithLifecycle()
+        val nearby by vm.nearby.collectAsStateWithLifecycle()
+        val rec by vm.recordings.collectAsStateWithLifecycle()
+        val mapActions = MapActions(
+            onBack = { vm.back() },
+            onRowClick = { vm.select(it.id) },
+            onBackToList = { vm.select(null) },
+            onSortClick = vm::cycleSort,
+            onSearchToggle = vm::toggleSearch,
+            onQueryChange = vm::setQuery,
+            onAreaChip = vm::toggleArea,
+            onLayerToggle = vm::toggleHeat,
+            detail = detailActions,
+        )
+        val category = (route as? Route.Category)?.let { r -> (nearby.categories + nearby.unrecognized).firstOrNull { it.id == r.id } }
 
         AppShell(
             recorder = recorder,
@@ -133,75 +162,64 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             placement = recordPlacement(recorder.phase, roomForExpanded = onScan && !sheetOpen && !controlBarOpen),
             tab = tab,
             onTab = vm::selectTab,
-            showScrollToTop = showTop,
-            snackbarShown = problem != null || saved != null,
-            onScrollToTop = { scope.launch { listState.animateScrollToItem(0) } },
-            controlBarOpen = controlBarOpen,
-            onDismissControlBar = { vm.setControlBar(false) },
-            overlay = {
-                val d = detail
-                if (sheetOpen && d != null) ScanDeviceSheet(d, detailActions, onDismiss = { vm.select(null) })
-            },
-            snackbar = {
-                val info = saved
-                val trouble = problem
-                if (trouble != null) {
-                    Box(Modifier.align(Alignment.BottomCenter).padding(bottom = (if (tab != null) 64.dp else 0.dp) + 12.dp)) {
-                        RecordProblemSnackbar(trouble, onRetry = vm::retrySave, onDismiss = vm::dismissProblem)
-                    }
-                } else if (info != null) {
-                    Box(Modifier.align(Alignment.BottomCenter).padding(bottom = (if (tab != null) 64.dp else 0.dp) + 12.dp)) {
-                        RecordSavedSnackbar(
-                            info.summary.durationSeconds, info.summary.sightings,
-                            onAddNote = { vm.addNote(info.recordingId); vm.dismissSaved() },
-                            onView = vm::viewSaved,
+            topBar = {
+                when (route) {
+                    is Route.Tab -> when (route.tab) {
+                        AppTab.Scan -> ScanTopBar(
+                            deviceCount = scan.rows.size,
+                            location = scan.location,
+                            notice = notice,
+                            searching = searching,
+                            onSearchToggle = { searching = !searching; if (!searching) query = "" },
+                            onSettings = { vm.open(Route.Legacy) },
                         )
+                        AppTab.Nearby -> NearbyTopBar(nearby, notice)
+                        AppTab.History -> HistoryTopBar(rec, notice)
                     }
+                    is Route.Category -> if (category != null) CategoryTopBar(category, onBack = { vm.back() })
+                    is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> mapState?.let { MapTopBar(it, mapActions) }
+                    Route.Legacy -> Unit
                 }
             },
-        ) {
+            showScrollToTop = onScan && showTop,
+            onScrollToTop = { scope.launch { listState.animateScrollToItem(0) } },
+            snackbarHostState = snackbarHost,
+            controlBarOpen = controlBarOpen,
+            onDismissControlBar = { vm.setControlBar(false) },
+        ) { padding ->
             when (route) {
                 is Route.Tab -> when (route.tab) {
-                    AppTab.Scan -> ScanPage(
-                        rows = scan.rows,
-                        location = scan.location,
+                    AppTab.Scan -> ScanContent(
+                        rows = filterScanRows(scan.rows, searching, query),
+                        sortVersion = scan.sortVersion,
                         listState = listState,
+                        padding = padding,
                         refreshing = vm.refreshing.collectAsStateWithLifecycle().value,
                         onRefresh = vm::refreshScan,
                         onRowClick = { vm.select(it.id) },
-                        onSettings = { vm.open(Route.Legacy) },
-                        notice = notice,
+                        searching = searching,
+                        query = query,
+                        onQueryChange = { query = it },
                     )
-                    AppTab.Nearby -> {
-                        val nearby by vm.nearby.collectAsStateWithLifecycle()
-                        NearbyPage(
-                            nearby,
-                            notice = notice,
-                            onOpenCategory = { vm.open(Route.Category(it.id)) },
-                            onOpenProduct = { vm.openProduct(it.id) },
-                        )
-                    }
-                    AppTab.History -> {
-                        val rec by vm.recordings.collectAsStateWithLifecycle()
-                        RecordingsPage(rec, notice = notice, onOpenRecording = { vm.open(Route.RecordingMap(it.id)) })
-                    }
+                    AppTab.Nearby -> NearbyContent(
+                        nearby, padding,
+                        onOpenCategory = { vm.open(Route.Category(it.id)) },
+                        onOpenProduct = { vm.openProduct(it.id) },
+                    )
+                    AppTab.History -> HistoryContent(
+                        rec, padding,
+                        onOpenRecording = { vm.open(Route.RecordingMap(it.id)) },
+                        onEditNote = { vm.addNote(it.id) },
+                    )
                 }
-                is Route.Category -> {
-                    val nearby by vm.nearby.collectAsStateWithLifecycle()
-                    val category = (nearby.categories + nearby.unrecognized).firstOrNull { it.id == route.id }
-                    if (category == null) {
-                        Box(Modifier.fillMaxSize())
-                    } else {
-                        CategoryListPage(category, onBack = { vm.back() }, onOpenProduct = { vm.openProduct(it.id) })
-                    }
-                }
-                is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> {
-                    val state by vm.mapState.collectAsStateWithLifecycle()
-                    state?.let { MapRoute(it, vm, detailActions) } ?: Box(Modifier.fillMaxSize())
-                }
+                is Route.Category -> if (category != null) CategoryContent(category, padding, onOpenProduct = { vm.openProduct(it.id) }) else Box(Modifier.fillMaxSize())
+                is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap ->
+                    mapState?.let { MapRoute(it, vm, mapActions, padding) } ?: Box(Modifier.fillMaxSize())
                 Route.Legacy -> Unit
             }
         }
+        val d = detail
+        if (sheetOpen && d != null) ScanDeviceSheet(d, detailActions, onDismiss = { vm.select(null) })
 
         val noteTarget by vm.noteTarget.collectAsStateWithLifecycle()
         if (noteTarget != null) NoteDialog(vm)
@@ -209,18 +227,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
 }
 
 @Composable
-private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDetailActions) {
-    val actions = MapActions(
-        onBack = { vm.back() },
-        onRowClick = { vm.select(it.id) },
-        onBackToList = { vm.select(null) },
-        onSortClick = vm::cycleSort,
-        onSearchToggle = vm::toggleSearch,
-        onQueryChange = vm::setQuery,
-        onAreaChip = vm::toggleArea,
-        onLayerToggle = vm::toggleHeat,
-        detail = detailActions,
-    )
+private fun MapRoute(state: MapUiState, vm: V3ViewModel, actions: MapActions, padding: PaddingValues) {
     val route = vm.stack.collectAsStateWithLifecycle().value.last()
     var offline by remember { mutableStateOf(false) }
     // Frame the camera again when the content first arrives: points load after the selection is made.
@@ -230,7 +237,7 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDe
     } else {
         state.route.size >= 2 || state.productPoints.isNotEmpty()
     }
-    MapPage(state, actions, notice = if (offline) R.string.notice_offline_map else null) { covered ->
+    MapContent(state, actions, padding, notice = if (offline) R.string.notice_offline_map else null) { covered ->
         MapLibreMap(
             overlay = MapOverlay(
                 route = if (state.selected != null) emptyList() else state.route,
@@ -260,8 +267,11 @@ private fun NoteDialog(vm: V3ViewModel) {
         onDismissRequest = vm::dismissNote,
         title = { Text(stringResource(R.string.note_title)) },
         text = {
-            Box {
-                if (text.isEmpty()) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it; edited = true },
+                enabled = canEdit,
+                placeholder = {
                     Text(
                         stringResource(
                             when {
@@ -270,18 +280,10 @@ private fun NoteDialog(vm: V3ViewModel) {
                                 else -> R.string.note_hint
                             },
                         ),
-                        color = MaterialTheme.colorScheme.outline,
                     )
-                }
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it; edited = true },
-                    enabled = canEdit,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                )
-            }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
         },
         confirmButton = { TextButton({ vm.saveNote(text) }, enabled = canEdit) { Text(stringResource(R.string.action_save)) } },
         dismissButton = { TextButton(vm::dismissNote) { Text(stringResource(R.string.action_cancel)) } },

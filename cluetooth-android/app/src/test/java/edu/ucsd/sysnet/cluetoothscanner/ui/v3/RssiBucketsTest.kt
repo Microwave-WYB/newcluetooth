@@ -5,7 +5,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBucketer
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBuckets
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ChartWindow
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.wikiUrl
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.signalOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,8 +36,8 @@ class RssiBucketsTest {
     }
 
     @Test
-    fun windowsUseOneFiveAndFifteenSecondBucketsOfSixtyEach() {
-        assertEquals(listOf(1 to 60, 5 to 60, 15 to 60), ChartWindow.entries.map { it.bucketSeconds to it.seconds / it.bucketSeconds })
+    fun theChartIsTheLastMinuteInOneSecondBucketsAndTheSparklineIn2s() {
+        assertEquals(60, RssiBuckets.CHART_WINDOW_SEC / RssiBuckets.CHART_BUCKET_SEC) // the detail chart: the last minute, 1 s buckets
         assertEquals(30, RssiBucketer(now, 60, 2).count) // the list sparkline
     }
 
@@ -97,8 +97,8 @@ class RssiBucketsTest {
         t.onSample(sample(-82, 1_001_900))
         val now = 1_002_000L
         val row = t.row("AA:BB:CC:DD:EE:01", now)!!
-        for (window in ChartWindow.entries) {
-            val series = t.chart("AA:BB:CC:DD:EE:01", window, now)
+        run {
+            val series = t.chart("AA:BB:CC:DD:EE:01", now)
             val plan = RssiBuckets.plan(series.buckets, row.rssi)
             assertEquals("marker value is the displayed number", row.rssi, plan.end!!.rssi)
             assertEquals("marker sits at now, the right edge", series.buckets.lastIndex, plan.end!!.index)
@@ -106,7 +106,6 @@ class RssiBucketsTest {
             // while the line itself still ends at the newest bucket's strongest sample
             val newestBucket = series.buckets.last { it != null }!!
             assertEquals(newestBucket, plan.lines.flatten().lastOrNull()?.rssi ?: plan.dots.last().rssi)
-            if (window != ChartWindow.OneMinute) assertEquals("the one 5 s / 15 s bucket holds both samples", -50, newestBucket)
         }
         val spark = RssiBuckets.plan(row.history, row.rssi)
         assertEquals(row.rssi, spark.end!!.rssi)
@@ -115,7 +114,12 @@ class RssiBucketsTest {
         val later = 1_000_000L + 90_000
         val quiet = t.row("AA:BB:CC:DD:EE:01", later)!!
         assertEquals(-82, quiet.rssi)
-        assertEquals(-82, RssiBuckets.plan(t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, later).buckets, quiet.rssi).end!!.rssi)
+        assertEquals(-82, RssiBuckets.plan(t.chart("AA:BB:CC:DD:EE:01", later).buckets, quiet.rssi).end!!.rssi)
+    }
+
+    @Test
+    fun theWikiLinkUsesThePageIdTheSiteRoutesBy() {
+        assertEquals("https://wirelesswiki.org/p/product_family--acuity-nlight-lighting-control", wikiUrl("product_family--acuity-nlight-lighting-control"))
     }
 
     @Test
@@ -133,13 +137,13 @@ class RssiBucketsTest {
         val raw = byteArrayOf(2, 1, 6)
         fun sample(rssi: Int, ms: Long) = LiveSample("AA:BB:CC:DD:EE:01", rssi, ms, raw, null, true, true, null, null, null, 1)
         t.onSample(sample(-77, 1_000_000))
-        t.onSample(sample(-60, 1_020_000))
-        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FiveMinutes, 1_020_400)
-        assertEquals(20, series.heardSeconds)
+        t.onSample(sample(-60, 1_004_000))
+        val series = t.chart("AA:BB:CC:DD:EE:01", 1_004_400)
+        assertEquals(4, series.heardSeconds)
         assertEquals(listOf(-77, -60), series.buckets.filterNotNull())
         assertEquals(59, series.buckets.indexOfLast { it != null })
-        assertTrue(RssiBuckets.isShortLived(series.heardSeconds, ChartWindow.FiveMinutes.seconds))
-        val row = t.row("AA:BB:CC:DD:EE:01", 1_020_400)!!
+        assertTrue(RssiBuckets.isShortLived(series.heardSeconds, RssiBuckets.CHART_WINDOW_SEC))
+        val row = t.row("AA:BB:CC:DD:EE:01", 1_004_400)!!
         assertEquals(30, row.history.size)
         assertEquals(listOf(-77, -60), row.history.filterNotNull())
     }

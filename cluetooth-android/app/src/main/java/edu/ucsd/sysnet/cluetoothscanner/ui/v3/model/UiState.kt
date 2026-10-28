@@ -16,14 +16,6 @@ fun signalOf(rssi: Int): Signal = when {
     else -> Signal.Weak
 }
 
-enum class AddressType(@StringRes val label: Int) {
-    Unknown(R.string.address_unknown),
-    Public(R.string.address_public),
-    RandomStatic(R.string.address_random_static),
-    ResolvablePrivate(R.string.address_resolvable_private),
-    NonResolvablePrivate(R.string.address_non_resolvable_private),
-}
-
 enum class AdvKind(@StringRes val label: Int) { Legacy(R.string.adv_legacy), Extended(R.string.adv_extended) }
 
 enum class RecorderPhase { Idle, Recording, Paused }
@@ -46,7 +38,6 @@ data class DeviceRowState(
     val id: String,
     val name: String?,
     val mac: String,
-    val addressType: AddressType,
     val advKind: AdvKind,
     val connectable: Boolean,
     val rssi: Int,
@@ -60,6 +51,11 @@ data class ScanUiState(
     val rows: List<DeviceRowState>,
     val recorder: RecorderUiState,
     val location: ScanLocation = ScanLocation.Unavailable,
+    /**
+     * Bumped with the rows of each sort (the initial one and every pull to refresh), in the same
+     * emission, so the list scrolls to the top only once the sorted rows are on screen.
+     */
+    val sortVersion: Int = 0,
 )
 
 /** What the Scan subtitle says about the phone's own position. */
@@ -73,13 +69,6 @@ sealed interface ScanLocation {
 }
 
 // ---- Device detail -------------------------------------------------------------------------
-
-/** The window length, its bucket size (60 buckets each) and the label of its left edge. */
-enum class ChartWindow(@StringRes val label: Int, val seconds: Int, val bucketSeconds: Int, val startMinutes: Int) {
-    OneMinute(R.string.chart_1_min, 60, 1, 1),
-    FiveMinutes(R.string.chart_5_min, 300, 5, 5),
-    FifteenMinutes(R.string.chart_15_min, 900, 15, 15),
-}
 
 data class AdStructureRow(val type: String, val typeName: String, val length: Int, val data: String)
 
@@ -124,24 +113,16 @@ sealed interface GattUiState {
     ) : GattUiState
 }
 
-/** A wiki family record; only present for recognized devices. */
-data class WikiUiState(
-    val family: String,
-    val summary: String,
-    val facts: List<Pair<String, String>>,
-    val confidence: String,
-)
-
 data class DeviceDetailUiState(
     val device: DeviceRowState,
     val variants: List<AdVariantState>,
-    val chartWindow: ChartWindow,
-    /** RSSI over [chartWindow], oldest first; null marks a stretch with no samples (a gap). */
+    /** RSSI over the last minute in 1 s buckets, oldest first; null marks a bucket with no samples. */
     val chartSamples: List<Int?>,
     /** How long the device has been heard, for the "Heard for ..." caption on short-lived devices; null when unknown. */
     val chartHeardSeconds: Int? = null,
     val gatt: GattUiState,
-    val wiki: WikiUiState?,
+    /** The matched wiki page (`<kind>--<slug>`, the wiki directory name); null when the device is not recognized. */
+    val wikiPageId: String?,
     /** Non-null disables "Discover GATT" and says why. */
     val gattDisabledReason: String?,
     /** Where the device probably is, from its located samples; only on the maps, and only when it can be estimated. */
@@ -153,7 +134,6 @@ data class PositionEstimateState(val at: LatLon, val accuracyMeters: Int?)
 enum class DetailTab(@StringRes val label: Int) {
     Advertising(R.string.detail_tab_advertising),
     Gatt(R.string.detail_tab_gatt),
-    Wiki(R.string.detail_tab_wiki),
 }
 
 // ---- Nearby --------------------------------------------------------------------------------

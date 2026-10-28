@@ -62,8 +62,8 @@ class UiCopyTest {
         assertEquals("48 devices", devicesText(48, TestTexts))
         assertEquals("1 row", rowsText(1, TestTexts))
         assertEquals("1.4k rows", rowsText(1_400, TestTexts))
-        assertEquals("Saved · 23 min · 1.4k rows", TestTexts.string(R.string.record_saved, formatDuration(23 * 60, TestTexts), rowsText(1_400, TestTexts)))
         assertEquals("45 s", formatDuration(45, TestTexts))
+        assertEquals("23 min", formatDuration(23 * 60, TestTexts))
     }
 
     @Test

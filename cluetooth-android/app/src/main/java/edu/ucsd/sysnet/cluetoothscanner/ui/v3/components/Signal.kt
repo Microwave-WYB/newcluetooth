@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.ui.res.stringResource
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
 import edu.ucsd.sysnet.cluetoothscanner.R
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,7 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,17 +36,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ChartWindow
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.Signal
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.signalOf
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.MonoFamily
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.extra
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.TabularNumbers
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.signal
 
 @Composable
 fun Signal.color(): Color = when (this) {
-    Signal.Strong -> MaterialTheme.extra.signalGreen
-    Signal.Fair -> MaterialTheme.extra.signalYellow
-    Signal.Weak -> MaterialTheme.extra.signalRed
+    Signal.Strong -> MaterialTheme.signal.strong
+    Signal.Fair -> MaterialTheme.signal.fair
+    Signal.Weak -> MaterialTheme.signal.weak
 }
 
 @Composable
@@ -58,17 +57,15 @@ fun SignalDot(rssi: Int, size: Dp = 8.dp, modifier: Modifier = Modifier) {
     Box(modifier.size(size).clip(CircleShape).background(signalColor(rssi)))
 }
 
-/** RSSI number in the signal color, monospace. */
+/** RSSI number in the signal color, body font with tabular digits. */
 @Composable
-fun RssiText(rssi: Int, modifier: Modifier = Modifier, size: Int = 15, textAlign: TextAlign? = null) {
+fun RssiText(rssi: Int, modifier: Modifier = Modifier, textAlign: TextAlign? = TextAlign.End) {
     Text(
         text = rssi.toString(),
         modifier = modifier,
         textAlign = textAlign,
         color = signalColor(rssi),
-        fontFamily = MonoFamily,
-        fontSize = size.sp,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        style = MaterialTheme.typography.labelLarge.merge(TabularNumbers),
     )
 }
 
@@ -108,73 +105,56 @@ fun Sparkline(history: List<Int?>, current: Int, modifier: Modifier = Modifier) 
     val endColor = signalColor(current)
     Canvas(modifier.size(width = 56.dp, height = 20.dp)) {
         val pad = 3.dp.toPx()
-        val lo = -100f
+        val lo = -110f
         val hi = -35f
         val n = history.size
         drawBuckets(
             history, current,
             xOf = { i -> pad + (size.width - 2 * pad) * (i + 1) / n },
-            yOf = { v -> pad + (size.height - 2 * pad) * (1f - (v.coerceIn(-100, -35) - lo) / (hi - lo)) },
+            yOf = { v -> pad + (size.height - 2 * pad) * (1f - (v.coerceIn(-110, -35) - lo) / (hi - lo)) },
             line = line, strokeWidth = 1.25.dp.toPx(), dotRadius = 1.5.dp.toPx(), endRadius = 2.5.dp.toPx(), endColor = endColor,
         )
     }
 }
 
-/** The chart's fixed value range; -65 and -80 are the band edges. */
-private const val CHART_LO = -100f
+/** The chart's fixed value range (readings go below -100, so the floor is -110); -65 and -80 are the band edges. */
+private const val CHART_LO = -110f
 private const val CHART_HI = -30f
 
 private fun chartFraction(rssi: Float) = (CHART_HI - rssi) / (CHART_HI - CHART_LO)
 
 /**
- * The detail chart: a fixed window that ends at now on the right edge, with its start labelled on
+ * The detail chart: always the last minute, ending at now on the right edge ("−1 min … now"), labelled on
  * the left, 60 buckets of the strongest RSSI, faint -65 / -80 lines with labels, and one end marker.
- * A device heard for less than a tenth of the window gets a "Heard for ..." caption.
+ * A device heard for less than a tenth of the minute gets a "Heard for ..." caption.
  */
 @Composable
 fun RssiChart(
     samples: List<Int?>,
     /** The reading shown as the big number; the end marker is this value at now. */
     current: Int,
-    window: ChartWindow,
     heardSeconds: Int?,
-    onWindowChange: (ChartWindow) -> Unit,
     modifier: Modifier = Modifier,
     chartHeight: Dp = 150.dp,
 ) {
-    val extra = MaterialTheme.extra
+    val bands = MaterialTheme.signal
     val line = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
     val label = MaterialTheme.colorScheme.onSurfaceVariant
     val endColor = signalColor(current)
     Column(modifier) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.signal_strength), style = MaterialTheme.typography.labelMedium, color = label, modifier = Modifier.weight(1f))
-            ChartWindow.entries.forEach { w ->
-                val selected = w == window
-                Text(
-                    text = stringResource(w.label),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (selected) MaterialTheme.colorScheme.primary else label,
-                    modifier = Modifier
-                        .padding(start = 4.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                        .clickable { onWindowChange(w) }
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                )
-            }
-        }
-        Box(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Box(Modifier.fillMaxWidth()) {
             Canvas(Modifier.fillMaxWidth().height(chartHeight)) {
-                fun y(v: Float) = size.height * chartFraction(v.coerceIn(CHART_LO, CHART_HI))
+                // Points at the range edges are drawn whole: the line lives inside a small vertical inset.
+                val inset = 5.dp.toPx()
+                fun y(v: Float) = inset + (size.height - 2 * inset) * chartFraction(v.coerceIn(CHART_LO, CHART_HI))
                 val y65 = y(-65f)
                 val y80 = y(-80f)
                 // Everything is drawn inside the plot area.
                 clipRect {
-                    drawRect(extra.signalGreen.copy(alpha = 0.07f), Offset(0f, 0f), Size(size.width, y65))
-                    drawRect(extra.signalYellow.copy(alpha = 0.07f), Offset(0f, y65), Size(size.width, y80 - y65))
-                    drawRect(extra.signalRed.copy(alpha = 0.07f), Offset(0f, y80), Size(size.width, size.height - y80))
+                    drawRect(bands.strong.copy(alpha = 0.08f), Offset(0f, 0f), Size(size.width, y65))
+                    drawRect(bands.fair.copy(alpha = 0.08f), Offset(0f, y65), Size(size.width, y80 - y65))
+                    drawRect(bands.weak.copy(alpha = 0.08f), Offset(0f, y80), Size(size.width, size.height - y80))
                     drawLine(grid, Offset(0f, y65), Offset(size.width, y65), 1.dp.toPx())
                     drawLine(grid, Offset(0f, y80), Offset(size.width, y80), 1.dp.toPx())
                     val pad = 5.dp.toPx() // room for the end marker at the right edge
@@ -187,12 +167,12 @@ fun RssiChart(
                     )
                 }
             }
-            Text("-65", fontFamily = MonoFamily, fontSize = 10.sp, color = label, modifier = Modifier.align(Alignment.TopStart).offset(y = chartHeight * chartFraction(-65f) - 14.dp))
-            Text("-80", fontFamily = MonoFamily, fontSize = 10.sp, color = label, modifier = Modifier.align(Alignment.TopStart).offset(y = chartHeight * chartFraction(-80f) - 14.dp))
+            Text("-65", style = MaterialTheme.typography.labelSmall, color = label, modifier = Modifier.align(Alignment.TopStart).padding(start = 4.dp).offset(y = chartHeight * chartFraction(-65f) - 16.dp))
+            Text("-80", style = MaterialTheme.typography.labelSmall, color = label, modifier = Modifier.align(Alignment.TopStart).padding(start = 4.dp).offset(y = chartHeight * chartFraction(-80f) - 16.dp))
         }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.chart_axis_start, window.startMinutes), style = MaterialTheme.typography.labelSmall, color = label)
-            if (RssiBuckets.isShortLived(heardSeconds, window.seconds)) {
+            Text(stringResource(R.string.chart_axis_start), style = MaterialTheme.typography.labelSmall, color = label)
+            if (RssiBuckets.isShortLived(heardSeconds, RssiBuckets.CHART_WINDOW_SEC)) {
                 Text(
                     stringResource(R.string.chart_heard_for, formatDuration(heardSeconds ?: 0, LocalTexts.current)),
                     Modifier.weight(1f),

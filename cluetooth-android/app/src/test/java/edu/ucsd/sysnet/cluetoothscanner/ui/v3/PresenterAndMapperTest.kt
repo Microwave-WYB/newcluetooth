@@ -295,18 +295,23 @@ class NoticesTest {
 
 class RecordingOutcomeTest {
     @Test
-    fun aSealedRecordingIsSaved() {
-        assertEquals(
-            RecordingOutcome.Kind.Saved,
-            RecordingOutcome.atStop(ScanTransitionState.FINALIZING, startSeen = false, hasSummary = true),
-        )
+    fun aSealedRecordingSaysNothing() {
+        // No message for success, however the stop was reached.
+        for (previous in ScanTransitionState.entries) {
+            for (startSeen in listOf(true, false)) {
+                assertEquals(
+                    RecordingOutcome.Kind.None,
+                    RecordingOutcome.atStop(previous, startSeen, recorded = true),
+                )
+            }
+        }
     }
 
     @Test
     fun aStartThatNeverRanIsAFailedStart() {
         assertEquals(
             RecordingOutcome.Kind.StartFailed,
-            RecordingOutcome.atStop(ScanTransitionState.STARTING, startSeen = true, hasSummary = false),
+            RecordingOutcome.atStop(ScanTransitionState.STARTING, startSeen = true, recorded = false),
         )
     }
 
@@ -314,12 +319,12 @@ class RecordingOutcomeTest {
     fun aRejectedScannerIsReportedOnlyWhenTheStartWasSeen() {
         assertEquals(
             RecordingOutcome.Kind.ScannerRejected,
-            RecordingOutcome.atStop(ScanTransitionState.FINALIZING, startSeen = true, hasSummary = false),
+            RecordingOutcome.atStop(ScanTransitionState.FINALIZING, startSeen = true, recorded = false),
         )
         // A ViewModel created mid-finalization joins at FINALIZING and never saw a start: say nothing.
         assertEquals(
             RecordingOutcome.Kind.None,
-            RecordingOutcome.atStop(ScanTransitionState.FINALIZING, startSeen = false, hasSummary = false),
+            RecordingOutcome.atStop(ScanTransitionState.FINALIZING, startSeen = false, recorded = false),
         )
     }
 }
