@@ -186,6 +186,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             snackbarHostState = snackbarHost,
             controlBarOpen = controlBarOpen,
             onDismissControlBar = { vm.setControlBar(false) },
+            startAllowed = onScan,
         ) { padding ->
             when (route) {
                 is Route.Tab -> when (route.tab) {

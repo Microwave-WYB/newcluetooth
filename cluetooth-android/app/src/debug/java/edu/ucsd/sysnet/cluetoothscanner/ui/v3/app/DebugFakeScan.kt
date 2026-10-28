@@ -47,6 +47,8 @@ object DebugFakeScan {
             while (true) {
                 val now = System.currentTimeMillis()
                 val elapsed = now - t0
+                // The phone's fix, spread a little per device (up to about 150 m) so a map has something to show.
+                val fix = service.locationService.getLastKnownLocation()
                 for (d in devices) {
                     val here = elapsed >= d.arriveAtMs && (d.leaveAtMs == null || elapsed < d.leaveAtMs || (d.returnAtMs != null && elapsed >= d.returnAtMs))
                     if (!here || rnd.nextInt(100) >= 60) continue
@@ -62,7 +64,9 @@ object DebugFakeScan {
                             txPower = null,
                             isConnectable = d.index % 3 != 0,
                             v3 = ScanV3Fields.from(true, 1, 0, 255, 127, 0, 0, 1),
-                            lat = null, lon = null, accuracyMeters = null,
+                            lat = fix?.let { it.latitude + ((d.index * 37) % 27 - 13) * 0.0001 },
+                            lon = fix?.let { it.longitude + ((d.index * 53) % 31 - 15) * 0.0001 },
+                            accuracyMeters = fix?.accuracy,
                         ),
                     )
                 }

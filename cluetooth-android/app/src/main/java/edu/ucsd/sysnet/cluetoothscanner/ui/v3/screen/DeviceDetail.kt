@@ -1,12 +1,22 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen
 
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceRowState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdField
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdVariantState
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,7 +25,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -27,6 +36,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -34,7 +44,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -53,10 +62,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiChart
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatCount
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.signalColor
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdStructureRow
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdVariantState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DetailTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattCharState
@@ -140,9 +147,8 @@ private fun PositionEstimateRow(estimate: PositionEstimateState) {
 }
 
 /**
- * The whole device detail as one scrolling column. [tabState] and [expandedVariant] are hoisted so a
- * caller can start on a given tab (previews). "N variants ›" and "Discover GATT" switch the tab and
- * scroll it into view.
+ * The whole device detail as one scrolling column. [tabState] is hoisted so a caller can start on a
+ * given tab (previews). "Discover GATT" switches to its tab and scrolls it into view.
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -156,7 +162,6 @@ fun DeviceDetailContent(
      */
     showLiveChart: Boolean = true,
     tabState: MutableState<DetailTab> = remember(detail.device.id) { mutableStateOf(DetailTab.Advertising) },
-    expandedVariant: MutableState<String?> = remember(detail.device.id) { mutableStateOf(null) },
 ) {
     val device = detail.device
     val running = detail.gatt is GattUiState.InProgress
@@ -169,31 +174,14 @@ fun DeviceDetailContent(
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         Column(Modifier.padding(horizontal = 24.dp)) {
             DeviceHeader(device.name, device.mac, device.rssi)
-            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    stringResource(if (device.connectable) R.string.connectable else R.string.not_connectable) + " · ",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    softWrap = false,
-                )
-                Text(
-                    stringResource(R.string.variants_link, LocalTexts.current.plural(R.plurals.ad_variants, detail.variants.size, detail.variants.size)),
-                    Modifier.clickable { showTab(DetailTab.Advertising) },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    softWrap = false,
-                )
-            }
             if (showLiveChart) RssiChart(detail.chartSamples, device.rssi, detail.chartHeardSeconds, Modifier.padding(top = 16.dp))
             detail.positionEstimate?.let { PositionEstimateRow(it) }
-            // One row: the two actions share the width; a matched device adds the stock icon button that opens its
-            // wiki page at the end. Narrower button padding keeps both labels on one line on a 360 dp phone.
-            val compact = PaddingValues(horizontal = 12.dp)
+            // One row of stock buttons with their default padding and colors: Discover GATT is the filled primary
+            // action, View on map and the wiki link are secondary (tonal). The two actions share the width; a label
+            // that does not fit is ellipsized.
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (running) {
-                    OutlinedButton(onClick = actions.onCancelGatt, modifier = Modifier.weight(1f), contentPadding = compact) {
+                    FilledTonalButton(onClick = actions.onCancelGatt, modifier = Modifier.weight(1f)) {
                         Text(stringResource(R.string.gatt_cancel), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 } else {
@@ -201,16 +189,17 @@ fun DeviceDetailContent(
                         onClick = { actions.onDiscoverGatt(); showTab(DetailTab.Gatt) },
                         enabled = detail.gattDisabledReason == null,
                         modifier = Modifier.weight(1f),
-                        contentPadding = compact,
                     ) { Text(stringResource(R.string.gatt_discover), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
-                OutlinedButton(onClick = actions.onShowOnMap, modifier = Modifier.weight(1f), contentPadding = compact) {
+                FilledTonalButton(onClick = actions.onShowOnMap, modifier = Modifier.weight(1f)) {
                     Text(stringResource(R.string.view_on_map), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (detail.wikiPageId != null) {
                     val uri = LocalUriHandler.current
                     val url = wikiUrl(detail.wikiPageId)
-                    OutlinedIconButton(onClick = { uri.openUri(url) }) {
+                    // The same stock secondary (tonal) button as "View on map"; icon only, since a "Wiki" label does
+                    // not fit beside the other two on a 360 dp phone.
+                    FilledTonalButton(onClick = { uri.openUri(url) }) {
                         Icon(Icons.AutoMirrored.Filled.OpenInNew, stringResource(R.string.action_open_wiki))
                     }
                 }
@@ -235,11 +224,7 @@ fun DeviceDetailContent(
             }
         }
         when (tabState.value) {
-            DetailTab.Advertising -> detail.variants.forEach { v ->
-                VariantItem(v, expanded = v.id == expandedVariant.value) {
-                    expandedVariant.value = if (expandedVariant.value == v.id) null else v.id
-                }
-            }
+            DetailTab.Advertising -> AdvertisingTab(device, detail.variants)
             DetailTab.Gatt -> GattTab(detail, actions.onDiscoverGatt, actions.onCancelGatt)
         }
         Spacer(Modifier.height(16.dp))
@@ -254,47 +239,107 @@ fun DeviceDetailPeek(detail: DeviceDetailUiState, modifier: Modifier = Modifier)
 
 // ---- Advertising ----------------------------------------------------------------------------
 
+/**
+ * What the device advertises: first the details (connectable, format) and what it reads as (name,
+ * company, services, TX power; each distinct value once across its advertisements), one label and value
+ * per row, then the raw table of each advertisement below.
+ */
 @Composable
-private fun VariantItem(v: AdVariantState, expanded: Boolean, onToggle: () -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        ListItem(
-            colors = InSheet,
-            headlineContent = {
-                Text(buildString {
-                    append(v.pduType).append(" · ").append(v.phy)
-                    if (v.sid != null) append(" · SID ").append(v.sid)
-                })
-            },
-            supportingContent = {
-                Text(
-                    stringResource(
-                        R.string.times_range,
-                        LocalTexts.current.plural(R.plurals.times_heard, v.count, formatCount(v.count)), v.firstSeen, v.lastSeen,
-                    ),
-                )
-            },
-            trailingContent = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${v.rssiMin} … ${v.rssiMax}", style = MaterialTheme.typography.labelMedium.merge(TabularNumbers))
-                    Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null, Modifier.padding(start = 4.dp))
+private fun AdvertisingTab(device: DeviceRowState, variants: List<AdVariantState>) {
+    val decoded = listOf(
+        AdField(stringResource(R.string.detail_connectable), stringResource(if (device.connectable) R.string.yes else R.string.no)),
+        AdField(stringResource(R.string.detail_format), stringResource(device.advKind.label)),
+    ) + variants.flatMap { v -> v.structures.flatMap { it.fields } }.filter { !it.bytes }.distinct()
+    SectionTitle(stringResource(R.string.ad_decoded))
+    SelectionContainer {
+        Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            decoded.forEach { f ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(f.label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        f.value,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.End,
+                    )
                 }
-            },
-            modifier = Modifier.clickable(onClick = onToggle),
-        )
-        if (expanded) v.structures.forEach { AdStructureItem(it) }
+            }
+        }
+    }
+    variants.forEachIndexed { i, v ->
+        SectionTitle(if (variants.size > 1) stringResource(R.string.ad_raw_n, i + 1) else stringResource(R.string.ad_raw))
+        AdTable(v.structures)
     }
 }
 
-/** One AD structure: type and its name, the length, and the bytes. */
 @Composable
-private fun AdStructureItem(s: AdStructureRow) {
-    ListItem(
-        colors = InSheet,
-        overlineContent = { Text("0x${s.type} · ${stringResource(R.string.table_length)} ${s.length}") },
-        headlineContent = { Text(s.typeName) },
-        supportingContent = { Text(s.data.chunked(2).joinToString(" ")) },
-        modifier = Modifier.padding(start = 16.dp),
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 8.dp),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
     )
+}
+
+/**
+ * One advertisement as the table the old scanner had: Len | Type | Data, one row per AD structure in the
+ * order sent, the bytes in monospace and selectable. The info icon by a type opens what that type is and
+ * what this structure reads as (a name, the company, UUIDs).
+ */
+@Composable
+private fun AdTable(structures: List<AdStructureRow>) {
+    var info by remember { mutableStateOf<AdStructureRow?>(null) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.ad_table_len), Modifier.weight(0.8f), style = MaterialTheme.typography.labelMedium)
+            Text(stringResource(R.string.ad_table_type), Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium)
+            Text(stringResource(R.string.ad_table_data), Modifier.weight(3f), style = MaterialTheme.typography.labelMedium)
+        }
+        HorizontalDivider()
+        SelectionContainer {
+            Column {
+                structures.forEach { s ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(s.length.toString(), Modifier.weight(0.8f), style = MaterialTheme.typography.bodySmall)
+                        Row(Modifier.weight(1.2f), verticalAlignment = Alignment.CenterVertically) {
+                            Text("0x${s.type}", style = MaterialTheme.typography.bodySmall)
+                            IconButton(onClick = { info = s }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Filled.Info, stringResource(R.string.ad_table_type_info), Modifier.size(14.dp))
+                            }
+                        }
+                        Text(
+                            s.data,
+                            Modifier.weight(3f),
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    info?.let { s ->
+        AlertDialog(
+            onDismissRequest = { info = null },
+            title = { Text(s.typeName) },
+            text = {
+                SelectionContainer {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        s.fields.forEach { f ->
+                            Text("${f.label}: ${f.value}", style = if (f.bytes) MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { info = null }) { Text(stringResource(R.string.action_ok)) } },
+        )
+    }
 }
 
 // ---- GATT ----------------------------------------------------------------------------------

@@ -251,6 +251,32 @@ class MapperTest {
     }
 
     @Test
+    fun noDataRecordingsAreHiddenButTheCurrentOneNeverIs() {
+        val today = LocalDate.of(2026, 10, 28)
+        fun ms(d: Int, h: Int) = LocalDate.of(2026, 10, d).atTime(h, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val recorder = RecorderUiState(RecorderPhase.Recording, 30, 100)
+        val state = RecordingMapper.state(
+            recorder,
+            listOf(rec("now", ms(28, 9), active = true), rec("empty", ms(28, 8)), rec("kept", ms(28, 7)), rec("allEmpty", ms(27, 7))),
+            // The core may already call the running session empty; it stays pinned anyway.
+            mapOf("now" to GatewaySessionUploadState.EMPTY, "empty" to GatewaySessionUploadState.EMPTY, "allEmpty" to GatewaySessionUploadState.EMPTY),
+            emptyMap(),
+            TestTexts,
+            today,
+        )
+        assertEquals("now", state.current!!.id)
+        // A day left with only no-data recordings disappears with them.
+        assertEquals(listOf("Today · Oct 28"), state.days.map { it.label })
+        assertEquals(listOf("kept"), state.days.single().recordings.map { it.id })
+
+        val none = RecordingMapper.state(
+            RecorderUiState(RecorderPhase.Idle, 0, 0), listOf(rec("e", ms(28, 8))), mapOf("e" to GatewaySessionUploadState.EMPTY), emptyMap(), TestTexts, today,
+        )
+        assertEquals(null, none.current)
+        assertEquals(emptyList<Any>(), none.days)
+    }
+
+    @Test
     fun anUploadTheCoreHasNotReportedIsNeverShownAsUploaded() {
         val r = rec("x", 1_000_000)
         assertEquals(UploadStatus.Unknown, RecordingMapper.summary(r, null, null).upload)

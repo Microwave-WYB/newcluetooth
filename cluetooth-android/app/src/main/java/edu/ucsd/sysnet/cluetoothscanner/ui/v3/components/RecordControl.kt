@@ -34,7 +34,6 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
@@ -192,10 +191,7 @@ private fun PauseResumeButton(paused: Boolean, callbacks: RecorderCallbacks) {
 
 @Composable
 private fun StopButton(onClick: () -> Unit) {
-    FilledIconButton(
-        onClick = onClick,
-        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
-    ) {
+    FilledIconButton(onClick = onClick) {
         Icon(Icons.Filled.Stop, stringResource(R.string.record_stop))
     }
 }
@@ -218,11 +214,7 @@ fun RecordControlSheetContent(state: RecorderUiState, callbacks: RecorderCallbac
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
                 Text(stringResource(if (paused) R.string.record_resume else R.string.record_pause))
             }
-            Button(
-                onClick = callbacks.onStop,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
-            ) {
+            Button(onClick = callbacks.onStop, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Filled.Stop, null, Modifier.size(ButtonDefaults.IconSize))
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
                 Text(stringResource(R.string.record_stop))

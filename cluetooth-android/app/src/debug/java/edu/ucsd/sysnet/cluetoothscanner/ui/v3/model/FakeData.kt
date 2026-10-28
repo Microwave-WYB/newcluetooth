@@ -73,22 +73,18 @@ object FakeData {
 
     private val headphoneStructures = listOf(
         AdStructureRow("01", "Flags", 2, "06"),
-        AdStructureRow("09", "Complete Local Name", 11, "57482D31303030584D35"),
-        AdStructureRow("FF", "Manufacturer Specific", 8, "2D0103010A824C"),
-        AdStructureRow("03", "Complete 16-bit UUIDs", 5, "0EFE0D18"),
+        AdStructureRow("09", "Complete Local Name", 11, "57482D31303030584D35", listOf(AdField("Name", "WH-1000XM5"))),
+        AdStructureRow("FF", "Manufacturer Specific", 8, "2D0103010A824C", listOf(AdField("Company", "0x012D"), AdField("Data", "03 01 0a 82 4c", bytes = true))),
+        AdStructureRow("03", "Complete 16-bit UUIDs", 5, "0EFE0D18", listOf(AdField("Services", "FE0E, 180D"))),
     )
 
     private val variants = listOf(
-        AdVariantState("v1", "ADV_IND", "1M", null, 1_284, "14:02:11", "14:31:48", -71, -50, headphoneStructures),
+        AdVariantState("v1", headphoneStructures),
         AdVariantState(
-            "v2", "SCAN_RSP", "1M", null, 1_279, "14:02:11", "14:31:48", -71, -50,
-            listOf(AdStructureRow("09", "Complete Local Name", 11, "57482D31303030584D35")),
-        ),
-        AdVariantState(
-            "v3", "ADV_EXT_IND", "2M", 3, 96, "14:19:02", "14:31:20", -66, -52,
+            "v2",
             listOf(
                 AdStructureRow("01", "Flags", 2, "06"),
-                AdStructureRow("FF", "Manufacturer Specific", 8, "2D0103010A824C"),
+                AdStructureRow("FF", "Manufacturer Specific", 8, "2D0103010A824C", listOf(AdField("Company", "0x012D"), AdField("Data", "03 01 0a 82 4c", bytes = true))),
             ),
         ),
     )

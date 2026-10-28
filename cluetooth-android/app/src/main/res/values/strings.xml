@@ -40,21 +40,9 @@
         <item quantity="one">%1$s recording</item>
         <item quantity="other">%1$s recordings</item>
     </plurals>
-    <plurals name="minute_rows">
-        <item quantity="one">%1$s minute record</item>
-        <item quantity="other">%1$s minute records</item>
-    </plurals>
     <plurals name="minutes_heard">
         <item quantity="one">%1$s minute</item>
         <item quantity="other">%1$s minutes</item>
-    </plurals>
-    <plurals name="ad_variants">
-        <item quantity="one">%1$s variant</item>
-        <item quantity="other">%1$s variants</item>
-    </plurals>
-    <plurals name="times_heard">
-        <item quantity="one">%1$s time</item>
-        <item quantity="other">%1$s times</item>
     </plurals>
     <plurals name="gatt_services">
         <item quantity="one">%1$s service</item>
@@ -79,7 +67,7 @@
     <string name="search_hint_scan">Search name or MAC</string>
     <string name="search_hint_map">Search name, MAC or product</string>
     <string name="nearby_empty">No nearby products identified yet.</string>
-    <string name="history_empty">No recordings yet. Tap the red button to start.</string>
+    <string name="history_empty">No recordings yet. Start one on Scan.</string>
     <string name="category_in_range_total">%1$s in range · %2$s total</string>
     <string name="label_in_range">In range</string>
     <string name="label_seen_before">Seen before</string>
@@ -96,7 +84,6 @@
 
     <!-- Scan rows and detail -->
     <string name="connectable">Connectable</string>
-    <string name="not_connectable">Not connectable</string>
     <string name="adv_legacy">Legacy</string>
     <string name="adv_extended">Extended</string>
     <string name="chart_axis_start">−1 min</string>
@@ -104,9 +91,18 @@
     <string name="chart_heard_for">Heard for %1$s</string>
     <string name="detail_tab_advertising">Advertising</string>
     <string name="detail_tab_gatt">GATT</string>
-    <string name="variants_link">%1$s ›</string>
-    <string name="times_range">%1$s · %2$s – %3$s</string>
-    <string name="table_length">Length</string>
+    <string name="ad_decoded">Details</string>
+    <string name="detail_connectable">Connectable</string>
+    <string name="detail_format">Format</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+    <string name="ad_raw">Raw data</string>
+    <string name="ad_raw_n">Raw data · advertisement %1$d</string>
+    <string name="ad_table_len">Len</string>
+    <string name="ad_table_type">Type</string>
+    <string name="ad_table_data">Data</string>
+    <string name="ad_table_type_info">Type info</string>
+    <string name="action_ok">OK</string>
     <string name="view_on_map">View on map</string>
     <string name="gatt_discover">Discover GATT</string>
     <string name="gatt_discover_again">Discover GATT again</string>
@@ -204,7 +200,9 @@
     <string name="recording_subtitle">%1$s · %2$s · %3$s</string>
     <string name="map_recording_title">%1$s · %2$s</string>
     <string name="recording_no_location">This recording has no location data</string>
-    <string name="sightings_no_location">No located records yet</string>
+    <string name="sightings_no_location">No position yet. It shows here once your phone hears it with a location fix.</string>
+    <string name="map_row_heard_now">Heard now</string>
+    <string name="map_row_heard_ago">Heard %1$s ago</string>
 
     <!-- Maps -->
     <string name="map_show_all">Show all</string>
@@ -214,9 +212,9 @@
     <string name="map_estimated_position">Estimated position</string>
     <string name="map_estimated_position_accuracy">Estimated position ±%1$d m</string>
     <string name="map_attribution" translatable="false">© OpenMapTiles · © OpenStreetMap contributors · OpenFreeMap</string>
-    <string name="map_product_subtitle">%1$s · from %2$s</string>
-    <string name="map_device_subtitle">From %1$s · %2$s</string>
-    <string name="map_row_detail">%1$s · %2$s</string>
+    <string name="map_heard_now_count">%1$d heard now</string>
+    <string name="map_from_recordings">From %1$s</string>
+    <string name="map_row_detail">%1$s, last %2$s</string>
     <string name="map_sort_by_signal">By signal</string>
     <string name="map_sort_by_recency">By recency</string>
     <string name="map_sort_by_name">By name</string>

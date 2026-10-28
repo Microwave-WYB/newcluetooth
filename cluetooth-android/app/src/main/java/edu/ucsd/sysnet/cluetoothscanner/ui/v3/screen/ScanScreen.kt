@@ -115,10 +115,8 @@ fun ScanRow(row: DeviceRowState, onClick: () -> Unit, modifier: Modifier = Modif
                 overflow = TextOverflow.Ellipsis,
             )
         },
-        supportingContent = {
-            val parts = listOf(row.mac, stringResource(row.advKind.label)) + if (row.connectable) listOf(stringResource(R.string.connectable)) else emptyList()
-            Text(parts.joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
+        // Only the address; the format and whether it is connectable are in the device sheet.
+        supportingContent = { Text(row.mac, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Sparkline(row.history, row.rssi)

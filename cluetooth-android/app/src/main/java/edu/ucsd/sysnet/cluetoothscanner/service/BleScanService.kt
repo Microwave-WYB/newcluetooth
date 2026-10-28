@@ -46,7 +46,7 @@ import kotlinx.coroutines.flow.map
 
 class BleScanService(
     private val context: Context,
-    private val locationService: LocationService,
+    internal val locationService: LocationService,
     private val repository: CluetoothRepository,
     private val triggerCache: AdvertisementTriggerCache = AdvertisementTriggerCache(),
 ) {

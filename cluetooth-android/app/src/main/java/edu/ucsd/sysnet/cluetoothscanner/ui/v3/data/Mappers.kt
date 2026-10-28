@@ -160,7 +160,8 @@ object RecordingMapper {
     ): RecordingsUiState {
         val all = recordings.map { summary(it, uploads[it.id], notes[it.id]) to it.active }
         val current = all.firstOrNull { it.second }?.first
-        val days = all.filter { !it.second }.map { it.first }
+        // Finished recordings that produced no data ("No data") are hidden here; nothing is deleted.
+        val days = all.filter { !it.second && it.first.upload != UploadStatus.Empty }.map { it.first }
             .groupBy { it.startedAt.toLocalDate() }
             .map { (date, items) -> RecordingDayState(dayLabel(date, today, texts), items.sortedByDescending { it.startedAt }) }
             .sortedByDescending { day -> day.recordings.first().startedAt }

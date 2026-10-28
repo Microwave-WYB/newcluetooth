@@ -1,13 +1,11 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.data
 
 import edu.ucsd.sysnet.cluetoothscanner.ble.BleParser
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdField
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdStructureRow
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdVariantState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdvKind
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceRowState
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /** One advertisement, reduced to what the tracker keeps (see `LiveScan`). */
 class LiveSample(
@@ -24,7 +22,13 @@ class LiveSample(
     val advSid: Int?,
     /** 0 public, 1 random, null when the platform did not say. */
     val addrType: Int?,
+    /** The phone's location fix when this was heard, if any. */
+    val lat: Double? = null,
+    val lon: Double? = null,
 )
+
+/** Where the phone was when it heard a device the strongest (in memory only, while the device is tracked). */
+data class LiveSpot(val lat: Double, val lon: Double, val rssi: Int, val timeMs: Long)
 
 /**
  * Aggregates the live scan stream per MAC: the latest values, one RSSI average per second for
@@ -49,10 +53,7 @@ class LiveDeviceTracker {
     ) {
         /** Parsed once per variant: the table is read every second while a detail page is open. */
         val structures: List<AdStructureRow> by lazy { adStructures(raw) }
-        var count = 0
         var lastMs = firstMs
-        var min = Int.MAX_VALUE
-        var max = Int.MIN_VALUE
     }
 
     /**
@@ -101,6 +102,7 @@ class LiveDeviceTracker {
         var connectable = false
         var legacy = true
         var addrType: Int? = null
+        var spot: LiveSpot? = null
         val ring = RssiRing()
 
         /** Access order: the variant least recently heard is the one evicted when full. */
@@ -121,6 +123,9 @@ class LiveDeviceTracker {
         if (s.rssi != null) {
             d.rssi = s.rssi
             d.ring.add(s.timeMs / 1000, s.rssi)
+            if (s.lat != null && s.lon != null && (d.spot?.let { s.rssi >= it.rssi } != false)) {
+                d.spot = LiveSpot(s.lat, s.lon, s.rssi, s.timeMs)
+            }
         }
         s.connectable?.let { d.connectable = it }
         s.legacy?.let { d.legacy = it }
@@ -135,16 +140,19 @@ class LiveDeviceTracker {
                 (s.localName ?: advertisedName(s.raw))?.let { name -> d.name = name }
             }
         }
-        v.count++
         v.lastMs = s.timeMs
-        if (s.rssi != null) {
-            if (s.rssi < v.min) v.min = s.rssi
-            if (s.rssi > v.max) v.max = s.rssi
-        }
         return isNew
     }
 
     fun rssi(addr: String): Int? = devices[addr]?.rssi
+
+    fun lastSeenMs(addr: String): Long? = devices[addr]?.lastSeenMs
+
+    /** Where the phone was when it heard [addr] the strongest, if it had a fix. */
+    fun spot(addr: String): LiveSpot? = devices[addr]?.spot
+
+    /** Every tracked device with the bytes of each distinct advertisement, for matching against the wiki. */
+    fun advertisements(): Map<String, List<ByteArray>> = devices.mapValues { (_, d) -> d.variants.values.map { it.raw } }
 
     /** The advertised name, without building a row. */
     fun name(addr: String): String? = devices[addr]?.name
@@ -192,24 +200,16 @@ class LiveDeviceTracker {
         return bucketer.buckets()
     }
 
+    /**
+     * The distinct advertisements, by content, in the order they first appeared. Variants that differ
+     * only in flags (connectable, PHY, set id) carry the same bytes and show once.
+     */
     fun variants(addr: String): List<AdVariantState> {
         val d = devices[addr] ?: return emptyList()
-        val time = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
         // The map is access-ordered (for eviction); the table is shown in the order the variants first appeared.
-        return d.variants.values.sortedWith(compareBy<Variant> { it.firstMs }.thenBy { it.key.hash }).map { v ->
-            AdVariantState(
-                id = "v${v.key.flags}-${v.key.hash}-${v.key.size}",
-                pduType = pduType(v.legacy, v.connectable),
-                phy = phyLabel(v.legacy, v.primaryPhy, v.secondaryPhy),
-                sid = v.sid,
-                count = v.count,
-                firstSeen = time.format(Instant.ofEpochMilli(v.firstMs)),
-                lastSeen = time.format(Instant.ofEpochMilli(v.lastMs)),
-                rssiMin = if (v.min == Int.MAX_VALUE) -100 else v.min,
-                rssiMax = if (v.max == Int.MIN_VALUE) -100 else v.max,
-                structures = v.structures,
-            )
-        }
+        return d.variants.values.sortedWith(compareBy<Variant> { it.firstMs }.thenBy { it.key.hash })
+            .distinctBy { it.key.hash to it.key.size }
+            .map { v -> AdVariantState(id = "v${v.key.hash}-${v.key.size}", structures = v.structures) }
     }
 
     companion object {
@@ -224,31 +224,75 @@ class LiveDeviceTracker {
         fun advertisedName(raw: ByteArray): String? =
             BleParser.extractDeviceName(BleParser.parseAdvertisementData(raw))?.takeIf { it.isNotBlank() }
 
-        fun adStructures(raw: ByteArray): List<AdStructureRow> =
+        fun adStructures(raw: ByteArray, sig: SigNumbers = SigNumbers.current): List<AdStructureRow> =
             BleParser.parseAdvertisementData(raw).structures.map { s ->
                 AdStructureRow(
                     type = s.type.toString(16).padStart(2, '0').uppercase(),
-                    typeName = BleParser.getAdTypeDescription(s.type),
+                    typeName = sig.adType(s.type.toInt()) ?: BleParser.getAdTypeDescription(s.type),
                     length = s.length,
                     data = s.data.joinToString("") { "%02x".format(it) },
+                    fields = fields(s.type.toInt(), s.data, sig),
                 )
             }
 
-        /** Android does not report the PDU type; this is what the flags imply. */
-        fun pduType(legacy: Boolean, connectable: Boolean) = when {
-            !legacy -> "ADV_EXT_IND"
-            connectable -> "ADV_IND"
-            else -> "ADV_NONCONN_IND"
+        private fun hex(bytes: ByteArray): String = bytes.joinToString(" ") { "%02x".format(it) }
+
+        private fun u16(b: ByteArray, at: Int) = (b[at].toInt() and 0xFF) or ((b[at + 1].toInt() and 0xFF) shl 8)
+
+        private fun uuid128(b: ByteArray, at: Int): String {
+            val h = (15 downTo 0).joinToString("") { "%02x".format(b[at + it]) }
+            return "${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}"
         }
 
-        fun phyLabel(legacy: Boolean, primary: Int?, secondary: Int?): String {
-            fun name(phy: Int?) = when (phy) {
-                1 -> "1M"
-                2 -> "2M"
-                3 -> "Coded"
-                else -> null
+        /** "Heart Rate (180D)", or the bare "180D" when the SIG list has no name for it. */
+        private fun named16(sig: SigNumbers, uuid: Int): String {
+            val code = "%04X".format(uuid)
+            return sig.uuid16(uuid)?.let { "$it ($code)" } ?: code
+        }
+
+        /** The Flags bits (Core Specification Supplement, Part A, 1.3), one per line. */
+        private val FLAG_BITS = listOf(
+            "LE Limited Discoverable",
+            "LE General Discoverable",
+            "BR/EDR Not Supported",
+            "LE and BR/EDR (Controller)",
+            "LE and BR/EDR (Host)",
+        )
+
+        /** The data after an identifier (a company, a service), as its own row when there is any. */
+        private fun rest(b: ByteArray, from: Int): List<AdField> =
+            if (b.size > from) listOf(AdField("Data", hex(b.copyOfRange(from, b.size)), bytes = true)) else emptyList()
+
+        /**
+         * What a structure carries, as rows a person reads: the flags, a name as text, services and the
+         * company by their SIG names, a TX power, an appearance. Several values go one per line. Anything
+         * else, or anything malformed, stays bytes under "Type 0xNN".
+         */
+        fun fields(type: Int, b: ByteArray, sig: SigNumbers = SigNumbers.current): List<AdField> = when {
+            type == 0x01 && b.size == 1 -> {
+                val v = b[0].toInt() and 0xFF
+                val bits = FLAG_BITS.filterIndexed { i, _ -> v and (1 shl i) != 0 }
+                listOf(AdField("Flags", bits.joinToString("\n").ifEmpty { "None" }))
             }
-            return if (legacy) "1M" else name(secondary) ?: name(primary) ?: "—"
+            type == 0x09 && b.isNotEmpty() -> listOf(AdField("Name", b.decodeToString()))
+            type == 0x08 && b.isNotEmpty() -> listOf(AdField("Short name", b.decodeToString()))
+            (type == 0x02 || type == 0x03) && b.size % 2 == 0 && b.isNotEmpty() ->
+                listOf(AdField("Services", (b.indices step 2).joinToString("\n") { named16(sig, u16(b, it)) }))
+            (type == 0x06 || type == 0x07) && b.size % 16 == 0 && b.isNotEmpty() ->
+                listOf(AdField("Services", (b.indices step 16).joinToString("\n") { uuid128(b, it) }))
+            type == 0x16 && b.size >= 2 -> listOf(AdField("Service", named16(sig, u16(b, 0)))) + rest(b, 2)
+            type == 0x21 && b.size >= 16 -> listOf(AdField("Service", uuid128(b, 0))) + rest(b, 16)
+            type == 0x0A && b.size == 1 -> listOf(AdField("TX power", "${b[0].toInt()} dBm"))
+            type == 0x19 && b.size == 2 -> {
+                val v = u16(b, 0)
+                listOf(AdField("Appearance", sig.appearance(v)?.let { "$it (0x%04X)".format(v) } ?: "0x%04X".format(v)))
+            }
+            type == 0xFF && b.size >= 2 -> {
+                val id = u16(b, 0)
+                val code = "0x%04X".format(id)
+                listOf(AdField("Company", sig.company(id)?.let { "$it ($code)" } ?: code)) + rest(b, 2)
+            }
+            else -> listOf(AdField("Type 0x%02X".format(type), hex(b), bytes = true))
         }
     }
 }

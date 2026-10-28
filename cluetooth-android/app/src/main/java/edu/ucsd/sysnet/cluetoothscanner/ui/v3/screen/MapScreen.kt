@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.BottomSheetScaffold
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -34,15 +35,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetValue
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.material3.rememberStandardBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -50,7 +48,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
@@ -61,7 +58,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.BackButton
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.LocalRecordButtonLift
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.PageTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiText
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.TopBarIconButton
@@ -136,13 +132,6 @@ fun MapContent(
     var layoutPx by remember { mutableFloatStateOf(0f) }
     val visibleSheetPx = { runCatching { (layoutPx - sheetState.requireOffset()).coerceAtLeast(0f) }.getOrDefault(0f) }
 
-    // The shell's record button rides above this sheet and steps aside while it is expanded.
-    val lift = LocalRecordButtonLift.current
-    LaunchedEffect(sheetState, lift) { snapshotFlow { visibleSheetPx() }.collect { lift.px = it } }
-    // Read in composition (not inside the effect), so a drag to Expanded recomposes and hides the button.
-    val sheetUp = sheetState.targetValue == SheetValue.Expanded
-    SideEffect { lift.hidden = sheetUp }
-    DisposableEffect(lift) { onDispose { lift.px = 0f; lift.hidden = false } }
     // A new selection (or going back to the list) starts with the sheet peeking.
     LaunchedEffect(state.selected?.device?.id) { if (!initiallyExpanded) runCatching { sheetState.partialExpand() } }
 
@@ -196,7 +185,7 @@ fun MapContent(
                     }
                     val message = notice?.let { stringResource(it) } ?: state.emptyNote
                     if (message != null) {
-                        Surface(shape = MaterialTheme.shapes.small, tonalElevation = 2.dp, modifier = Modifier.padding(top = 8.dp)) {
+                        Card(Modifier.padding(top = 8.dp)) {
                             Text(
                                 message,
                                 Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -261,8 +250,12 @@ private fun DeviceListSheet(state: MapUiState, actions: MapActions) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
+                // The address, then what is known of it on its own line (no dot-joined run of facts).
                 supportingContent = {
-                    Text(listOfNotNull(row.mac, row.detail.takeIf { it.isNotEmpty() }).joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column {
+                        row.mac?.let { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        if (row.detail.isNotEmpty()) Text(row.detail, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 },
                 trailingContent = row.rssi?.let { { RssiText(it) } },
                 modifier = Modifier.clickable { actions.onRowClick(row) },

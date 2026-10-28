@@ -70,18 +70,24 @@ sealed interface ScanLocation {
 
 // ---- Device detail -------------------------------------------------------------------------
 
-data class AdStructureRow(val type: String, val typeName: String, val length: Int, val data: String)
+/** One row of the advertising table: a short label and its value; [bytes] values are shown in monospace. */
+data class AdField(val label: String, val value: String, val bytes: Boolean = false)
 
+/**
+ * One AD structure as the detail shows it: the table rows it reads as ([fields]: a name as text, UUIDs,
+ * the company and its data, a TX power, else the bytes). [data] stays the exact bytes as hex.
+ */
+data class AdStructureRow(
+    val type: String,
+    val typeName: String,
+    val length: Int,
+    val data: String,
+    val fields: List<AdField> = listOf(AdField(typeName, data.chunked(2).joinToString(" ").lowercase(), bytes = true)),
+)
+
+/** One distinct advertisement a device sent: just its content. */
 data class AdVariantState(
     val id: String,
-    val pduType: String,
-    val phy: String,
-    val sid: Int?,
-    val count: Int,
-    val firstSeen: String,
-    val lastSeen: String,
-    val rssiMin: Int,
-    val rssiMax: Int,
     val structures: List<AdStructureRow>,
 )
 

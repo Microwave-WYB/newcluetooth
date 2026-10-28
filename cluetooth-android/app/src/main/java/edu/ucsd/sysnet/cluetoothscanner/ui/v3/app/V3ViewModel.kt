@@ -28,10 +28,12 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Texts
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSpot
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveScanList
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiSeries
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.SigNumbers
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LocationFix
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.scanLocationOf
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
@@ -261,10 +263,12 @@ class V3ViewModel(
     private fun LiveScan.toSample() = LiveSample(
         addr = addr, rssi = rssi, timeMs = scannedAtMs, raw = raw, localName = localName,
         connectable = isConnectable, legacy = v3.isLegacy, primaryPhy = v3.primaryPhy,
-        secondaryPhy = v3.secondaryPhy, advSid = v3.advSid, addrType = v3.addrType,
+        secondaryPhy = v3.secondaryPhy, advSid = v3.advSid, addrType = v3.addrType, lat = lat, lon = lon,
     )
 
     init {
+        // Names for company ids and UUIDs in the device sheet; read once, before any sheet can open.
+        viewModelScope.launch(Dispatchers.IO) { SigNumbers.load(app) }
         // The stores are fed by CluetoothApplication; this is only the on-screen list.
         viewModelScope.launch(Dispatchers.Default) {
             uiActive.collectLatest { active ->
@@ -432,7 +436,7 @@ class V3ViewModel(
     private companion object {
         const val HEAT_MAX_POINTS = 4_000
         const val DEMO_PREFIX = "demo:"
-        const val MATCH_CACHE_SIZE = 256
+        const val MATCH_CACHE_SIZE = 2_048
         const val MAX_GATT_RESULTS = 20
     }
 
@@ -521,8 +525,8 @@ class V3ViewModel(
             is Route.RecordingMap -> recordingMap(route.id)
             is Route.ProductMap ->
                 if (route.pageId.startsWith(DEMO_PREFIX)) demoMap(route.pageId.removePrefix(DEMO_PREFIX))
-                else sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), productTitle = route.pageId)
-            is Route.DeviceMap -> sightingMap(localData.sightingsOfDevice(route.addr, 2_000), deviceAddr = route.addr)
+                else sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), _tick.map { liveOfProduct(route.pageId) }, productTitle = route.pageId)
+            is Route.DeviceMap -> sightingMap(localData.sightingsOfDevice(route.addr, 2_000), _tick.map { liveDevice(route.addr) }, deviceAddr = route.addr)
             else -> flowOf(null)
         }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -614,41 +618,90 @@ class V3ViewModel(
         }
     }
 
-    /** The product map (one wiki page) and the device map (one address) share this. */
-    private fun sightingMap(sightings: Flow<List<Sighting>>, productTitle: String? = null, deviceAddr: String? = null): Flow<MapUiState?> =
-        combine(sightings, localData.catalog, _selected, _mapLocal, selectedDetail) { all, catalog, selected, local, det ->
+    /** A device heard right now, with the phone's position when it heard it the strongest. */
+    private data class LiveHit(val addr: String, val rssi: Int?, val spot: LiveSpot?, val lastSeenMs: Long)
+
+    private fun liveHit(addr: String): LiveHit? {
+        val last = tracker.lastSeenMs(addr) ?: return null
+        return LiveHit(addr, tracker.rssi(addr), tracker.spot(addr), last)
+    }
+
+    /** The devices tracked now whose advertisements (any of them) identify [pageId]. */
+    private fun liveOfProduct(pageId: String): List<LiveHit> {
+        val ads = synchronized(lock) { tracker.advertisements() }
+        val addrs = ads.filter { (addr, raws) -> raws.any { pageId in pagesFor(addr, it) } }.keys
+        return synchronized(lock) { addrs.mapNotNull(::liveHit) }
+    }
+
+    private fun liveDevice(addr: String): List<LiveHit> = synchronized(lock) { listOfNotNull(liveHit(addr)) }
+
+    /**
+     * The product map (one wiki page) and the device map (one address) share this. It joins what is heard
+     * now (from the live scan, placed where the phone heard it the strongest) with what recordings saved.
+     */
+    private fun sightingMap(
+        sightings: Flow<List<Sighting>>,
+        live: Flow<List<LiveHit>>,
+        productTitle: String? = null,
+        deviceAddr: String? = null,
+    ): Flow<MapUiState?> =
+        combine(combine(sightings, live) { a, b -> a to b }, localData.catalog, _selected, _mapLocal, selectedDetail) { (all, liveHits), catalog, selected, local, det ->
             val located = all.filter { it.location != null }
             fun point(s: Sighting) = SightingPoint(LatLon(s.location!!.lat, s.location.lon), s.bestRssi ?: -90)
-            val rows = all.groupBy { it.addr }.map { (addr, list) ->
-                val last = list.maxOf { it.minuteMs }
-                val title = if (productTitle != null) catalog?.page(productTitle)?.title ?: productTitle else titleFor(addr, list.first().pageIds)
+            fun livePoint(h: LiveHit) = h.spot?.let { SightingPoint(LatLon(it.lat, it.lon), it.rssi) }
+            val liveByAddr = liveHits.associateBy { it.addr }
+            val recordedByAddr = all.groupBy { it.addr }
+            val now = System.currentTimeMillis()
+            fun heard(h: LiveHit): String {
+                val minutes = ((now - h.lastSeenMs) / 60_000).toInt()
+                return if (minutes < 1) texts.string(R.string.map_row_heard_now)
+                else texts.string(R.string.map_row_heard_ago, texts.plural(R.plurals.minutes_heard, minutes, minutes))
+            }
+            val rows = (liveByAddr.keys + recordedByAddr.keys).map { addr ->
+                val list = recordedByAddr[addr].orEmpty()
+                val hit = liveByAddr[addr]
+                val last = maxOf(list.maxOfOrNull { it.minuteMs } ?: 0L, hit?.lastSeenMs ?: 0L)
+                // Each device by its own advertised name (Govee_H6056_4828), else the product's title.
+                val title = if (productTitle != null) {
+                    synchronized(lock) { tracker.name(addr) } ?: catalog?.page(productTitle)?.title ?: productTitle
+                } else {
+                    titleFor(addr, list.firstOrNull()?.pageIds.orEmpty())
+                }
+                val recorded = if (list.isEmpty()) null else texts.string(
+                    R.string.map_row_detail,
+                    list.map { it.recordingId }.distinct().size.let { texts.plural(R.plurals.recordings_count, it, it) }, md(last),
+                )
                 MapListRowState(
                     id = addr,
                     title = title,
                     unnamed = productTitle == null && title == unnamedText,
                     mac = addr,
-                    detail = texts.string(
-                        R.string.map_row_detail,
-                        list.map { it.recordingId }.distinct().size.let { texts.plural(R.plurals.recordings_count, it, it) }, md(last),
-                    ),
-                    rssi = list.mapNotNull { it.bestRssi }.maxOrNull(),
+                    // What is heard now wins; otherwise what recordings saved.
+                    detail = hit?.let(::heard) ?: recorded.orEmpty(),
+                    rssi = hit?.rssi ?: list.mapNotNull { it.bestRssi }.maxOrNull(),
                     lastSeenMs = last,
-                    at = list.firstOrNull { it.location != null }?.location?.let { LatLon(it.lat, it.lon) },
+                    at = hit?.spot?.let { LatLon(it.lat, it.lon) } ?: list.firstOrNull { it.location != null }?.location?.let { LatLon(it.lat, it.lon) },
                 )
             }.arranged(local)
-            val selectedPoints = if (selected != null) located.filter { it.addr == selected }.map(::point) else emptyList()
-            val all2 = located.map(::point)
+            val selectedPoints = if (selected != null) {
+                located.filter { it.addr == selected }.map(::point) + listOfNotNull(liveByAddr[selected]?.let(::livePoint))
+            } else {
+                emptyList()
+            }
+            val all2 = located.map(::point) + liveHits.mapNotNull(::livePoint)
             val estimate = if (selected != null) estimatePosition(selectedPoints) else null
             val title = productTitle?.let { catalog?.page(it)?.title ?: it } ?: deviceAddr.orEmpty()
-            val macs = rows.size
+            val macs = (liveByAddr.keys + recordedByAddr.keys).size
             val recordingsCount = all.map { it.recordingId }.distinct().size
             MapUiState(
                 mode = MapMode.Product,
                 title = title,
-                subtitle = if (productTitle != null) {
-                    texts.string(R.string.map_product_subtitle, texts.plural(R.plurals.macs, macs, macs), texts.plural(R.plurals.recordings_count, recordingsCount, recordingsCount))
-                } else {
-                    texts.string(R.string.map_device_subtitle, texts.plural(R.plurals.recordings_count, recordingsCount, recordingsCount), texts.plural(R.plurals.minute_rows, all.size, all.size))
+                // One phrase, no dot-joined facts: how many are heard now, else what recordings hold.
+                subtitle = when {
+                    liveHits.isNotEmpty() && productTitle != null -> texts.string(R.string.map_heard_now_count, liveHits.size)
+                    liveHits.isNotEmpty() -> texts.string(R.string.map_row_heard_now)
+                    recordingsCount > 0 -> texts.string(R.string.map_from_recordings, texts.plural(R.plurals.recordings_count, recordingsCount, recordingsCount))
+                    else -> ""
                 },
                 route = emptyList(),
                 rows = rows,
@@ -662,7 +715,7 @@ class V3ViewModel(
                 areaOnly = local.areaOnly,
                 heatmap = local.heat,
                 heat = if (local.heat) all2.map { it.at } else emptyList(),
-                emptyNote = if (located.isEmpty()) texts.string(R.string.sightings_no_location) else null,
+                emptyNote = if (all2.isEmpty()) texts.string(R.string.sightings_no_location) else null,
             )
         }
 
@@ -679,10 +732,18 @@ class V3ViewModel(
         _stack.value = listOf(Route.Tab(AppTab.Scan), Route.ProductMap(DEMO_PREFIX + variant))
     }
 
-    /** Opens the product map for a Nearby tile; the "unidentified" tile has no map. */
+    /**
+     * Opens the product map for a Nearby tile; the "unidentified" tile has no map. When exactly one device
+     * of it is heard now, that device is opened right away: what it is, where, and what it advertises.
+     */
     fun openProduct(pageId: String) {
         if (pageId.startsWith(NearbyMapper.UNKNOWN_PREFIX)) return
-        open(Route.ProductMap(pageId))
+        val route = Route.ProductMap(pageId)
+        open(route)
+        viewModelScope.launch(Dispatchers.Default) {
+            val only = liveOfProduct(pageId).singleOrNull() ?: return@launch
+            if (_stack.value.lastOrNull() == route && _selected.value == null) select(only.addr)
+        }
     }
 
     override fun onCleared() {

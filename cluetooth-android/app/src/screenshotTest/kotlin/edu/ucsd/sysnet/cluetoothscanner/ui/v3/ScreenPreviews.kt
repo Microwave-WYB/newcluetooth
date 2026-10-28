@@ -172,35 +172,35 @@ fun ScanControlSheet() = Frame { ScanPreview(FakeData.scan.copy(recorder = FakeD
 
 @PreviewTest @PhonePreview @Composable
 fun NearbyHome() = Frame {
-    AppShell(FakeData.nearby.recorder, cb, recordPlacement(FakeData.nearby.recorder.phase, false), tab = AppTab.Nearby, topBar = { NearbyTopBar(FakeData.nearby, null) }) {
+    AppShell(FakeData.nearby.recorder, cb, recordPlacement(FakeData.nearby.recorder.phase, false), tab = AppTab.Nearby, startAllowed = false, topBar = { NearbyTopBar(FakeData.nearby, null) }) {
         NearbyContent(FakeData.nearby, it)
     }
 }
 
 @PreviewTest @PhonePreview @Composable
 fun NearbyRecording() = Frame {
-    AppShell(FakeData.recording, cb, recordPlacement(FakeData.recording.phase, false), tab = AppTab.Nearby, topBar = { NearbyTopBar(FakeData.nearbyRecording, null) }) {
+    AppShell(FakeData.recording, cb, recordPlacement(FakeData.recording.phase, false), tab = AppTab.Nearby, startAllowed = false, topBar = { NearbyTopBar(FakeData.nearbyRecording, null) }) {
         NearbyContent(FakeData.nearbyRecording, it)
     }
 }
 
 @PreviewTest @PhonePreview @Composable
 fun NearbyCategoryList() = Frame {
-    AppShell(FakeData.idle, cb, recordPlacement(FakeData.idle.phase, false), tab = AppTab.Nearby, topBar = { CategoryTopBar(FakeData.nearbyAudio) {} }) {
+    AppShell(FakeData.idle, cb, recordPlacement(FakeData.idle.phase, false), tab = AppTab.Nearby, startAllowed = false, topBar = { CategoryTopBar(FakeData.nearbyAudio) {} }) {
         CategoryContent(FakeData.nearbyAudio, it)
     }
 }
 
 @PreviewTest @PhonePreview @Composable
 fun HistoryList() = Frame {
-    AppShell(FakeData.recordings.recorder, cb, recordPlacement(FakeData.recordings.recorder.phase, false), tab = AppTab.History, topBar = { HistoryTopBar(FakeData.recordings, null) }) {
+    AppShell(FakeData.recordings.recorder, cb, recordPlacement(FakeData.recordings.recorder.phase, false), tab = AppTab.History, startAllowed = false, topBar = { HistoryTopBar(FakeData.recordings, null) }) {
         HistoryContent(FakeData.recordings, it)
     }
 }
 
 @PreviewTest @PhonePreview @Composable
 fun HistoryIdle() = Frame {
-    AppShell(FakeData.idle, cb, recordPlacement(FakeData.idle.phase, false), tab = AppTab.History, topBar = { HistoryTopBar(FakeData.recordingsIdle, null) }) {
+    AppShell(FakeData.idle, cb, recordPlacement(FakeData.idle.phase, false), tab = AppTab.History, startAllowed = false, topBar = { HistoryTopBar(FakeData.recordingsIdle, null) }) {
         HistoryContent(FakeData.recordingsIdle, it)
     }
 }
@@ -209,7 +209,7 @@ fun HistoryIdle() = Frame {
 
 @Composable
 private fun MapPreview(state: MapUiState, recorder: RecorderUiState = FakeData.idle, expanded: Boolean = false, tab: DetailTab = DetailTab.Advertising) =
-    AppShell(recorder, cb, recordPlacement(recorder.phase, roomForExpanded = false), topBar = { MapTopBar(state, MapActions()) }) { padding ->
+    AppShell(recorder, cb, recordPlacement(recorder.phase, roomForExpanded = false), startAllowed = false, topBar = { MapTopBar(state, MapActions()) }) { padding ->
         MapContent(state, MapActions(), padding, initiallyExpanded = expanded, initialTab = tab) { covered -> PlaceholderMapFor(state, covered) }
     }
 
