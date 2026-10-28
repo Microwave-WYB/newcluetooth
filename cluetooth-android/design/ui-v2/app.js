@@ -147,14 +147,12 @@
     },
 
     /** DiscoverHead: the view switch (it shows the view it switches TO), then Nearby / All while live, else the view's name.
-     *  In the product view it is the back button. */
-    discoverHead: ({ view, live, mode, product }) => product
-      ? `${UI.iconButton({ name: "back", label: "Back", action: "sheet-back" })}<span></span><span></span>`
-      : `${UI.iconButton({ name: view === "list" ? "grid" : "list", label: view === "list" ? "Show categories" : "Show the device list", action: "disc-view" })}
+     */
+    discoverHead: ({ view, live, mode }) => `${UI.iconButton({ name: view === "list" ? "grid" : "list", label: view === "list" ? "Show categories" : "Show the device list", action: "disc-view" })}
          ${live ? UI.segmented([{ id: "nearby", label: "Nearby" }, { id: "all", label: "All" }], mode, "disc-mode") : `<span class="disc-title">${view === "list" ? "Devices" : "Products"}</span>`}
          <span></span>`,
 
-    /** ProductView: inside the Discover sheet; the background map shows the product's points. */
+    /** ProductView: a product sheet's content; the background map shows the product's points. */
     productView: (p, rows) => `
       <div class="hero">${icon(catIcon(p.category))}</div>
       <div class="prod-body">
@@ -165,6 +163,9 @@
       </div>
       ${UI.sect("Devices")}
       <div class="rows">${rows}</div>`,
+
+    /** SheetTop: a pushed sheet's header with the same close button (X) at the top right. */
+    sheetTop: (inner) => `${inner}${UI.iconButton({ name: "close", label: "Close", action: "sheet-close" })}`,
 
     /** Section label. */
     sect: (t) => `<div class="sect">${esc(t)}</div>`,
@@ -195,10 +196,9 @@
         <text x="${x0}" y="${ht - 2}">−1 min</text><text x="${w}" y="${ht - 2}" text-anchor="end">now</text></svg>`;
     },
 
-    /** DeviceHead: name, product wiki link, MAC with RSSI, and the neutral close button at the top right. */
+    /** DeviceHead: name, product wiki link, MAC with RSSI. */
     deviceHead: (d) => `
         <div class="dev-head">
-          ${UI.iconButton({ name: "close", label: "Close", action: "device-close" })}
           <div class="dev-name"><b class="${d.name ? "" : "none"}">${d.name ? esc(d.name) : "No name"}</b></div>
           ${d.productName ? `<a class="dev-product" href="${esc(d.wikiUrl)}" target="_blank" rel="noopener">${esc(d.productName)}${icon("external")}</a>` : ""}
           <div class="dev-sub">${d.addr}<span class="dev-rssi band-${band(d.rssi)}">${minus(d.rssi)} dBm</span></div>
@@ -253,11 +253,6 @@
         ${phase === "done" ? UI.gattServices(result.services) : ""}</div>`;
     },
 
-    /** MapMarker: one device point (its category icon) or a cluster (dominant icon and count). */
-    markerPoint: (p, { sel, faded } = {}) =>
-      `<div class="mk ${p.category === "unidentified" ? "muted" : ""} ${sel ? "sel" : ""} ${faded ? "faded" : ""}" data-action="map-point" data-value="${p.addr}">${icon(catIcon(p.category))}</div>`,
-    markerCluster: (cat, count, id = "", { faded } = {}) =>
-      `<div class="mk cluster ${cat === "unidentified" ? "muted" : ""} ${faded ? "faded" : ""}" data-action="map-cluster" data-value="${id}">${icon(catIcon(cat))}<span>${count}</span></div>`,
   };
 
   // =============================================================================================
@@ -291,6 +286,7 @@
         <div class="disc-chips" id="disc-chips"></div>
         <div class="sheet-body" id="disc-body"></div>
       </section>
+      <div class="area-toggle gone" id="area-toggle"></div>
       <div class="recorder-catch" data-action="recorder-close"></div>
       ${UI.recorder({ state: "idle", paused: false, time: "12:34", meta: "", mapId: "rec-map" })}
       <div class="main-dim" data-action="side-close"></div>
@@ -299,15 +295,10 @@
       ${UI.menuButton(false)}
       ${UI.topSearch(false)}
       <div id="pages"></div>
-      <div class="scrim dev-scrim" data-action="device-close"></div>
-      <section class="sheet dev-sheet" aria-label="Device" data-snaps="dismissed expanded">
-        <div class="handle"></div>
-        <div class="dev-top" id="dev-top"></div>
-        <div class="sheet-body" id="dev-body"></div>
-      </section>`;
+      <div class="scrim" data-action="sheet-close"></div>`;
   }
 
-  /** The Discover sheet: categories or the device list (Nearby / All only while live), or one product. */
+  /** The Discover sheet (the stack's root): categories or the device list (Nearby / All only while live). */
   function renderDiscover() {
     const sheet = $(".disc-sheet", phone);
     const sess = S.session && D.getRecording(S.session);
@@ -316,19 +307,16 @@
     const mode = S.live ? S.discoverMode : "all";
     const q = S.query.trim().toLowerCase();
     const head = $("#disc-head"), chips = $("#disc-chips"), body = $("#disc-body");
-    const top = S.nav[S.nav.length - 1];
-    head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, product: !!top });
-    if (top) {
-      const p = D.getProduct(top.id);
-      chips.innerHTML = "";
-      body.innerHTML = UI.productView(p, productDevices(p).filter((d) => nameMatch(d.name, q)).map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`);
-    } else if (S.discView === "list") {
+    head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode });
+    if (S.discView === "list") {
       chips.innerHTML = UI.chipRow(CATS, S.devCat, "dev-cat", "inline");
       body.innerHTML = `<div class="rows">${sessionRows(mode)}</div>`;
     } else {
       chips.innerHTML = "";
+      const area = areaCounts();
       const groups = D.getProducts(mode, S.session)
-        .map((g) => ({ ...g, products: g.products.filter((p) => nameMatch(p.name, q)) }))
+        .map((g) => ({ ...g, products: g.products.filter((p) => nameMatch(p.name, q) && (!area || area.count[p.id]))
+          .map((p) => (area ? { ...p, count: area.count[p.id], inRange: Math.min(p.inRange, area.live[p.id] || 0) } : p)) }))
         .filter((g) => g.products.length);
       body.innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
     }
@@ -338,11 +326,11 @@
   }
   const nameMatch = (name, q) => !q || (name || "").toLowerCase().includes(q);
 
-  /** The record FAB sits above the Discover sheet's peek and hides while the sheet is raised (Half or Full). */
+  /** The record FAB sits above the top sheet's peek and hides while the top sheet is raised (Half or Full). */
   function liftRecorder() {
-    const sheet = $(".disc-sheet", phone), open = sheet.classList.contains("open");
-    phone.style.setProperty("--rec-lift", `${open ? parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 0 : 0}px`);
-    $(".recorder", phone).classList.toggle("sheet-up", open && sheetState(sheet) !== "collapsed");
+    const root = $(".disc-sheet", phone), open = root.classList.contains("open"), top = Stack.top().el;
+    phone.style.setProperty("--rec-lift", `${open ? parseFloat(getComputedStyle(top).getPropertyValue("--peek")) || 0 : 0}px`);
+    $(".recorder", phone).classList.toggle("sheet-up", open && sheetState(top) !== "collapsed");
   }
 
   // ---- Left sidebar: the current session (pinned while recording), the history, Settings ----
@@ -362,10 +350,42 @@
   function sessionRows(mode) {
     const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
     const q = S.query.trim().toLowerCase();
-    return S.order.map((a) => byAddr[a])
+    return (S.areaOnly ? S.areaOrder : S.order).map((a) => byAddr[a])
       .filter((d) => d && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat) && nameMatch(d.name, q))
       .map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
   }
+  // ---- "Only this area": the sheet lists only devices whose point is inside the map's viewport ----
+  const inArea = (addr) => !S.areaOnly || S.inView.has(addr);
+  /** Per product, how many of the session's devices are in view (null when the toggle is off). */
+  function areaCounts() {
+    if (!S.areaOnly) return null;
+    const count = {}, live = {};
+    for (const d of D.getSessionDevices(S.session)) {
+      if (!S.inView.has(d.addr)) continue;
+      const k = d.product || "unidentified";
+      count[k] = (count[k] || 0) + 1;
+      if (!d.stale) live[k] = (live[k] || 0) + 1;
+    }
+    return { count, live };
+  }
+  /** After the map moves: rows still in view keep their order, rows that left hide, rows that came in are appended. */
+  function updateArea() {
+    if (!S.areaOnly || !S.session) return;
+    const vis = S.map.visibleAddrs();
+    S.areaOrder = [...S.areaOrder.filter((a) => vis.has(a)), ...S.order.filter((a) => vis.has(a) && !S.areaOrder.includes(a))];
+    S.inView = vis;
+    refreshSheets();
+  }
+  /** The toggle floats under the top row; it hides with no session, under an open search field or recorder panel,
+   *  and when a sheet at Full hides the map. */
+  function updateAreaToggle() {
+    const el = $("#area-toggle");
+    if (!el) return;
+    const hidden = !S.session || $(".top-search.open", phone) || S.recorder === "panel" || sheetState(Stack.top().el) === "full";
+    el.classList.toggle("gone", !!hidden);
+    el.innerHTML = UI.chip({ label: "Only this area", on: S.areaOnly, action: "area" });
+  }
+
   /** A product's devices: those of the shown session if it has any, else every device of the product. Sorted once. */
   function productDevices(p) {
     const inSession = S.session ? D.getSessionDevices(S.session).filter((d) => (d.product || "unidentified") === p.id) : [];
@@ -393,9 +413,6 @@
 
   /** One point per device: where it scanned strongest. */
   const bestPoint = (addr) => { const s = D.getDeviceSightings(addr); return s.length ? s.reduce((a, b) => (b.rssi > a.rssi ? b : a)) : null; };
-  function productPoints(p) {
-    return p.devices.map((d) => { const b = bestPoint(d.addr); return b && { addr: d.addr, at: b.at, rssi: b.rssi }; }).filter(Boolean);
-  }
 
   // ---- Onboarding (#onboarding) ----
   const OB_STEPS = [
@@ -420,40 +437,38 @@
     </div>`;
   }
 
-  // ---- Maps (MapLibre) ----
+  // ---- Maps (MapLibre). Everything drawn over the base map is style layers from map-style.js: no DOM markers. ----
+  const MS = window.CluetoothMapStyle;
   function boundsOf(coords) {
     const b = new maplibregl.LngLatBounds(coords[0], coords[0]);
     coords.forEach((c) => b.extend(c));
     return b;
   }
-  function routeMarker(kind, at, map) {
-    const el = document.createElement("div");
-    el.className = `route-mark ${kind}`;
-    el.textContent = kind === "start" ? "Start" : "End";
-    // Start sits above its point and End below, so the two never cover each other on a loop
-    return new maplibregl.Marker({ element: el, anchor: kind === "start" ? "bottom" : "top", offset: [0, kind === "start" ? -10 : 10] }).setLngLat(at).addTo(map);
-  }
-  const lineGeo = (route) => ({ type: "FeatureCollection", features: route.length > 1 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: route } }] : [] });
-  const routeLayer = () => ({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": tok("--map-route"), "line-width": 4, "line-opacity": +tok("--map-route-opacity") } });
+  const lineGeo = (routes) => ({ type: "FeatureCollection", features: routes.filter((r) => r.length > 1).map((r) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: r } })) });
   const fc = (points) => ({ type: "FeatureCollection", features: points.map((p) => ({ type: "Feature", properties: { ...p, at: undefined }, geometry: { type: "Point", coordinates: p.at } })) });
+  /** The style values, read from tokens.css. */
+  const styleColors = () => ({
+    route: tok("--map-route"), routeOpacity: +tok("--map-route-opacity"),
+    density: tok("--map-density"), densityOpacity: +tok("--map-density-opacity"), densityRadius: +tok("--map-density-radius"),
+    point: tok("--blue"), stroke: tok("--on-blue"), clusterText: tok("--on-blue"), selected: tok("--t1"), me: tok("--blue"),
+    rssiStrong: tok("--rssi-strong"), rssiFair: tok("--rssi-fair"), rssiWeak: tok("--rssi-weak"),
+    start: tok("--map-start"), end: tok("--map-end"), endText: tok("--map-end"), halo: tok("--fill1"), font: "Noto Sans Bold",
+  });
+  function addStyle(map, only) {
+    const src = MS.sources();
+    for (const id in src) map.addSource(id, src[id]);
+    MS.layers(styleColors()).filter((l) => !only || only.includes(l.id)).forEach((l) => map.addLayer(l));
+  }
 
-  /** A small non-interactive preview: the route (recorder panel) or the points (product card, device sheet). */
-  function miniMap(container, route, points = []) {
-    const coords = route.length ? route : points.length ? points.map((p) => p.at) : [ME.at];
+  /** A small non-interactive preview of a route (the recorder panel). */
+  function miniMap(container, route) {
+    const coords = route.length ? route : [ME.at];
     const map = new maplibregl.Map({ container, style: MAP_STYLE(), interactive: false, attributionControl: false,
       bounds: boundsOf(coords), fitBoundsOptions: { padding: 28, maxZoom: 16 } });
     map.on("load", () => {
-      if (route.length > 1) {
-        map.addSource("route", { type: "geojson", data: lineGeo(route) });
-        map.addLayer(routeLayer());
-        routeMarker("start", route[0], map);
-        routeMarker("end", route[route.length - 1], map);
-      }
-      if (points.length) {
-        map.addSource("pts", { type: "geojson", data: fc(points) });
-        map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": 4, "circle-color": tok("--blue"), "circle-stroke-width": 1.5, "circle-stroke-color": tok("--fill1") } });
-      }
+      addStyle(map, ["route", "end-dots", "end-labels"]);
+      map.getSource("route").setData(lineGeo([route]));
+      map.getSource("ends").setData(MS.endsOf(route));
     });
     return map;
   }
@@ -462,101 +477,67 @@
   function createMainMap(container) {
     const map = new maplibregl.Map({ container, style: MAP_STYLE(), attributionControl: false, center: ME.at, zoom: 16 });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
-    const M = { sel: null, cache: {}, shown: {}, points: [], at: {}, routeMarks: [], me: null, ready: false, pending: [] };
+    container._map = map; // a handle for the screenshot tests
+    const M = { sel: null, points: [], at: {}, ready: false, pending: [] };
     const whenReady = (f) => (M.ready ? f() : M.pending.push(f));
-    // frame what the Discover sheet leaves visible above it
+    // frame what the sheets leave visible above them
     const pad = () => ({ top: 90, bottom: sheetCover() + 40, left: 40, right: 40 });
 
     map.on("load", () => {
-      map.addSource("route", { type: "geojson", data: lineGeo([]) });
-      map.addLayer(routeLayer());
-      map.addSource("density", { type: "geojson", data: fc([]) });
-      map.addLayer({ id: "density", type: "circle", source: "density",
-        paint: { "circle-radius": +tok("--map-density-radius"), "circle-color": tok("--map-density"), "circle-opacity": +tok("--map-density-opacity") } });
-      map.addSource("sightings", { type: "geojson", data: fc([]) });
-      map.addLayer({ id: "sightings", type: "circle", source: "sightings", paint: {
-        "circle-radius": 6, "circle-stroke-width": 2, "circle-stroke-color": tok("--fill1"),
-        "circle-color": ["step", ["get", "rssi"], tok("--rssi-weak"), -80, tok("--rssi-fair"), -65, tok("--rssi-strong")] } });
-      map.addSource("devices", { type: "geojson", data: fc([]), cluster: true, clusterRadius: 50, clusterMaxZoom: 18,
-        clusterProperties: Object.fromEntries(CATS.map((c) => [c.id, ["+", ["case", ["==", ["get", "category"], c.id], 1, 0]]])) });
-      // an invisible layer so the source is tiled and querySourceFeatures returns it
-      map.addLayer({ id: "devices", type: "circle", source: "devices", paint: { "circle-radius": 0, "circle-opacity": 0 } });
+      addStyle(map);
       M.ready = true;
       M.pending.splice(0).forEach((f) => f());
     });
-
-    function syncMarkers() {
-      const next = {};
-      for (const f of map.querySourceFeatures("devices")) {
-        const p = f.properties, id = p.cluster ? `c${p.cluster_id}` : p.addr;
-        if (next[id]) continue;
-        let mk = M.cache[id];
-        if (!mk) {
-          const box = document.createElement("div");
-          if (p.cluster) {
-            const dom = CATS.reduce((a, c) => ((p[c.id] || 0) > (p[a.id] || 0) ? c : a), CATS[0]);
-            box.innerHTML = UI.markerCluster(dom.id, p.point_count, p.cluster_id);
-            box.firstElementChild.dataset.lng = f.geometry.coordinates[0];
-            box.firstElementChild.dataset.lat = f.geometry.coordinates[1];
-          } else box.innerHTML = UI.markerPoint({ addr: p.addr, category: p.category });
-          mk = M.cache[id] = new maplibregl.Marker({ element: box.firstElementChild }).setLngLat(f.geometry.coordinates);
-        }
-        next[id] = mk;
-        if (!M.shown[id]) mk.addTo(map);
-      }
-      for (const id in M.shown) if (!next[id]) M.shown[id].remove();
-      M.shown = next;
-      paintSelection();
-    }
     function paintSelection() {
-      for (const id in M.shown) {
-        const e = M.shown[id].getElement();
-        e.classList.toggle("sel", !!M.sel && id === M.sel);
-        e.classList.toggle("faded", !!M.sel && id !== M.sel);
+      for (const [layer, kind, prop, value] of MS.selectionProps(M.sel, +tok("--dim"))) {
+        if (kind === "filter") map.setFilter(layer, value);
+        else map.setPaintProperty(layer, prop, value);
       }
     }
-    let queued = false;
-    map.on("render", () => {
-      if (queued || !M.ready || !map.isSourceLoaded("devices")) return;
-      queued = true;
-      requestAnimationFrame(() => { queued = false; syncMarkers(); });
+    // taps: a point opens its device, a cluster zooms in, empty map clears the selection
+    map.on("click", (e) => {
+      const r = 8, box = [[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]];
+      const f = map.queryRenderedFeatures(box, { layers: ["clusters", "points"] })[0];
+      if (!f) return Stack.entries.length > 1 ? Stack.pop() : M.clear(true);
+      if (f.properties.cluster) return M.zoomCluster(f.properties.cluster_id, f.geometry.coordinates);
+      openDevice(f.properties.addr, false);
     });
-    map.on("click", (e) => { if (!e.originalEvent.target.closest(".mk")) M.clear(); });
-    // the user panning or zooming the map (drag, pinch, wheel, double-tap) collapses the Discover sheet;
+    map.on("mousemove", (e) => {
+      const r = 8, hit = map.queryRenderedFeatures([[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]], { layers: ["clusters", "points"] }).length;
+      map.getCanvas().style.cursor = hit ? "pointer" : "";
+    });
+    M.visibleAddrs = () => { const b = map.getBounds(); return new Set(M.points.filter((p) => b.contains(p.at)).map((p) => p.addr)); };
+    map.on("moveend", () => updateArea());
+    // the user panning or zooming the map (drag, pinch, wheel, double-tap) collapses the sheet in front;
     // camera moves made by the app have no originalEvent
     map.on("movestart", (e) => {
-      const ds = $(".disc-sheet", phone);
-      if (e.originalEvent && ds.classList.contains("open") && sheetState(ds) !== "collapsed") setSheetState(ds, "collapsed");
+      if (!e.originalEvent) return;
+      const ds = Stack.top().el; // the sheet in front
+      if (ds.classList.contains("open") && sheetState(ds) !== "collapsed") setSheetState(ds, "collapsed");
     });
 
     function setPoints(points) {
       M.points = points;
       M.at = Object.fromEntries(points.map((p) => [p.addr, p.at]));
-      for (const id in M.shown) M.shown[id].remove();
-      M.shown = {}; M.cache = {};
-      map.getSource("devices").setData(fc(points));
-      map.getSource("density").setData(fc(points));
+      const pts = points.map((p) => ({ addr: p.addr, at: p.at }));
+      map.getSource("devices").setData(fc(pts));
+      map.getSource("density").setData(fc(pts));
     }
-    /** null: only the user's location. Otherwise the session's route and points, framed. */
+    /** null: only the user's location. Otherwise the session's route(s) and points, framed. */
     M.setSession = (sess, points) => whenReady(() => {
       M.clear(true);
-      M.routeMarks.forEach((m) => m.remove());
-      M.routeMarks = [];
-      if (M.me) { M.me.remove(); M.me = null; }
+      map.getSource("me").setData(fc(sess ? [] : [{ at: ME.at }]));
       if (!sess) {
         setPoints([]);
         map.getSource("route").setData(lineGeo([]));
-        const el = document.createElement("div");
-        el.className = "me-dot";
-        el.setAttribute("aria-label", "Your location");
-        M.me = new maplibregl.Marker({ element: el }).setLngLat(ME.at).addTo(map);
+        map.getSource("ends").setData(MS.endsOf([]));
         map.jumpTo({ center: ME.at, zoom: 16 });
         return;
       }
       setPoints(points);
-      map.getSource("route").setData(sess.routes ? { type: "FeatureCollection", features: sess.routes.flatMap((rt) => lineGeo(rt).features) } : lineGeo(sess.route));
+      map.getSource("route").setData(lineGeo(sess.routes || [sess.route]));
       map.setPaintProperty("route", "line-opacity", +tok(sess.routes ? "--map-routes-opacity" : "--map-route-opacity"));
-      if (sess.route.length > 1) M.routeMarks = [routeMarker("start", sess.route[0], map), routeMarker("end", sess.route[sess.route.length - 1], map)];
+      map.getSource("ends").setData(MS.endsOf(sess.routes ? [] : sess.route)); // All sessions: no single route
       const coords = [...(sess.routes || [sess.route]).flat(), ...points.map((p) => p.at)];
       if (coords.length) map.fitBounds(boundsOf(coords), { padding: pad(), maxZoom: 17, duration: 0 });
     });
@@ -570,13 +551,18 @@
       if (move && at) map.easeTo({ center: at, zoom: Math.max(map.getZoom(), 18.2), padding: { top: 0, bottom: below, left: 0, right: 0 }, duration: 600 });
       paintSelection();
     });
-    /** Removes the highlight; unless quiet, a tap on empty map also leaves the device view. */
+    /** Removes the device highlight. */
     M.clear = (quiet) => {
-      if (!M.sel || !M.ready) return;
-      M.sel = null;
-      map.getSource("sightings").setData(fc([]));
-      paintSelection();
-      if (!quiet) closeDevice();
+      if (!M.ready) return;
+      if (M.sel) {
+        M.sel = null;
+        map.getSource("sightings").setData(fc([]));
+        paintSelection();
+      }
+    };
+    M.camera = (cam) => {
+      if (!cam) return { center: map.getCenter().toArray(), zoom: map.getZoom() };
+      whenReady(() => map.easeTo({ ...cam, duration: 300 }));
     };
     M.zoomCluster = async (id, lngLat) => {
       const z = await map.getSource("devices").getClusterExpansionZoom(+id);
@@ -594,8 +580,8 @@
   const S = {
     session: null, live: false, order: [],
     recorder: "idle", paused: false, recMap: null,
-    discoverMode: "nearby", discView: "categories", nav: [], device: null, // nav: the sheet's stack above the base view (a product)
-    devCat: "all", query: "",
+    discoverMode: "nearby", discView: "categories",
+    devCat: "all", query: "", areaOnly: false, areaOrder: [], inView: new Set(),
     settings: { ...SETTINGS }, stack: [], map: null,
     ob: 0, obAuto: true, obAllowed: [false, false, false],
   };
@@ -637,12 +623,14 @@
   function showSession(id, live) {
     S.session = id;
     S.live = !!(id && live);
-    S.nav = [];
+    Stack.reset();
+    S.areaOnly = false; // per session view
     S.order = id ? D.getSessionDevices(id).sort((a, b) => b.rssi - a.rssi).map((d) => d.addr) : []; // sorted once
     const sess = id && D.getRecording(id);
     S.map.setSession(sess, id ? sessionPoints() : []);
     renderDiscover();
     updateChrome();
+    updateAreaToggle();
     const r = $(".recorder", phone);
     $(".rec-meta", r).textContent = S.recorder === "idle" ? "" : `${D.getCurrentRecording().devices} devices · ${locationText()}`;
   }
@@ -668,6 +656,7 @@
     r.setAttribute("aria-label", state === "idle" ? "Record" : "Recording");
     $(".recorder-catch", phone).classList.toggle("on", state === "panel");
     phone.classList.toggle("rec-top-open", state === "panel");
+    updateAreaToggle();
     if (state === "panel" && !S.recMap) {
       r.addEventListener("transitionend", function once(e) {
         if (e.propertyName !== "height") return;
@@ -696,16 +685,142 @@
     if (!S.session || S.session === id) showSession(id, false);
   }
 
-  // ---- Sheet snapping ----
-  // Each sheet lists its snap states in data-snaps: the device sheet "collapsed expanded", the Discover sheet
-  // "collapsed half full". The sheet is always its full height; a state is a translateY offset (px from the top).
-  const SNAP_STATES = ["dismissed", "collapsed", "half", "full", "expanded"];
+  // ---- Sheets ----
+  // One sheet component. Snap states come from data-snaps: the root (the Discover sheet) "collapsed half full",
+  // every pushed sheet the same plus "dismissed" (dragging down from Collapsed pops it). A sheet is always its full
+  // height; a state is a translateY offset (px from the top).
+  const SNAP_STATES = ["dismissed", "collapsed", "half", "full"];
   const sheetState = (sheet) => SNAP_STATES.find((st) => sheet.classList.contains(st)) || null;
   function setSheetState(sheet, state) {
-    if (state === "dismissed") return closeDevice();
+    if (state === "dismissed") return Stack.pop();
     SNAP_STATES.forEach((st) => sheet.classList.toggle(st, st === state));
-    if (sheet.classList.contains("disc-sheet")) liftRecorder();
+    if (sheet === Stack.top().el) { couple(); updateScrim(); }
+    liftRecorder();
+    updateAreaToggle();
   }
+  const offsetOf = (sheet, state) => (snapOffsets(sheet).find((o) => o.st === state) || { y: 0 }).y;
+  /** Every sheet below the top one sits at the top sheet's height (fully covered). liveY: during a drag. */
+  function couple(liveY) {
+    const top = Stack.top().el, y = liveY != null ? liveY : offsetOf(top, sheetState(top));
+    Stack.entries.forEach((e) => {
+      const below = e.el !== top;
+      e.el.classList.toggle("following", below);
+      e.el.classList.toggle("dragging", below && liveY != null);
+      if (below) e.el.style.setProperty("--follow-y", `${y}px`);
+      else e.el.style.removeProperty("--follow-y");
+    });
+  }
+  /** The scrim shows only while a pushed sheet is on top at Full; tapping it pops one level. */
+  function updateScrim() {
+    const top = Stack.top(), on = Stack.entries.length > 1 && sheetState(top.el) === "full";
+    const scrim = $(".scrim", phone);
+    scrim.style.zIndex = (+top.el.style.zIndex || 81) - 1;
+    scrim.classList.toggle("on", on);
+  }
+
+  /**
+   * SheetStack. entries[0] is the root (the Discover sheet, never closes). push(kind, props) opens a sheet on top
+   * (a product, or a device over whatever is showing; any depth); pop() closes the top one, and the sheet below gets
+   * back its height, scroll, view, filters and the map as it was. Compose mirrors this as a list of sheet entries.
+   */
+  const Stack = {
+    entries: [],
+    top() { return this.entries[this.entries.length - 1]; },
+    entryOf(el) { return this.entries.find((e) => e.el === el); },
+    init(root) { this.entries = [{ el: root, kind: "discover", props: {} }]; },
+    push(kind, props) {
+      const below = this.top();
+      below.saved = { state: sheetState(below.el), scroll: $(".sheet-body", below.el).scrollTop, camera: S.map.camera() };
+      const el = document.createElement("section");
+      el.className = `sheet stack-sheet ${kind}-sheet`;
+      el.dataset.snaps = "dismissed collapsed half full";
+      el.setAttribute("aria-label", kind === "device" ? "Device" : "Product");
+      el.style.zIndex = 81 + this.entries.length * 2;
+      el.innerHTML = `<div class="handle"></div><div class="sheet-top"></div><div class="sheet-body"></div>`;
+      phone.append(el);
+      const entry = { el, kind, props };
+      this.entries.push(entry);
+      renderSheet(entry);
+      el.getBoundingClientRect(); // starts below the screen and slides up
+      el.classList.add("open");
+      // opens at Half, or at the height of the sheet below when that is higher
+      setSheetState(el, below.saved.state === "full" ? "full" : "half");
+      applyMap(entry, true);
+    },
+    /** A device opened while a device is on top replaces it, on the same level and at the same height. */
+    replaceTop(kind, props) {
+      const top = this.top();
+      if (top.kind === "device") stopGatt();
+      top.kind = kind;
+      top.props = props;
+      renderSheet(top);
+      $(".sheet-body", top.el).scrollTop = 0;
+      applyMap(top, true);
+    },
+    pop() {
+      if (this.entries.length < 2) return;
+      const gone = this.entries.pop();
+      if (gone.kind === "device") stopGatt();
+      gone.el.classList.remove("open", "following", ...SNAP_STATES);
+      setTimeout(() => gone.el.remove(), 400);
+      const top = this.top();
+      setSheetState(top.el, top.saved.state);
+      $(".sheet-body", top.el).scrollTop = top.saved.scroll;
+      applyMap(top, false);
+      S.map.camera(top.saved.camera);
+    },
+    /** A new session view: back to the root alone. */
+    reset() {
+      while (this.entries.length > 1) { const e = this.entries.pop(); if (e.kind === "device") stopGatt(); e.el.remove(); }
+      if (this.entries.length) { couple(); updateScrim(); }
+    },
+  };
+  /** The map shows what the top sheet is about: the session, a product's points, or a device's sightings. */
+  function applyMap(entry, opening) {
+    if (entry.kind === "discover") { S.map.setPoints(sessionPoints()); return; }
+    if (entry.kind === "product") {
+      const pts = productPoints(D.getProduct(entry.props.id));
+      S.map.setPoints(pts);
+      if (opening) S.map.fit(pts.map((x) => x.at));
+      return;
+    }
+    S.map.select(entry.props.addr, opening && entry.props.move);
+  }
+  /** A pushed sheet's header and content. */
+  function renderSheet(entry) {
+    const el = entry.el, top = $(".sheet-top", el), body = $(".sheet-body", el);
+    if (entry.kind === "device") {
+      const d = D.getDevice(entry.props.addr);
+      top.innerHTML = UI.sheetTop(UI.deviceHead(d));
+      body.innerHTML = UI.deviceBody(d, { tab: entry.props.tab, gatt: null, chartW: phone.clientWidth - 32 });
+      $("#dev-tab", body).innerHTML = entry.props.tab === "adv" ? UI.advertising(d) : gattTabNow(d.addr);
+    } else {
+      const p = D.getProduct(entry.props.id), q = S.query.trim().toLowerCase();
+      top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">${esc((CATS.find((c) => c.id === p.category) || { label: "Unidentified" }).label)}</span>`);
+      const rows = productDevices(p).filter((d) => nameMatch(d.name, q) && inArea(d.addr)).map((d) => UI.deviceRow(d, { spark: S.live })).join("");
+      body.innerHTML = UI.productView(p, rows || `<div class="empty">No matching devices</div>`);
+    }
+    el.style.setProperty("--peek", `${$(".handle", el).offsetHeight + top.offsetHeight}px`);
+  }
+  /** After the search, the area or a filter changes: the root and every product sheet, scroll kept. */
+  function refreshSheets() {
+    Stack.entries.forEach((e) => {
+      const body = $(".sheet-body", e.el), sc = body.scrollTop;
+      if (e.kind === "discover") renderDiscover();
+      else if (e.kind === "product") renderSheet(e);
+      else return;
+      body.scrollTop = sc;
+    });
+  }
+  /** A product's points on the map: its devices in the shown session (or all of them), each at its strongest point. */
+  const productPoints = (p) => productDevices(p).map((d) => { const b = d.best ? { at: d.best, rssi: d.rssi } : bestPoint(d.addr); return b && { addr: d.addr, at: b.at, rssi: b.rssi }; }).filter(Boolean);
+  function openDevice(addr, move) {
+    const props = { addr, tab: "adv", move };
+    if (Stack.top().kind === "device") Stack.replaceTop("device", props);
+    else Stack.push("device", props);
+  }
+  const devEntry = (addr) => Stack.entries.find((e) => e.kind === "device" && e.props.addr === addr);
+
   function snapOffsets(sheet) {
     const h = sheet.offsetHeight, peek = parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 92;
     const hv = tok("--discover-sheet-half"); // e.g. "67cqh": a share of the phone's height
@@ -713,12 +828,11 @@
     const at = { dismissed: h + 8, collapsed: h - peek, half: Math.max(0, h - half), full: 0, expanded: 0 };
     return sheet.dataset.snaps.split(" ").map((st) => ({ st, y: at[st] })).sort((a, b) => b.y - a.y); // lowest first
   }
-  /** How much of the screen bottom the Discover sheet covers. */
+  /** How much of the screen bottom the sheets cover (the top sheet). */
   function sheetCover() {
-    const ds = $(".disc-sheet", phone);
-    if (!ds || !ds.classList.contains("open")) return 0;
-    const o = snapOffsets(ds).find((x) => x.st === sheetState(ds));
-    return ds.offsetHeight - (o ? o.y : 0);
+    if (!$(".disc-sheet", phone).classList.contains("open")) return 0;
+    const top = Stack.top().el;
+    return top.offsetHeight - offsetOf(top, sheetState(top));
   }
   /** On release: a flick moves exactly one state from where the drag started; otherwise the nearest state. */
   function snapTo(sheet, y, v, from) {
@@ -739,9 +853,9 @@
   phone.addEventListener("pointerdown", (e) => {
     const sheet = e.target.closest(".sheet.open:not(.static)");
     if (!sheet || e.button > 0) return;
-    const onHead = !!e.target.closest(".handle, .dev-top, .disc-head");
+    const onHead = !!e.target.closest(".handle, .sheet-top, .disc-head");
     // touches on the Discover sheet's content are handled by the touch listeners below (native scrolling)
-    const body = sheet.classList.contains("disc-sheet") && e.pointerType !== "touch" && e.target.closest(".sheet-body, .disc-chips");
+    const body = e.pointerType !== "touch" && e.target.closest(".sheet-body, .disc-chips");
     if (!onHead && !body) return;
     if (onHead && e.target.closest("a, button") && !e.target.closest(".handle")) return; // header controls are taps
     const scroller = $(".sheet-body", sheet);
@@ -761,7 +875,7 @@
           scroller.scrollTop -= used; dy -= used;
         }
       }
-      if (dy) { y = Math.max(top, Math.min(bottom, y + dy)); sheetMoved = true; sheet.style.transform = `translateY(${y}px)`; }
+      if (dy) { y = Math.max(top, Math.min(bottom, y + dy)); sheetMoved = true; sheet.style.transform = `translateY(${y}px)`; if (sheet === Stack.top().el) couple(y); }
       samples.push([performance.now(), ev.clientY]);
       if (samples.length > 5) samples.shift();
     };
@@ -773,8 +887,7 @@
       sheet.style.transform = "";
       if (!moved) {
         // a tap on the handle: collapsed rises one step, anything else goes back down
-        if (onHead && sheet.classList.contains("disc-sheet") && !e.target.closest("a, button"))
-          setSheetState(sheet, sheetState(sheet) === "collapsed" ? nextUp(sheet) : "collapsed");
+        if (onHead && !e.target.closest("a, button")) setSheetState(sheet, sheetState(sheet) === "collapsed" ? nextUp(sheet) : "collapsed");
         return;
       }
       suppressClick = true;
@@ -791,7 +904,7 @@
   // taken over only when the sheet is not at Full (dragging moves it), or at scrollTop 0 when the finger moves down
   // (that lowers it). The decision is made on the first move, while touchmove can still be cancelled.
   phone.addEventListener("touchstart", (e) => {
-    const sheet = e.target.closest(".disc-sheet.open, .dev-sheet.open");
+    const sheet = e.target.closest(".sheet.open:not(.static)");
     if (!sheet || e.touches.length > 1 || !e.target.closest(".sheet-body, .disc-chips")) return;
     const scroller = $(".sheet-body", sheet), offs = snapOffsets(sheet), from = sheetState(sheet);
     const top = offs[offs.length - 1].y, bottom = offs[0].y;
@@ -810,7 +923,7 @@
       let dy = cy - lastY;
       lastY = cy;
       if (dy < 0 && y <= top) { scroller.scrollTop -= dy; dy = 0; } // reached Full within this gesture: scroll
-      if (dy) { y = Math.max(top, Math.min(bottom, y + dy)); sheet.style.transform = `translateY(${y}px)`; }
+      if (dy) { y = Math.max(top, Math.min(bottom, y + dy)); sheet.style.transform = `translateY(${y}px)`; if (sheet === Stack.top().el) couple(y); }
       samples.push([performance.now(), cy]);
       if (samples.length > 5) samples.shift();
     };
@@ -834,8 +947,8 @@
   // A wheel or trackpad does the same on the Discover sheet: down raises it to Full first, up at the top lowers it.
   let wheelLock = 0;
   phone.addEventListener("wheel", (e) => {
-    const sheet = e.target.closest(".disc-sheet.open");
-    if (!sheet || !e.target.closest(".sheet-body, .disc-chips, .disc-head, .handle")) return;
+    const sheet = e.target.closest(".sheet.open:not(.static)");
+    if (!sheet || !e.target.closest(".sheet-body, .disc-chips, .disc-head, .sheet-top, .handle")) return;
     const scroller = $(".sheet-body", sheet), st = sheetState(sheet);
     if (e.deltaY > 0 && st !== "full") { e.preventDefault(); if (Date.now() > wheelLock) { setSheetState(sheet, "full"); wheelLock = Date.now() + 400; } }
     else if (e.deltaY < 0 && scroller.scrollTop <= 0 && st !== "collapsed") { e.preventDefault(); if (Date.now() > wheelLock) { setSheetState(sheet, nextDown(sheet)); wheelLock = Date.now() + 400; } }
@@ -849,47 +962,6 @@
     b.classList.toggle("open", open);
     b.setAttribute("aria-label", open ? "Close sidebar" : "Sessions and settings");
     b.setAttribute("aria-expanded", open);
-  }
-  // ---- Navigation inside the Discover sheet: the base view (categories or list), then a product ----
-  /** Pushes a level; the scroll position of the level below is kept for Back. */
-  function pushSheet(entry) {
-    const body = $("#disc-body");
-    entry.below = body.scrollTop;
-    S.nav.push(entry);
-    renderDiscover();
-    body.scrollTop = 0;
-  }
-  /** Back: pops one level and restores exactly what was below (content, scroll, filters). */
-  function popSheet() {
-    const e = S.nav.pop();
-    if (!e) return;
-    if (e.kind === "product") S.map.setPoints(sessionPoints());
-    renderDiscover();
-    $("#disc-body").scrollTop = e.below;
-  }
-  /** The product view: the background map shows only that product's points. */
-  function openProduct(id) {
-    const p = D.getProduct(id);
-    const pts = productDevices(p).map((d) => { const b = d.best ? { at: d.best, rssi: d.rssi } : bestPoint(d.addr); return b && { addr: d.addr, at: b.at, rssi: b.rssi, category: d.category }; }).filter(Boolean);
-    S.map.setPoints(pts);
-    S.map.fit(pts.map((x) => x.at));
-    pushSheet({ kind: "product", id });
-  }
-
-  // ---- The device sheet: a second sheet over the Discover sheet (Google Maps' place sheet) ----
-  // Open (up to below the top row) or dismissed, nothing in between. A solid scrim dims everything behind it;
-  // the Discover sheet underneath keeps its state, view, scroll and filters.
-  function openDevice(addr, move) {
-    const d = D.getDevice(addr), sheet = $(".dev-sheet", phone);
-    stopGatt();
-    S.device = { addr, tab: "adv" };
-    $("#dev-top").innerHTML = UI.deviceHead(d);
-    $("#dev-body").innerHTML = UI.deviceBody(d, { tab: "adv", gatt: D.getDeviceGatt(addr), chartW: phone.clientWidth - 32 });
-    $("#dev-body").scrollTop = 0;
-    S.map.select(addr, move);
-    setSheetState(sheet, "expanded");
-    sheet.classList.add("open");
-    $(".dev-scrim", phone).classList.add("on");
   }
   // The GATT discovery's steps are revealed on a short timer chain: the prototype's only timer, to show the sequence.
   function gattTabNow(addr) {
@@ -911,23 +983,13 @@
     const run = (S.gattRun = { addr, timers: [], view: null });
     const show = (f) => {
       run.view = { ...f, result, addr };
-      const tab = $("#dev-tab");
-      if (S.device && S.device.addr === addr && S.device.tab === "gatt" && tab) tab.innerHTML = UI.gattTab(run.view);
+      const e = devEntry(addr), tab = e && $("#dev-tab", e.el);
+      if (e && e.props.tab === "gatt" && tab) tab.innerHTML = UI.gattTab(run.view);
       if (f.phase !== "running") S.gattRun = f.phase === "failed" ? run : null; // a finished run is read from the data next time
     };
     frames.forEach((f, k) => run.timers.push(setTimeout(() => show(f), k === 0 ? 0 : 450 + k * 450)));
   }
   function stopGatt() { if (S.gattRun) S.gattRun.timers.forEach(clearTimeout); S.gattRun = null; }
-
-  function closeDevice() {
-    if (!S.device) return;
-    stopGatt();
-    S.device = null;
-    const sheet = $(".dev-sheet", phone);
-    sheet.classList.remove("open", "expanded");
-    $(".dev-scrim", phone).classList.remove("on");
-    S.map.clear(true);
-  }
 
   /** The top-right search: the button opens the field across the top row; an empty field closes again. */
   function setSearch(open) {
@@ -936,7 +998,8 @@
     $(".ts-toggle", el).setAttribute("aria-expanded", open);
     input.tabIndex = open ? 0 : -1;
     if (open) input.focus();
-    else if (S.query) { input.value = ""; S.query = ""; renderDiscover(); }
+    else if (S.query) { input.value = ""; S.query = ""; refreshSheets(); }
+    updateAreaToggle();
   }
 
   const ACTIONS = {
@@ -953,21 +1016,20 @@
       const k = el.dataset.value;
       S.settings[k] = !S.settings[k];
       el.setAttribute("aria-checked", S.settings[k]);
-      if (k === "hideUnnamedApple") renderDiscover();
+      if (k === "hideUnnamedApple") refreshSheets();
     },
     upload: () => {},
     wiki: (el) => open(`https://wirelesswiki.org/p/${el.dataset.value}`, "_blank", "noopener"),
     "open-session-map": () => { setRecorder("capsule"); popAll(); S.map.fit(D.getCurrentRecording().route); },
-    product: (el) => openProduct(el.dataset.value),
-    "sheet-back": () => popSheet(),
-    "device-close": () => closeDevice(),
+    product: (el) => Stack.push("product", { id: el.dataset.value }),
+    "sheet-close": () => Stack.pop(),
     device: (el) => openDevice(el.dataset.value, true),
     "dev-tab": (el) => {
-      const t = S.device;
+      const sheet = el.closest(".sheet"), t = Stack.entryOf(sheet).props;
       t.tab = el.dataset.value;
       const d = D.getDevice(t.addr);
-      $("#dev-seg").innerHTML = UI.segmented([{ id: "adv", label: "Advertising" }, { id: "gatt", label: "GATT" }], t.tab, "dev-tab");
-      $("#dev-tab").innerHTML = t.tab === "adv" ? UI.advertising(d) : gattTabNow(t.addr);
+      $("#dev-seg", sheet).innerHTML = UI.segmented([{ id: "adv", label: "Advertising" }, { id: "gatt", label: "GATT" }], t.tab, "dev-tab");
+      $("#dev-tab", sheet).innerHTML = t.tab === "adv" ? UI.advertising(d) : gattTabNow(t.addr);
     },
     // GATT: the button turns into Cancel | I am authorized (the prompt every time); authorized starts the discovery
     "gatt-go": (el) => {
@@ -985,12 +1047,11 @@
       el.tabIndex = -1;
     },
     "gatt-retry": (el) => {
-      $("#dev-tab").innerHTML = UI.gattTab({ phase: "idle", addr: el.dataset.value });
-      const go = $(".gatt-go", phone);
+      const tab = el.closest("#dev-tab");
+      tab.innerHTML = UI.gattTab({ phase: "idle", addr: el.dataset.value });
+      const go = $(".gatt-go", tab);
       requestAnimationFrame(() => ACTIONS["gatt-go"](go)); // straight to the prompt
     },
-    "map-point": (el) => openDevice(el.dataset.value, false),
-    "map-cluster": (el) => S.map.zoomCluster(el.dataset.value, [+el.dataset.lng, +el.dataset.lat]),
     "dev-cat": (el) => {
       S.devCat = el.dataset.value;
       renderDiscover();
@@ -1006,6 +1067,12 @@
     },
     stop: () => stopRecording(),
     "disc-mode": (el) => { S.discoverMode = el.dataset.value; renderDiscover(); },
+    area: () => {
+      S.areaOnly = !S.areaOnly;
+      if (S.areaOnly) { S.inView = S.map.visibleAddrs(); S.areaOrder = S.order.filter((a) => S.inView.has(a)); }
+      refreshSheets();
+      updateAreaToggle();
+    },
     "disc-view": () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; },
     search: () => setSearch(!$(".top-search", phone).classList.contains("open") || !!S.query),
     "ob-allow": (el) => { S.obAllowed[+el.dataset.value] = true; renderOnboarding(); },
@@ -1038,15 +1105,14 @@
   // Escape stands in for system back: the topmost layer closes first.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || location.hash) return;
-    if (S.device) closeDevice();
-    else if (S.nav.length) popSheet();
+    if (Stack.entries.length > 1) Stack.pop();
     else if (phone.classList.contains("side-open")) setDrawer(false);
     else if ($(".top-search.open", phone)) setSearch(false);
     else if (S.recorder === "panel") setRecorder("capsule");
     else if (S.stack.length) pop();
   });
   phone.addEventListener("input", (e) => {
-    if (e.target.id === "top-q") { S.query = e.target.value; renderDiscover(); }
+    if (e.target.id === "top-q") { S.query = e.target.value; refreshSheets(); }
   });
 
   /** Launch. Recording when "Record when the app opens" is on; otherwise All sessions, or only the location for a
@@ -1054,6 +1120,7 @@
    *  first (first run, no recordings ever); 5 is the old name of 1. */
   function boot() {
     renderMain();
+    Stack.init($(".disc-sheet", phone));
     updateChrome();
     S.map = createMainMap($("#main-map"));
     const q = new URLSearchParams(location.search).get("state");
@@ -1096,7 +1163,7 @@
       </div>
 
       ${sect("Color", "tokens.css")}
-      <div class="g-row">${["--bg", "--fill1", "--fill2", "--panel", "--t1", "--t2", "--t3", "--div", "--blue", "--chip-on-bg", "--chip-on-fg", "--seg-on-bg", "--rssi-strong", "--rssi-fair", "--rssi-weak", "--rec", "--map-muted"].map(swatch).join("")}</div>
+      <div class="g-row">${["--bg", "--fill1", "--fill2", "--panel", "--t1", "--t2", "--t3", "--div", "--blue", "--chip-on-bg", "--chip-on-fg", "--seg-on-bg", "--rssi-strong", "--rssi-fair", "--rssi-weak", "--rec"].map(swatch).join("")}</div>
       ${sect("Shadow", "--shadow-float, --shadow-raised, --shadow-drawer, --shadow-sheet, --shadow-thumb")}
       <div class="g-row">${["--shadow-float", "--shadow-raised", "--shadow-drawer", "--shadow-sheet", "--shadow-thumb"].map(shadow).join("")}</div>
 
@@ -1119,6 +1186,8 @@
         ${cell("Resume", UI.iconButton({ name: "play", label: "Resume", action: "" }))}
         ${cell("Stop", UI.iconButton({ name: "stop", label: "Stop", action: "", kind: "rec" }))}
       </div>
+      ${sect("AreaToggle", ".area-toggle · the chip, floating: --chip-bg + --shadow-float; on: --chip-on-bg")}
+      <div class="g-row">${cell("off", `<div class="area-toggle static">${UI.chip({ label: "Only this area", on: false, action: "" })}</div>`)}${cell("on", `<div class="area-toggle static">${UI.chip({ label: "Only this area", on: true, action: "" })}</div>`)}</div>
       ${sect("Recorder (main map only: idle FAB bottom-right, recording = top-center island)", ".recorder · --fab, --fab-dot, --rec, --on-rec, --recorder-pad, --recorder-map-h, --shadow-float → --shadow-raised, --t-morph; BlinkingDot .rec-dot · --rec-dot, --t-blink")}
       <div class="g-row">
         ${cell("idle", UI.recorder({ state: "idle", paused: false, time: "12:34", meta: "", cls: "static" }), "width: 120px; height: 90px")}
@@ -1171,42 +1240,40 @@
           days: [{ label: "Today · Oct 28", sessions: [{ id: "a", title: "6:05 PM", sub: "23 min · 1.8 km · 214 devices" }, { id: "b", title: "12:10 PM", sub: "8 min · 41 devices" }] }] })}</nav>`, "width: 338px; height: 420px; padding: 0")}
         ${cell("not recording, history session selected", `<nav class="side static">${UI.sidebar({ current: null, selected: "a",
           days: [{ label: "Today · Oct 28", sessions: [{ id: "a", title: "6:05 PM", sub: "23 min · 1.8 km · 214 devices" }, { id: "b", title: "12:10 PM", sub: "8 min · 41 devices" }] }] })}</nav>`, "width: 338px; height: 420px; padding: 0")}</div>
-      ${sect("Device sheet (over the Discover sheet)", ".dev-sheet · open or dismissed; --sheet-expanded-h; close button .ib neutral; --scrim behind; RssiChart ticks −65/−80 only")}
+      ${sect("Device sheet (a pushed sheet)", ".stack-sheet · collapsed / half / full like the root; the same X; --scrim only at Full; neutral; --scrim behind; RssiChart ticks −65/−80 only")}
       <div class="g-row">
         ${[["identified, Advertising", sheetDev, "adv", D.getDeviceGatt(sheetDev.addr)], ["GATT read", sheetDev, "gatt", D.getDeviceGatt(sheetDev.addr)], ["unidentified, no name, GATT not read", noName, "gatt", null]]
-          .map(([label, d, tab, gatt]) => cell(label, `<section class="sheet static dev-sheet"><div class="handle"></div><div class="dev-top">${UI.deviceHead(d)}</div><div class="sheet-body">${UI.deviceBody(d, { tab, gatt, chartW: 380 })}</div></section>`, "width: 412px; padding: 0")).join("")}
+          .map(([label, d, tab, gatt]) => cell(label, `<section class="sheet static stack-sheet"><div class="handle"></div><div class="sheet-top">${UI.sheetTop(UI.deviceHead(d))}</div><div class="sheet-body">${UI.deviceBody(d, { tab, gatt, chartW: 380 })}</div></section>`, "width: 412px; padding: 0")).join("")}
       </div>
       ${sect("GATT tab flow", ".gatt-flow · note always shown; Discover GATT → Cancel | I am authorized; steps .gstep (spinner, done, failed --rssi-weak); Try again")}
       <div class="g-row">
         ${(() => { const r = { ok: true, steps: [{ label: "Connecting…", detail: "0.8 s" }, { label: "Discovering services…", detail: "5 services" }, { label: "Reading characteristics", detail: "18/18", progress: "12/18" }, { label: "Disconnected", detail: "" }], services: (D.getDeviceGatt(sheetDev.addr) || { services: [] }).services };
           const f = { ok: false, steps: [{ label: "Connecting…", detail: "0.8 s" }, { label: "Discovering services…", detail: "5 services" }, { label: "Reading characteristics", detail: "Disconnected unexpectedly", failed: true }], services: [] };
-          const box = (label, html) => cell(label, `<section class="sheet static dev-sheet"><div class="sheet-body">${html}</div></section>`, "width: 380px; padding: 12px 0");
+          const box = (label, html) => cell(label, `<section class="sheet static stack-sheet"><div class="sheet-body">${html}</div></section>`, "width: 380px; padding: 12px 0");
           return [box("1 · before discovery", UI.gattTab({ phase: "idle" })), box("2 · confirm", UI.gattTab({ phase: "confirm" })),
             box("3 · running (reading 12/18)", UI.gattTab({ phase: "running", result: r, shown: 2, running: 2, progress: "12/18" })),
             box("4 · failed", UI.gattTab({ phase: "failed", result: f, shown: 3 })), box("5 · done, with results", UI.gattTab({ phase: "done", result: r, shown: 4 }))].join(""); })()}
       </div>
-      ${sect("MapMarker", ".mk · --marker, --marker-icon, --fill1, --shadow-float; muted --map-muted; faded --dim; RouteMark .route-mark")}
-      <div class="g-row">
-        ${cell("point", UI.markerPoint({ addr: "", category: "lighting" }))}
-        ${cell("unidentified", UI.markerPoint({ addr: "", category: "unidentified" }))}
-        ${cell("selected", UI.markerPoint({ addr: "", category: "audio" }, { sel: true }))}
-        ${cell("faded", UI.markerPoint({ addr: "", category: "audio" }, { faded: true }))}
-        ${cell("cluster", UI.markerCluster("audio", 50))}
-        ${cell("cluster, unidentified", UI.markerCluster("unidentified", 26))}
-        ${cell("route", `<span class="route-mark start">Start</span> <span class="route-mark end">End</span>`)}
-      </div>
+      ${sect("Map style (map-style.js: MapLibre layers, no DOM markers)", "points and clusters --blue + --on-blue stroke; sightings by RSSI band; Start/End symbol labels with --fill1 halo; selection dims to --dim")}
+      <div class="g-row">${cell("a past session (clusters, points, route, Start/End)", `<div id="g-style-map" style="width: 380px; height: 300px; border-radius: var(--r-item); overflow: hidden"></div>`, "padding: 0")}
+        ${cell("layers as JSON (for MapLibre Android)", `<details><summary>map-style layers</summary><pre class="g-json">${esc(JSON.stringify(MS.layers(styleColors()), null, 2))}</pre></details>`, "width: 420px")}</div>
       ${sect("Discover sheet", ".disc-sheet · three snaps: collapsed (peek), --discover-sheet-half (67%), --discover-sheet-full; view switch shows the view it switches TO")}
       <div class="g-row">
         ${cell("live, categories", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: true, mode: "nearby" })}</div><div class="sheet-body">${UI.categorySection({ ...groups[1], products: groups[1].products.slice(0, 2) })}</div></section>`, "width: 412px; padding: 0")}
         ${cell("live, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: true, mode: "all" })}</div><div class="disc-chips">${UI.chipRow(CATS, "all", "", "inline")}</div><div class="sheet-body"><div class="rows">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}</div></div></section>`, "width: 412px; padding: 0")}
         ${cell("history, categories (no Nearby / All)", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: false })}</div></section>`, "width: 412px; padding: 0")}
         ${cell("history, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: false })}</div></section>`, "width: 412px; padding: 0")}
-        ${cell("product view", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ product: "govee" })}</div><div class="sheet-body">${UI.productView(D.getProduct("govee"), D.getProduct("govee").devices.slice(0, 2).map((d) => UI.deviceRow(d, { spark: false })).join(""))}</div></section>`, "width: 412px; padding: 0")}
+        ${cell("product sheet", `<section class="sheet static stack-sheet"><div class="handle"></div><div class="sheet-top">${UI.sheetTop(`<span class="sheet-kicker">Lighting</span>`)}</div><div class="sheet-body">${UI.productView(D.getProduct("govee"), D.getProduct("govee").devices.slice(0, 2).map((d) => UI.deviceRow(d, { spark: false })).join(""))}</div></section>`, "width: 412px; padding: 0")}
       </div>
       ${sect("TopFade", ".top-fade · --fade-h, --fade-solid; solid gradient to --bg, no blur")}
       <div class="g-row">${cell("over a list", `<div style="position: relative; height: 150px; overflow: hidden">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}<div class="top-fade" style="height: 90px"></div></div>`, "width: 412px; padding: 0")}</div>
     </div>`;
     miniMap($("#g-rec-map"), D.getRecording("now").route);
+    { // the map style on a past session
+      const r = D.getRecording("r5"), m = new maplibregl.Map({ container: $("#g-style-map"), style: MAP_STYLE(), attributionControl: false, bounds: boundsOf(r.route), fitBoundsOptions: { padding: 30 } });
+      m.on("load", () => { addStyle(m); m.getSource("route").setData(lineGeo([r.route])); m.getSource("ends").setData(MS.endsOf(r.route));
+        const pts = r.points.map((p) => ({ addr: p.addr, at: p.at })); m.getSource("devices").setData(fc(pts)); m.getSource("density").setData(fc(pts)); });
+    }
     $("#g-q").focus();
   }
 

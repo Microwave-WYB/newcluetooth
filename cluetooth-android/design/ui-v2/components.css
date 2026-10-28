@@ -237,14 +237,18 @@ button.item:active { background: var(--fill2); }
 .item .chev { color: var(--t3); }
 .sect { font-size: var(--small-size); line-height: var(--small-line); color: var(--t3); padding: 16px var(--gutter) 4px; }
 
-/* ---------- Device sheet: a second sheet over everything, with a solid scrim behind it ---------- */
+/* ---------- Pushed sheets (product, device): over everything; the scrim sits right below the top one ---------- */
 .scrim { position: absolute; inset: 0; z-index: 80; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity var(--t-page) var(--ease); }
 .scrim.on { opacity: 1; pointer-events: auto; }
-.dev-sheet { z-index: 81; }
-.dev-top { flex: none; touch-action: none; cursor: grab; }
-.dev-top .dev-head { position: relative; padding-right: calc(var(--gutter) + var(--icon-btn) + 8px); }
-.dev-top .dev-head > .ib { position: absolute; top: 0; right: var(--edge); }
-.dev-sheet .sheet-body { touch-action: pan-y; }
+.stack-sheet { height: var(--discover-sheet-full); }
+.stack-sheet .sheet-body { touch-action: pan-y; }
+.stack-sheet.open:not(.full) .sheet-body { overflow-y: hidden; }
+/* every pushed sheet's header: its content, and the same close button (X) at the top right */
+.sheet-top { flex: none; position: relative; min-height: calc(var(--icon-btn) + 12px); padding-right: calc(var(--edge) + var(--icon-btn) + 8px); touch-action: none; cursor: grab; }
+.sheet-top > .ib { position: absolute; top: 0; right: var(--edge); }
+.sheet-kicker { display: block; padding: 8px var(--gutter) 0; font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
+/* a sheet below the top one sits at the top sheet's height, covered */
+.sheet.sheet.open.following { transform: translateY(var(--follow-y)); }
 
 /* ---------- Sidebar: a full-height panel that pushes the map ---------- */
 .main { position: absolute; inset: 0; z-index: 0; overflow: hidden; transition: transform var(--t-std) var(--ease); }
@@ -380,20 +384,13 @@ button.item:active { background: var(--fill2); }
 .disc-sheet .prod-body .dev-product { font-size: var(--body-size); }
 .disc-title { font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
 .disc-sheet .search-slot { flex: none; }
-.me-dot { width: var(--me-dot); height: var(--me-dot); border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 3px var(--fill1), var(--shadow-float); }
 
-/* ---------- MapMarker: device point and cluster ---------- */
-/* device markers stay below the Start/End labels (z-index 5), so a label is never covered */
-.maplibregl-marker.mk { z-index: 1; }
-.mk { width: var(--marker); height: var(--marker); border-radius: 50%; display: grid; place-items: center; background: var(--fill1); color: var(--t1); box-shadow: var(--shadow-float); cursor: pointer; transition: opacity var(--t-std), transform var(--t-fast); }
-.mk .icon { width: var(--marker-icon); height: var(--marker-icon); }
-.mk.muted { color: var(--map-muted); }
-.mk.faded { opacity: var(--dim); }
-.mk.sel { background: var(--t1); color: var(--bg); transform: scale(1.15); }
-.mk.cluster { width: auto; min-width: var(--marker); padding: 0 10px 0 8px; border-radius: var(--r-pill); display: flex; gap: 4px; font-size: var(--sub-size); font-weight: var(--weight-semi); font-variant-numeric: tabular-nums; }
-.route-mark { z-index: 5; padding: 0 8px; white-space: nowrap; height: 22px; border-radius: var(--r-pill); font-size: 12px; line-height: 22px; font-weight: var(--weight-semi); color: var(--on-blue); box-shadow: var(--shadow-float); }
-.route-mark.start { background: var(--map-start); }
-.route-mark.end { background: var(--map-end); color: var(--bg); }
+/* ---------- AreaToggle: "Only this area", floating just under the top row ---------- */
+.area-toggle { position: absolute; z-index: 9; top: calc(var(--edge) + var(--rb) + 8px); left: 50%; transform: translateX(-50%); transition: opacity var(--t-fast); }
+.area-toggle .chip { box-shadow: var(--shadow-float); }
+.area-toggle.gone { opacity: 0; pointer-events: none; }
+.area-toggle.static { position: static; transform: none; }
+
 .maplibregl-ctrl-attrib { font-size: 10px; }
 
 /* ---------- Onboarding ---------- */
@@ -415,5 +412,6 @@ button.item:active { background: var(--fill2); }
 .g-cell { display: flex; flex-direction: column; gap: 8px; min-width: 120px; }
 .g-cell > small { font-size: var(--small-size); color: var(--t3); }
 .g-box { position: relative; background: var(--bg); border-radius: var(--r-item); box-shadow: inset 0 0 0 1px var(--div); padding: 12px; }
+.g-json { max-height: 320px; overflow: auto; font-family: var(--font-code); font-size: 11px; line-height: 15px; background: var(--fill2); border-radius: var(--r-item); padding: 10px; margin: 8px 0 0; }
 .g-links a { color: var(--blue); text-decoration: none; font-weight: var(--weight-medium); }
 .g-sw { width: 72px; height: 44px; border-radius: var(--r-item); box-shadow: inset 0 0 0 1px var(--div); }

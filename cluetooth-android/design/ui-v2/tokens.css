@@ -32,7 +32,6 @@
   --on-rec: #fff;           /* the FAB's dot */
   --map-route: #0064d4;     /* the route line (drawn at --map-route-opacity) */
   --map-density: #0064d4;   /* density circles (drawn at --map-density-opacity) */
-  --map-muted: #8b9099;     /* unidentified device points */
   --map-start: #1c8a4c;
   --map-end: #111112;
   --map-route-opacity: 0.35;
@@ -55,7 +54,7 @@
   --seg-on-shadow: var(--shadow-thumb);
 
   /* ---- Shadows ----
-   * --shadow-float:  round float buttons, the recorder (FAB and capsule), map markers, the location dot
+   * --shadow-float:  round float buttons, the recorder (FAB and capsule), the area toggle
    * --shadow-raised: the recorder's expanded panel
    * --shadow-sheet:  the device sheet and the map sheet
    * --shadow-thumb:  the segmented control's selected thumb (lighter than --shadow-float)
@@ -106,7 +105,6 @@
   --recorder-pad: 18px;         /* the capsule's left inset, before the dot */
   --rec-dot: 8px;
   --side-w: 82cqw;          /* the left sidebar; the map strip beside it stays visible */
-  --me-dot: 16px;
   --sheet-peek: 92px;
   --sheet-expanded-h: calc(100% - var(--top-zone)); /* the expanded device sheet stops below the top float-button row */
   --discover-sheet-half: 67cqh;  /* the Discover sheet's Half snap */
@@ -124,8 +122,6 @@
   --search-h: 42px;
   --search-size: 14px;
   --chart-h: 96px;
-  --marker: 32px;
-  --marker-icon: 16px;
   --top-zone: calc(var(--edge) + var(--rb) + var(--edge)); /* the float row a sheet never covers */
   --list-top: calc(var(--edge) + var(--rb) + 8px + var(--chip-h) + 8px);
 
@@ -180,7 +176,6 @@
     --rec: #ff453a;
     --map-route: #3b9bff;
     --map-density: #3b9bff;
-    --map-muted: #9aa0a8;
     --map-start: #4cc27f;
     --map-end: #f5f5f6;
 
