@@ -44,16 +44,27 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .float.tl { top: var(--edge); left: var(--edge); }
 .float.tr { top: var(--edge); right: var(--edge); }
 
-/* ---------- MorphButton: Discover <-> collapse panel ---------- */
-/* One element: it slides from the top-right to the top-left while its icon turns into the arrow. */
-.morph { position: absolute; z-index: 50; top: var(--edge); right: var(--edge); }
-.morph.static { position: relative; top: auto; right: auto; }
-.morph .icon { grid-area: 1 / 1; transition: opacity var(--t-morph) var(--ease), transform var(--t-morph) var(--ease); }
-.morph .i-b { opacity: 0; transform: rotate(-180deg) scale(0.6); }
-.morph.open { transform: translateX(calc(var(--rb) + 2 * var(--edge) - 100cqw)); }
-.morph.open .i-a { opacity: 0; transform: rotate(180deg) scale(0.6); }
-.morph.open .i-b { opacity: 1; transform: none; }
-.morph.gone { opacity: 0; pointer-events: none; }
+/* ---------- TopSearch: round button that opens into the wiki search field across the top row ---------- */
+.top-search {
+  position: absolute; z-index: 45; top: var(--edge); right: var(--edge); width: var(--rb); height: var(--rb);
+  border-radius: var(--r-pill); background: var(--fill1); box-shadow: var(--shadow-float); overflow: hidden; color: var(--t1);
+  transition: width var(--t-morph) var(--ease), background-color var(--t-std), opacity var(--t-fast), transform var(--t-std) var(--ease);
+}
+.top-search.open { width: calc(100% - 2 * var(--edge) - var(--rb) - 8px); background: var(--fill2); color: var(--t3); }
+.top-search:focus-within { background: var(--field); outline: var(--focus-w) solid var(--focus-color); outline-offset: calc(-1 * var(--focus-w)); }
+.ts-toggle { position: absolute; left: 0; top: 0; width: var(--rb); height: var(--rb); display: grid; place-items: center; color: inherit; }
+.ts-toggle .icon { width: var(--rb-icon); height: var(--rb-icon); }
+.top-search.open .ts-toggle .icon { width: var(--icon); height: var(--icon); }
+.top-search input {
+  position: absolute; inset: 0 var(--gutter) 0 var(--rb); border: 0; outline: 0; background: transparent; color: var(--t1);
+  font: inherit; font-size: var(--search-size); opacity: 0; transition: opacity var(--t-fast);
+}
+.top-search input::placeholder { color: var(--t3); }
+.top-search input::-webkit-search-cancel-button { display: none; }
+.top-search.open input { opacity: 1; transition-delay: var(--t-fast); }
+.top-search.gone { opacity: 0; pointer-events: none; }
+.top-search.static { position: relative; top: auto; right: auto; }
+.top-search.static.open { width: 100%; }
 
 /* ---------- Recorder: the record FAB, the recording capsule and its panel (Scan only) ---------- */
 /* One element anchored bottom-right. idle: red FAB with a white dot. capsule: dot, time, Pause/Resume,
@@ -64,8 +75,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   display: flex; flex-direction: column; justify-content: flex-end;
   background: var(--rec); box-shadow: var(--shadow-float); cursor: pointer;
   transition: width var(--t-morph) var(--ease), height var(--t-morph) var(--ease), border-radius var(--t-morph) var(--ease),
-    background-color var(--t-std), box-shadow var(--t-morph), bottom var(--t-page) var(--ease);
+    background-color var(--t-std), box-shadow var(--t-morph), bottom var(--t-page) var(--ease), opacity var(--t-std), scale var(--t-std) var(--ease);
 }
+/* the idle FAB hides while the Discover sheet is expanded */
+.recorder.idle.sheet-up { opacity: 0; scale: 0.6; pointer-events: none; }
 .recorder::after {
   content: ""; position: absolute; left: 50%; top: 50%; width: var(--fab-dot); height: var(--fab-dot); margin: calc(var(--fab-dot) / -2);
   border-radius: 50%; background: var(--on-rec); transition: opacity var(--t-fast), transform var(--t-std) var(--ease);
@@ -83,8 +96,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .recorder.capsule .rec-row, .recorder.panel .rec-row { opacity: 1; transition-delay: var(--t-fast); }
 .recorder.panel .rec-meta, .recorder.panel .rec-map { opacity: 1; transition-delay: var(--t-fast); }
 .recorder-catch { position: absolute; inset: 0; z-index: 14; display: none; }
-/* Top placement, while the Discover sheet is expanded: the same element at the top center, between ☰ and
-   the scan button; its panel grows downward (capsule row first). JS animates the move (FLIP). */
+/* While recording the recorder is always the island at the top center, between ☰ and search; its panel grows
+   downward (the capsule row first). Starting and stopping animate the move (FLIP, in JS). */
 .recorder.top { top: calc(var(--edge) + (var(--rb) - var(--fab)) / 2); bottom: auto; right: auto; left: calc(50% - var(--fab) / 2); justify-content: flex-start; }
 .recorder.top.capsule { left: calc(50% - var(--capsule-w, var(--recorder-capsule-w)) / 2); }
 .recorder.top.panel { left: var(--edge); }
@@ -92,7 +105,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .recorder.top .rec-meta { padding-top: 0; }
 .recorder.top .rec-map { margin-bottom: var(--edge); }
 /* the open top panel covers the float-button row: those buttons step aside until it closes */
-.phone.rec-top-open .menu-btn, .phone.rec-top-open .morph { opacity: 0; pointer-events: none; }
+.phone.rec-top-open .menu-btn, .phone.rec-top-open .top-search { opacity: 0; pointer-events: none; }
 .recorder-catch.on { display: block; }
 
 /* ---------- IconButton: round, neutral (--fill2) or record red ---------- */
@@ -106,9 +119,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .rec-dot { width: var(--rec-dot); height: var(--rec-dot); border-radius: 50%; background: var(--rec); flex: none; animation: blink var(--t-blink) steps(1, end) infinite; }
 .rec-dot.paused { animation: none; background: var(--t3); }
 @keyframes blink { 50% { opacity: 0; } }
-
-/* ---------- ScanSearch: the search field between the menu and Discover buttons ---------- */
-.scan-search { position: absolute; z-index: 10; top: calc(var(--edge) + (var(--rb) - var(--search-h)) / 2); left: calc(var(--edge) + var(--rb) + 8px); right: calc(var(--edge) + var(--rb) + 8px); }
 
 /* ---------- Chip / ChipRow ---------- */
 .chips {
@@ -256,7 +266,7 @@ button.item:active { background: var(--fill2); }
 .menu-btn.open .i-b { opacity: 1; transform: none; }
 .menu-btn.gone { opacity: 0; pointer-events: none; }
 .menu-btn.static { position: relative; top: auto; left: auto; }
-.phone.side-open .morph { transform: translateX(var(--side-w)); }
+.phone.side-open .top-search { transform: translateX(var(--side-w)); }
 .brand { padding: 2px 10px 14px; font-weight: var(--title-weight); font-size: 16px; letter-spacing: -0.01em; }
 .nav { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border-radius: var(--r-item); transition: background-color var(--t-fast); }
 .nav:active, .nav.on { background: var(--fill2); }
@@ -290,8 +300,6 @@ button.item:active { background: var(--fill2); }
 .dev-rssi { margin-left: 8px; font-size: var(--sub-size); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
 .dev-product { display: inline-flex; align-items: center; gap: 4px; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--blue); text-decoration: none; }
 .dev-product .icon { width: 14px; height: 14px; }
-.dev-map { padding: 4px var(--gutter) 4px; }
-.dev-map .map-card { margin-top: 0; }
 .gatt-empty { padding: 8px var(--gutter); }
 .gatt-empty p { margin: 0 0 10px; color: var(--t2); font-size: 14px; }
 .dev-sub { font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); font-variant-numeric: tabular-nums; }
@@ -327,8 +335,6 @@ button.item:active { background: var(--fill2); }
 .prod-name { margin: 0; font-size: var(--head-size); line-height: var(--head-line); font-weight: var(--title-weight); letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .prod-desc { margin: 6px 0 0; color: var(--t2); }
 .prod-meta { margin: 2px 0 14px; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); font-variant-numeric: tabular-nums; }
-.map-card { display: block; width: 100%; margin-top: 16px; padding: 0; text-align: left; border-radius: var(--r-item); overflow: hidden; background: var(--fill2); }
-.map-card .mini { height: var(--map-preview-h); background: var(--fill2); }
 
 
 /* ---------- Map screen ---------- */
@@ -336,16 +342,14 @@ button.item:active { background: var(--fill2); }
 
 /* ---------- Main map screen ---------- */
 .disc-sheet { z-index: 12; height: var(--discover-sheet-h); }
-.disc-head { flex: none; display: grid; grid-template-columns: var(--icon-btn) 1fr var(--icon-btn); align-items: center; gap: 8px; padding: 0 var(--edge) 10px; touch-action: none; cursor: grab; }
-.disc-center { justify-self: center; }
-.disc-center .seg { width: 184px; }
+.disc-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 0 var(--edge) 10px; touch-action: none; cursor: grab; }
+.disc-head .seg { width: 184px; }
+.disc-chips .chips { position: static; padding: 0 var(--edge) 10px; }
+.disc-sheet .hero { margin: 0 var(--edge); border-radius: var(--r-item); }
+.disc-sheet .prod-body .dev-product { font-size: var(--body-size); }
 .disc-title { font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
 .disc-sheet .search-slot { flex: none; }
-.map-filter { position: absolute; z-index: 10; top: calc(var(--edge) + (var(--rb) - var(--chip-h)) / 2); left: 50%; transform: translateX(-50%); max-width: calc(100% - 2 * (var(--edge) + var(--rb) + 8px)); }
-.map-filter .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .me-dot { width: var(--me-dot); height: var(--me-dot); border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 3px var(--fill1), var(--shadow-float); }
-.scan-search.wide { right: var(--edge); }
-.devices-page { transition-duration: var(--t-morph); }
 
 /* ---------- MapMarker: device point and cluster ---------- */
 /* device markers stay below the Start/End labels (z-index 5), so a label is never covered */

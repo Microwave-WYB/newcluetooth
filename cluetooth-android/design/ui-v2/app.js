@@ -36,7 +36,8 @@
     car: '<path d="M3 17v-4l2-6h14l2 6v4z"/><path d="M3 13h18"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/>',
     medical: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
     external: '<path d="M7 17 17 7M9 7h8v8"/>',
-    devices: '<path d="M4 7.5l9 9-4.5 4.5V3l4.5 4.5-9 9"/><path d="M16.5 9.5a3.5 3.5 0 0 1 0 5M19.5 7a7 7 0 0 1 0 10"/>', // Bluetooth rune with scan waves
+    list: '<path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
+    grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
     panelClose: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M16 15l-3-3 3-3"/>',
     pause: '<rect class="solid" x="6" y="5" width="4" height="14" rx="1"/><rect class="solid" x="14" y="5" width="4" height="14" rx="1"/>',
     play: '<path class="solid" d="M8 5.5v13a1 1 0 0 0 1.5.9l10.4-6.5a1 1 0 0 0 0-1.8L9.5 4.6A1 1 0 0 0 8 5.5z"/>',
@@ -52,9 +53,12 @@
     floatButton: ({ name, label, action, cls = "", value = "" }) =>
       `<button class="rb ${cls}" data-action="${action}" data-value="${esc(value)}" aria-label="${esc(label)}">${icon(name)}</button>`,
 
-    /** MorphButton: Devices at the top-right; with the devices page open, its close button at the top-left. */
-    morphButton: (open, cls = "morph") =>
-      `<button class="rb ${cls} ${open ? "open" : ""}" data-action="devices" aria-label="${open ? "Close devices" : "Devices"}">${icon("devices", "i-a")}${icon("collapse", "i-b")}</button>`,
+    /** TopSearch: the top-right search button; open, it is the wiki search field across the top row. Name only. */
+    topSearch: (open, cls = "") => `
+      <div class="top-search ${open ? "open" : ""} ${cls}">
+        <button class="ts-toggle" data-action="search" aria-label="Search by name" aria-expanded="${open}">${icon("search")}</button>
+        <input id="top-q" type="search" placeholder="Search by name" autocomplete="off" aria-label="Search by name" tabindex="${open ? 0 : -1}">
+      </div>`,
 
     /** MenuButton: ☰ at the map's top-left; with the sidebar out, it rides the sidebar's edge as "collapse sidebar". */
     menuButton: (open, cls = "") =>
@@ -141,9 +145,24 @@
         ${end ? `<span class="item-end">${end}</span>` : ""}${chevron ? icon("chevron", "chev") : ""}</${tag}>`;
     },
 
-    /** MapThumb: a clean map preview (points or route, Start/End only); the whole thumbnail is the tap target. */
-    mapThumb: (action, value, id) =>
-      `<button class="map-card" data-action="${action}" data-value="${esc(value)}" aria-label="Open the map"><div class="mini" id="${id}"></div></button>`,
+    /** DiscoverHead: the view switch (it shows the view it switches TO), then Nearby / All while live, else the view's name.
+     *  In the product view it is the back button. */
+    discoverHead: ({ view, live, mode, product }) => product
+      ? `${UI.iconButton({ name: "back", label: "Back", action: "product-back" })}`
+      : `${UI.iconButton({ name: view === "list" ? "grid" : "list", label: view === "list" ? "Show categories" : "Show the device list", action: "disc-view" })}
+         ${live ? UI.segmented([{ id: "nearby", label: "Nearby" }, { id: "all", label: "All" }], mode, "disc-mode") : `<span class="disc-title">${view === "list" ? "Devices" : "Products"}</span>`}`,
+
+    /** ProductView: inside the Discover sheet; the background map shows the product's points. */
+    productView: (p, rows) => `
+      <div class="hero">${icon(catIcon(p.category))}</div>
+      <div class="prod-body">
+        <h1 class="prod-name">${esc(p.name)}</h1>
+        <p class="prod-desc">${esc(p.description)}</p>
+        <p class="prod-meta">Seen at ${p.places} places · last ${esc(p.last)}</p>
+        ${p.identified ? `<a class="dev-product" href="https://wirelesswiki.org/p/${esc(p.id)}" target="_blank" rel="noopener">Open in Wiki${icon("external")}</a>` : ""}
+      </div>
+      ${UI.sect("Devices")}
+      <div class="rows">${rows}</div>`,
 
     /** Section label. */
     sect: (t) => `<div class="sect">${esc(t)}</div>`,
@@ -174,8 +193,8 @@
         <text x="${x0}" y="${ht - 2}">−1 min</text><text x="${w}" y="${ht - 2}" text-anchor="end">now</text></svg>`;
     },
 
-    /** DeviceSheet: name, product link, MAC with RSSI, chart, map preview, Advertising / GATT tabs. */
-    deviceSheet: (d, { tab, gatt, chartW, mapId = "" }) => `
+    /** DeviceSheet: name, product link, MAC with RSSI, chart, Advertising / GATT tabs. The map behind shows its sightings. */
+    deviceSheet: (d, { tab, gatt, chartW }) => `
       <div class="handle"></div>
         <div class="dev-head">
           <div class="dev-name"><b class="${d.name ? "" : "none"}">${d.name ? esc(d.name) : "No name"}</b></div>
@@ -184,7 +203,6 @@
         </div>
       <div class="sheet-body">
         ${d.history ? `<div class="chart-wrap">${UI.chart(d.history, d.rssi, chartW)}</div>` : ""}
-        ${mapId ? `<div class="dev-map">${UI.mapThumb("device-map", d.addr, mapId)}</div>` : ""}
         <div class="dev-tabs" id="dev-seg">${UI.segmented([{ id: "adv", label: "Advertising" }, { id: "gatt", label: "GATT" }], tab, "dev-tab")}</div>
         <div id="dev-tab">${tab === "adv" ? UI.advertising(d) : UI.gatt(gatt, d.addr)}</div>
       </div>`,
@@ -242,12 +260,11 @@
     phone.innerHTML = `
       <div class="main">
       <div class="map main-map" id="main-map"></div>
-      <div class="map-filter" id="map-filter"></div>
       <section class="sheet disc-sheet" aria-label="Discover">
         <div class="handle"></div>
         <div class="disc-head" id="disc-head"></div>
-        <div class="search-slot"><div>${UI.searchField("Search products", "disc-q")}</div></div>
-        <div class="sheet-body"><div id="disc-groups"></div></div>
+        <div class="disc-chips" id="disc-chips"></div>
+        <div class="sheet-body" id="disc-body"></div>
       </section>
       <div class="recorder-catch" data-action="recorder-close"></div>
       ${UI.recorder({ state: "idle", paused: false, time: "12:34", meta: "", mapId: "rec-map" })}
@@ -255,39 +272,47 @@
       </div>
       <nav class="side" aria-label="Sessions"></nav>
       ${UI.menuButton(false)}
+      ${UI.topSearch(false)}
       <div id="pages"></div>
-      ${UI.morphButton(false)}
       <div class="scrim sheet-scrim" data-action="sheet-close"></div>
       <section class="sheet dev-sheet" aria-label="Device"></section>`;
   }
 
-  /** The Discover sheet: Nearby / All only while the session is live; a finished session shows All. */
+  /** The Discover sheet: categories or the device list (Nearby / All only while live), or one product. */
   function renderDiscover() {
     const sheet = $(".disc-sheet", phone);
     const sess = S.session && D.getRecording(S.session);
     sheet.classList.toggle("open", !!sess);
     if (!sess) return liftRecorder();
     const mode = S.live ? S.discoverMode : "all";
-    $("#disc-head").innerHTML = `<span></span>
-      <span class="disc-center">${S.live ? UI.segmented([{ id: "nearby", label: "Nearby" }, { id: "all", label: "All" }], mode, "disc-mode") : `<span class="disc-title">Discover</span>`}</span>
-      ${UI.iconButton({ name: "search", label: "Search products", action: "disc-search" })}`;
-    const q = S.discoverQuery.trim().toLowerCase();
-    const groups = D.getProducts(mode, S.session)
-      .map((g) => ({ ...g, products: g.products.filter((p) => !q || p.name.toLowerCase().includes(q)) }))
-      .filter((g) => g.products.length);
-    $("#disc-groups").innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
-    sheet.style.setProperty("--peek", `${$(".handle", sheet).offsetHeight + $("#disc-head").offsetHeight}px`);
+    const q = S.query.trim().toLowerCase();
+    const head = $("#disc-head"), chips = $("#disc-chips"), body = $("#disc-body");
+    head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, product: S.product });
+    if (S.product) {
+      const p = D.getProduct(S.product);
+      chips.innerHTML = "";
+      body.innerHTML = UI.productView(p, productDevices(p).filter((d) => nameMatch(d.name, q)).map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`);
+    } else if (S.discView === "list") {
+      chips.innerHTML = UI.chipRow(CATS, S.devCat, "dev-cat", "inline");
+      body.innerHTML = `<div class="rows">${sessionRows(mode)}</div>`;
+    } else {
+      chips.innerHTML = "";
+      const groups = D.getProducts(mode, S.session)
+        .map((g) => ({ ...g, products: g.products.filter((p) => nameMatch(p.name, q)) }))
+        .filter((g) => g.products.length);
+      body.innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
+    }
+    sheet.style.setProperty("--peek", `${$(".handle", sheet).offsetHeight + head.offsetHeight}px`);
     if (!sheet.classList.contains("expanded")) setSheetState(sheet, "collapsed");
     liftRecorder();
   }
+  const nameMatch = (name, q) => !q || (name || "").toLowerCase().includes(q);
 
-  /** The recorder sits above the Discover sheet's peek; while the sheet is expanded it moves to the top center. */
+  /** The record FAB sits above the Discover sheet's peek and hides while the sheet is expanded. */
   function liftRecorder() {
-    const sheet = $(".disc-sheet", phone);
-    let lift = 0;
-    if (sheet.classList.contains("open")) lift = parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 0;
-    placeRecorder(sheet.classList.contains("open") && sheet.classList.contains("expanded"));
-    phone.style.setProperty("--rec-lift", `${lift}px`);
+    const sheet = $(".disc-sheet", phone), open = sheet.classList.contains("open");
+    phone.style.setProperty("--rec-lift", `${open ? parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 0 : 0}px`);
+    $(".recorder", phone).classList.toggle("sheet-up", open && sheet.classList.contains("expanded"));
   }
 
   // ---- Left sidebar: the current session (pinned while recording), the history, Settings ----
@@ -303,25 +328,19 @@
     });
   }
 
-  // ---- Right panel: the session's devices (the old Scan list) ----
-  function sessionRows() {
-    if (!S.session) return `<div class="empty">Start recording to scan devices</div>`;
+  // ---- List view: the session's devices (the old Scan list), in the order sorted once ----
+  function sessionRows(mode) {
     const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
-    const q = S.devQuery.trim().toLowerCase();
-    const match = (d) => !q || (d.name || "").toLowerCase().includes(q) || d.addr.toLowerCase().includes(q) || d.addr.replace(/:/g, "").toLowerCase().includes(q);
-    // the order was sorted once when the session was shown; filters only hide rows
+    const q = S.query.trim().toLowerCase();
     return S.order.map((a) => byAddr[a])
-      .filter((d) => d && !hiddenByFilter(d) && (S.devCat === "all" || d.category === S.devCat) && match(d))
+      .filter((d) => d && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat) && nameMatch(d.name, q))
       .map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
   }
-  function devicesPage() {
-    return `
-      <div class="scroll scan-list"><div class="rows" id="dev-rows">${sessionRows()}</div></div>
-      <div class="top-fade"></div>
-      <div class="scan-search wide" ${S.session ? "" : "hidden"}>${UI.searchField("Search name or MAC", "dev-q")}</div>
-      <div id="dev-chips" ${S.session ? "" : "hidden"}>${UI.chipRow(CATS, S.devCat, "dev-cat")}</div>`;
+  /** A product's devices: those of the shown session if it has any, else every device of the product. Sorted once. */
+  function productDevices(p) {
+    const inSession = S.session ? D.getSessionDevices(S.session).filter((d) => (d.product || "unidentified") === p.id) : [];
+    return (inSession.length ? inSession : p.devices).slice().sort((a, b) => b.rssi - a.rssi);
   }
-  const refreshDevices = () => { const r = $("#dev-rows"); if (r) r.innerHTML = sessionRows(); };
 
   // ---- Settings ----
   function settingsPage() {
@@ -342,25 +361,6 @@
       </div>`;
   }
 
-  // ---- Product page ----
-  function productPage(p) {
-    const order = p.devices.slice().sort((a, b) => b.rssi - a.rssi); // sorted once, when the page appears
-    return `
-      <div class="scroll">
-        <div class="hero">${icon(catIcon(p.category))}</div>
-        <div class="prod-body">
-          <h1 class="prod-name">${esc(p.name)}</h1>
-          <p class="prod-desc">${esc(p.description)}</p>
-          <p class="prod-meta">Seen at ${p.places} places · last ${esc(p.last)}</p>
-          ${p.identified ? UI.button({ kind: "tonal", label: "Wiki", action: "wiki", value: p.id }) : ""}
-          ${UI.mapThumb("product-map", p.id, "prod-mini")}
-        </div>
-        ${UI.sect("Devices")}
-        <div class="rows">${order.map((d) => UI.deviceRow(d)).join("")}</div>
-      </div>
-      <div class="top-fade short when-scrolled"></div>
-      ${UI.floatButton({ name: "back", label: "Back", action: "back", cls: "float tl" })}`;
-  }
   /** One point per device: where it scanned strongest. */
   const bestPoint = (addr) => { const s = D.getDeviceSightings(addr); return s.length ? s.reduce((a, b) => (b.rssi > a.rssi ? b : a)) : null; };
   function productPoints(p) {
@@ -434,7 +434,12 @@
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
     const M = { sel: null, cache: {}, shown: {}, points: [], at: {}, routeMarks: [], me: null, ready: false, pending: [] };
     const whenReady = (f) => (M.ready ? f() : M.pending.push(f));
-    const pad = () => ({ top: 90, bottom: (parseFloat(phone.style.getPropertyValue("--rec-lift")) || 0) + 40, left: 40, right: 40 });
+    // frame what the Discover sheet leaves visible: above its peek, or above the expanded sheet
+    const pad = () => {
+      const ds = $(".disc-sheet", phone), open = ds.classList.contains("open");
+      const below = !open ? 0 : ds.classList.contains("expanded") ? ds.offsetHeight : parseFloat(getComputedStyle(ds).getPropertyValue("--peek")) || 0;
+      return { top: 90, bottom: below + 40, left: 40, right: 40 };
+    };
 
     map.on("load", () => {
       map.addSource("route", { type: "geojson", data: lineGeo([]) });
@@ -529,7 +534,8 @@
       const sightings = D.getDeviceSightings(addr);
       map.getSource("sightings").setData(fc(sightings));
       const at = M.at[addr] || (sightings[0] && sightings[0].at);
-      if (move && at) map.easeTo({ center: at, zoom: Math.max(map.getZoom(), 18.2), padding: { top: 0, bottom: 320, left: 0, right: 0 }, duration: 600 });
+      const ds = $(".disc-sheet", phone), below = ds.classList.contains("open") && ds.classList.contains("expanded") ? ds.offsetHeight : 320;
+      if (move && at) map.easeTo({ center: at, zoom: Math.max(map.getZoom(), 18.2), padding: { top: 0, bottom: below, left: 0, right: 0 }, duration: 600 });
       paintSelection();
       openSheet(addr, { onMap: true });
     });
@@ -556,21 +562,19 @@
   const S = {
     session: null, live: false, order: [],
     recorder: "idle", paused: false, recMap: null,
-    discoverMode: "nearby", discoverSearch: false, discoverQuery: "",
-    devCat: "all", devQuery: "", productFilter: null,
+    discoverMode: "nearby", discView: "categories", product: null, catScroll: 0,
+    devCat: "all", query: "",
     settings: { ...SETTINGS }, stack: [], map: null,
     ob: 0, obAuto: true, obAllowed: [false, false, false],
   };
 
   const top = () => (S.stack.length ? S.stack[S.stack.length - 1].id : "main");
 
-  /** The devices button lives above the pages: on the map, and as the devices page's close button. */
+  /** ☰ and search show on the map only (not over Settings). */
   function updateChrome() {
-    const t = top(), morph = $(".morph", phone);
-    morph.classList.toggle("open", t === "devices");
-    morph.classList.toggle("gone", t !== "main" && t !== "devices");
-    morph.setAttribute("aria-label", t === "devices" ? "Close devices" : "Devices");
+    const t = top();
     $(".menu-btn", phone).classList.toggle("gone", t !== "main");
+    $(".top-search", phone).classList.toggle("gone", t !== "main" || !S.session);
   }
 
   function push(id, html, { cls = "", mount, cleanup } = {}) {
@@ -601,13 +605,12 @@
   function showSession(id, live) {
     S.session = id;
     S.live = !!(id && live);
-    S.productFilter = null;
+    S.product = null;
     S.order = id ? D.getSessionDevices(id).sort((a, b) => b.rssi - a.rssi).map((d) => d.addr) : []; // sorted once
     const sess = id && D.getRecording(id);
     S.map.setSession(sess, id ? sessionPoints() : []);
     renderDiscover();
-    refreshDevices();
-    $("#map-filter").innerHTML = "";
+    updateChrome();
     const r = $(".recorder", phone);
     $(".rec-meta", r).textContent = S.recorder === "idle" ? "" : `${D.getCurrentRecording().devices} devices · ${locationText()}`;
   }
@@ -620,11 +623,19 @@
     // the row is max-content wide, so this is the content width even when measured from the open panel
     if (state === "capsule") r.style.setProperty("--capsule-w", `${row.offsetWidth}px`);
     if (state === "panel") r.style.setProperty("--panel-h", `${[...r.children].reduce((h, c) => h + c.offsetHeight + parseFloat(getComputedStyle(c).marginTop) + parseFloat(getComputedStyle(c).marginBottom), 0) + 2}px`);
+    // idle is the FAB at the bottom right; recording is always the island at the top center
+    const top = state !== "idle", a = r.getBoundingClientRect(), moving = r.classList.contains("top") !== top;
     r.classList.remove("idle", "capsule", "panel");
     r.classList.add(state);
+    r.classList.toggle("top", top);
+    if (moving) {
+      const b = r.getBoundingClientRect();
+      r.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)` }, { transform: "none" }],
+        { duration: parseFloat(tok("--t-morph")) * 1000, easing: tok("--ease") });
+    }
     r.setAttribute("aria-label", state === "idle" ? "Record" : "Recording");
     $(".recorder-catch", phone).classList.toggle("on", state === "panel");
-    phone.classList.toggle("rec-top-open", state === "panel" && r.classList.contains("top"));
+    phone.classList.toggle("rec-top-open", state === "panel");
     if (state === "panel" && !S.recMap) {
       r.addEventListener("transitionend", function once(e) {
         if (e.propertyName !== "height") return;
@@ -632,17 +643,6 @@
         S.recMap = miniMap($("#rec-map"), D.getCurrentRecording().route);
       });
     }
-  }
-  /** Moves the one recorder element between bottom-right and top-center, animating the jump (FLIP). */
-  function placeRecorder(top) {
-    const r = $(".recorder", phone);
-    if (r.classList.contains("top") === top) return;
-    if (S.recorder === "panel") setRecorder("capsule");
-    const a = r.getBoundingClientRect();
-    r.classList.toggle("top", top);
-    const b = r.getBoundingClientRect();
-    r.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)` }, { transform: "none" }],
-      { duration: parseFloat(tok("--t-morph")) * 1000, easing: tok("--ease") });
   }
 
   function startRecording() {
@@ -669,10 +669,7 @@
     const d = D.getDevice(addr);
     S.sheet = { addr, onMap, tab: "adv" };
     const sheet = $(".dev-sheet", phone);
-    const sightings = D.getDeviceSightings(addr);
-    if (S.sheetMap) { S.sheetMap.remove(); S.sheetMap = null; }
-    sheet.innerHTML = UI.deviceSheet(d, { tab: "adv", gatt: D.getDeviceGatt(addr), chartW: phone.clientWidth - 32, mapId: sightings.length ? "dev-mini" : "" });
-    if (sightings.length) S.sheetMap = miniMap($("#dev-mini", sheet), [], sightings);
+    sheet.innerHTML = UI.deviceSheet(d, { tab: "adv", gatt: D.getDeviceGatt(addr), chartW: phone.clientWidth - 32 });
     $(".sheet-body", sheet).scrollTop = 0;
     sheet.style.setProperty("--peek", `${$(".handle", sheet).offsetHeight + $(".dev-head", sheet).offsetHeight}px`);
     // on the map it opens collapsed so the selection stays visible; elsewhere expanded
@@ -737,17 +734,33 @@
     b.setAttribute("aria-label", open ? "Close sidebar" : "Sessions and settings");
     b.setAttribute("aria-expanded", open);
   }
-  /** The product page's map preview filters the main map to that product. */
-  function filterToProduct(id) {
+  /** The product view: the background map shows only that product's points. */
+  function openProduct(id) {
     const p = D.getProduct(id);
-    popAll();
+    S.catScroll = $("#disc-body").scrollTop;
+    S.product = id;
     closeSheet();
-    let pts = S.session ? sessionPoints().filter((x) => x.product === id) : [];
-    if (!pts.length) pts = productPoints(p).map((x) => ({ ...x, category: p.category }));
-    S.productFilter = id;
+    const pts = productDevices(p).map((d) => { const b = d.best ? { at: d.best, rssi: d.rssi } : bestPoint(d.addr); return b && { addr: d.addr, at: b.at, rssi: b.rssi, category: d.category }; }).filter(Boolean);
     S.map.setPoints(pts);
     S.map.fit(pts.map((x) => x.at));
-    $("#map-filter").innerHTML = UI.chip({ label: p.name, on: true, action: "clear-filter", value: id });
+    renderDiscover();
+    $("#disc-body").scrollTop = 0;
+  }
+  function closeProduct() {
+    S.product = null;
+    closeSheet();
+    S.map.setPoints(sessionPoints());
+    renderDiscover();
+    $("#disc-body").scrollTop = S.catScroll; // back to the categories at the same place
+  }
+  /** The top-right search: the button opens the field across the top row; an empty field closes again. */
+  function setSearch(open) {
+    const el = $(".top-search", phone), input = $("#top-q");
+    el.classList.toggle("open", open);
+    $(".ts-toggle", el).setAttribute("aria-expanded", open);
+    input.tabIndex = open ? 0 : -1;
+    if (open) input.focus();
+    else if (S.query) { input.value = ""; S.query = ""; renderDiscover(); }
   }
 
   const ACTIONS = {
@@ -759,27 +772,19 @@
       const cur = D.getCurrentRecording();
       showSession(el.dataset.value, !!cur && cur.id === el.dataset.value);
     },
-    devices: () => (top() === "devices" ? pop() : push("devices", devicesPage(), { cls: "devices-page" })),
     settings: () => { setDrawer(false); push("settings", settingsPage()); },
     setting: (el) => {
       const k = el.dataset.value;
       S.settings[k] = !S.settings[k];
       el.setAttribute("aria-checked", S.settings[k]);
-      if (k === "hideUnnamedApple") refreshDevices();
+      if (k === "hideUnnamedApple") renderDiscover();
     },
     upload: () => {},
     wiki: (el) => open(`https://wirelesswiki.org/p/${el.dataset.value}`, "_blank", "noopener"),
     "open-session-map": () => { setRecorder("capsule"); popAll(); S.map.fit(D.getCurrentRecording().route); },
-    "product-map": (el) => filterToProduct(el.dataset.value),
-    "clear-filter": () => { S.productFilter = null; $("#map-filter").innerHTML = ""; S.map.setPoints(sessionPoints()); },
-    product: (el) => {
-      const p = D.getProduct(el.dataset.value);
-      push("product", productPage(p), { mount: (pg, entry) => {
-        const mini = miniMap($("#prod-mini", pg), [], productPoints(p));
-        entry.cleanup = () => mini.remove();
-      } });
-    },
-    device: (el) => openSheet(el.dataset.value),
+    product: (el) => openProduct(el.dataset.value),
+    "product-back": () => closeProduct(),
+    device: (el) => S.map.select(el.dataset.value, true),
     "sheet-close": () => closeSheet(),
     "dev-tab": (el) => {
       S.sheet.tab = el.dataset.value;
@@ -788,13 +793,11 @@
       $("#dev-tab").innerHTML = S.sheet.tab === "adv" ? UI.advertising(d) : UI.gatt(D.getDeviceGatt(S.sheet.addr), S.sheet.addr);
     },
     gatt: (el) => { D.discoverGatt(el.dataset.value); $("#dev-tab").innerHTML = UI.gatt(D.getDeviceGatt(el.dataset.value), el.dataset.value); },
-    "device-map": (el) => { const a = el.dataset.value; popAll(); closeSheet(); S.map.select(a, true); },
     "map-point": (el) => S.map.select(el.dataset.value, false),
     "map-cluster": (el) => S.map.zoomCluster(el.dataset.value, [+el.dataset.lng, +el.dataset.lat]),
     "dev-cat": (el) => {
       S.devCat = el.dataset.value;
-      $("#dev-chips").innerHTML = UI.chipRow(CATS, S.devCat, "dev-cat");
-      refreshDevices();
+      renderDiscover();
     },
     recorder: () => { if (S.recorder === "idle") startRecording(); },
     "recorder-open": () => { if (S.recorder === "capsule") setRecorder("panel"); },
@@ -807,12 +810,8 @@
     },
     stop: () => stopRecording(),
     "disc-mode": (el) => { S.discoverMode = el.dataset.value; renderDiscover(); },
-    "disc-search": () => {
-      S.discoverSearch = !S.discoverSearch;
-      $(".disc-sheet .search-slot", phone).classList.toggle("open", S.discoverSearch);
-      if (S.discoverSearch) { setSheetState($(".disc-sheet", phone), "expanded"); $("#disc-q").focus(); }
-      else { $("#disc-q").value = ""; S.discoverQuery = ""; renderDiscover(); }
-    },
+    "disc-view": () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; },
+    search: () => setSearch(!$(".top-search", phone).classList.contains("open") || !!S.query),
     "ob-allow": (el) => { S.obAllowed[+el.dataset.value] = true; renderOnboarding(); },
     "ob-auto": (el) => { S.obAuto = !S.obAuto; el.setAttribute("aria-checked", S.obAuto); },
     "ob-next": () => { S.ob++; renderOnboarding(); },
@@ -832,17 +831,20 @@
     if (f) f.classList.toggle("on", e.target.scrollTop > 0);
   }, true);
 
+  // an empty search field closes when it loses focus
+  phone.addEventListener("focusout", (e) => { if (e.target.id === "top-q" && !e.target.value) setTimeout(() => !S.query && setSearch(false), 120); });
+
   // Escape stands in for system back: the topmost layer closes first.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || location.hash) return;
     if (S.sheet) closeSheet();
     else if (phone.classList.contains("side-open")) setDrawer(false);
+    else if ($(".top-search.open", phone)) setSearch(false);
     else if (S.recorder === "panel") setRecorder("capsule");
     else if (S.stack.length) pop();
   });
   phone.addEventListener("input", (e) => {
-    if (e.target.id === "dev-q") { S.devQuery = e.target.value; refreshDevices(); }
-    if (e.target.id === "disc-q") { S.discoverQuery = e.target.value; renderDiscover(); }
+    if (e.target.id === "top-q") { S.query = e.target.value; renderDiscover(); }
   });
 
   /** Launch. ?state=1..4 jumps to a demo state; without it, "Record when the app opens" decides between 1 and 2. */
@@ -899,12 +901,8 @@
         ${cell("density on", UI.floatButton({ name: "density", label: "Density", action: "", cls: "on" }))}
         ${cell("density off", UI.floatButton({ name: "density", label: "Density", action: "" }))}
       </div>
-      ${sect("MorphButton", ".morph · --t-morph, --ease; Devices (Bluetooth scan icon, top-right) → close devices page (top-left)")}
-      <div class="g-row">
-        ${cell("closed", UI.morphButton(false), "position: relative; width: 240px; height: 68px; container-type: inline-size")}
-        ${cell("open", UI.morphButton(true), "position: relative; width: 240px; height: 68px; container-type: inline-size")}
-        ${cell("tap to play", UI.morphButton(false, "morph g-play"), "position: relative; width: 240px; height: 68px; container-type: inline-size")}
-      </div>
+      ${sect("TopSearch", ".top-search · --rb → wiki .sf (--fill2, --search-size, inset --focus-color); filters by name")}
+      <div class="g-row">${cell("closed", UI.topSearch(false, "static"), "width: 80px")}${cell("open", UI.topSearch(true, "static"), "width: 340px")}</div>
       ${sect("MenuButton", ".menu-btn · ☰ → collapse sidebar, rides the sidebar edge; --side-w, --t-std")}
       <div class="g-row">${cell("closed", UI.menuButton(false, "static"))}${cell("open", UI.menuButton(true, "static"))}</div>
       ${sect("IconButton", ".ib · --icon-btn, --icon-btn-glyph; neutral --fill2/--t1; rec --rec-red/--on-rec")}
@@ -913,7 +911,7 @@
         ${cell("Resume", UI.iconButton({ name: "play", label: "Resume", action: "" }))}
         ${cell("Stop", UI.iconButton({ name: "stop", label: "Stop", action: "", kind: "rec" }))}
       </div>
-      ${sect("Recorder (main map only)", ".recorder · --fab, --fab-dot, --rec, --on-rec, --recorder-pad, --recorder-map-h, --shadow-float → --shadow-raised, --t-morph; BlinkingDot .rec-dot · --rec-dot, --t-blink")}
+      ${sect("Recorder (main map only: idle FAB bottom-right, recording = top-center island)", ".recorder · --fab, --fab-dot, --rec, --on-rec, --recorder-pad, --recorder-map-h, --shadow-float → --shadow-raised, --t-morph; BlinkingDot .rec-dot · --rec-dot, --t-blink")}
       <div class="g-row">
         ${cell("idle", UI.recorder({ state: "idle", paused: false, time: "12:34", meta: "", cls: "static" }), "width: 120px; height: 90px")}
         ${cell("capsule", UI.recorder({ state: "capsule", paused: false, time: "12:34", meta: "", cls: "static" }), "width: 240px; height: 90px")}
@@ -965,7 +963,7 @@
           days: [{ label: "Today · Oct 28", sessions: [{ id: "a", title: "6:05 PM", sub: "23 min · 1.8 km · 214 devices" }, { id: "b", title: "12:10 PM", sub: "8 min · 41 devices" }] }] })}</nav>`, "width: 338px; height: 420px; padding: 0")}
         ${cell("not recording, history session selected", `<nav class="side static">${UI.sidebar({ current: null, selected: "a",
           days: [{ label: "Today · Oct 28", sessions: [{ id: "a", title: "6:05 PM", sub: "23 min · 1.8 km · 214 devices" }, { id: "b", title: "12:10 PM", sub: "8 min · 41 devices" }] }] })}</nav>`, "width: 338px; height: 420px; padding: 0")}</div>
-      ${sect("DeviceSheet", ".sheet · --r-sheet, --panel, --shadow-sheet, --chart-h; product link --blue + ↗; RssiChart ticks −65/−80 only; MapThumb")}
+      ${sect("DeviceSheet", ".sheet · --sheet-expanded-h, --r-sheet, --panel, --shadow-sheet, --chart-h; product link --blue + ↗; RssiChart ticks −65/−80 only")}
       <div class="g-row">
         ${cell("identified, Advertising", `<section class="sheet static">${UI.deviceSheet(sheetDev, { tab: "adv", gatt: D.getDeviceGatt(sheetDev.addr), chartW: 380, mapId: "g-dev-1" })}</section>`, "width: 412px; padding: 0")}
         ${cell("GATT read", `<section class="sheet static">${UI.deviceSheet(sheetDev, { tab: "gatt", gatt: D.getDeviceGatt(sheetDev.addr), chartW: 380, mapId: "g-dev-2" })}</section>`, "width: 412px; padding: 0")}
@@ -982,18 +980,19 @@
         ${cell("cluster, unidentified", UI.markerCluster("unidentified", 26))}
         ${cell("route", `<span class="route-mark start">Start</span> <span class="route-mark end">End</span>`)}
       </div>
-      ${sect("MapThumb", ".map-card · --map-preview-h, --r-item, --fill2; a clean map, no caption")}
-      <div class="g-row">${cell("product preview", UI.mapThumb("", "", "g-thumb"), "width: 380px")}</div>
+      ${sect("Discover sheet", ".disc-sheet · --discover-sheet-h (67%); view switch shows the view it switches TO")}
+      <div class="g-row">
+        ${cell("live, categories", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: true, mode: "nearby" })}</div><div class="sheet-body">${UI.categorySection({ ...groups[1], products: groups[1].products.slice(0, 2) })}</div></section>`, "width: 412px; padding: 0")}
+        ${cell("live, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: true, mode: "all" })}</div><div class="disc-chips">${UI.chipRow(CATS, "all", "", "inline")}</div><div class="sheet-body"><div class="rows">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}</div></div></section>`, "width: 412px; padding: 0")}
+        ${cell("history, categories (no Nearby / All)", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: false })}</div></section>`, "width: 412px; padding: 0")}
+        ${cell("history, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: false })}</div></section>`, "width: 412px; padding: 0")}
+        ${cell("product view", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ product: "govee" })}</div><div class="sheet-body">${UI.productView(D.getProduct("govee"), D.getProduct("govee").devices.slice(0, 2).map((d) => UI.deviceRow(d, { spark: false })).join(""))}</div></section>`, "width: 412px; padding: 0")}
+      </div>
       ${sect("TopFade", ".top-fade · --fade-h, --fade-solid; solid gradient to --bg, no blur")}
       <div class="g-row">${cell("over a list", `<div style="position: relative; height: 150px; overflow: hidden">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}<div class="top-fade" style="height: 90px"></div></div>`, "width: 412px; padding: 0")}</div>
     </div>`;
     miniMap($("#g-rec-map"), D.getRecording("now").route);
-    const p = D.getProduct("govee");
-    miniMap($("#g-thumb"), [], productPoints(p));
-    ["g-dev-1", "g-dev-2"].forEach((id) => miniMap($(`#${id}`), [], D.getDeviceSightings(sheetDev.addr)));
-    miniMap($("#g-dev-3"), [], D.getDeviceSightings(noName.addr));
     $("#g-q").focus();
-    $(".g-play").addEventListener("click", (e) => e.currentTarget.classList.toggle("open"));
   }
 
   window.CluetoothUI = { UI, icon, band, minus };

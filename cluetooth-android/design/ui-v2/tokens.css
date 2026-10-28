@@ -122,7 +122,6 @@
   --search-h: 42px;
   --search-size: 14px;
   --chart-h: 96px;
-  --map-preview-h: 140px;
   --marker: 32px;
   --marker-icon: 16px;
   --top-zone: calc(var(--edge) + var(--rb) + var(--edge)); /* the float row a sheet never covers */
