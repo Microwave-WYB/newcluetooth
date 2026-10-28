@@ -107,7 +107,7 @@
   --side-w: 82cqw;          /* the left sidebar; the map strip beside it stays visible */
   --me-dot: 16px;
   --sheet-peek: 92px;
-  --sheet-max: 60%;        /* of the frame: the map always stays visible above it */
+  --sheet-expanded-h: calc(100% - var(--top-zone)); /* expanded sheets (device, Discover) stop below the top float-button row */
   --handle-w: 36px;
   --handle-h: 4px;
   --card-w: 148px;

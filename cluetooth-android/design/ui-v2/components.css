@@ -255,9 +255,9 @@ button.item:active { background: var(--fill2); }
 
 /* ---------- Sheet (bottom sheet: device sheet and map list sheet) ---------- */
 /* Two snap states only: .collapsed shows the peek header (--peek), .expanded the whole sheet. The
-   height is fixed (--sheet-full); content scrolls inside, so tabs or content never change it. */
+   height is fixed (--sheet-expanded-h); content scrolls inside, so tabs or content never change it. */
 .sheet {
-  position: absolute; z-index: 81; left: 0; right: 0; bottom: 0; height: var(--sheet-full, calc(100% - var(--top-zone)));
+  position: absolute; z-index: 81; left: 0; right: 0; bottom: 0; height: var(--sheet-expanded-h);
   display: flex; flex-direction: column; border-radius: var(--r-sheet) var(--r-sheet) 0 0; background: var(--panel); box-shadow: var(--shadow-sheet);
   transform: translateY(calc(100% + 8px)); visibility: hidden; transition: transform var(--t-page) var(--ease), visibility var(--t-page);
 }
@@ -325,7 +325,7 @@ button.item:active { background: var(--fill2); }
 .map { position: absolute; inset: 0; background: var(--fill2); }
 
 /* ---------- Main map screen ---------- */
-.disc-sheet { z-index: 12; --sheet-full: var(--sheet-max); }
+.disc-sheet { z-index: 12; }
 .disc-head { flex: none; display: grid; grid-template-columns: var(--icon-btn) 1fr var(--icon-btn); align-items: center; gap: 8px; padding: 0 var(--edge) 10px; touch-action: none; cursor: grab; }
 .disc-center { justify-self: center; }
 .disc-center .seg { width: 184px; }

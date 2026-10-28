@@ -281,13 +281,11 @@
     liftRecorder();
   }
 
-  /** The recorder sits above the Discover sheet: at its peek, or above it when expanded. */
+  /** The recorder sits above the Discover sheet's peek (also while the sheet is expanded, floating over it). */
   function liftRecorder() {
     const sheet = $(".disc-sheet", phone);
     let lift = 0;
-    if (sheet.classList.contains("open")) {
-      lift = sheet.classList.contains("expanded") ? sheet.offsetHeight : parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 0;
-    }
+    if (sheet.classList.contains("open")) lift = parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 0;
     phone.style.setProperty("--rec-lift", `${lift}px`);
   }
 
