@@ -28,7 +28,21 @@ object GattJson {
 
     fun encode(result: GattDiscoveryResult): String = toJson(result).toString()
 
-    fun toJson(result: GattDiscoveryResult): JsonObject {
+    fun toJson(result: GattDiscoveryResult): JsonObject = stripNul(build(result)) as JsonObject
+
+    /** PostgreSQL cannot store NUL; names and error strings come from the peer and the stack. */
+    private fun stripNul(element: JsonElement): JsonElement = when (element) {
+        is JsonPrimitive -> if (element.isString && '\u0000' in element.content) {
+            JsonPrimitive(element.content.replace("\u0000", ""))
+        } else {
+            element
+        }
+        is JsonObject -> JsonObject(element.mapValues { (_, value) -> stripNul(value) })
+        is JsonArray -> JsonArray(element.map(::stripNul))
+        else -> element
+    }
+
+    private fun build(result: GattDiscoveryResult): JsonObject {
         val request = result.request
         return buildJsonObject {
             put("schema", SCHEMA)
@@ -102,7 +116,8 @@ object GattJson {
     private fun target(target: GattTarget) = buildJsonObject {
         put("addr", target.addr)
         put("addr_type", nullable(target.addrType))
-        put("name", nullable(target.name))
+        // A name that was only NULs would become empty; the contract uses null for "no name".
+        put("name", nullable(target.name?.replace("\u0000", "")?.ifEmpty { null }))
         put(
             "trigger_adv",
             target.triggerAdv?.let {

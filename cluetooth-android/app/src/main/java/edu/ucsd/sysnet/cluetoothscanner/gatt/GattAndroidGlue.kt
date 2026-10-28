@@ -83,7 +83,8 @@ fun startGattDiscovery(
             else -> null
         },
         name = trigger?.name,
-        triggerAdv = trigger?.let {
+        // The contract needs a non-empty advertisement; a record without bytes is no trigger.
+        triggerAdv = trigger?.takeIf { it.raw.isNotEmpty() }?.let {
             GattTriggerAdv(
                 raw = it.raw,
                 rssi = it.rssi,
@@ -100,7 +101,7 @@ fun startGattDiscovery(
             target = target,
             sessionId = repository.activeSessionId(),
             location = location?.let {
-                GattLocation(it.latitude, it.longitude, it.accuracy.toDouble())
+                GattLocation.validOrNull(it.latitude, it.longitude, it.accuracy.toDouble())
             },
             linkFactory = AndroidGattLinkFactory(context.applicationContext, bluetoothDevice),
         ),

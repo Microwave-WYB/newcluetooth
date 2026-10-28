@@ -14,8 +14,10 @@ class GattJsonTest {
     // 2025-03-25T00:00:00Z
     private val midnight = 1_742_860_800_000L
 
-    private fun fixture(name: String) =
-        Json.parseToJsonElement(File("../../cluetooth-core/tests/fixtures/gatt-v1/$name.json").readText())
+    private fun id(n: Int) = "0195ca99-5000-7001-8000-00000000000$n"
+
+    private fun fixture(n: Int) =
+        Json.parseToJsonElement(File("../../test-fixtures/gatt-v1/2025/03/25/${id(n)}.json").readText())
 
     private val device = GattRequest(
         id = "0195ca99-5000-7131-b131-313131313131",
@@ -29,6 +31,7 @@ class GattJsonTest {
 
     private fun completeResult() = GattDiscoveryResult(
         request = device.copy(
+            id = id(1),
             sessionId = "0195ca99-4fff-7555-9555-555555555555",
             target = GattTarget(
                 "AA:BB:CC:DD:EE:FF", "random", "sensor",
@@ -79,13 +82,13 @@ class GattJsonTest {
 
     @Test
     fun `complete discovery matches the golden contract object`() {
-        assertEquals(fixture("complete"), GattJson.toJson(completeResult()))
+        assertEquals(fixture(1), GattJson.toJson(completeResult()))
     }
 
     @Test
     fun `partial discovery after a remote disconnect matches the golden object`() {
         val result = GattDiscoveryResult(
-            request = device.copy(target = GattTarget("AA:BB:CC:DD:EE:FF", "public", null, null)),
+            request = device.copy(id = id(2), target = GattTarget("AA:BB:CC:DD:EE:FF", "public", null, null)),
             startedAtMs = midnight + 1_000,
             endedAtMs = midnight + 5_250,
             outcome = GattOutcome.PARTIAL,
@@ -105,13 +108,13 @@ class GattJsonTest {
                 ),
             ),
         )
-        assertEquals(fixture("partial-remote-disconnect"), GattJson.toJson(result))
+        assertEquals(fixture(2), GattJson.toJson(result))
     }
 
     @Test
     fun `failed connect timeout matches the golden object`() {
         val result = GattDiscoveryResult(
-            request = device,
+            request = device.copy(id = id(3)),
             startedAtMs = midnight + 1_000,
             endedAtMs = midnight + 11_000,
             outcome = GattOutcome.FAILED,
@@ -123,7 +126,7 @@ class GattJsonTest {
             timings = GattTimings(null, null, null, null),
             services = emptyList(),
         )
-        assertEquals(fixture("failed-connect-timeout"), GattJson.toJson(result))
+        assertEquals(fixture(3), GattJson.toJson(result))
     }
 
     @Test
@@ -140,6 +143,40 @@ class GattJsonTest {
             ),
             keys,
         )
+    }
+
+    @Test
+    fun `NUL characters from the peer are stripped from every string`() {
+        val base = completeResult()
+        val dirty = base.copy(
+            request = base.request.copy(
+                target = base.request.target.copy(name = "se\u0000nsor"),
+            ),
+            error = GattError(GattStage.READ, 19, "ERR\u0000OR"),
+        )
+        val root = GattJson.toJson(dirty)
+        assertEquals("sensor", root.getValue("target").jsonObject.getValue("name").jsonPrimitive.content)
+        assertEquals("ERROR", root.getValue("error").jsonObject.getValue("name").jsonPrimitive.content)
+        assertTrue('\u0000' !in GattJson.encode(dirty).replace("\\u0000", ""))
+        // A name made only of NULs is "no name".
+        val onlyNul = base.copy(request = base.request.copy(target = base.request.target.copy(name = "\u0000")))
+        assertEquals(JsonNull, GattJson.toJson(onlyNul).getValue("target").jsonObject.getValue("name"))
+    }
+
+    @Test
+    fun `a location the server would reject is dropped`() {
+        assertEquals(GattLocation(32.0, -117.0, 4.0), GattLocation.validOrNull(32.0, -117.0, 4.0))
+        assertEquals(null, GattLocation.validOrNull(91.0, 0.0, 1.0))
+        assertEquals(null, GattLocation.validOrNull(0.0, 181.0, 1.0))
+        assertEquals(null, GattLocation.validOrNull(0.0, 0.0, -1.0))
+        assertEquals(null, GattLocation.validOrNull(Double.NaN, 0.0, 1.0))
+        assertEquals(null, GattLocation.validOrNull(0.0, 0.0, Double.POSITIVE_INFINITY))
+    }
+
+    @Test
+    fun `values over the 512 byte attribute limit are an error not a clipped ok`() {
+        assertEquals(GattReadValue.ok(ByteArray(512)).status, "ok")
+        assertEquals(GattReadValue(null, "error:13"), GattReadValue.ok(ByteArray(513)))
     }
 
     @Test

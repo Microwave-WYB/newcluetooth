@@ -95,7 +95,8 @@ class GattEngine(
         return GattDiscoveryResult(
             request = request,
             startedAtMs = startedAt,
-            endedAtMs = nowMs(),
+            // The wall clock may step back mid-run; the contract needs ended >= started.
+            endedAtMs = maxOf(nowMs(), startedAt),
             outcome = run.outcome,
             stageReached = if (run.outcome == GattOutcome.COMPLETE) GattStage.DISCONNECT else run.stage,
             error = run.error,
@@ -120,7 +121,7 @@ class GattEngine(
             enter(run, GattStage.CONNECT, attempt)
             val connectStart = nowMs()
             when (val waited = await<Unit>(attempt, timeouts.connectMs) { if (it is GattEvent.Connected) Unit else null }) {
-                is Wait.Got -> run.connectMs = nowMs() - connectStart
+                is Wait.Got -> run.connectMs = elapsedSince(connectStart)
                 is Wait.Disconnected -> return failRemote(run, waited.status, attempt)
                 Wait.TimedOut -> return failTimeout(run, link, attempt, GattStage.CONNECT)
                 Wait.Cancelled -> return cancelled(run, link, attempt)
@@ -132,13 +133,17 @@ class GattEngine(
             if (link.requestMtu(timeouts.requestedMtu)) {
                 when (val waited = await<GattEvent.MtuChanged>(attempt, timeouts.mtuMs) { it as? GattEvent.MtuChanged }) {
                     // A failed or unanswered MTU request only means the default MTU stays.
-                    is Wait.Got -> if (waited.value.status == GattStatus.SUCCESS) run.mtu = waited.value.mtu
+                    is Wait.Got -> if (waited.value.status == GattStatus.SUCCESS &&
+                        waited.value.mtu in MIN_MTU..MAX_MTU
+                    ) {
+                        run.mtu = waited.value.mtu
+                    }
                     is Wait.Disconnected -> return failRemote(run, waited.status, attempt)
                     Wait.TimedOut -> Unit
                     Wait.Cancelled -> return cancelled(run, link, attempt)
                 }
             }
-            run.mtuMs = nowMs() - mtuStart
+            run.mtuMs = elapsedSince(mtuStart)
 
             enter(run, GattStage.DISCOVER, attempt)
             val discoverStart = nowMs()
@@ -150,7 +155,7 @@ class GattEngine(
             }
             when (val waited = await<GattEvent.ServicesDiscovered>(attempt, timeouts.discoverMs) { it as? GattEvent.ServicesDiscovered }) {
                 is Wait.Got -> {
-                    run.discoverMs = nowMs() - discoverStart
+                    run.discoverMs = elapsedSince(discoverStart)
                     if (waited.value.status != GattStatus.SUCCESS) {
                         return failLocal(run, link, attempt, GattStage.DISCOVER, waited.value.status)
                     }
@@ -187,11 +192,11 @@ class GattEngine(
             GattServiceResult(
                 uuid = contractUuid(service.uuid),
                 primary = service.primary,
-                instance = service.instance,
+                instance = service.instance.coerceAtLeast(0),
                 characteristics = characteristics.mapIndexed { c, (characteristic, descriptorValues) ->
                     GattCharacteristicResult(
                         uuid = contractUuid(characteristic.uuid),
-                        instance = characteristic.instance,
+                        instance = characteristic.instance.coerceAtLeast(0),
                         properties = propertyNames(characteristic.propertyMask),
                         value = characteristicValues[s][c] ?: GattReadValue.NOT_READ_VALUE,
                         descriptors = characteristic.descriptors.mapIndexed { d, descriptor ->
@@ -269,9 +274,12 @@ class GattEngine(
         disconnect(run, link, attempt, DisconnectInitiator.LOCAL)
     }
 
+    /** Timings are never negative, even if the wall clock stepped back. */
+    private fun elapsedSince(start: Long): Long = (nowMs() - start).coerceAtLeast(0)
+
     private fun finishRead(run: Run, services: List<GattServiceResult>, readStart: Long) {
         run.services = services
-        run.readMs = nowMs() - readStart
+        run.readMs = elapsedSince(readStart)
     }
 
     private fun enter(run: Run, stage: GattStage, attempt: Int, readsDone: Int = 0, readsTotal: Int? = null) {
@@ -339,7 +347,9 @@ class GattEngine(
                 }
                 if (tagged.attempt != attempt) continue
                 val event = tagged.event ?: continue
-                if (event is GattEvent.PhyRead && event.status == GattStatus.SUCCESS) {
+                if (event is GattEvent.PhyRead && event.status == GattStatus.SUCCESS &&
+                    event.tx in PHY_RANGE && event.rx in PHY_RANGE
+                ) {
                     observedPhy = GattPhy(event.tx, event.rx)
                 }
                 found = when (event) {
@@ -358,5 +368,8 @@ class GattEngine(
     private companion object {
         /** Attempt tag no link ever uses; the retry backoff only listens for cancel. */
         const val RETRY_WAIT = -1
+        const val MIN_MTU = 23
+        const val MAX_MTU = 517
+        val PHY_RANGE = 1..3
     }
 }

@@ -18,6 +18,14 @@ Rust prepares one combined JSONL or Parquet artifact for a v2 session and a ZIP 
 
 Maps Compose renders only Rust-derived local route and observation overlays. No Routes, reverse-geocoding, or Static Maps route API is used. Google still receives normal viewport/tile requests. Supply `CLUETOOTH_MAPS_API_KEY` through a Gradle property or environment variable; never check it in. Restrict it to the Android package/signing certificate and enable only Maps SDK for Android. With no key, the detail screen safely shows a map-unavailable message. A future renderer seam is retained if viewport disclosure later requires MapLibre/offline tiles.
 
+## Scan payload v3 and manual GATT discovery
+
+New payloads are `scans/v3` (docs/payload-schema-v3.md): extended advertising is scanned with `setLegacy(false)` and `setPhy(PHY_LE_ALL_SUPPORTED)`; the "Scan LE Coded PHY" switch on the Upload screen (default on) selects 1M only when off and is re-read at every scan restart (at least once a minute). Before each scan (re)start `BleScanService` declares the footer facts (device, Android, app version, capabilities, PHY in force) to the core, which seals the payload in progress whenever they change.
+
+`gatt/` is the manual GATT engine. `GattEngine` is a stage machine (connect 10 s, MTU 517, discover 15 s, read every readable characteristic and every descriptor at 3 s each within 30 s, disconnect, always `close()`) over the `GattLink` interface, which has no write, notification or bonding call. Any disconnect, timeout or error keeps what was collected as a partial result; status 133 before any read is retried once after one second; `cancel()` works at any point. `GattDiscoveryManager` (one per process, in `CluetoothApplication`) exposes `start`, `cancel` and a `state` flow, builds the `gatt/v1` JSON (`GattJson`) and hands it to the Rust core, which validates, stores and uploads it through the shared WorkManager path and keeps the plaintext in `archive/gatt`. A one-slot preference (`cluetooth_gatt`) holds a `failed` object for the current stage while a discovery runs, so a discovery cut short by process death is stored as failed at the next start. The only trigger today is a debug-build panel in the device sheet (`GattDebugPanel`); release builds have no UI entry point.
+
+Android notes: the stack may start pairing by itself when a read fails for authentication or encryption, and there is no public API to forbid that. The engine records the status and reads on; the operator cancels any pairing dialog. Android exposes instance ids, not ATT handles. `BLUETOOTH_CONNECT` (already part of the required runtime permissions) is needed to connect.
+
 ## Local setup (from the repository root)
 
 AGP 8.10 requires JDK **17**, Gradle 8.11.1 (the retained wrapper), SDK platform 35 and build-tools 35.0.0. Native packaging additionally requires NDK 27.2.12479018, cargo-ndk 4.1.2 and all four Android Rust targets.

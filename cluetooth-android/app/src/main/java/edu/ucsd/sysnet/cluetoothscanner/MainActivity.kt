@@ -41,7 +41,10 @@ import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanReadiness
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanReadinessAction
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanViewModel
+import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
+import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
 import edu.ucsd.sysnet.cluetoothscanner.ui.screen.DeviceDetailsBottomSheet
+import edu.ucsd.sysnet.cluetoothscanner.ui.screen.GattDebugPanel
 import edu.ucsd.sysnet.cluetoothscanner.ui.screen.MainScreen
 import edu.ucsd.sysnet.cluetoothscanner.ui.screen.UploadStatusScreen
 import edu.ucsd.sysnet.cluetoothscanner.ui.theme.CluetoothScannerTheme
@@ -123,7 +126,10 @@ class MainActivity : ComponentActivity() {
         val repository = remember { (application as CluetoothApplication).repository }
         val serviceScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
         val locationService = remember { LocationService(context, repository) }
-        val bleScanService = remember { BleScanService(context, locationService, repository) }
+        val cluetoothApplication = remember { application as CluetoothApplication }
+        val bleScanService = remember {
+            BleScanService(context, locationService, repository, cluetoothApplication.triggerCache)
+        }
         val uploadService = remember { UploadService(context) }
         val storageService = remember { StorageService(context, serviceScope, uploadService) }
         val exportScope = rememberCoroutineScope()
@@ -342,12 +348,45 @@ class MainActivity : ComponentActivity() {
                     },
                     sheetState = bottomSheetState
                 ) {
+                    val gattManager = cluetoothApplication.gattManager
+                    val gattState by gattManager.state.collectAsState()
+                    var gattStartMessage by remember { mutableStateOf<String?>(null) }
+                    val gattItem = selectedItem!!
                     DeviceDetailsBottomSheet(
-                        item = selectedItem!!,
+                        item = gattItem,
                         onDismiss = {
                             showBottomSheet = false
                             scanViewModel.clearSelection()
-                        }
+                        },
+                        debugPanel = if (BuildConfig.DEBUG) {
+                            {
+                                GattDebugPanel(
+                                    state = gattState,
+                                    onStart = {
+                                        startGattDiscovery(
+                                            context = context,
+                                            manager = gattManager,
+                                            triggers = cluetoothApplication.triggerCache,
+                                            repository = repository,
+                                            addr = gattItem.mac,
+                                            location = locationService.getLastKnownLocation(),
+                                        ).also { result ->
+                                            gattStartMessage = when (result) {
+                                                GattStartResult.Started -> null
+                                                GattStartResult.Busy -> "A discovery is already running"
+                                                GattStartResult.PermissionMissing -> "Bluetooth connect permission is not granted"
+                                                GattStartResult.BluetoothUnavailable -> "Bluetooth is unavailable"
+                                            }
+                                        }
+                                    },
+                                    onCancel = gattManager::cancel,
+                                    onDismissResult = gattManager::dismissResult,
+                                    startMessage = gattStartMessage,
+                                )
+                            }
+                        } else {
+                            null
+                        },
                     )
                 }
             }

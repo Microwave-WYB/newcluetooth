@@ -134,6 +134,67 @@ class GattEngineTest {
     }
 
     @Test
+    fun `an mtu outside the att range is not recorded`() = runTest {
+        for (reported in listOf(22, 518, 0, -1)) {
+            val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+                override fun onMtu(link: FakeLink, mtu: Int): Boolean {
+                    link.emit(GattEvent.MtuChanged(reported, GattStatus.SUCCESS))
+                    return true
+                }
+            }))
+            assertNull("$reported", engine(factory).run(request).mtu)
+        }
+        for (edge in listOf(23, 517)) {
+            val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+                override fun onMtu(link: FakeLink, mtu: Int): Boolean {
+                    link.emit(GattEvent.MtuChanged(edge, GattStatus.SUCCESS))
+                    return true
+                }
+            }))
+            assertEquals(edge, engine(factory).run(request).mtu)
+        }
+    }
+
+    @Test
+    fun `a phy outside 1 to 3 is not recorded`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onMtu(link: FakeLink, mtu: Int): Boolean {
+                link.emit(GattEvent.PhyRead(0, 4, GattStatus.SUCCESS))
+                link.emit(GattEvent.MtuChanged(247, GattStatus.SUCCESS))
+                return true
+            }
+        }))
+        // FakeLink.readPhy also reports (2, 2); the invalid pair must not replace it.
+        assertEquals(GattPhy(2, 2), engine(factory).run(request).phy)
+    }
+
+    @Test
+    fun `a clock stepping back never yields negative timings or an end before the start`() = runTest {
+        var tick = 0L
+        val engine = GattEngine(
+            linkFactory = FakeFactory(attempts = arrayOf(Cooperative)),
+            nowMs = { 1_000_000L - 100 * tick++ },
+        )
+        val result = engine.run(request)
+        assertTrue(result.endedAtMs >= result.startedAtMs)
+        listOf(result.timings.connectMs, result.timings.mtuMs, result.timings.discoverMs, result.timings.readMs)
+            .forEach { assertTrue("$it", it == null || it >= 0) }
+    }
+
+    @Test
+    fun `an over long attribute value is recorded as an error and not clipped`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                link.emit(GattEvent.AttributeRead(ref, ByteArray(513), GattStatus.SUCCESS))
+                return true
+            }
+        }))
+        val result = engine(factory).run(request)
+        assertEquals(GattReadValue(null, "error:13"), result.value(0, 0))
+        assertEquals(GattOutcome.COMPLETE, result.outcome)
+    }
+
+    @Test
     fun `a failed mtu status keeps the default mtu`() = runTest {
         val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
             override fun onMtu(link: FakeLink, mtu: Int): Boolean {

@@ -38,7 +38,15 @@ data class GattReadValue(val hex: String?, val status: String) {
 
         val NOT_READ_VALUE = GattReadValue(null, NOT_READ)
 
-        fun ok(bytes: ByteArray) = GattReadValue(bytes.toHex(), OK)
+        /** ATT attribute values are at most 512 bytes. */
+        const val MAX_VALUE_BYTES = 512
+
+        /**
+         * A longer value breaks the protocol; it is recorded as an error rather than
+         * clipped, because a clipped value would claim to be complete.
+         */
+        fun ok(bytes: ByteArray) =
+            if (bytes.size > MAX_VALUE_BYTES) failed(GattStatus.INVALID_ATTRIBUTE_LENGTH) else GattReadValue(bytes.toHex(), OK)
 
         /** Android `BluetoothGatt` read status to the contract's status vocabulary. */
         fun failed(androidStatus: Int) = GattReadValue(
@@ -57,6 +65,7 @@ data class GattReadValue(val hex: String?, val status: String) {
 object GattStatus {
     const val SUCCESS = 0
     const val READ_NOT_PERMITTED = 2
+    const val INVALID_ATTRIBUTE_LENGTH = 13
     const val INSUFFICIENT_AUTHENTICATION = 5
     const val INSUFFICIENT_ENCRYPTION = 15
     const val CONN_TIMEOUT = 8
@@ -77,6 +86,7 @@ object GattStatus {
     fun name(status: Int): String = when (status) {
         SUCCESS -> "GATT_SUCCESS"
         READ_NOT_PERMITTED -> "GATT_READ_NOT_PERMITTED"
+        INVALID_ATTRIBUTE_LENGTH -> "GATT_INVALID_ATTRIBUTE_LENGTH"
         INSUFFICIENT_AUTHENTICATION -> "GATT_INSUFFICIENT_AUTHENTICATION"
         INSUFFICIENT_ENCRYPTION -> "GATT_INSUFFICIENT_ENCRYPTION"
         CONN_TIMEOUT -> "GATT_CONN_TIMEOUT"
@@ -135,7 +145,19 @@ data class GattTarget(
     val triggerAdv: GattTriggerAdv?,
 )
 
-data class GattLocation(val lat: Double, val lon: Double, val accuracy: Double)
+data class GattLocation(val lat: Double, val lon: Double, val accuracy: Double) {
+    companion object {
+        /** A fix the server would accept (finite, in range, nonnegative accuracy), or null. */
+        fun validOrNull(lat: Double, lon: Double, accuracy: Double): GattLocation? =
+            if (lat.isFinite() && lon.isFinite() && accuracy.isFinite() &&
+                lat in -90.0..90.0 && lon in -180.0..180.0 && accuracy >= 0.0
+            ) {
+                GattLocation(lat, lon, accuracy)
+            } else {
+                null
+            }
+    }
+}
 
 /** Everything the engine needs to know to run one discovery; metadata is copied into the result. */
 data class GattRequest(

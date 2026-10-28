@@ -22,7 +22,9 @@ import java.time.format.DateTimeFormatter
 fun DeviceDetailsBottomSheet(
     item: DisplayItem,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Debug-only controls (manual GATT discovery); null in release builds. */
+    debugPanel: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val packet = remember(item) { BleParser.parseAdvertisementData(item.record.raw) }
     var showTypeInfo by remember { mutableStateOf<UByte?>(null) }
@@ -67,6 +69,11 @@ fun DeviceDetailsBottomSheet(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        debugPanel?.let {
+            it()
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
         Text(
             text = "Raw Data",
