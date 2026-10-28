@@ -1,0 +1,1160 @@
+{
+  "schema": 1,
+  "version": "2026-10-26+9f9ccfd7",
+  "rules_version": "82f6f951efdf6f32",
+  "categories": [
+    {
+      "id": "asset-tracker",
+      "label": "Asset tracker",
+      "label_zh": "资产追踪器"
+    },
+    {
+      "id": "fleet-telematics",
+      "label": "Fleet telematics",
+      "label_zh": "车队远程信息"
+    },
+    {
+      "id": "vehicle-equipment",
+      "label": "Vehicle equipment",
+      "label_zh": "车载设备"
+    },
+    {
+      "id": "wearable",
+      "label": "Wearable",
+      "label_zh": "可穿戴设备"
+    },
+    {
+      "id": "audio-device",
+      "label": "Audio device",
+      "label_zh": "音频设备"
+    },
+    {
+      "id": "telephony",
+      "label": "Telephony",
+      "label_zh": "电话"
+    },
+    {
+      "id": "camera",
+      "label": "Camera",
+      "label_zh": "相机"
+    },
+    {
+      "id": "security-and-access",
+      "label": "Security and access",
+      "label_zh": "安防与门禁"
+    },
+    {
+      "id": "lighting-control",
+      "label": "Lighting control",
+      "label_zh": "照明控制"
+    },
+    {
+      "id": "smart-appliance",
+      "label": "Smart appliance",
+      "label_zh": "智能家电"
+    },
+    {
+      "id": "personal-care",
+      "label": "Personal care",
+      "label_zh": "个人护理"
+    },
+    {
+      "id": "medical-device",
+      "label": "Medical device",
+      "label_zh": "医疗设备"
+    },
+    {
+      "id": "reader-terminal",
+      "label": "Reader or terminal",
+      "label_zh": "读卡与扫码终端"
+    },
+    {
+      "id": "printer",
+      "label": "Printer",
+      "label_zh": "打印机"
+    },
+    {
+      "id": "power-energy",
+      "label": "Power and energy",
+      "label_zh": "电源与能源"
+    },
+    {
+      "id": "environmental-monitor",
+      "label": "Environmental monitor",
+      "label_zh": "环境监测"
+    },
+    {
+      "id": "display",
+      "label": "Display",
+      "label_zh": "显示设备"
+    },
+    {
+      "id": "input-peripheral",
+      "label": "Input peripheral",
+      "label_zh": "输入设备"
+    },
+    {
+      "id": "sports-equipment",
+      "label": "Sports equipment",
+      "label_zh": "运动器材"
+    }
+  ],
+  "pages": [
+    {
+      "id": "cohort--gozio-wayfinding-beacon",
+      "title": "Unnamed advertisements with Gozio's company ID",
+      "kind": "identifier",
+      "one_line": "Gozio's hospital wayfinding ecosystem, not a specific product",
+      "categories": [
+        "asset-tracker"
+      ],
+      "entity": null,
+      "has_rule": false
+    },
+    {
+      "id": "cohort--mesh-proxy-1828-unnamed",
+      "title": "Unnamed Mesh Proxy advertisements",
+      "kind": "identifier",
+      "one_line": "Unnamed advertisements carrying the SIG Mesh Proxy service UUID 1828.",
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Company field 1957 subset",
+            "company": [
+              1957
+            ]
+          },
+          {
+            "desc": "Company field 529 subset",
+            "company": [
+              529
+            ]
+          },
+          {
+            "desc": "19-byte service data",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "03/2",
+                "16/19"
+              ]
+            }
+          },
+          {
+            "desc": "11-byte service data with manufacturer data",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "03/2",
+                "16/11",
+                "FF/29"
+              ]
+            }
+          },
+          {
+            "desc": "Mesh Proxy service 1828",
+            "uuid": {
+              "ad": [
+                2,
+                3,
+                22
+              ],
+              "in": [
+                "1828"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "company_identifier--259",
+      "title": "Company field 259",
+      "kind": "identifier",
+      "one_line": "Bluetooth SIG company identifier 259, assigned to Bang & Olufsen A/S and also sent by unrelated devices.",
+      "entity": "company_id/259",
+      "has_rule": true,
+      "rule": {
+        "desc": "Company field 259",
+        "company": [
+          259
+        ]
+      }
+    },
+    {
+      "id": "ecosystem--google-cast-home-fea0",
+      "title": "Google Chromecast and Nest speakers",
+      "kind": "platform",
+      "one_line": "Google-assigned FEA0 service/service-data on Chromecast and Nest speaker names and a kitchen room-name candidate.",
+      "categories": [
+        "audio-device"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Chromecast name",
+            "name": {
+              "prefix": "Chromecast"
+            }
+          },
+          {
+            "desc": "Nest Audio name",
+            "name": {
+              "prefix": "Nest Audio"
+            }
+          },
+          {
+            "desc": "Nest Mini name",
+            "name": {
+              "prefix": "Nest Mini"
+            }
+          },
+          {
+            "desc": "kitchen room name",
+            "name": {
+              "prefix": "kitchen"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ecosystem--hid-seos",
+      "title": "HID Seos credentials and readers",
+      "kind": "platform",
+      "one_line": "HID Global's Seos credential platform for physical access control, including BLE mobile credentials.",
+      "categories": [
+        "security-and-access"
+      ],
+      "entity": "ecosystem/hid-seos",
+      "has_rule": false
+    },
+    {
+      "id": "ecosystem--ring-security",
+      "title": "Ring security devices",
+      "kind": "platform",
+      "one_line": "Ring connected-security ecosystem.",
+      "categories": [
+        "security-and-access"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Ring service UUID",
+            "uuid": {
+              "ad": [
+                7
+              ],
+              "in": [
+                "9760face-a234-4686-9e00-fcbbee000002"
+              ]
+            }
+          },
+          {
+            "desc": "Ring name",
+            "name": {
+              "prefix": "Ring"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "model--aranet4",
+      "title": "Aranet4 air-quality monitor",
+      "kind": "device",
+      "one_line": "Aranet4 CO₂/temperature/humidity/pressure room monitor.",
+      "categories": [
+        "environmental-monitor"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "desc": "Name token Aranet4",
+        "name": {
+          "equals": "Aranet4"
+        }
+      }
+    },
+    {
+      "id": "model--bixolon-slp-dx220b",
+      "title": "BIXOLON SLP-DX220B label printer",
+      "kind": "device",
+      "one_line": "Bluetooth model of BIXOLON's 2-inch SLP-DX220 desktop label printer; no advertisement fingerprint is established yet.",
+      "categories": [
+        "printer"
+      ],
+      "entity": "model/bixolon-slp-dx220b",
+      "has_rule": false
+    },
+    {
+      "id": "model--cisco-ip-phone-8851",
+      "title": "Cisco IP Phone 8851",
+      "kind": "device",
+      "one_line": "Cisco IP Phone 8851, a wired enterprise VoIP desk phone with Bluetooth 3.0 for headsets and mobile devices",
+      "categories": [
+        "telephony"
+      ],
+      "entity": null,
+      "has_rule": false
+    },
+    {
+      "id": "model--cisco-ip-phone-8945",
+      "title": "Cisco IP Phone 8945",
+      "kind": "device",
+      "one_line": "Cisco Unified IP Phone 8945, a wired enterprise video and VoIP desk phone",
+      "categories": [
+        "telephony"
+      ],
+      "entity": null,
+      "has_rule": false
+    },
+    {
+      "id": "model--nlight-res7",
+      "title": "nLight AIR rES7 fixture-integrated sensor",
+      "kind": "device",
+      "one_line": "Acuity nLight AIR rES7, an in-fixture occupancy and daylight sensor with Bluetooth and 900 MHz radios.",
+      "categories": [
+        "lighting-control"
+      ],
+      "entity": "model/nlight-res7",
+      "has_rule": false
+    },
+    {
+      "id": "model--platco-pr1",
+      "title": "Platco PR1 remote",
+      "kind": "device",
+      "one_line": "Generic BLE HID remote candidate.",
+      "categories": [
+        "input-peripheral"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Name Platco PR1",
+            "name": {
+              "equals": "Platco PR1"
+            }
+          },
+          {
+            "desc": "Company field 1767",
+            "company": [
+              1767
+            ]
+          },
+          {
+            "desc": "AD layout",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "02/8",
+                "09/10",
+                "FF/13",
+                "0A/1",
+                "12/4",
+                "19/2"
+              ]
+            }
+          },
+          {
+            "desc": "Immediate alert 1802",
+            "uuid": {
+              "ad": [
+                2,
+                3,
+                22
+              ],
+              "in": [
+                "1802"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "model--resmed-airmini",
+      "title": "ResMed AirMini travel CPAP",
+      "kind": "device",
+      "one_line": "ResMed AirMini portable CPAP machine, paired with a phone app; its Bluetooth name is ResMed plus six digits.",
+      "categories": [
+        "medical-device"
+      ],
+      "entity": "model/resmed-airmini",
+      "has_rule": true,
+      "rule": {
+        "desc": "Name ResMed plus space plus six digits",
+        "name": {
+          "regex": "ResMed \\d\\d\\d\\d\\d\\d"
+        },
+        "note": "Name format from ResMed's pairing guide. Name only; no UUID or company field is documented for AirMini. Other ResMed products may use the same format, so treat a match as a candidate."
+      }
+    },
+    {
+      "id": "model--rockford-fosgate-pmx1",
+      "title": "Rockford Fosgate PMX-1",
+      "kind": "device",
+      "one_line": "Rockford Fosgate PMX-1 marine/outdoor media receiver name token.",
+      "categories": [
+        "audio-device"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Service UUID 5D00",
+            "uuid": {
+              "ad": [
+                2
+              ],
+              "in": [
+                "5D00"
+              ]
+            }
+          },
+          {
+            "desc": "Name token PMX-1",
+            "name": {
+              "equals": "PMX-1"
+            }
+          },
+          {
+            "desc": "Company field 1705",
+            "company": [
+              1705
+            ]
+          },
+          {
+            "desc": "AD layout",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "02/4",
+                "FF/8",
+                "09/20",
+                "0A/1"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "model--sonicu-sonishield-duo",
+      "title": "Sonicu SoniShield Duo",
+      "kind": "device",
+      "one_line": "Sonicu SoniShield Duo environmental meter for refrigerators, freezers and room conditions, with Bluetooth for local setup and display pairing.",
+      "categories": [
+        "environmental-monitor"
+      ],
+      "entity": null,
+      "has_rule": false
+    },
+    {
+      "id": "model--wattstopper-fsp-321",
+      "title": "Wattstopper FSP-321 fixture sensor",
+      "kind": "device",
+      "one_line": "Legrand Wattstopper in-fixture PIR and daylight sensor with a Bluetooth LE configuration interface.",
+      "categories": [
+        "lighting-control"
+      ],
+      "entity": "model/wattstopper-fsp-321",
+      "has_rule": true,
+      "rule": {
+        "name": {
+          "prefix": "FSP-321",
+          "case": "insensitive"
+        },
+        "desc": "Name starts with FSP-321",
+        "note": "Wattstopper's app guide says the default sensor name is the model number, so FSP-321 and FSP-321B variants share this prefix. A name set during commissioning replaces it. No vendor source gives a company field or UUID to pair with the name."
+      }
+    },
+    {
+      "id": "product_family--acuity-nlight-lighting-control",
+      "title": "Acuity SensorSwitch and nLight AIR controls",
+      "kind": "device",
+      "one_line": "Acuity Brands SensorSwitch / nLight AIR products with name + manufacturer-data layouts.",
+      "categories": [
+        "lighting-control"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "SensorSwitch name",
+            "name": {
+              "prefix": "SensorSwitch"
+            }
+          },
+          {
+            "desc": "rPP20 name",
+            "name": {
+              "prefix": "rPP20"
+            }
+          },
+          {
+            "desc": "nECYD name",
+            "name": {
+              "case": "insensitive",
+              "prefix": "nECYD"
+            }
+          },
+          {
+            "desc": "Company field 160 (SensorSwitch)",
+            "company": [
+              160
+            ]
+          },
+          {
+            "desc": "Company field 4101 (nECYD)",
+            "company": [
+              4101
+            ]
+          },
+          {
+            "desc": "SensorSwitch layout",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "09/17",
+                "FF/7"
+              ]
+            }
+          },
+          {
+            "desc": "nECYD layout",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "09/17",
+                "FF/20"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--amazfit-fee0",
+      "title": "Amazfit wearables (Huami identifiers)",
+      "kind": "device",
+      "one_line": "Amazfit bands and watches; the identifiers 343 and FEE0 are registered to Huami, but no source ties them to a model.",
+      "categories": [
+        "wearable"
+      ],
+      "entity": "product_family/amazfit-fee0",
+      "has_rule": false
+    },
+    {
+      "id": "product_family--anker-ff09-power-products",
+      "title": "Anker SOLIX and Prime power products",
+      "kind": "device",
+      "one_line": "Anker SOLIX portable power stations and Prime power banks that connect to the Anker app over Bluetooth; no verified advertisement fingerprint yet.",
+      "categories": [
+        "power-energy"
+      ],
+      "entity": null,
+      "has_rule": false
+    },
+    {
+      "id": "product_family--bose-le-audio-names",
+      "title": "Bose audio devices (FEBE and company 158)",
+      "kind": "device",
+      "one_line": "Bose headphones, earbuds and speakers, recognised by Bose's own service UUID FEBE or company field 158.",
+      "categories": [
+        "audio-device"
+      ],
+      "entity": "family/bose-le-audio-names",
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Bose member UUID FEBE",
+            "note": "Assigned to Bose Corporation by the Bluetooth SIG. AD types carrying it are not documented; family-level only.",
+            "uuid": {
+              "ad": [
+                2,
+                3,
+                22
+              ],
+              "in": [
+                "FEBE"
+              ]
+            }
+          },
+          {
+            "desc": "Bose company field",
+            "note": "Company identifier 158 is Bose Corporation. Family-level only; does not identify a model.",
+            "company": [
+              158
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--dreo-5348-appliances",
+      "title": "Dreo fans, heaters and appliances",
+      "kind": "device",
+      "one_line": "Dreo app-connected fans, air conditioners, humidifiers and heaters that are set up over Bluetooth; no primary source yet ties a name, company field or UUID to them.",
+      "categories": [
+        "smart-appliance"
+      ],
+      "entity": "product_family/dreo-5348-appliances",
+      "has_rule": false
+    },
+    {
+      "id": "product_family--elk-bleddm-led-controllers",
+      "title": "ELK-BLEDDM LED controllers",
+      "kind": "device",
+      "one_line": "Generic BLE LED strip/light controller candidate named ELK-BLEDDM.",
+      "categories": [
+        "lighting-control"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "ELK-BLEDDM name",
+            "name": {
+              "prefix": "ELK-BLEDDM"
+            }
+          },
+          {
+            "desc": "Flags plus 13-byte name",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "09/13"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--elk-bledom-led-controllers",
+      "title": "ELK-BLEDOM LED strip controllers",
+      "kind": "device",
+      "one_line": "Generic ELK-BLEDOM BLE RGB LED-strip controller family.",
+      "categories": [
+        "lighting-control"
+      ],
+      "entity": "family/elk-bledom-led-controllers",
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "ELK-BLEDOM name",
+            "name": {
+              "prefix": "ELK-BLEDOM"
+            }
+          },
+          {
+            "desc": "Company field 12849",
+            "company": [
+              12849
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--enovate-emtag",
+      "title": "Enovate EmTag BLE tag",
+      "kind": "device",
+      "one_line": "Enovate Medical's battery-powered BLE tag (assemblies A0001659, A0001707); no advertisement fingerprint is documented.",
+      "categories": [
+        "asset-tracker"
+      ],
+      "entity": "family/enovate-emtag",
+      "has_rule": false
+    },
+    {
+      "id": "product_family--epson-ecotank-printers",
+      "title": "Epson EcoTank and WorkForce printers",
+      "kind": "device",
+      "one_line": "Epson EcoTank ET-series and WorkForce WF-2950 printers, recognized by an ET-/WF- model name and company field 64.",
+      "categories": [
+        "printer"
+      ],
+      "entity": "product_family/epson-ecotank-printers",
+      "has_rule": true,
+      "rule": {
+        "desc": "Epson ET-/WF- model name with Seiko Epson company field",
+        "all": [
+          {
+            "any": [
+              {
+                "name": {
+                  "prefix": "ET-"
+                },
+                "desc": "EcoTank ET- name token"
+              },
+              {
+                "name": {
+                  "prefix": "WF-"
+                },
+                "desc": "WorkForce WF- name token"
+              }
+            ]
+          },
+          {
+            "company": [
+              64
+            ],
+            "desc": "Company field 64, assigned to Seiko Epson Corporation",
+            "note": "Assignment is documented, but no source checked says these printers put it in their advertisement. The name prefix alone is generic and needs this to discriminate."
+          }
+        ],
+        "note": "Best effort. Names and company field together point to an Epson printer family, not to a model; the full name token gives the model."
+      }
+    },
+    {
+      "id": "product_family--govee-h-model-code-names",
+      "title": "Govee devices",
+      "kind": "device",
+      "one_line": "Govee lighting, plug, environmental-monitoring and other products identified by the public H model code in the local name (three name prefixes, same code scheme).",
+      "categories": [
+        "lighting-control",
+        "environmental-monitor",
+        "smart-appliance"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Govee_H name",
+            "name": {
+              "prefix": "Govee_H"
+            }
+          },
+          {
+            "desc": "ihoment_H name",
+            "name": {
+              "prefix": "ihoment_H"
+            }
+          },
+          {
+            "desc": "GBK_H name",
+            "name": {
+              "prefix": "GBK_H"
+            }
+          },
+          {
+            "desc": "Company field 34818",
+            "company": [
+              34818
+            ]
+          },
+          {
+            "desc": "Company field 34819",
+            "company": [
+              34819
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--honeywell-xenon-hc-base",
+      "title": "Honeywell Xenon Ultra healthcare charge and communication bases",
+      "kind": "device",
+      "one_line": "Candidate family: Honeywell's white, healthcare-housing charge and communication bases for the Xenon Ultra 1960h/1962h Bluetooth scanners.",
+      "categories": [
+        "reader-terminal"
+      ],
+      "entity": "product_family/honeywell-xenon-hc-base",
+      "has_rule": false
+    },
+    {
+      "id": "product_family--jabra-name-tokens",
+      "title": "Jabra earbuds, headsets and speakerphone",
+      "kind": "device",
+      "one_line": "Jabra consumer earbuds, office headsets and a speakerphone; a candidate name prefix `Jabra` plus Google Fast Pair service data, neither confirmed by a primary source.",
+      "categories": [
+        "audio-device"
+      ],
+      "entity": "family/jabra-earbuds-headsets-and-speakerphone",
+      "has_rule": true,
+      "rule": {
+        "name": {
+          "prefix": "Jabra"
+        },
+        "desc": "Local name starting with Jabra",
+        "note": "Name prefix is from unpublished research notes; no primary source found for it. The Fast Pair UUID FE2C is deliberately not in this rule: any Fast Pair accessory from any vendor advertises it."
+      }
+    },
+    {
+      "id": "product_family--lednetwf-zengge-controllers",
+      "title": "lednetwf colour-light controllers",
+      "kind": "device",
+      "one_line": "Zengge/Magic Hue-compatible colour-light controller candidate.",
+      "categories": [
+        "lighting-control"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "lednetwf name",
+            "name": {
+              "case": "insensitive",
+              "prefix": "lednetwf"
+            }
+          },
+          {
+            "desc": "Manufacturer data first",
+            "shape": {
+              "rest": false,
+              "items": [
+                "FF/29",
+                "01/1",
+                "09/20"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--marshall-home-speakers",
+      "title": "Marshall Acton and Stanmore home speakers",
+      "kind": "device",
+      "one_line": "Mains-powered Marshall Acton and Stanmore Bluetooth speakers, recognised by the generation name; only the II names are documented.",
+      "categories": [
+        "audio-device"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Acton II name",
+            "note": "Vendor pairing guide shows the name ACTON II. Acton III and Stanmore III names are not documented, so they are not in this rule.",
+            "name": {
+              "case": "insensitive",
+              "prefix": "Acton II"
+            }
+          },
+          {
+            "desc": "Stanmore II name",
+            "note": "Vendor pairing guide shows the name Stanmore II. Only the Stanmore II generation is covered.",
+            "name": {
+              "case": "insensitive",
+              "prefix": "Stanmore II"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--pedal-commander",
+      "title": "Pedal Commander throttle controllers",
+      "kind": "device",
+      "one_line": "Pedal Commander throttle-response controller candidate; other pedal names unassigned.",
+      "categories": [
+        "vehicle-equipment"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Name Pedal Commander",
+            "name": {
+              "equals": "Pedal Commander"
+            }
+          },
+          {
+            "desc": "Name prefix pedal (unattributed)",
+            "name": {
+              "case": "insensitive",
+              "prefix": "pedal"
+            }
+          },
+          {
+            "desc": "Flags, name, TX power layout",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "09/15",
+                "0A/1"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--primex-sync-clock",
+      "title": "Primex Sync Bluetooth clocks and repeaters",
+      "kind": "device",
+      "one_line": "Primex OneVue Sync Bluetooth clocks and repeaters, which Primex says advertise the local name PrimexClock.",
+      "categories": [
+        "display"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "desc": "Primex Sync clock or repeater",
+        "name": {
+          "equals": "PrimexClock"
+        },
+        "note": "Primex documents this name for Sync Bluetooth clocks and repeaters. It does not separate a clock from a repeater, and the Sync Bridge advertises a different, generic name that is deliberately not matched."
+      }
+    },
+    {
+      "id": "product_family--samsung-galaxy-wearables",
+      "title": "Samsung Galaxy Watch and Galaxy Ring",
+      "kind": "device",
+      "one_line": "Samsung Galaxy Watch smartwatches and the Galaxy Ring; Samsung's company field and a Samsung member UUID are shared with other Samsung products, so the name is the only discriminating clue.",
+      "categories": [
+        "wearable"
+      ],
+      "entity": null,
+      "has_rule": false
+    },
+    {
+      "id": "product_family--sony-le-prefixed-audio-names",
+      "title": "Sony LE_ audio names",
+      "kind": "device",
+      "one_line": "Sony headphones and earbuds that advertise their model name with an LE_ prefix, such as LE_WH-1000XM5 or LE_WF-1000XM4.",
+      "categories": [
+        "audio-device"
+      ],
+      "entity": "family/sony-le-prefixed-audio-names",
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "LE_WH-1000XM name",
+            "name": {
+              "prefix": "LE_WH-1000XM"
+            },
+            "note": "Documented by Sony for the WH-1000XM5; other XM numbers follow the same pattern."
+          },
+          {
+            "desc": "LE_WF-1000XM name",
+            "name": {
+              "prefix": "LE_WF-1000XM"
+            },
+            "note": "Documented by Sony for the WF-1000XM4 and WF-1000XM5."
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--tile-feed",
+      "title": "Tile trackers",
+      "kind": "device",
+      "one_line": "Tile Bluetooth item-finder family.",
+      "categories": [
+        "asset-tracker"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "FEED service",
+            "uuid": {
+              "ad": [
+                2,
+                3,
+                22
+              ],
+              "in": [
+                "FEED"
+              ]
+            }
+          },
+          {
+            "desc": "Tile name",
+            "name": {
+              "equals": "Tile"
+            }
+          },
+          {
+            "desc": "Usual Tile layout",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "03/2",
+                "16/12",
+                "09/4"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "product_family--triones-led-controllers",
+      "title": "Colour-light controllers sold as Triones",
+      "kind": "device",
+      "one_line": "Triones-compatible Bluetooth colour-light control family.",
+      "categories": [
+        "lighting-control"
+      ],
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "FFD5 service UUID",
+            "uuid": {
+              "ad": [
+                2
+              ],
+              "in": [
+                "FFD5"
+              ]
+            }
+          },
+          {
+            "desc": "Triones name",
+            "name": {
+              "case": "insensitive",
+              "prefix": "Triones"
+            }
+          },
+          {
+            "desc": "Longer form (UUIDs, manufacturer data, name)",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "02/4",
+                "FF/8",
+                "09/18"
+              ]
+            }
+          },
+          {
+            "desc": "Name-only form",
+            "shape": {
+              "rest": false,
+              "items": [
+                "01/1",
+                "09/20"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "protocol--eddystone",
+      "title": "Google Eddystone",
+      "kind": "platform",
+      "one_line": "Google's open beacon format",
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "any": [
+          {
+            "desc": "Any Eddystone frame",
+            "uuid": {
+              "ad": [
+                3,
+                22
+              ],
+              "in": [
+                "FEAA"
+              ]
+            }
+          },
+          {
+            "desc": "Eddystone-UID",
+            "struct": {
+              "ad": 22,
+              "uuid": "FEAA",
+              "bytes": {
+                "value": "00",
+                "offset": 0
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "protocol--google-fast-pair",
+      "title": "Google Fast Pair",
+      "kind": "platform",
+      "one_line": "Google's protocol for pairing Bluetooth accessories with a phone in few steps",
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "desc": "Discoverable (model ID)",
+        "struct": {
+          "ad": 22,
+          "len": 3,
+          "uuid": "FE2C"
+        }
+      }
+    },
+    {
+      "id": "protocol--ibeacon",
+      "title": "Apple iBeacon",
+      "kind": "platform",
+      "one_line": "Apple's advertisement format for proximity beacons",
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "desc": "Standard iBeacon",
+        "struct": {
+          "ad": 255,
+          "bytes": {
+            "value": "0215",
+            "offset": 0
+          },
+          "company": 76
+        }
+      }
+    },
+    {
+      "id": "protocol--xiaomi-mibeacon",
+      "title": "Xiaomi MiBeacon",
+      "kind": "platform",
+      "one_line": "Xiaomi's advertisement format for Bluetooth devices on its IoT platform",
+      "entity": null,
+      "has_rule": true,
+      "rule": {
+        "desc": "MiBeacon service data",
+        "uuid": {
+          "ad": [
+            3,
+            22
+          ],
+          "in": [
+            "FE95"
+          ]
+        }
+      }
+    }
+  ]
+}

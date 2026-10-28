@@ -4,6 +4,10 @@ import android.app.Application
 import android.os.SystemClock
 import edu.ucsd.sysnet.cluetoothscanner.ble.AdvertisementTriggerCache
 import edu.ucsd.sysnet.cluetoothscanner.core.NativeCoreGateway
+import edu.ucsd.sysnet.cluetoothscanner.local.AndroidSqlDatabase
+import edu.ucsd.sysnet.cluetoothscanner.local.LocalData
+import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataHub
+import edu.ucsd.sysnet.cluetoothscanner.local.NativeAdvertisementMatcher
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattDiscoveryManager
 import edu.ucsd.sysnet.cluetoothscanner.gatt.FilePendingDiscoveryStore
 import edu.ucsd.sysnet.cluetoothscanner.gatt.RepositoryGattStore
@@ -36,6 +40,11 @@ class CluetoothApplication : Application() {
     lateinit var repository: CluetoothRepository
         private set
 
+    private lateinit var localDataHub: LocalDataHub
+
+    /** The phone's local stores: seen products, recordings, sighting history. See [LocalData]. */
+    val localData: LocalData get() = localDataHub
+
     /** Latest advertisement per address; the scanner writes it, GATT discovery reads it. */
     val triggerCache = AdvertisementTriggerCache()
 
@@ -61,6 +70,12 @@ class CluetoothApplication : Application() {
         super.onCreate()
         val coreDirectory = File(filesDir, "cluetooth-core")
         val uploadService = UploadService(this)
+        localDataHub = LocalDataHub(
+            openDatabase = { AndroidSqlDatabase.open(this) },
+            loadBundleJson = { assets.open(WIKI_BUNDLE_ASSET).bufferedReader().use { it.readText() } },
+            createMatcher = NativeAdvertisementMatcher::fromBundleJson,
+            scope = applicationScope,
+        ).also { it.start() }
         repository = CluetoothRepository(
             gatewayFactory = { NativeCoreGateway.open(coreDirectory.absolutePath) },
             parentScope = applicationScope,
@@ -68,6 +83,7 @@ class CluetoothApplication : Application() {
                 uploadService.autoUploadNow()
                 uploadService.autoGattUploadNow()
             },
+            localData = localDataHub,
         )
         gattManager = GattDiscoveryManager(
             scope = applicationScope,
@@ -80,6 +96,13 @@ class CluetoothApplication : Application() {
         applicationScope.launch { gattManager.recoverStale() }
         locationService = LocationService(this, repository)
         bleScanService = BleScanService(this, locationService, repository, triggerCache)
+        // Live scanning runs without a core session, so the payload store and the in-range view are fed
+        // from the live stream (every advertisement while the scanner runs, recording or not).
+        applicationScope.launch {
+            bleScanService.liveScans.collect { scan ->
+                localDataHub.onAdvertisement(scan.addr, scan.rssi, scan.raw, scan.scannedAtMs)
+            }
+        }
         // Live scanning (foreground) and recording (session + rows) are separate; the supervisor
         // decides when the scanner runs and when rows are written.
         val supervisor = ScanSupervisor(
@@ -133,5 +156,9 @@ class CluetoothApplication : Application() {
         uploadService.startPeriodicUpload()
         uploadService.autoUploadNow()
         uploadService.autoGattUploadNow()
+    }
+
+    private companion object {
+        const val WIKI_BUNDLE_ASSET = "wiki-bundle.json"
     }
 }

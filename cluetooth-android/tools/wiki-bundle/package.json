@@ -1,0 +1,14 @@
+{
+  "name": "cluetooth-wiki-bundle",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Build-time exporter: Wireless Wiki checkout -> the app's wiki-bundle.json asset",
+  "scripts": {
+    "export": "node export-bundle.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  }
+}
