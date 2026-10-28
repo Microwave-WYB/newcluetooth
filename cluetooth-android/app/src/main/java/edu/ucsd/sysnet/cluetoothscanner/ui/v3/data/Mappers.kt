@@ -4,6 +4,10 @@ import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionUploadState
 import edu.ucsd.sysnet.cluetoothscanner.local.CategoryProducts
 import edu.ucsd.sysnet.cluetoothscanner.local.InRangeSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.local.Recording
+import edu.ucsd.sysnet.cluetoothscanner.local.SeenUnknown
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKey
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKind
+import edu.ucsd.sysnet.cluetoothscanner.local.UnknownInRange
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiCatalog
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiPage
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingMode
@@ -36,6 +40,9 @@ object NearbyMapper {
     const val OTHER = "other"
     const val UNIDENTIFIED = "unknown"
 
+    /** Item ids of unidentified structures; they have no map. */
+    const val UNKNOWN_PREFIX = "unknown:"
+
     private fun iconOf(categoryId: String) = when (categoryId) {
         "asset-tracker" -> CategoryIcon.Tracker
         "fleet-telematics", "vehicle-equipment" -> CategoryIcon.Car
@@ -50,12 +57,22 @@ object NearbyMapper {
     /** The product's one line: its page's summary up to the first sentence end. */
     private fun subtitle(page: WikiPage): String = page.oneLine.substringBefore(". ").trimEnd('.')
 
+    /** "公司 0x004C", "服务 FEED", "名称 ELK…", "形状 01/1,FF/7". */
+    fun structureLabel(key: StructureKey): String = when (key.kind) {
+        StructureKind.COMPANY -> key.companyId?.let { String.format(java.util.Locale.US, "公司 0x%04X", it) } ?: "公司 ${key.value}"
+        StructureKind.SERVICE_UUID -> "服务 ${key.value}"
+        StructureKind.LOCAL_NAME -> "名称 ${key.value}…"
+        StructureKind.AD_SHAPE -> "形状 ${key.value}"
+    }
+
     fun map(
         recorder: RecorderUiState,
         inRange: InRangeSnapshot?,
         seen: List<CategoryProducts>,
         catalog: WikiCatalog?,
         zone: ZoneId = ZoneId.systemDefault(),
+        unknownNow: List<UnknownInRange> = emptyList(),
+        unknownSeen: List<SeenUnknown> = emptyList(),
     ): NearbyUiState {
         class Cat(val id: String, val title: String) {
             val items = LinkedHashMap<String, ProductItemState>()
@@ -84,16 +101,27 @@ object NearbyMapper {
                 }
             }
         }
-        val unidentified = inRange?.unidentifiedDeviceCount ?: 0
+        // Unidentified advertisements by coarse structure: those heard now first (strongest first), then the rest.
+        val unknown = LinkedHashMap<String, ProductItemState>()
+        unknownNow.sortedByDescending { it.strongestRssi ?: Int.MIN_VALUE }.forEach { u ->
+            unknown[u.structure.key] = ProductItemState(
+                "$UNKNOWN_PREFIX${u.structure.key}", "${structureLabel(u.structure)} ×${u.deviceCount}", "${u.deviceCount} 台在范围内", u.strongestRssi,
+            )
+        }
+        unknownSeen.forEach { u ->
+            if (u.structure.key !in unknown) {
+                val day = Instant.ofEpochMilli(u.lastSeenMs).atZone(zone).toLocalDate()
+                unknown[u.structure.key] = ProductItemState(
+                    "$UNKNOWN_PREFIX${u.structure.key}", "${structureLabel(u.structure)} ×${u.payloadCount}", "上次 ${day.monthValue}月${day.dayOfMonth}日", null,
+                )
+            }
+        }
         return NearbyUiState(
             recorder = recorder,
             categories = cats.values.filter { it.items.isNotEmpty() }.map {
                 NearbyCategoryState(it.id, it.title, iconOf(it.id), it.items.values.toList())
             },
-            unrecognized = NearbyCategoryState(
-                UNIDENTIFIED, "未识别", CategoryIcon.Unknown,
-                if (unidentified > 0) listOf(ProductItemState("unidentified", "未识别的设备", "$unidentified 台在范围内", null)) else emptyList(),
-            ),
+            unrecognized = NearbyCategoryState(UNIDENTIFIED, "未识别", CategoryIcon.Unknown, unknown.values.toList()),
         )
     }
 }

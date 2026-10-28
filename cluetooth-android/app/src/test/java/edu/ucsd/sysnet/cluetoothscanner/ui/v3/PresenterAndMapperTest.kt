@@ -19,6 +19,10 @@ import edu.ucsd.sysnet.cluetoothscanner.local.PageKind
 import edu.ucsd.sysnet.cluetoothscanner.local.ProductInRange
 import edu.ucsd.sysnet.cluetoothscanner.local.Recording
 import edu.ucsd.sysnet.cluetoothscanner.local.SeenProduct
+import edu.ucsd.sysnet.cluetoothscanner.local.SeenUnknown
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKey
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKind
+import edu.ucsd.sysnet.cluetoothscanner.local.UnknownInRange
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiCatalog
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiCategory
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiPage
@@ -184,7 +188,31 @@ class MapperTest {
         assertNull(band.strongestRssi)
         assertEquals("上次 10月20日", band.subtitle)
         assertEquals("未识别", state.unrecognized.title)
-        assertEquals("4 台在范围内", state.unrecognized.items.single().subtitle)
+        assertTrue(state.unrecognized.items.isEmpty())
+    }
+
+    @Test
+    fun unidentifiedStructuresAreGroupedAndLabelledInRangeFirstThenSeenBefore() {
+        val day = 1_761_000_000_000L // 2025-10-20
+        val state = NearbyMapper.map(
+            RecorderUiState(), null, emptyList(), catalog, ZoneOffset.UTC,
+            unknownNow = listOf(
+                UnknownInRange(StructureKey(StructureKind.SERVICE_UUID, "FEED"), 4, -70, 0),
+                UnknownInRange(StructureKey(StructureKind.COMPANY, "76"), 6, -55, 0),
+            ),
+            unknownSeen = listOf(
+                SeenUnknown(StructureKey(StructureKind.COMPANY, "76"), 9, 100, 0, day),
+                SeenUnknown(StructureKey(StructureKind.LOCAL_NAME, "ELK"), 2, 10, 0, day),
+            ),
+        )
+        val items = state.unrecognized.items
+        assertEquals(listOf("公司 0x004C ×6", "服务 FEED ×4", "名称 ELK… ×2"), items.map { it.name })
+        assertEquals(-55, items[0].strongestRssi)
+        assertEquals("6 台在范围内", items[0].subtitle)
+        assertNull(items[2].strongestRssi)
+        assertEquals("上次 10月20日", items[2].subtitle)
+        assertEquals("unknown:company:76", items[0].id)
+        assertEquals("形状 01/1,FF/7", NearbyMapper.structureLabel(StructureKey(StructureKind.AD_SHAPE, "01/1,FF/7")))
     }
 
     @Test

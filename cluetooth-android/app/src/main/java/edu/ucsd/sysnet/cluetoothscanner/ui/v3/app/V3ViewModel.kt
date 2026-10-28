@@ -7,7 +7,11 @@ import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
+import edu.ucsd.sysnet.cluetoothscanner.local.CategoryProducts
+import edu.ucsd.sysnet.cluetoothscanner.local.InRangeSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.local.GeoBounds as LocalBounds
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataHub
+import edu.ucsd.sysnet.cluetoothscanner.local.WikiCatalog
 import edu.ucsd.sysnet.cluetoothscanner.local.RecordedDevice
 import edu.ucsd.sysnet.cluetoothscanner.local.Sighting
 import edu.ucsd.sysnet.cluetoothscanner.service.LiveScan
@@ -96,7 +100,6 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     private val recording = app.recordingController
     private val coordinator = recording.coordinator
     private val gatt = app.gattManager
-    private val notes = RecordingNotes(app)
 
     /** Wiki pages per (address, payload), so the detail page does not run the matcher every second. */
     private val matchCache = object : LinkedHashMap<Long, List<String>>(64, 0.75f, true) {
@@ -180,14 +183,28 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
 
     private val _noteTarget = MutableStateFlow<String?>(null)
     val noteTarget: StateFlow<String?> = _noteTarget
-    val noteText: StateFlow<String> = combine(_noteTarget, notes.notes) { id, all -> all[id].orEmpty() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    /**
+     * The note being edited, read through the store's own flow. Null until it has emitted, so the editor
+     * never starts from a placeholder "" that only means the database is not there yet.
+     */
+    val noteText: StateFlow<String?> = _noteTarget
+        .flatMapLatest<String?, String?> { id -> if (id == null) flowOf(null) else localData.observeRecordingNote(id) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun addNote(recordingId: String?) { if (recordingId != null) _noteTarget.value = recordingId }
     fun dismissNote() { _noteTarget.value = null }
     fun saveNote(text: String) {
-        _noteTarget.value?.let { notes.set(it, text) }
-        _noteTarget.value = null
+        val id = _noteTarget.value ?: return
+        viewModelScope.launch {
+            try {
+                localData.setRecordingNote(id, text)
+                _noteTarget.value = null
+            } catch (error: IllegalStateException) {
+                // The store refuses rather than losing the note; keep the editor open.
+                toasts.trySend("备注没有保存：本地数据库不可用")
+            }
+        }
     }
 
     fun dismissSaved() { _saved.value = null }
@@ -452,7 +469,18 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         )
     }
 
+    /** At most [HEAT_MAX_POINTS] distinct spots (about one metre apart), spread over the whole list. */
+    private fun thinForHeat(points: List<LatLon>): List<LatLon> {
+        val distinct = LinkedHashMap<Long, LatLon>()
+        points.forEach { p -> distinct.putIfAbsent((Math.round(p.lat * 1e5) shl 32) xor Math.round(p.lon * 1e5), p) }
+        val all = distinct.values.toList()
+        if (all.size <= HEAT_MAX_POINTS) return all
+        val step = all.size.toDouble() / HEAT_MAX_POINTS
+        return List(HEAT_MAX_POINTS) { all[(it * step).toInt()] }
+    }
+
     private companion object {
+        const val HEAT_MAX_POINTS = 4_000
         const val DEMO_PREFIX = "demo:"
         const val MATCH_CACHE_SIZE = 256
         const val MAX_GATT_RESULTS = 20
@@ -494,21 +522,34 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     // ---- nearby ---------------------------------------------------------------------------
 
     val nearby: StateFlow<NearbyUiState> = combine(
-        recorder,
-        localData.productsInRange(),
-        localData.previouslySeenProducts(),
-        localData.catalog,
-    ) { rec, inRange, seen, catalog -> NearbyMapper.map(rec, inRange, seen, catalog) }
+        combine(recorder, localData.productsInRange(), localData.previouslySeenProducts(), localData.catalog) { rec, inRange, seen, catalog ->
+            listOf(rec, inRange, seen, catalog)
+        },
+        localData.unknownStructuresInRange(),
+        localData.previouslySeenUnknownStructures(),
+    ) { products, unknownNow, unknownSeen ->
+        @Suppress("UNCHECKED_CAST")
+        NearbyMapper.map(
+            products[0] as RecorderUiState, products[1] as InRangeSnapshot, products[2] as List<CategoryProducts>,
+            products[3] as WikiCatalog?, unknownNow = unknownNow, unknownSeen = unknownSeen,
+        )
+    }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NearbyMapper.map(RecorderUiState(), null, emptyList(), null))
 
     // ---- recordings -----------------------------------------------------------------------
 
+    /** Every recording's note, each through the store's own observe flow. */
+    private val allNotes: Flow<Map<String, String>> = localData.recordings().flatMapLatest { list ->
+        if (list.isEmpty()) flowOf(emptyMap())
+        else combine(list.map { r -> localData.observeRecordingNote(r.id).map { r.id to it } }) { pairs -> pairs.toMap() }
+    }
+
     val recordings: StateFlow<RecordingsUiState> = combine(
         recorder,
         localData.recordings(),
         app.repository.uiState.map { s -> if (s.coreReady) s.sessions.associate { it.sessionId to it.uploadState } else emptyMap() }.distinctUntilChanged(),
-        notes.notes,
+        allNotes,
     ) { rec, list, uploads, noteMap -> RecordingMapper.state(rec, list, uploads, noteMap) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecordingsUiState(RecorderUiState(), null, emptyList()))
@@ -541,12 +582,15 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         return "${d.monthValue}月${d.dayOfMonth}日"
     }
 
-    private fun List<MapListRowState>.arranged(local: MapLocal): List<MapListRowState> {
+    /** [areaAddrs] (when the filter is on and the store answered) replaces the per-row location test. */
+    private fun List<MapListRowState>.arranged(local: MapLocal, areaAddrs: Set<String>? = null): List<MapListRowState> {
         val q = local.query.trim().lowercase()
         val searched = if (q.isEmpty()) this else filter { (it.title + " " + (it.mac ?: "") + " " + it.detail).lowercase().contains(q) }
-        val inArea = if (local.areaOnly && local.viewport != null) {
-            searched.filter { r -> r.at?.let { local.viewport.contains(it.lat, it.lon) } ?: false }
-        } else searched
+        val inArea = when {
+            areaAddrs != null -> searched.filter { it.mac in areaAddrs }
+            local.areaOnly && local.viewport != null -> searched.filter { r -> r.at?.let { local.viewport.contains(it.lat, it.lon) } ?: false }
+            else -> searched
+        }
         return when (local.sort) {
             DeviceSort.Signal -> inArea.sortedByDescending { it.rssi ?: Int.MIN_VALUE }
             DeviceSort.Recent -> inArea.sortedByDescending { it.lastSeenMs }
@@ -565,7 +609,16 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         val data = combine(localData.recording(id), localData.route(id), localData.devicesInRecording(id), localData.catalog) { r, route, devices, catalog ->
             Triple(r, route, devices) to catalog
         }
-        return combine(data, selectedHistory, _selected, _mapLocal, selectedDetail) { d, history, selected, local, det ->
+        // Recording-wide sightings are heavy: only collected while the density layer or the viewport filter needs them.
+        val heatFlow = _mapLocal.map { it.heat }.distinctUntilChanged().flatMapLatest { on ->
+            if (on) localData.sightingsInRecording(id) else flowOf(emptyList())
+        }
+        val areaFlow: Flow<Set<String>?> = _mapLocal.map { if (it.areaOnly) it.viewport else null }.distinctUntilChanged().flatMapLatest { box ->
+            if (box == null) flowOf(null)
+            else localData.sightingsInRecording(id, LocalBounds(box.south, box.west, box.north, box.east)).map { list -> list.mapTo(HashSet()) { it.addr } }
+        }
+        val extras = combine(selectedDetail, heatFlow, areaFlow) { det, heatRows, area -> Triple(det, heatRows, area) }
+        return combine(data, selectedHistory, _selected, _mapLocal, extras) { d, history, selected, local, (det, heatRows, areaAddrs) ->
             val (r, route, devices) = d.first
             if (r == null) return@combine null
             val routePts = route.map { LatLon(it.lat, it.lon) }
@@ -579,10 +632,10 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                     lastSeenMs = dev.lastSeenMs,
                     at = dev.bestLocation?.let { LatLon(it.lat, it.lon) },
                 )
-            }.arranged(local)
+            }.arranged(local, areaAddrs)
             val points = history.filter { it.recordingId == id }.mapNotNull { s -> s.location?.let { SightingPoint(LatLon(it.lat, it.lon), s.bestRssi ?: -90) } }
             val estimate = if (selected != null) estimatePosition(points) else null
-            val heat = devices.mapNotNull { it.bestLocation }.map { LatLon(it.lat, it.lon) } + routePts
+            val heat = thinForHeat(heatRows.mapNotNull { s -> s.location?.let { LatLon(it.lat, it.lon) } })
             val start = LocalDateTime.ofInstant(Instant.ofEpochMilli(r.startedAtMs), ZoneId.systemDefault())
             MapUiState(
                 mode = MapMode.Recording,
@@ -600,7 +653,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 areaOnly = local.areaOnly,
                 heatmap = local.heat,
                 heat = if (local.heat) heat else emptyList(),
-                emptyNote = if (routePts.isEmpty() && heat.isEmpty()) "这次录制没有位置信息" else null,
+                emptyNote = if (routePts.isEmpty() && devices.all { it.bestLocation == null }) "这次录制没有位置信息" else null,
             )
         }
     }
@@ -663,7 +716,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
 
     /** Opens the product map for a Nearby tile; the "unidentified" tile has no map. */
     fun openProduct(pageId: String) {
-        if (pageId == "unidentified") return
+        if (pageId.startsWith(NearbyMapper.UNKNOWN_PREFIX)) return
         open(Route.ProductMap(pageId))
     }
 

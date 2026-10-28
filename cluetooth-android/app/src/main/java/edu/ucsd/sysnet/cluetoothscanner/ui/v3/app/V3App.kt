@@ -242,24 +242,28 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDe
 
 @Composable
 private fun NoteDialog(vm: V3ViewModel) {
-    val initial by vm.noteText.collectAsStateWithLifecycle()
-    var text by remember(initial) { mutableStateOf(initial) }
+    // null until the store has answered: the editor starts from its note, never from a placeholder.
+    val stored by vm.noteText.collectAsStateWithLifecycle()
+    var text by remember { mutableStateOf("") }
+    var edited by remember { mutableStateOf(false) }
+    LaunchedEffect(stored) { if (!edited) stored?.let { text = it } }
     AlertDialog(
         onDismissRequest = vm::dismissNote,
         title = { Text("备注") },
         text = {
             Box {
-                if (text.isEmpty()) Text("这次录制是在哪里、做什么", color = MaterialTheme.colorScheme.outline)
+                if (text.isEmpty()) Text(if (stored == null) "读取中…" else "这次录制是在哪里、做什么", color = MaterialTheme.colorScheme.outline)
                 BasicTextField(
                     value = text,
-                    onValueChange = { text = it },
+                    onValueChange = { text = it; edited = true },
+                    enabled = stored != null,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 )
             }
         },
-        confirmButton = { TextButton({ vm.saveNote(text) }) { Text("保存") } },
+        confirmButton = { TextButton({ vm.saveNote(text) }, enabled = stored != null) { Text("保存") } },
         dismissButton = { TextButton(vm::dismissNote) { Text("取消") } },
     )
 }

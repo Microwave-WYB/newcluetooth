@@ -218,10 +218,10 @@ object FakeData {
         unrecognized = NearbyCategoryState(
             "unknown", "未识别", CategoryIcon.Unknown,
             listOf(
-                product("u1", "结构 3f9a", "9 台设备", -69),
-                product("u2", "结构 c102", "4 台设备", -82),
-                product("u3", "结构 07be", "2 台设备", null).copy(subtitle = "上次 10月24日"),
-                product("u4", "结构 91d4", "1 台设备", null).copy(subtitle = "上次 10月19日"),
+                product("unknown:company:76", "公司 0x004C ×6", "6 台在范围内", -69),
+                product("unknown:uuid:FEED", "服务 FEED ×4", "4 台在范围内", -82),
+                product("unknown:name:ELK", "名称 ELK… ×2", "上次 10月24日", null),
+                product("unknown:shape:01/1,FF/7", "形状 01/1,FF/7 ×1", "上次 10月19日", null),
             ),
         ),
     )
