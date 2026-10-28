@@ -9,11 +9,20 @@ import edu.ucsd.sysnet.cluetoothscanner.gatt.FilePendingDiscoveryStore
 import edu.ucsd.sysnet.cluetoothscanner.gatt.RepositoryGattStore
 import edu.ucsd.sysnet.cluetoothscanner.gatt.gattDeviceInfo
 import edu.ucsd.sysnet.cluetoothscanner.repository.CluetoothRepository
+import edu.ucsd.sysnet.cluetoothscanner.service.AndroidRecordingHost
+import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
+import edu.ucsd.sysnet.cluetoothscanner.service.LocationService
+import edu.ucsd.sysnet.cluetoothscanner.service.RecordingController
+import edu.ucsd.sysnet.cluetoothscanner.service.ScanLifecycleEvent
 import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
+import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionCoordinator
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class CluetoothApplication : Application() {
@@ -24,6 +33,16 @@ class CluetoothApplication : Application() {
 
     /** Latest advertisement per address; the scanner writes it, GATT discovery reads it. */
     val triggerCache = AdvertisementTriggerCache()
+
+    /** Process-wide scanner and location, owned here so a recording outlives the Activity. */
+    lateinit var locationService: LocationService
+        private set
+    lateinit var bleScanService: BleScanService
+        private set
+
+    /** The recording API (state plus start/pause/resume/stop); see [RecordingController]. */
+    lateinit var recordingController: RecordingController
+        private set
 
     /** Process-wide, so there is one GATT connection at a time whatever the UI does. */
     lateinit var gattManager: GattDiscoveryManager
@@ -50,6 +69,33 @@ class CluetoothApplication : Application() {
         )
         // A discovery cut short by process death counts as failed; store it now.
         applicationScope.launch { gattManager.recoverStale() }
+        locationService = LocationService(this, repository)
+        bleScanService = BleScanService(this, locationService, repository, triggerCache)
+        val coordinator = ScanTransitionCoordinator(
+            startSession = repository::startScanSessionAndWait,
+            startScanner = bleScanService::startScanning,
+            stopScannerAndFence = bleScanService::stopScanningAndWait,
+            finishSession = repository::finishScanSessionAndWait,
+            onRequestRejected = { recordingController.wantsRecording = false },
+        )
+        recordingController = RecordingController(
+            coordinator = coordinator,
+            observationCount = repository.uiState
+                .map { it.totalObservations.toLong() }
+                .stateIn(applicationScope, SharingStarted.Eagerly, 0L),
+            host = AndroidRecordingHost(this),
+            scope = applicationScope,
+            elapsedRealtimeMs = SystemClock::elapsedRealtime,
+        )
+        bleScanService.setScanLifecycleListener { event ->
+            applicationScope.launch {
+                when (event) {
+                    ScanLifecycleEvent.DEFERRED_INTENT_RETAINED -> coordinator.scannerDeferred()
+                    ScanLifecycleEvent.RECOVERY_AVAILABLE -> coordinator.resumeDeferred()
+                    ScanLifecycleEvent.REJECTED -> coordinator.scannerRejected()
+                }
+            }
+        }
         uploadService.startPeriodicUpload()
         uploadService.autoUploadNow()
         uploadService.autoGattUploadNow()
