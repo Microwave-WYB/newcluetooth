@@ -1865,6 +1865,7 @@ mod tests {
         crate::write_schema_v3_parquet(
             collision.to_string_lossy().into_owned(),
             expected_id.to_owned(),
+            None,
             test_environment(),
             vec![crate::SchemaV3Row {
                 addr: "AA:BB:CC:DD:EE:FF".to_owned(),
@@ -3431,6 +3432,112 @@ mod tests {
                 "status",
                 Box::new(|v| {
                     v["services"][0]["characteristics"][0]["value"]["status"] = "bonded".into();
+                }),
+            ),
+            (
+                "ended before started",
+                Box::new(|v| v["ended_at"] = "2025-03-25T00:00:00.000Z".into()),
+            ),
+            (
+                "error stage",
+                Box::new(|v| v["error"]["stage"] = "pair".into()),
+            ),
+            (
+                "error status",
+                Box::new(|v| v["error"]["status"] = "19".into()),
+            ),
+            (
+                "initiator",
+                Box::new(|v| v["disconnect"]["initiator"] = "peer".into()),
+            ),
+            (
+                "addr type",
+                Box::new(|v| v["target"]["addr_type"] = "static".into()),
+            ),
+            (
+                "trigger raw",
+                Box::new(|v| v["target"]["trigger_adv"]["raw"] = "zz".into()),
+            ),
+            (
+                "trigger raw case",
+                Box::new(|v| v["target"]["trigger_adv"]["raw"] = "0A".into()),
+            ),
+            (
+                "trigger raw empty",
+                Box::new(|v| v["target"]["trigger_adv"]["raw"] = "".into()),
+            ),
+            (
+                "rssi absent value",
+                Box::new(|v| v["target"]["trigger_adv"]["rssi"] = 127.into()),
+            ),
+            (
+                "primary phy",
+                Box::new(|v| v["target"]["trigger_adv"]["primary_phy"] = 2.into()),
+            ),
+            (
+                "secondary phy",
+                Box::new(|v| v["target"]["trigger_adv"]["secondary_phy"] = 4.into()),
+            ),
+            (
+                "adv sid absent value",
+                Box::new(|v| v["target"]["trigger_adv"]["adv_sid"] = 255.into()),
+            ),
+            ("mtu low", Box::new(|v| v["mtu"] = 22.into())),
+            ("mtu high", Box::new(|v| v["mtu"] = 518.into())),
+            ("phy tx", Box::new(|v| v["phy"]["tx"] = 4.into())),
+            ("phy rx", Box::new(|v| v["phy"]["rx"] = 0.into())),
+            (
+                "timing negative",
+                Box::new(|v| v["timings_ms"]["read"] = (-1).into()),
+            ),
+            (
+                "service instance",
+                Box::new(|v| v["services"][0]["instance"] = (-1).into()),
+            ),
+            (
+                "characteristic instance",
+                Box::new(|v| v["services"][0]["characteristics"][0]["instance"] = (-1).into()),
+            ),
+            (
+                "service primary",
+                Box::new(|v| v["services"][0]["primary"] = "yes".into()),
+            ),
+            (
+                "service uuid",
+                Box::new(|v| v["services"][0]["uuid"] = "180a".into()),
+            ),
+            (
+                "property",
+                Box::new(|v| {
+                    v["services"][0]["characteristics"][0]["properties"] =
+                        serde_json::json!(["Read"])
+                }),
+            ),
+            (
+                "value over 512 bytes",
+                Box::new(|v| {
+                    v["services"][0]["characteristics"][0]["value"]["hex"] =
+                        "ab".repeat(513).into();
+                }),
+            ),
+            (
+                "hex with non-ok status",
+                Box::new(|v| {
+                    v["services"][0]["characteristics"][1]["value"]["hex"] = "ab".into();
+                }),
+            ),
+            (
+                "NUL in name",
+                Box::new(|v| v["target"]["name"] = "se\u{0}nsor".into()),
+            ),
+            (
+                "NUL in error name",
+                Box::new(|v| v["error"]["name"] = "ERR\u{0}".into()),
+            ),
+            (
+                "descriptor instance",
+                Box::new(|v| {
+                    v["services"][0]["characteristics"][0]["descriptors"][0]["instance"] = 3.into()
                 }),
             ),
             (

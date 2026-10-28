@@ -221,6 +221,7 @@ pub fn write_schema_v2_parquet_impl(
 pub fn write_schema_v3_parquet_impl(
     path: &Path,
     payload_id: &str,
+    scan_session_id: Option<&str>,
     environment: &ScanEnvironment,
     rows: Vec<SchemaV3Row>,
 ) -> Result<PayloadInspection, CoreError> {
@@ -228,7 +229,7 @@ pub fn write_schema_v3_parquet_impl(
         path,
         ScanSchema::V3,
         payload_id,
-        None,
+        scan_session_id,
         Some(environment),
         rows,
     )

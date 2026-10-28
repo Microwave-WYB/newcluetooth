@@ -56,10 +56,17 @@ pub fn write_schema_v2_parquet(
 pub fn write_schema_v3_parquet(
     path: String,
     payload_id: String,
+    scan_session_id: Option<String>,
     environment: ScanEnvironment,
     rows: Vec<SchemaV3Row>,
 ) -> Result<PayloadInspection, CoreError> {
-    payload::write_schema_v3_parquet_impl(Path::new(&path), &payload_id, &environment, rows)
+    payload::write_schema_v3_parquet_impl(
+        Path::new(&path),
+        &payload_id,
+        scan_session_id.as_deref(),
+        &environment,
+        rows,
+    )
 }
 
 /// Validates a scan payload of either generation (v2 or v3).

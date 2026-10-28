@@ -193,9 +193,74 @@ Rules:
   authentication failure; the operator cancels it. See the engine notes in
   `cluetooth-android/README.md`.
 
-The core validates all of the above on `save_gatt_discovery` and refuses
-anything else before storing it. Storing the same bytes again is a no-op;
-different bytes for an existing id are refused.
+### Validation rules
+
+The core validates every object on `save_gatt_discovery` and refuses anything
+else before it is stored. The rules are at least as strict as the server reader
+(`gatt_v1.py`), because an object sync rejects is retried forever; where the
+server tolerates a sentinel or a spelling, the producer must already have
+written the canonical form.
+
+| Member | Rule |
+| --- | --- |
+| whole object | at most 8 MiB; valid JSON; no NUL (`\u0000`) in any string or key (the producer strips them from names and error strings; a name that was only NULs becomes `null`) |
+| `schema`, `id` | `gatt/v1`; canonical lowercase UUIDv7 that names the object |
+| `session_id` | `null` or a UUIDv7 |
+| `app_version`, `device.model`, `device.android` | non-empty strings |
+| `target.addr` | canonical uppercase `XX:XX:XX:XX:XX:XX` |
+| `target.addr_type` | `null` or one of `public`, `random`, `anonymous`, `unknown` (the Android producer writes `public`, `random` or `null`) |
+| `target.name` | `null` or a string |
+| `trigger_adv.raw` | non-empty lowercase hex of even length |
+| `trigger_adv.rssi` | `null` or an integer in -127..126 (127 is the platform's "absent" and is written as `null`) |
+| `trigger_adv.primary_phy` | `null`, `1` or `3` |
+| `trigger_adv.secondary_phy` | `null` or 0..3 |
+| `trigger_adv.adv_sid` | `null` or 0..15 (255 is written as `null`) |
+| `trigger_adv.scanned_at`, `started_at`, `ended_at` | `YYYY-MM-DDTHH:MM:SS.mmmZ`; `ended_at` is not before `started_at` |
+| `location` | `null`, or finite `lat` -90..90, `lon` -180..180 and `accuracy` >= 0, all present |
+| `outcome`, `stage_reached` | the enums above |
+| `error.stage` | one of the five stages; `error.status` is an integer within 32 bits |
+| `disconnect.initiator` | `local`, `remote` or `timeout`; `disconnect.status` is `null` or a 32-bit integer |
+| `mtu` | `null` or 23..517 |
+| `phy.tx`, `phy.rx` | 1..3 |
+| `timings_ms.*` | `null` or an integer >= 0 |
+| service/characteristic `instance` | integer >= 0; a descriptor's `instance` is `null` |
+| `uuid` | four uppercase hex digits, or lowercase 128-bit hyphenated |
+| `properties` | names from the fixed list above |
+| `value.status` | `ok`, `insufficient_authentication`, `insufficient_encryption`, `read_not_permitted`, `timeout`, `not_read` or `error:<n>` |
+| `value.hex` | lowercase even-length hex of at most 512 bytes when `status` is `ok`; `null` otherwise |
+
+A value longer than 512 bytes would break the ATT protocol; the engine records
+it as `error:13` (`GATT_INVALID_ATTRIBUTE_LENGTH`) instead of clipping it, since
+a clipped value would claim to be complete. The engine also records `mtu` and
+`phy` only when they are inside the ranges above, clamps instances and timings
+at zero, and never lets `ended_at` precede `started_at` when the wall clock
+steps back.
+
+Storing the same bytes again is a no-op; different bytes for an existing id are
+refused.
+
+## Producer fixtures
+
+`test-fixtures/` (repository root) holds objects written by the producer code
+itself, so the sync side can prove that it ingests exactly what the app emits:
+
+- `test-fixtures/scans-v3/2025/03/25/<uuidv7>.parquet`: a plaintext scan v3
+  file written by the core's Parquet writer (footer with the session id and the
+  full environment, a 1650-byte Coded PHY row, a legacy row with a name and a
+  location, a truncated extended row and a row where the platform reported
+  nothing).
+- `test-fixtures/gatt-v1/2025/03/25/<uuidv7>.json`: `...01` to `...03` are
+  hand-written golden objects pinning the serializer's shape;
+  `...11` to `...15` are produced by running the real engine against a scripted
+  peripheral and the real serializer (complete, remote disconnect mid-read,
+  authentication/encryption refusals, status 133 then success, discovery
+  timeout).
+
+Each file name is the object's identity and the directory is its UTC date, so a
+fixture maps straight onto `scans/v3/...` or `gatt/v1/...`. Tests fail when a
+fixture no longer matches what the producer writes; regenerate after an
+intended change with `CLUETOOTH_UPDATE_FIXTURES=1` (Rust:
+`cargo test --test producer_fixtures`, Kotlin: the `GattFixtureTest` unit test).
 
 ## Deviations from #23
 

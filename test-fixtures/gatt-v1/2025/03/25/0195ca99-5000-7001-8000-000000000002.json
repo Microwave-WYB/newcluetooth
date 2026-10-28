@@ -1,6 +1,6 @@
 {
   "schema": "gatt/v1",
-  "id": "0195ca99-5000-7131-b131-313131313131",
+  "id": "0195ca99-5000-7001-8000-000000000002",
   "session_id": null,
   "app_version": "0.1.0",
   "device": {"model": "Pixel 8", "android": "15 (API 35)"},

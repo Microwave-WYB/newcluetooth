@@ -102,6 +102,7 @@ fn round_trip_preserves_every_value_null_and_a_1650_byte_raw() {
     let inspection = write_schema_v3_parquet(
         path.to_string_lossy().into_owned(),
         PAYLOAD_ID.to_owned(),
+        None,
         environment(),
         rows.clone(),
     )
@@ -177,6 +178,7 @@ fn footer_carries_device_and_scanner_environment_once() {
     write_schema_v3_parquet(
         path.to_string_lossy().into_owned(),
         PAYLOAD_ID.to_owned(),
+        None,
         environment(),
         vec![legacy_row_with_nulls()],
     )
@@ -221,6 +223,7 @@ fn invalid_environment_is_rejected_before_anything_is_written() {
         let error = write_schema_v3_parquet(
             path.to_string_lossy().into_owned(),
             PAYLOAD_ID.to_owned(),
+            None,
             value,
             vec![legacy_row_with_nulls()],
         )
@@ -279,6 +282,7 @@ fn producer_validation_rejects_platform_sentinels_and_out_of_range_values() {
                 .to_string_lossy()
                 .into_owned(),
             PAYLOAD_ID.to_owned(),
+            None,
             environment(),
             vec![row],
         )
@@ -298,6 +302,7 @@ fn inspection_rejects_v3_files_missing_or_corrupting_footer_environment() {
     write_schema_v3_parquet(
         path.to_string_lossy().into_owned(),
         PAYLOAD_ID.to_owned(),
+        None,
         environment(),
         vec![extended_row()],
     )
@@ -346,20 +351,4 @@ fn inspection_rejects_v3_files_missing_or_corrupting_footer_environment() {
         let error = inspect_schema_v2_parquet(broken.to_string_lossy().into_owned()).unwrap_err();
         assert!(matches!(error, CoreError::InvalidPayload { .. }), "{name}");
     }
-}
-
-#[test]
-fn gatt_v1_golden_fixtures_satisfy_the_producer_contract() {
-    // The Kotlin serializer test builds the same objects and compares them to these files,
-    // so a drift on either side fails a host test without needing a device.
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gatt-v1");
-    let mut checked = 0;
-    for entry in std::fs::read_dir(directory).unwrap() {
-        let path = entry.unwrap().path();
-        let json = std::fs::read_to_string(&path).unwrap();
-        cluetooth_core::validate_gatt_json(json)
-            .unwrap_or_else(|error| panic!("{path:?}: {error}"));
-        checked += 1;
-    }
-    assert_eq!(checked, 3);
 }
