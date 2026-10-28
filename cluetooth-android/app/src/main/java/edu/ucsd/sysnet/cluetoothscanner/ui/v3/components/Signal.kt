@@ -169,10 +169,6 @@ fun RssiChart(
             }
             Text("-65", style = MaterialTheme.typography.labelSmall, color = label, modifier = Modifier.align(Alignment.TopStart).padding(start = 4.dp).offset(y = chartHeight * chartFraction(-65f) - 16.dp))
             Text("-80", style = MaterialTheme.typography.labelSmall, color = label, modifier = Modifier.align(Alignment.TopStart).padding(start = 4.dp).offset(y = chartHeight * chartFraction(-80f) - 16.dp))
-            // What the bands mean, at the right edge just inside the top of each band.
-            Text(stringResource(R.string.chart_band_close), style = MaterialTheme.typography.labelSmall, color = label, modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp).offset(y = 2.dp))
-            Text(stringResource(R.string.chart_band_nearby), style = MaterialTheme.typography.labelSmall, color = label, modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp).offset(y = chartHeight * chartFraction(-65f) + 2.dp))
-            Text(stringResource(R.string.chart_band_far), style = MaterialTheme.typography.labelSmall, color = label, modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp).offset(y = chartHeight * chartFraction(-80f) + 2.dp))
         }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.chart_axis_start), style = MaterialTheme.typography.labelSmall, color = label)

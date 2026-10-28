@@ -70,9 +70,6 @@
     <!-- Tabs and pages -->
     <string name="tab_scan">Scan</string>
     <string name="tab_discover">Discover</string>
-    <string name="chart_band_close">Close</string>
-    <string name="chart_band_nearby">Nearby</string>
-    <string name="chart_band_far">Far</string>
     <string name="recording_devices_pending">Devices appear here as minutes are saved (about every minute)</string>
     <string name="map_route_start">Start</string>
     <string name="map_route_end">End</string>
