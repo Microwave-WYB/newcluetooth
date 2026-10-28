@@ -57,7 +57,8 @@ fun GattDebugPanel(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onDismissResult) { Text("Done") }
+                    Button(onClick = { onStart() }) { Text("Connect again") }
+                    OutlinedButton(onClick = onDismissResult) { Text("Done") }
                 }
             }
         }
