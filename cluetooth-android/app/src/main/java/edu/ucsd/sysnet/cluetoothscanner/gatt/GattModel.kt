@@ -80,6 +80,12 @@ object GattStatus {
     /** Engine-side marker: the stage timed out, there is no Android status. */
     const val TIMED_OUT = -1
 
+    /** A read never answered and blocks every later read (Android allows one outstanding request). */
+    const val READ_QUEUE_STALLED = -3
+
+    /** The engine itself threw; the discovery is stored as failed rather than lost. */
+    const val INTERNAL_ERROR = -4
+
     /** Recorded for a discovery that was in flight when the process died. */
     const val PROCESS_DEATH = -2
 
@@ -97,6 +103,8 @@ object GattStatus {
         FAILURE -> "GATT_FAILURE"
         TIMED_OUT -> "TIMEOUT"
         PROCESS_DEATH -> "PROCESS_DEATH"
+        READ_QUEUE_STALLED -> "READ_QUEUE_STALLED"
+        INTERNAL_ERROR -> "INTERNAL_ERROR"
         else -> "STATUS_$status"
     }
 }

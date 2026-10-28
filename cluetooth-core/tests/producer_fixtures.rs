@@ -182,7 +182,7 @@ fn every_gatt_fixture_satisfies_the_producer_contract_and_its_path() {
         }
     }
     assert!(
-        checked >= 6,
+        checked >= 9,
         "expected the golden and engine fixtures, found {checked}"
     );
 }

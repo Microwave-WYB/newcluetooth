@@ -125,11 +125,10 @@ class MainActivity : ComponentActivity() {
 
         val repository = remember { (application as CluetoothApplication).repository }
         val serviceScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
-        val locationService = remember { LocationService(context, repository) }
         val cluetoothApplication = remember { application as CluetoothApplication }
-        val bleScanService = remember {
-            BleScanService(context, locationService, repository, cluetoothApplication.triggerCache)
-        }
+        // Process-owned (see CluetoothApplication) so a recording outlives this Activity.
+        val locationService = cluetoothApplication.locationService
+        val bleScanService = cluetoothApplication.bleScanService
         val uploadService = remember { UploadService(context) }
         val storageService = remember { StorageService(context, serviceScope, uploadService) }
         val exportScope = rememberCoroutineScope()
@@ -175,7 +174,23 @@ class MainActivity : ComponentActivity() {
                 storageService,
                 uploadService,
                 repository,
+                cluetoothApplication.recordingController,
+                cluetoothApplication.scanSupervisor,
             )
+        }
+
+        // The recording notification needs this on Android 13+; recording works without it,
+        // so it is asked for once the required permissions are granted and never blocks.
+        val notificationLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { }
+        LaunchedEffect(allPermissionsGranted) {
+            if (allPermissionsGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
+                PermissionChecker.PERMISSION_GRANTED
+            ) {
+                notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
 
         fun refreshReadiness(
@@ -234,7 +249,8 @@ class MainActivity : ComponentActivity() {
                         requestMissingPermissions = false,
                         requestBluetoothEnable = false,
                     )
-                    Lifecycle.Event.ON_STOP -> Unit // Preserve best-effort background scan intent.
+                    // Live scanning is for the foreground; a recording (foreground service) goes on.
+                    Lifecycle.Event.ON_STOP -> scanViewModel.onActivityStopped()
                     else -> Unit
                 }
             }

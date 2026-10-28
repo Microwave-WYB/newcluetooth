@@ -118,8 +118,10 @@ pub(crate) fn validate_gatt_json(bytes: &[u8]) -> Result<String, CoreError> {
             "gatt/v1 object must be 1 to {MAX_GATT_OBJECT_BYTES} bytes"
         )));
     }
-    let value: Value = serde_json::from_slice(bytes)
-        .map_err(|error| CoreError::invalid(format!("gatt/v1 object is not JSON: {error}")))?;
+    // The server reader refuses duplicate keys; serde_json's Value would silently keep the last.
+    let StrictJson(value) = serde_json::from_slice(bytes).map_err(|error| {
+        CoreError::invalid(format!("gatt/v1 object is not valid JSON: {error}"))
+    })?;
     reject_nul(&value)?;
     let root = object(&value, "gatt/v1 object")?;
     if root.get("schema").and_then(Value::as_str) != Some(GATT_SCHEMA) {
@@ -239,6 +241,81 @@ pub(crate) fn validate_gatt_json(bytes: &[u8]) -> Result<String, CoreError> {
 }
 
 type Fields = serde_json::Map<String, Value>;
+
+/// A JSON value that fails to parse when any object repeats a key.
+struct StrictJson(Value);
+
+impl<'de> serde::Deserialize<'de> for StrictJson {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{self, MapAccess, SeqAccess, Visitor};
+
+        struct Strict;
+
+        impl<'de> Visitor<'de> for Strict {
+            type Value = Value;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("any JSON value")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Value, E> {
+                Ok(Value::Bool(value))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Value, E> {
+                Ok(Value::from(value))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Value, E> {
+                Ok(Value::from(value))
+            }
+
+            fn visit_f64<E: de::Error>(self, value: f64) -> Result<Value, E> {
+                serde_json::Number::from_f64(value)
+                    .map(Value::Number)
+                    .ok_or_else(|| E::custom("number is not finite"))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Value, E> {
+                Ok(Value::String(value.to_owned()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Value, E> {
+                Ok(Value::String(value))
+            }
+
+            fn visit_unit<E>(self) -> Result<Value, E> {
+                Ok(Value::Null)
+            }
+
+            fn visit_none<E>(self) -> Result<Value, E> {
+                Ok(Value::Null)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+                let mut items = Vec::new();
+                while let Some(StrictJson(item)) = seq.next_element()? {
+                    items.push(item);
+                }
+                Ok(Value::Array(items))
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+                let mut fields = serde_json::Map::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if fields.contains_key(&key) {
+                        return Err(de::Error::custom(format!("duplicate JSON key {key:?}")));
+                    }
+                    let StrictJson(value) = map.next_value()?;
+                    fields.insert(key, value);
+                }
+                Ok(Value::Object(fields))
+            }
+        }
+
+        deserializer.deserialize_any(Strict).map(StrictJson)
+    }
+}
 
 /// PostgreSQL text and jsonb cannot hold NUL, so no key or string may contain one.
 fn reject_nul(value: &Value) -> Result<(), CoreError> {
@@ -432,13 +509,27 @@ fn timestamp<'a>(fields: &'a Fields, key: &str) -> Result<&'a str, CoreError> {
             23 => *byte == b'Z',
             _ => byte.is_ascii_digit(),
         });
+    let year = value.get(0..4).and_then(|text| text.parse::<u32>().ok());
     let month = value.get(5..7).and_then(|text| text.parse::<u32>().ok());
     let day = value.get(8..10).and_then(|text| text.parse::<u32>().ok());
     let hour = value.get(11..13).and_then(|text| text.parse::<u32>().ok());
     let minute = value.get(14..16).and_then(|text| text.parse::<u32>().ok());
     let second = value.get(17..19).and_then(|text| text.parse::<u32>().ok());
-    let in_range = matches!(month, Some(1..=12))
-        && matches!(day, Some(1..=31))
+    // A real calendar date: month length and leap years, like `datetime.fromisoformat`.
+    let real_date = match (year, month, day) {
+        (Some(year @ 1..=9999), Some(month @ 1..=12), Some(day)) => {
+            let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+            let days_in_month = match month {
+                2 if leap => 29,
+                2 => 28,
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+            (1..=days_in_month).contains(&day)
+        }
+        _ => false,
+    };
+    let in_range = real_date
         && matches!(hour, Some(0..=23))
         && matches!(minute, Some(0..=59))
         && matches!(second, Some(0..=59));

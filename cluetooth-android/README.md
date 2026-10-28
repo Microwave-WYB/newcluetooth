@@ -30,6 +30,10 @@ New payloads are `scans/v3` (docs/payload-schema-v3.md): extended advertising is
 
 Android notes: the stack may start pairing by itself when a read fails for authentication or encryption, and there is no public API to forbid that. The engine records the status and reads on; the operator cancels any pairing dialog. Android exposes instance ids, not ATT handles. `BLUETOOTH_CONNECT` (already part of the required runtime permissions) is needed to connect.
 
+## Live scanning and recording
+
+The scanner runs live whenever the app is in the foreground (`BleScanService.liveScans`, no core session, no rows); a recording (`RecordingController`: start, pause, resume, stop; `RecordingService` foreground service with a partial wake lock) opens the session and writes rows. Details: `docs/recording-model.md`.
+
 ## Local setup (from the repository root)
 
 AGP 8.10 requires JDK **17**, Gradle 8.11.1 (the retained wrapper), SDK platform 35 and build-tools 35.0.0. Native packaging additionally requires NDK 27.2.12479018, cargo-ndk 4.1.2 and all four Android Rust targets.

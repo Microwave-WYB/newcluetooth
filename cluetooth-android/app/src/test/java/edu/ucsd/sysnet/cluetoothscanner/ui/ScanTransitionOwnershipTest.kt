@@ -18,6 +18,9 @@ class ScanTransitionOwnershipTest {
         val service = mainSource(
             "edu/ucsd/sysnet/cluetoothscanner/service/BleScanService.kt",
         ).readText()
+        val application = mainSource(
+            "edu/ucsd/sysnet/cluetoothscanner/CluetoothApplication.kt",
+        ).readText()
 
         assertFalse(viewModel.contains("bleScanService.startScanning()"))
         assertFalse(viewModel.contains("bleScanService.stopScanning()"))
@@ -26,8 +29,21 @@ class ScanTransitionOwnershipTest {
         assertFalse(activity.contains(".stopScanning()"))
         assertEquals(1, "_isScanning.value =".toRegex().findAll(viewModel).count())
         assertTrue(viewModel.contains("_isScanning.value = transition.isRequested"))
-        assertTrue(viewModel.contains("scanTransitionCoordinator.stop()"))
+        // The process owns the one coordinator; the ViewModel only uses the recording API.
+        assertTrue(viewModel.contains("recording.start()"))
+        assertTrue(viewModel.contains("recording.stop()"))
+        assertFalse(viewModel.contains("ScanTransitionCoordinator("))
+        assertEquals(1, "ScanTransitionCoordinator\\(".toRegex().findAll(application).count())
         assertFalse(service.contains("fun cleanup() {\n        stopScanning()"))
+    }
+
+    @Test
+    fun theViewModelNeverStopsTheRecordingWhenItIsCleared() {
+        val viewModel = mainSource("edu/ucsd/sysnet/cluetoothscanner/ui/ScanViewModel.kt").readText()
+        val onCleared = viewModel.substringAfter("override fun onCleared()").substringBefore("companion object")
+        assertFalse(onCleared.contains("stop()"))
+        assertFalse(onCleared.contains("bleScanService.cleanup()"))
+        assertFalse(onCleared.contains("locationService.cleanup()"))
     }
 
     private fun mainSource(relativePath: String): File {

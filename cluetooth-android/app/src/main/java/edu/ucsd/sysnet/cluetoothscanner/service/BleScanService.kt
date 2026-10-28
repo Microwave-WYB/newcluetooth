@@ -33,15 +33,14 @@ import edu.ucsd.sysnet.cluetoothscanner.data.BleRecord
 import edu.ucsd.sysnet.cluetoothscanner.repository.CluetoothRepository
 import edu.ucsd.sysnet.cluetoothscanner.repository.ObservationAdmission
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
-import java.time.Instant
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.map
 
 class BleScanService(
     private val context: Context,
@@ -57,14 +56,26 @@ class BleScanService(
     private var pausedByBackpressure = false
     private var scanLifecycleListener: ((ScanLifecycleEvent) -> Unit)? = null
 
-    private val scanResults = Channel<BleRecord>(
-        capacity = 64,
+    // Every advertisement while the scanner runs, for the UI and the matcher's in-memory stores.
+    // A slow collector loses the oldest items; the scanner never waits for it.
+    private val _liveScans = MutableSharedFlow<LiveScan>(
+        replay = 0,
+        extraBufferCapacity = LIVE_SCAN_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+
+    /**
+     * Rows are written to the core only while a recording is active. Live scanning (app in the
+     * foreground) feeds [liveScans] and nothing else: no session, no Parquet, no upload.
+     */
+    @Volatile
+    private var rowWriting = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val callbackFence = CallbackFence(mainHandler::post)
     private var scanRestartRunnable: Runnable? = null
     private var scanStartedAtElapsedMs = 0L
+    private var restartSkippedWhileScreenOff = false
+    private var appliedCodedPhy = true
     private var deferredRecoveryRunnable: Runnable? = null
     private val _scanStatus = MutableStateFlow(ScanStatus())
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
@@ -86,7 +97,26 @@ class BleScanService(
         }
     }
 
-    val scanFlow: Flow<BleRecord> = scanResults.receiveAsFlow()
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(receiverContext: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_SCREEN_ON) return
+            if (isScanning && ScanRestartPolicy.screenOnRestartNow(
+                    skippedWhileOff = restartSkippedWhileScreenOff,
+                    appliedCodedPhy = appliedCodedPhy,
+                    wantedCodedPhy = AppSettings.isCodedPhyEnabled(context),
+                )
+            ) {
+                Log.i(TAG, "Screen on: applying the scan restart that was held back")
+                restartScanNow()
+            }
+        }
+    }
+
+    /** The live ScanResult stream. Collect it from the UI or a store; it never blocks scanning. */
+    val liveScans: SharedFlow<LiveScan> = _liveScans.asSharedFlow()
+
+    /** The same stream as UI records (kept for the nearby list). */
+    val scanFlow: Flow<BleRecord> = liveScans.map { it.toBleRecord() }
     val scanStatus: StateFlow<ScanStatus> = _scanStatus.asStateFlow()
 
     init {
@@ -94,6 +124,12 @@ class BleScanService(
             context,
             bluetoothStateReceiver,
             IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        ContextCompat.registerReceiver(
+            context,
+            screenReceiver,
+            IntentFilter(Intent.ACTION_SCREEN_ON),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         repository.setBackpressureListener { paused ->
@@ -201,6 +237,8 @@ class BleScanService(
         }
 
         val codedPhyEnabled = AppSettings.isCodedPhyEnabled(context)
+        appliedCodedPhy = codedPhyEnabled
+        restartSkippedWhileScreenOff = false
         val settings = buildScanSettings(codedPhyEnabled)
         // The footer of the next payload must describe this scan. The core's command
         // queue is ordered, so this precedes every observation of the new scan.
@@ -276,6 +314,25 @@ class BleScanService(
 
     fun isScanning(): Boolean = isScanning
 
+    /**
+     * Starts or stops writing rows. Enabling declares the footer environment first (ordered ahead
+     * of the first row); disabling is followed by [fenceCallbacks] so that no row of this
+     * recording is queued after the caller continues.
+     */
+    internal fun setRowWriting(enabled: Boolean) {
+        if (enabled && !rowWriting) {
+            bluetoothAdapter()?.let { adapter ->
+                repository.configureScan(scanEnvironment(adapter, AppSettings.isCodedPhyEnabled(context)))
+            }
+        }
+        rowWriting = enabled
+    }
+
+    /** Returns once every scan callback queued so far has been processed. */
+    internal suspend fun fenceCallbacks() {
+        callbackFence.await()
+    }
+
     private fun scanCallbackForGeneration(generation: Long) = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             if (!scanRequestState.accepts(generation)) return
@@ -321,23 +378,11 @@ class BleScanService(
             val mac = device.address
             val rssi = scanResult.rssi
             val scannedAtMs = scanWallClockMillis(scanResult.timestampNanos, snapshot)
-            val timestamp = Instant.ofEpochMilli(scannedAtMs).atOffset(ZoneOffset.UTC)
-                .format(DateTimeFormatter.ISO_INSTANT)
 
             val location = locationService.getLastKnownLocation()
             val scanRecord = scanResult.scanRecord
             val advertisementData = scanRecord?.bytes?.copyOf() ?: byteArrayOf()
             val v3 = scanV3Fields(scanResult, device)
-
-            val bleRecord = BleRecord(
-                mac = mac,
-                rssi = rssi,
-                timestamp = timestamp,
-                lat = location?.latitude,
-                lon = location?.longitude,
-                accuracy = location?.accuracy,
-                raw = advertisementData
-            )
 
             if (!scanRequestState.accepts(generation)) return
             triggerCache.put(
@@ -352,9 +397,24 @@ class BleScanService(
                     fields = v3,
                 ),
             )
-            // Preserve the current UI record stream; 0.0.5 persistence is owned by Rust.
-            scanResults.trySend(bleRecord)
-            val admission = repository.recordObservation(
+            _liveScans.tryEmit(
+                LiveScan(
+                    addr = mac,
+                    rssi = rssi.takeUnless { it == 127 },
+                    scannedAtMs = scannedAtMs,
+                    elapsedRealtimeNanos = scanResult.timestampNanos,
+                    raw = advertisementData,
+                    localName = scanRecord?.deviceName,
+                    txPower = scanRecord?.txPowerLevel?.takeUnless { it == 127 || it == Int.MIN_VALUE },
+                    isConnectable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) scanResult.isConnectable else null,
+                    v3 = v3,
+                    lat = location?.latitude,
+                    lon = location?.longitude,
+                    accuracyMeters = location?.accuracy,
+                ),
+            )
+            // Durable rows exist only for a recording; live scanning stops here.
+            val admission = if (!rowWriting) ObservationAdmission.ACCEPTED else repository.recordObservation(
                 CoreScanInput(
                     addr = mac,
                     rssi = rssi.takeUnless { it == 127 },
@@ -414,64 +474,73 @@ class BleScanService(
 
         val restart = Runnable {
             if (!isScanning) return@Runnable
-            if (!hasBluetoothPermissions()) {
-                markNotScanning("Bluetooth permission was revoked before scan restart")
-                return@Runnable
-            }
-            // A scan started while the screen is off is not delivered on some phones (verified
-            // on a Galaxy Note10), while one already running keeps going. Do not restart it
-            // until the screen is on again, but never let one scan run past the platform's
-            // long-scan downgrade window.
-            val screenOff = !(context.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
+            // A scan started while the screen is off delivers nothing on some phones (observed
+            // on a Galaxy Note10) while one already running keeps going, so the restart waits for
+            // the screen (the receiver restarts at once when it turns on), within a bound.
+            val screenOn = (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
             val runningMs = SystemClock.elapsedRealtime() - scanStartedAtElapsedMs
-            if (screenOff && runningMs < SCREEN_OFF_MAX_SCAN_RUN_MS) {
+            if (!ScanRestartPolicy.periodicRestartNow(screenOn, runningMs)) {
+                restartSkippedWhileScreenOff = true
                 schedulePeriodicScanRestart()
                 return@Runnable
             }
-            val scanner = bluetoothLeScanner
-            if (scanner == null) {
-                deferScanning(
-                    ScanStatus(
-                        ScanOperatingState.SCANNER_UNAVAILABLE,
-                        "Bluetooth scanner became unavailable",
-                    ),
-                )
-                return@Runnable
-            }
-
-            Log.i(TAG, "Restarting BLE scan to avoid Android timeout")
-            val previousCallback = scanRequestState.stop()
-            if (previousCallback == null) {
-                markNotScanning("BLE scan restart lost its active callback")
-                return@Runnable
-            }
-            val nextRequest = scanRequestState.begin(::scanCallbackForGeneration)
-            try {
-                scanner.stopScan(previousCallback)
-                // Re-read the switch so a change takes effect at the next restart, and
-                // keep the payload footer in step with the settings actually in force.
-                val codedPhyEnabled = AppSettings.isCodedPhyEnabled(context)
-                val settings = buildScanSettings(codedPhyEnabled)
-                bluetoothAdapter()?.let { adapter ->
-                    repository.configureScan(scanEnvironment(adapter, codedPhyEnabled))
-                }
-                scanner.startScan(scanFilters(), settings, nextRequest.callback)
-                scanStartedAtElapsedMs = SystemClock.elapsedRealtime()
-                Log.i(TAG, "BLE scan restarted (generation ${nextRequest.generation})")
-                schedulePeriodicScanRestart()
-            } catch (error: SecurityException) {
-                markNotScanning("BLE scan restart denied", error)
-            } catch (error: Exception) {
-                deferScanning(
-                    ScanStatus(
-                        ScanOperatingState.SCANNER_UNAVAILABLE,
-                        "Failed to restart BLE scan: ${error.message}",
-                    ),
-                )
-            }
+            restartScanNow()
         }
         scanRestartRunnable = restart
         mainHandler.postDelayed(restart, 60 * 1000L)
+    }
+
+    /** Stops and starts the scan again with the current settings and footer environment. */
+    @SuppressLint("MissingPermission")
+    private fun restartScanNow() {
+        if (!isScanning) return
+        if (!hasBluetoothPermissions()) {
+            markNotScanning("Bluetooth permission was revoked before scan restart")
+            return
+        }
+        val scanner = bluetoothLeScanner
+        if (scanner == null) {
+            deferScanning(
+                ScanStatus(
+                    ScanOperatingState.SCANNER_UNAVAILABLE,
+                    "Bluetooth scanner became unavailable",
+                ),
+            )
+            return
+        }
+
+        Log.i(TAG, "Restarting BLE scan to avoid Android timeout")
+        val previousCallback = scanRequestState.stop()
+        if (previousCallback == null) {
+            markNotScanning("BLE scan restart lost its active callback")
+            return
+        }
+        val nextRequest = scanRequestState.begin(::scanCallbackForGeneration)
+        try {
+            scanner.stopScan(previousCallback)
+            // Re-read the switch so a change takes effect now, and keep the payload footer in
+            // step with the settings actually in force.
+            val codedPhyEnabled = AppSettings.isCodedPhyEnabled(context)
+            val settings = buildScanSettings(codedPhyEnabled)
+            bluetoothAdapter()?.let { adapter ->
+                repository.configureScan(scanEnvironment(adapter, codedPhyEnabled))
+            }
+            scanner.startScan(scanFilters(), settings, nextRequest.callback)
+            appliedCodedPhy = codedPhyEnabled
+            restartSkippedWhileScreenOff = false
+            scanStartedAtElapsedMs = SystemClock.elapsedRealtime()
+            Log.i(TAG, "BLE scan restarted (generation ${nextRequest.generation})")
+            schedulePeriodicScanRestart()
+        } catch (error: SecurityException) {
+            markNotScanning("BLE scan restart denied", error)
+        } catch (error: Exception) {
+            deferScanning(
+                ScanStatus(
+                    ScanOperatingState.SCANNER_UNAVAILABLE,
+                    "Failed to restart BLE scan: ${error.message}",
+                ),
+            )
+        }
     }
 
     private fun cancelPeriodicScanRestart() {
@@ -537,23 +606,27 @@ class BleScanService(
     fun cleanup() {
         scanLifecycleListener = null
         repository.setBackpressureListener(null)
-        try {
-            context.unregisterReceiver(bluetoothStateReceiver)
-        } catch (_: IllegalArgumentException) {
-            // Cleanup may be called more than once by lifecycle teardown.
+        for (receiver in listOf(bluetoothStateReceiver, screenReceiver)) {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (_: IllegalArgumentException) {
+                // Cleanup may be called more than once by lifecycle teardown.
+            }
         }
-        scanResults.close()
+        // liveScans is a SharedFlow: it has no terminal state to close.
     }
 
     companion object {
         private const val TAG = "BleScanService"
         private const val DEFERRED_RECOVERY_RETRY_MS = 1_000L
-        private const val SCREEN_OFF_MAX_SCAN_RUN_MS = 20 * 60 * 1_000L
+        private const val LIVE_SCAN_BUFFER = 512
     }
 
-    // Android pauses *unfiltered* scans while the screen is off (8.1+). One empty filter
-    // matches every advertisement but makes this a filtered scan, so it keeps running with
-    // the screen off where the platform allows it.
+    // Android pauses *unfiltered* scans while the screen is off (8.1+). One empty filter is
+    // sent so that platforms that count any filter list as a filtered scan keep delivering with
+    // the screen off. It only helps up to API 14: AOSP 15 treats an all-empty filter as
+    // unfiltered, so on newer systems collection with the screen off relies on the recording
+    // foreground service (RecordingService) instead.
     private fun scanFilters(): List<ScanFilter> = listOf(ScanFilter.Builder().build())
 
     // Receive extended advertisements as well as legacy ones where supported (API 26+),

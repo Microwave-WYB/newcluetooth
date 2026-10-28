@@ -31,6 +31,18 @@ internal fun interface ObjectFileUploader {
 
 internal class UploadSessionExpiredException(cause: Throwable? = null) : Exception(cause)
 
+/**
+ * The storage refused the object for authorization reasons (HTTP 401/403, `-13021`). Retrying
+ * cannot help until rules or credentials change, so the file keeps its recorded error and the
+ * rest of the run carries on; it is tried again on the next run.
+ */
+internal class UploadDeniedException(cause: Throwable) : Exception(cause.message, cause)
+
+/** Scan payloads and GATT objects are uploaded in separate runs with separate retry policies. */
+internal enum class UploadKind { SCANS, GATT }
+
+internal fun isGattObject(objectPath: String) = objectPath.startsWith("gatt/")
+
 /** Resumable-upload state of one payload: the session URI and the exact bytes it was started with. */
 internal data class UploadSession(val uri: String, val cachePath: String)
 
@@ -74,6 +86,12 @@ internal class FirebaseObjectFileUploader(
             val clientError = error.httpResultCode in 400..499 &&
                 error.httpResultCode !in setOf(401, 403, 408, 429)
             if (sessionUri != null && clientError) throw UploadSessionExpiredException(error)
+            if (error.httpResultCode == 401 || error.httpResultCode == 403 ||
+                error.errorCode == StorageException.ERROR_NOT_AUTHORIZED ||
+                error.errorCode == StorageException.ERROR_NOT_AUTHENTICATED
+            ) {
+                throw UploadDeniedException(error)
+            }
             throw error
         }
     }
@@ -87,32 +105,38 @@ internal class FirebaseObjectFileUploader(
 }
 
 internal fun uploadDiagnostic(error: Exception): String {
-    val detail = error.message ?: error::class.java.simpleName
-    return if (error is StorageException) {
-        "StorageException code=${error.errorCode} http=${error.httpResultCode}: $detail"
+    val cause = (error as? UploadDeniedException)?.cause as? Exception ?: error
+    val detail = cause.message ?: cause::class.java.simpleName
+    return if (cause is StorageException) {
+        "StorageException code=${cause.errorCode} http=${cause.httpResultCode}: $detail"
     } else {
         detail
     }
 }
 
+/** [failed] is worth a WorkManager retry; [denied] objects wait for rules or credentials. */
 internal data class PayloadUploadSummary(
     val succeeded: Int,
     val failed: Int,
+    val denied: Int = 0,
 )
 
 internal class PayloadUploadCoordinator(
     private val core: CoreGateway,
     private val uploader: ObjectFileUploader,
     private val resume: UploadResume?,
+    private val kind: UploadKind = UploadKind.SCANS,
 ) {
     constructor(core: CoreGateway, uploader: ObjectFileUploader) : this(core, uploader, null)
 
     suspend fun uploadPending(): PayloadUploadSummary {
         var succeeded = 0
         var failed = 0
-        val pendingUploads = core.pendingUploads()
-        discardOrphanedSessions(pendingUploads.map { it.payloadId }.toSet())
-        for (pending in pendingUploads) {
+        var denied = 0
+        val allPending = core.pendingUploads()
+        // Sessions of the other kind are not orphans: only a finished upload discards them.
+        discardOrphanedSessions(allPending.map { it.payloadId }.toSet())
+        for (pending in allPending.filter { isGattObject(it.objectPath) == (kind == UploadKind.GATT) }) {
             try {
                 transfer(pending.payloadId, pending.objectPath)
                 core.markUploadSucceeded(pending.payloadId)
@@ -127,10 +151,10 @@ internal class PayloadUploadCoordinator(
                 } catch (_: Exception) {
                     // The original operation is still the useful WorkManager failure.
                 }
-                failed++
+                if (error is UploadDeniedException) denied++ else failed++
             }
         }
-        return PayloadUploadSummary(succeeded = succeeded, failed = failed)
+        return PayloadUploadSummary(succeeded = succeeded, failed = failed, denied = denied)
     }
 
     private suspend fun transfer(payloadId: String, objectPath: String) {

@@ -38,6 +38,8 @@ The design goal is:
 
 Payload contracts: `docs/payload-schema-v2.md` (identity, batching, upload
 state), `docs/payload-schema-v3.md` (scan v3 columns/footer and `gatt/v1`).
+`docs/recording-model.md`: live scanning (foreground, no session, no rows) versus
+recording (foreground service, core session, rows, upload).
 
 ## Database Model
 

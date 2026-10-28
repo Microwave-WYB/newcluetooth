@@ -7,7 +7,9 @@ import edu.ucsd.sysnet.cluetoothscanner.ble.BleParser
 import edu.ucsd.sysnet.cluetoothscanner.data.BleRecord
 import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
 import edu.ucsd.sysnet.cluetoothscanner.service.LocationService
-import edu.ucsd.sysnet.cluetoothscanner.service.ScanLifecycleEvent
+import edu.ucsd.sysnet.cluetoothscanner.service.RecordingController
+import edu.ucsd.sysnet.cluetoothscanner.service.ScanSupervisor
+import edu.ucsd.sysnet.cluetoothscanner.service.RecordingState
 import edu.ucsd.sysnet.cluetoothscanner.service.ScanStatus
 import edu.ucsd.sysnet.cluetoothscanner.service.StorageService
 import edu.ucsd.sysnet.cluetoothscanner.repository.AppUiState
@@ -59,6 +61,8 @@ class ScanViewModel(
     private val storageService: StorageService,
     private val uploadService: UploadService,
     private val repository: CluetoothRepository,
+    private val recording: RecordingController,
+    private val supervisor: ScanSupervisor,
 ) : ViewModel() {
     val coreUiState: StateFlow<AppUiState> = repository.uiState
 
@@ -81,31 +85,17 @@ class ScanViewModel(
     private val deviceMap = mutableMapOf<String, DisplayItem>()
     private val deviceOrder = mutableListOf<String>()  // Preserve insertion order
 
-    private var userWantsScanning = true
     private var locationRetryJob: Job? = null
-    private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val scanTransitionCoordinator = ScanTransitionCoordinator(
-        startSession = repository::startScanSessionAndWait,
-        startScanner = bleScanService::startScanning,
-        stopScannerAndFence = bleScanService::stopScanningAndWait,
-        finishSession = repository::finishScanSessionAndWait,
-        onRequestRejected = { userWantsScanning = false },
-    )
+
+    // The recording (session, scanner, foreground service) belongs to the process, not to this
+    // Activity-scoped ViewModel: it keeps running when the Activity goes away.
+    private val scanTransitionCoordinator = recording.coordinator
     val scanTransitionState: StateFlow<ScanTransitionState> = scanTransitionCoordinator.state
 
+    /** Start/pause/resume/stop and the elapsed/row state for the record button. */
+    val recordingState: StateFlow<RecordingState> = recording.state
+
     init {
-        bleScanService.setScanLifecycleListener { event ->
-            viewModelScope.launch {
-                when (event) {
-                    ScanLifecycleEvent.DEFERRED_INTENT_RETAINED ->
-                        scanTransitionCoordinator.scannerDeferred()
-                    ScanLifecycleEvent.RECOVERY_AVAILABLE ->
-                        scanTransitionCoordinator.resumeDeferred()
-                    ScanLifecycleEvent.REJECTED ->
-                        scanTransitionCoordinator.scannerRejected()
-                }
-            }
-        }
         observeBleScanResults()
         observeScanStatus()
         observeLocationUpdates()
@@ -115,15 +105,19 @@ class ScanViewModel(
     internal fun startWhenReady(readiness: ScanReadiness) {
         if (readiness.permissionsGranted) startLocationUpdates()
         viewModelScope.launch {
-            reconcileScanReadiness(readiness, userWantsScanning, scanTransitionCoordinator)
+            // Live scanning follows the foreground; it writes nothing (see ScanSupervisor).
+            supervisor.setForeground(readiness.permissionsGranted)
+            reconcileScanReadiness(readiness, recording.wantsRecording, scanTransitionCoordinator)
         }
     }
 
+    /** The Activity left the foreground: live scanning stops unless a recording is active. */
+    internal fun onActivityStopped() {
+        viewModelScope.launch { supervisor.setForeground(false) }
+    }
+
     internal fun onPermissionsPermanentlyRejected() {
-        userWantsScanning = false
-        viewModelScope.launch {
-            scanTransitionCoordinator.stop()
-        }
+        recording.stop()
     }
 
     private fun startLocationUpdates() {
@@ -242,26 +236,16 @@ class ScanViewModel(
         _scanItems.value = deviceOrder.mapNotNull { mac -> deviceMap[mac] }
     }
 
-    fun startScanning() {
-        userWantsScanning = true
-        viewModelScope.launch {
-            scanTransitionCoordinator.start()
-        }
-    }
+    fun startScanning() = recording.start()
 
-    fun stopScanning() {
-        userWantsScanning = false
-        viewModelScope.launch {
-            scanTransitionCoordinator.stop()
-        }
-    }
+    fun stopScanning() = recording.stop()
+
+    fun pauseRecording() = recording.pause()
+
+    fun resumeRecording() = recording.resume()
 
     fun toggleScanning() {
-        if (userWantsScanning) {
-            stopScanning()
-        } else {
-            startScanning()
-        }
+        if (_isScanning.value) stopScanning() else startScanning()
     }
 
     fun clearScanList() {
@@ -328,20 +312,10 @@ class ScanViewModel(
     override fun onCleared() {
         locationRetryJob?.cancel()
         locationRetryJob = null
-
-        // Teardown uses the same serialized stop/fence/finalize transition as an
-        // explicit Stop action; no lifecycle path clears service intent directly.
-        teardownScope.launch {
-            try {
-                scanTransitionCoordinator.stop()
-                storageService.forceFlush()
-            } finally {
-                bleScanService.cleanup()
-                locationService.cleanup()
-                storageService.cleanup()
-                teardownScope.coroutineContext[Job]?.cancel()
-            }
-        }
+        // Not stopped here: the recording, scanner and location updates are process-owned and
+        // keep running (in the foreground service) when the Activity is destroyed. Only
+        // Activity-scoped helpers are released.
+        storageService.cleanup()
         super.onCleared()
     }
 

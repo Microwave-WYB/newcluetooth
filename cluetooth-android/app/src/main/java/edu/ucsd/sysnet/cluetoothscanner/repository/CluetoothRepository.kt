@@ -18,6 +18,7 @@ import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataSink
 import edu.ucsd.sysnet.cluetoothscanner.service.ObjectFileUploader
 import edu.ucsd.sysnet.cluetoothscanner.service.PayloadUploadCoordinator
 import edu.ucsd.sysnet.cluetoothscanner.service.PayloadUploadSummary
+import edu.ucsd.sysnet.cluetoothscanner.service.UploadKind
 import edu.ucsd.sysnet.cluetoothscanner.service.UploadResume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -166,6 +167,7 @@ class CluetoothRepository(
     // This repository is the process-wide core owner. All v2 reconciliation and
     // transfer sessions share this mutex, including periodic and one-time workers.
     private val uploadCoordinatorMutex = Mutex()
+    private val gattUploadMutex = Mutex()
     @Volatile
     private var backpressureListener: ((Boolean) -> Unit)? = null
 
@@ -339,11 +341,17 @@ class CluetoothRepository(
     internal suspend fun uploadPendingV2(
         uploader: ObjectFileUploader,
         resume: UploadResume? = null,
-    ): PayloadUploadSummary = uploadCoordinatorMutex.withLock {
-        check(!closing.get()) { "Core repository is closing" }
-        val summary = PayloadUploadCoordinator(gateway.await(), uploader, resume).uploadPending()
-        callCore(publishScanState = false) { it.refresh() }
-        summary
+        kind: UploadKind = UploadKind.SCANS,
+    ): PayloadUploadSummary {
+        // GATT objects have their own lock so a slow or denied GATT upload never holds up
+        // scan uploads, exports or session changes, and vice versa.
+        val mutex = if (kind == UploadKind.GATT) gattUploadMutex else uploadCoordinatorMutex
+        return mutex.withLock {
+            check(!closing.get()) { "Core repository is closing" }
+            val summary = PayloadUploadCoordinator(gateway.await(), uploader, resume, kind).uploadPending()
+            callCore(publishScanState = false) { it.refresh() }
+            summary
+        }
     }
 
     fun refresh() {
@@ -360,18 +368,18 @@ class CluetoothRepository(
      * schedules the shared uploader. Throws when the core rejects the object.
      */
     suspend fun saveGattDiscovery(json: String) = withContext(nativeDispatcher) {
-        uploadCoordinatorMutex.withLock {
-            check(!closing.get()) { "Core repository is closing" }
-            val openedGateway = gateway.await()
-            val update = openedGateway.saveGattDiscovery(json)
-            publishCoreUpdate(
-                openedGateway,
-                openedGateway.apiVersion(),
-                update,
-                publishScanState = false,
-                refreshSessions = false,
-            )
-        }
+        // Not under the upload mutexes: saving is a quick, internally serialized core call and
+        // must never wait for a whole upload run.
+        check(!closing.get()) { "Core repository is closing" }
+        val openedGateway = gateway.await()
+        val update = openedGateway.saveGattDiscovery(json)
+        publishCoreUpdate(
+            openedGateway,
+            openedGateway.apiVersion(),
+            update,
+            publishScanState = false,
+            refreshSessions = false,
+        )
     }
 
     /** The scan session running now, for tagging a GATT discovery; null when none. */
