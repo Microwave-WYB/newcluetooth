@@ -359,7 +359,7 @@ fn optional_one_of(fields: &Fields, key: &str, allowed: &[&str]) -> Result<(), C
 }
 
 fn is_lower_hex(text: &str) -> bool {
-    text.len() % 2 == 0
+    text.len().is_multiple_of(2)
         && text
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
