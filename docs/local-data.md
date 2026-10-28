@@ -192,7 +192,9 @@ surfaces in `status` and the hub retries (5 s, doubling to 5 min), queueing even
   `StructureKey` derived from the bytes alone (the same AD split as everywhere: stop at a zero length
   or truncation): the first manufacturer-data company field (`company:76`, decimal), else the first
   16-bit service UUID of a service list or service data (`uuid:FEA0`), else the leading letters of the
-  local name (`name:ELK`; the first 3 characters when it starts with a non-letter), else the AD shape in wiki
+  local name (`name:ELK`; the first 3 characters when it starts with a non-letter; the name is the
+  database's: Complete (0x09) before Shortened (0x08), trailing NULs stripped, none when empty or not
+  valid UTF-8), else the AD shape in wiki
   notation (`shape:01/1,2A/2`, at most 16 items). `seen_payload.structure_key` is written on insert; the
   migration only adds the column, and the hub fills it for older rows in batches of 500 after startup
   (rows without a key are not listed until then). "In range now" comes from the live view (devices with no
@@ -203,10 +205,13 @@ surfaces in `status` and the hub retries (5 s, doubling to 5 min), queueing even
 * **Recording notes (schema 3).** `recording_note(recording_id, note, updated_ms)`, its own table so
   typing a note invalidates only note queries and a note can be written before the recording row exists.
   Written through the single writer; `setRecordingNote` returns after the commit and throws when the
-  database is unavailable (a note is never dropped silently). A blank note deletes the row. A note is
+  database is unavailable (a note is never dropped silently). `getRecordingNote` returns null then
+  ("unknown", not "no note"); editors must read through `observeRecordingNote` and not offer saving while
+  `status` is `UNAVAILABLE`, so a blank they never saw cannot overwrite a note. A blank note deletes the row. A note is
   removed with its recording (an orphan only after it is itself 30 days old).
 * **Recording-wide sightings.** `sightingsInRecording(id, bounds?, limit)` reads the recording's minute rows
-  (newest first, `limit` default 50 000, applied after the box). With a `GeoBounds` only rows with a located
+  (newest first, `limit` default 50 000, applied after the box). A finished recording is not re-read when
+  other sightings arrive (only when a re-match changes pages); the active one re-runs at most every 15 s. With a `GeoBounds` only rows with a located
   best sample inside it (inclusive; `minLon > maxLon` crosses the antimeridian) are returned.
 
 ### Queries and invalidation
@@ -232,7 +237,7 @@ the first query ran is not missed. Queries run on the IO dispatcher (also
 | `recordings()` / `recording(id)` | `Recording`: start, end, duration, distance, device count, active |
 | `unknownStructuresInRange(windowMs = 30 000)` | `List<UnknownInRange>`: structure, device count, strongest current RSSI, last seen; strongest first |
 | `previouslySeenUnknownStructures()` | `List<SeenUnknown>`: structure, payload count, heard count, first/last seen; newest first |
-| `observeRecordingNote(id)` / `getRecordingNote(id)` / `setRecordingNote(id, note)` | the note (`""` when none) as a flow / once / saved |
+| `observeRecordingNote(id)` / `getRecordingNote(id)` / `setRecordingNote(id, note)` | the note (`""` when none) as a flow / once (`null` when unavailable) / saved |
 | `sightingsInRecording(id, bounds?, limit = 50 000)` | `Sighting` minute rows of the recording, optionally inside a `GeoBounds`, newest first |
 | `devicesInRecording(id)` | `RecordedDevice`: address, first/last seen, strongest RSSI, minutes, matched pages, best location |
 | `route(id)` | `RoutePoint` list, oldest first |

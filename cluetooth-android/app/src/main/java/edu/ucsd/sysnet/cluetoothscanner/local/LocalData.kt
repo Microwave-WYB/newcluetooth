@@ -70,15 +70,21 @@ interface LocalData {
     /** The user's note on a recording ("" when none); emits again after [setRecordingNote]. */
     fun observeRecordingNote(recordingId: String): Flow<String> = flowOf("")
 
-    /** The note as it is now ("" when none, or when the layer is unavailable). */
-    suspend fun getRecordingNote(recordingId: String): String = ""
+    /**
+     * The note as it is now ("" when there is none), or null when the layer cannot say because the
+     * database is unavailable. Do not edit from this: an editor that shows "" for null and saves would
+     * overwrite a note the user never saw. Editors read through [observeRecordingNote] (which also emits ""
+     * while unavailable, but then [setRecordingNote] throws) and treat [status] `UNAVAILABLE` as read-only.
+     */
+    suspend fun getRecordingNote(recordingId: String): String? = null
 
     /**
      * Saves the note (blank deletes it); returns once it is on disk. Notes are kept as long as the
      * recording. Throws [IllegalStateException] when the database is unavailable, so a note is never
      * lost silently.
      */
-    suspend fun setRecordingNote(recordingId: String, note: String) = Unit
+    suspend fun setRecordingNote(recordingId: String, note: String): Unit =
+        error("setRecordingNote is not supported by ${this::class.simpleName}")
 
     // History for maps ------------------------------------------------------------------
 
