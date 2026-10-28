@@ -18,11 +18,15 @@ The design goal is:
   - Local test database config lives under `db/test/`.
 - `cluetooth-core/`
   - Owns platform-neutral observation batching and schema-v2 pending Parquet state.
+  - Owns the on-device wiki rule matcher (`src/matcher/`, `RuleMatcher` over UniFFI).
   - Uses Rust, Polars, UUIDv7, Zstd Parquet, and UniFFI.
 - `cluetooth-android/`
   - Owns BLE/location/UI/Firebase/WorkManager platform integration. Phase 4
     forwards new observations to Rust, uploads Rust-prepared v2 ciphertext, and
     retains strict pre-0.0.5 legacy pending-file upload.
+  - Also keeps the phone-local stores (`local/`: seen products, recordings,
+    sighting history, route) and the build-time wiki bundle exporter
+    (`tools/wiki-bundle/`, Node); see `docs/local-data.md`.
 - `cluetooth-sync/`
   - Owns the sync and ingestion pipeline.
   - Uses Python, Polars, ADBC PostgreSQL, PyNaCl, Google Cloud Storage, Typer,

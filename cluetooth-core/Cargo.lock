@@ -518,6 +518,8 @@ dependencies = [
  "hex",
  "polars",
  "polars-parquet",
+ "regex",
+ "regex-syntax",
  "rustix",
  "serde",
  "serde_json",
