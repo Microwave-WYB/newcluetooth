@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
@@ -26,6 +28,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -65,14 +68,14 @@ private fun ProductCard(item: ProductItemState, icon: CategoryIcon, onClick: () 
 
 /** A stock [ListItem] header with an arrow, then a row of cards; in-range products first. */
 @Composable
-private fun CategorySection(category: NearbyCategoryState, onOpenCategory: () -> Unit, onOpenProduct: (ProductItemState) -> Unit) {
+private fun CategorySection(category: NearbyCategoryState, onOpenCategory: () -> Unit, onOpenProduct: (ProductItemState) -> Unit, rowState: LazyListState) {
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
         ListItem(
             headlineContent = { Text(category.title, style = MaterialTheme.typography.titleMedium) },
             trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, stringResource(R.string.action_view_all)) },
             modifier = Modifier.clickable(onClick = onOpenCategory),
         )
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(category.items, key = { it.id }) { item -> ProductCard(item, category.icon) { onOpenProduct(item) } }
         }
     }
@@ -98,15 +101,20 @@ fun NearbyContent(
     modifier: Modifier = Modifier,
     mode: DiscoverMode = DiscoverMode.Nearby,
     onMode: (DiscoverMode) -> Unit = {},
+    /** Hoisted by the caller so a product page and back keeps where the page and each card row were. */
+    listState: LazyListState = rememberLazyListState(),
+    rowStates: MutableMap<String, LazyListState> = remember { HashMap() },
     onOpenCategory: (NearbyCategoryState) -> Unit = {},
     onOpenProduct: (ProductItemState) -> Unit = {},
 ) {
-    LazyColumn(modifier.fillMaxSize(), contentPadding = padding) {
+    LazyColumn(modifier.fillMaxSize(), state = listState, contentPadding = padding) {
         // Discover's switch: Nearby (in range now) or All (also what was seen before), the same layout.
         item(key = "mode") { DiscoverModeSwitch(mode, onMode) }
-        items(state.categories, key = { it.id }) { c -> CategorySection(c, { onOpenCategory(c) }, onOpenProduct) }
+        items(state.categories, key = { it.id }) { c -> CategorySection(c, { onOpenCategory(c) }, onOpenProduct, rowStates.getOrPut(c.id) { LazyListState() }) }
         if (state.unrecognized.items.isNotEmpty()) {
-            item(key = state.unrecognized.id) { CategorySection(state.unrecognized, { onOpenCategory(state.unrecognized) }, onOpenProduct) }
+            item(key = state.unrecognized.id) {
+                CategorySection(state.unrecognized, { onOpenCategory(state.unrecognized) }, onOpenProduct, rowStates.getOrPut(state.unrecognized.id) { LazyListState() })
+            }
         }
         if (state.categories.isEmpty() && state.unrecognized.items.isEmpty()) {
             item(key = "empty") {
@@ -128,10 +136,16 @@ fun CategoryTopBar(category: NearbyCategoryState, onBack: () -> Unit) {
 
 /** The arrow's destination: every product of one category as a list. */
 @Composable
-fun CategoryContent(category: NearbyCategoryState, padding: PaddingValues, modifier: Modifier = Modifier, onOpenProduct: (ProductItemState) -> Unit = {}) {
+fun CategoryContent(
+    category: NearbyCategoryState,
+    padding: PaddingValues,
+    modifier: Modifier = Modifier,
+    onOpenProduct: (ProductItemState) -> Unit = {},
+    listState: LazyListState = rememberLazyListState(),
+) {
     val now = category.items.filter { it.strongestRssi != null }
     val before = category.items.filter { it.strongestRssi == null }
-    LazyColumn(modifier.fillMaxSize(), contentPadding = padding) {
+    LazyColumn(modifier.fillMaxSize(), state = listState, contentPadding = padding) {
         if (now.isNotEmpty()) {
             item { SectionLabel(stringResource(R.string.label_in_range)) }
             items(now, key = { it.id }) { ProductListItem(it, category.icon) { onOpenProduct(it) } }

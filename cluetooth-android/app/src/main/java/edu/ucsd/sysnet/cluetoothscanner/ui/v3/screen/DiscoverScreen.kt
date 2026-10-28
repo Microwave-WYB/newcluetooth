@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Bolt
@@ -69,9 +71,10 @@ fun CategoryIcon.vector(): ImageVector = when (this) {
 
 // ---- Product page --------------------------------------------------------------------------------
 
+/** Only Back: the product's full name is the page's heading (never shown twice). */
 @Composable
-fun ProductTopBar(title: String, onBack: () -> Unit) {
-    PageTopBar(title = title, navigation = { BackButton(onBack) })
+fun ProductTopBar(onBack: () -> Unit) {
+    PageTopBar(title = "", navigation = { BackButton(onBack) })
 }
 
 /**
@@ -102,12 +105,14 @@ fun ProductContent(
     nowMs: Long = System.currentTimeMillis(),
     onOpenMap: () -> Unit = {},
     onDevice: (MapListRowState) -> Unit = {},
+    /** Hoisted by the caller so a device (or the map) and back keeps the scroll position. */
+    listState: LazyListState = rememberLazyListState(),
     map: @Composable () -> Unit = {},
 ) {
     val texts = LocalTexts.current
     val rows = state?.rows.orEmpty()
     val points = state?.productPoints.orEmpty()
-    LazyColumn(modifier.fillMaxSize(), contentPadding = padding) {
+    LazyColumn(modifier.fillMaxSize(), state = listState, contentPadding = padding) {
         item(key = "image") { ProductImage(header.icon, Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
         item(key = "about") {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -106,8 +108,10 @@ fun HistoryContent(
     modifier: Modifier = Modifier,
     onOpenRecording: (RecordingSummaryState) -> Unit = {},
     onEditNote: (RecordingSummaryState) -> Unit = {},
+    /** Hoisted by the caller so a recording and back keeps the scroll position. */
+    listState: LazyListState = rememberLazyListState(),
 ) {
-    LazyColumn(modifier.fillMaxSize(), contentPadding = padding) {
+    LazyColumn(modifier.fillMaxSize(), state = listState, contentPadding = padding) {
         if (state.current != null) {
             item(key = "current") {
                 RecordingRow(state.current, { onOpenRecording(state.current) }, live = true, liveClock = state.recorder.elapsedSeconds, onLongClick = { onEditNote(state.current) })

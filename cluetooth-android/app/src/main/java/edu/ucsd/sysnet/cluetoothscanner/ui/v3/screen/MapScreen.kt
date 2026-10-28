@@ -11,17 +11,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LayersClear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.Card
@@ -31,10 +35,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
-import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetScaffoldState
@@ -42,6 +46,7 @@ import androidx.compose.material3.rememberStandardBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +55,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -58,9 +64,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.BackButton
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.PageTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiText
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.TopBarIconButton
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DetailTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapListRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapMode
@@ -83,21 +87,10 @@ class MapActions(
     val detail: DeviceDetailActions = DeviceDetailActions(),
 )
 
-/** The map pages' stock top app bar: back, the recording or product, its one-line summary, the density layer toggle. */
-@Composable
-fun MapTopBar(state: MapUiState, actions: MapActions, menu: (@Composable () -> Unit)? = null) {
-    PageTopBar(
-        title = state.title,
-        subtitle = state.subtitle,
-        navigation = { BackButton(actions.onBack) },
-        actions = {
-            TopBarIconButton(
-                Icons.Filled.Layers, stringResource(R.string.map_density), actions.onLayerToggle,
-                tint = if (state.heatmap) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            menu?.invoke()
-        },
-    )
+/** Whether a map page's device list had its sheet expanded, kept by the page's owner across a device and back. */
+@Stable
+class MapSheetMemory {
+    var listExpanded by mutableStateOf(false)
 }
 
 /**
@@ -120,10 +113,16 @@ fun MapContent(
     /** For previews: start with the sheet expanded and on this tab. */
     initiallyExpanded: Boolean = false,
     initialTab: DetailTab = DetailTab.Advertising,
+    /** The device list's scroll position, hoisted so a device and back (or a page and back) keeps it. */
+    listState: LazyListState = rememberLazyListState(),
+    /** Whether the list's sheet was expanded, hoisted for the same reason. */
+    sheetMemory: MapSheetMemory = remember { MapSheetMemory() },
+    /** The page's own actions (a recording's menu), at the end of the sheet's header. */
+    menu: (@Composable () -> Unit)? = null,
     map: @Composable (coveredFraction: () -> Float) -> Unit,
 ) {
     val sheetState = rememberStandardBottomSheetState(
-        initialValue = if (initiallyExpanded) SheetValue.Expanded else SheetValue.PartiallyExpanded,
+        initialValue = if (initiallyExpanded || (state.selected == null && sheetMemory.listExpanded)) SheetValue.Expanded else SheetValue.PartiallyExpanded,
         skipHiddenState = true,
     )
     val scaffoldState = rememberBottomSheetScaffoldState(bottomSheetState = sheetState)
@@ -133,43 +132,51 @@ fun MapContent(
     var layoutPx by remember { mutableFloatStateOf(0f) }
     val visibleSheetPx = { runCatching { (layoutPx - sheetState.requireOffset()).coerceAtLeast(0f) }.getOrDefault(0f) }
 
-    // A new selection (or going back to the list) starts with the sheet peeking.
-    LaunchedEffect(state.selected?.device?.id) { if (!initiallyExpanded) runCatching { sheetState.partialExpand() } }
-
-    BackHandler {
-        when {
-            sheetState.currentValue == SheetValue.Expanded -> scope.launch { sheetState.partialExpand() }
-            selecting -> actions.onBackToList()
-            else -> actions.onBack()
-        }
+    // The list's sheet height is remembered while the list shows; a device opens peeking, and going back to the
+    // list gives it the height it had.
+    LaunchedEffect(sheetState.currentValue, selecting) { if (!selecting) sheetMemory.listExpanded = sheetState.currentValue == SheetValue.Expanded }
+    var shownSelection by remember { mutableStateOf(state.selected?.device?.id) }
+    LaunchedEffect(state.selected?.device?.id) {
+        val id = state.selected?.device?.id
+        if (id == shownSelection || initiallyExpanded) return@LaunchedEffect
+        shownSelection = id
+        runCatching { if (id == null && sheetMemory.listExpanded) sheetState.expand() else sheetState.partialExpand() }
     }
+
+    // No top app bar: Back closes a device (back to the list), else leaves the page.
+    BackHandler { if (selecting) actions.onBackToList() else actions.onBack() }
 
     BoxWithConstraints(modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).onSizeChanged { layoutPx = it.height.toFloat() }) {
         val peek = if (selecting) maxHeight * 0.42f else maxHeight * 0.3f
+        // Fully expanded, the sheet (its 48 dp stock drag handle included) stops at about 60% of the page: the
+        // map always shows above it.
+        val sheetMax = maxHeight * 0.6f - 48.dp
         BottomSheetScaffold(
             scaffoldState = scaffoldState,
             sheetPeekHeight = peek,
             sheetContent = {
-                if (state.selected != null) {
-                    Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        BackButton(actions.onBackToList)
-                        Text(stringResource(R.string.map_device_list), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.fillMaxWidth().heightIn(max = sheetMax)) {
+                    if (state.selected != null) {
+                        Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            BackButton(actions.onBackToList)
+                            Text(stringResource(R.string.map_device_list), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        DeviceDetailContent(
+                            detail = state.selected.copy(
+                                positionEstimate = state.estimate?.let { PositionEstimateState(it, state.estimateAccuracyMeters) },
+                            ),
+                            actions = DeviceDetailActions(
+                                onDiscoverGatt = actions.detail.onDiscoverGatt,
+                                onCancelGatt = actions.detail.onCancelGatt,
+                                onShowOnMap = { scope.launch { sheetState.partialExpand() }; actions.detail.onShowOnMap() },
+                            ),
+                            showLiveChart = false,
+                            tabState = tab,
+                        )
+                        Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+                    } else {
+                        DeviceListSheet(state, actions, listState, menu)
                     }
-                    DeviceDetailContent(
-                        detail = state.selected.copy(
-                            positionEstimate = state.estimate?.let { PositionEstimateState(it, state.estimateAccuracyMeters) },
-                        ),
-                        actions = DeviceDetailActions(
-                            onDiscoverGatt = actions.detail.onDiscoverGatt,
-                            onCancelGatt = actions.detail.onCancelGatt,
-                            onShowOnMap = { scope.launch { sheetState.partialExpand() }; actions.detail.onShowOnMap() },
-                        ),
-                        showLiveChart = false,
-                        tabState = tab,
-                    )
-                    Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
-                } else {
-                    DeviceListSheet(state, actions)
                 }
             },
         ) {
@@ -177,6 +184,10 @@ fun MapContent(
                 // A lambda, so a sheet drag does not recompose the map; it is read when drawing or fitting.
                 map { if (layoutPx > 0f) (visibleSheetPx() / layoutPx).coerceIn(0f, 1f) else 0.3f }
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    // The density layer's switch (it was in the app bar), top-left: the recording pill is top-right.
+                    SmallFloatingActionButton(onClick = actions.onLayerToggle) {
+                        Icon(if (state.heatmap) Icons.Filled.Layers else Icons.Filled.LayersClear, stringResource(R.string.map_density))
+                    }
                     if (state.showAreaChip) {
                         FilterChip(
                             selected = state.areaOnly,
@@ -209,14 +220,24 @@ fun MapContent(
     }
 }
 
-/** Sheet list: count, sort and search, then one stock [ListItem] per device (or MAC). */
+/**
+ * Sheet list: the page's title and summary (the map pages have no app bar) with its [menu], then the count
+ * (left out when the summary already gives it), sort and search, then one stock [ListItem] per device.
+ */
 @Composable
-private fun DeviceListSheet(state: MapUiState, actions: MapActions) {
+private fun DeviceListSheet(state: MapUiState, actions: MapActions, listState: LazyListState, menu: (@Composable () -> Unit)?) {
+    ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        headlineContent = { Text(state.title, style = MaterialTheme.typography.titleMedium) },
+        supportingContent = state.subtitle.takeIf { it.isNotEmpty() }?.let { { Text(it) } },
+        trailingContent = menu,
+    )
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        val count = if (state.mode == MapMode.Recording) null else LocalTexts.current.plural(R.plurals.macs, state.rows.size, state.rows.size)
         Text(
-            state.listHint ?: LocalTexts.current.plural(if (state.mode == MapMode.Product) R.plurals.macs else R.plurals.devices, state.rows.size, state.rows.size),
+            state.listHint ?: count.orEmpty(),
             Modifier.weight(1f),
-            style = if (state.listHint != null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
+            style = if (state.listHint != null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
         )
         TextButton(onClick = actions.onSortClick) {
             Icon(Icons.AutoMirrored.Filled.Sort, null)
@@ -239,7 +260,7 @@ private fun DeviceListSheet(state: MapUiState, actions: MapActions) {
             singleLine = true,
         )
     }
-    LazyColumn(Modifier.fillMaxWidth()) {
+    LazyColumn(Modifier.fillMaxWidth(), state = listState) {
         items(state.rows, key = { it.id }) { row ->
             ListItem(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),

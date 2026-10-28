@@ -84,6 +84,9 @@ import kotlinx.coroutines.launch
 /** Stock list items on the sheet's own surface (the default container would paint a different band). */
 private val InSheet @Composable get() = ListItemDefaults.colors(containerColor = Color.Transparent)
 
+/** Details rows that carry the advertised name. */
+private val NAME_LABELS = setOf("Name", "Short name")
+
 /** The wiki page for a matched device; the site's `/p/<id>` route uses the wiki directory name, as the bundle does. */
 fun wikiUrl(pageId: String): String = "https://wirelesswiki.org/p/" + java.net.URLEncoder.encode(pageId, Charsets.UTF_8.name())
 
@@ -251,7 +254,9 @@ private fun AdvertisingTab(device: DeviceRowState, variants: List<AdVariantState
     val decoded = listOf(
         AdField(stringResource(R.string.detail_connectable), stringResource(if (device.connectable) R.string.yes else R.string.no)),
         AdField(stringResource(R.string.detail_format), stringResource(device.advKind.label)),
-    ) + variants.flatMap { v -> v.structures.flatMap { it.fields } }.filter { !it.bytes }.distinct()
+    ) + variants.flatMap { v -> v.structures.flatMap { it.fields } }
+        // The name is the sheet's heading already: it is not repeated here.
+        .filter { !it.bytes && !(it.label in NAME_LABELS && it.value == device.name) }.distinct()
     SectionTitle(stringResource(R.string.ad_decoded))
     SelectionContainer {
         Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

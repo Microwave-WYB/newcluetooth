@@ -9,12 +9,21 @@ package edu.ucsd.sysnet.cluetoothscanner.ui.v3.data
 class StableOrder(private val settleMs: Long = SETTLE_MS) {
     private val orders = HashMap<String, List<String>>()
     private var settleUntilMs = Long.MIN_VALUE
+    private val listSettleUntilMs = HashMap<String, Long>()
 
-    /** The next lists (for [settleMs] from [nowMs]) set the order again. */
+    /** Every list (for [settleMs] from [nowMs]) sets its order again: a page opened, a mode changed. */
     @Synchronized
     fun reset(nowMs: Long) {
         orders.clear()
+        listSettleUntilMs.clear()
         settleUntilMs = nowMs + settleMs
+    }
+
+    /** Only list [key] sets its order again: the user picked another sort, or opened that list anew. */
+    @Synchronized
+    fun reset(key: String, nowMs: Long) {
+        orders.remove(key)
+        listSettleUntilMs[key] = nowMs + settleMs
     }
 
     /** [items] in the held order of list [key]. */
@@ -22,7 +31,7 @@ class StableOrder(private val settleMs: Long = SETTLE_MS) {
     fun <T> arrange(key: String, items: List<T>, nowMs: Long, id: (T) -> String): List<T> {
         val byId = LinkedHashMap<String, T>()
         items.forEach { byId.putIfAbsent(id(it), it) }
-        val order = if (nowMs < settleUntilMs) {
+        val order = if (nowMs < maxOf(settleUntilMs, listSettleUntilMs[key] ?: Long.MIN_VALUE)) {
             byId.keys.toList()
         } else {
             val kept = orders[key].orEmpty().filter { it in byId }

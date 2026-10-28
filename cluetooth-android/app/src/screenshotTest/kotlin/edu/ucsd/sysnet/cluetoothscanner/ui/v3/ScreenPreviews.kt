@@ -56,7 +56,6 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.LocalWindowHeight
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MissingPermissionsScreen
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyTopBar
@@ -238,7 +237,7 @@ fun NearbyCategoryList() = Frame {
 
 @Composable
 private fun ProductPreview(state: MapUiState) =
-    AppShell(FakeData.idle, cb, recordPlacement(FakeData.idle.phase, false), tab = AppTab.Discover, startAllowed = false, topBar = { ProductTopBar(FakeData.productHeader.title) {} }) {
+    AppShell(FakeData.idle, cb, recordPlacement(FakeData.idle.phase, false), tab = AppTab.Discover, startAllowed = false, topBar = { ProductTopBar {} }) {
         ProductContent(FakeData.productHeader, state, it, nowMs = 1_761_600_000_000L) { PlaceholderMapFor(state) { 0f } }
     }
 
@@ -273,7 +272,7 @@ fun HistoryIdle() = Frame {
 
 @Composable
 private fun MapPreview(state: MapUiState, recorder: RecorderUiState = FakeData.idle, expanded: Boolean = false, tab: DetailTab = DetailTab.Advertising) =
-    AppShell(recorder, cb, recordPlacement(recorder.phase, roomForExpanded = false), startAllowed = false, topBar = { MapTopBar(state, MapActions()) }) { padding ->
+    AppShell(recorder, cb, recordPlacement(recorder.phase, roomForExpanded = false), startAllowed = false) { padding ->
         MapContent(state, MapActions(), padding, initiallyExpanded = expanded, initialTab = tab) { covered -> PlaceholderMapFor(state, covered) }
     }
 

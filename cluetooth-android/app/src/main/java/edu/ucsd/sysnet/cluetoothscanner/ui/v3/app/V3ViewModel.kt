@@ -39,6 +39,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveScanList
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSpot
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LocationFix
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.MapListOrder
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
@@ -106,7 +107,8 @@ data class MapLocal(
     val sort: DeviceSort = DeviceSort.Signal,
     val searching: Boolean = false,
     val query: String = "",
-    val heat: Boolean = false,
+    /** The density layer: on when a map opens. */
+    val heat: Boolean = true,
     val panned: Boolean = false,
     val areaOnly: Boolean = false,
     val viewport: GeoBounds? = null,
@@ -152,22 +154,34 @@ class V3ViewModel(
         _controlBar.value = false
     }
 
+    /** What a page under the top one had when another was opened over it, by stack position: restored on Back. */
+    private data class PageState(val local: MapLocal, val selected: String?)
+    private val pagesBelow = HashMap<Int, PageState>()
+
     fun open(route: Route) {
+        pagesBelow[_stack.value.size - 1] = PageState(_mapLocal.value, _selected.value)
         resetPageState()
+        // A page opened anew sorts its device list again; one returned to keeps its order.
+        mapOrder.reset(route.toString(), System.currentTimeMillis())
         _stack.update { it + route }
     }
 
-    /** False when already at the root. */
+    /** False when already at the root. Coming back, the page finds its sort, filters and selection as it left them. */
     fun back(): Boolean {
         if (_stack.value.size <= 1) return false
         resetPageState()
         _stack.update { it.dropLast(1) }
+        pagesBelow.remove(_stack.value.size - 1)?.let { saved ->
+            _mapLocal.value = saved.local
+            _selected.value = saved.selected
+        }
         return true
     }
 
     fun selectTab(tab: AppTab) {
         if (tab == AppTab.Discover && _stack.value.firstOrNull() != Route.Tab(AppTab.Discover)) nearbyOrder.reset(System.currentTimeMillis())
         resetPageState()
+        pagesBelow.clear()
         _stack.value = listOf(Route.Tab(tab))
     }
 
@@ -709,7 +723,14 @@ class V3ViewModel(
 
     private val _mapLocal = MutableStateFlow(MapLocal())
 
-    fun cycleSort() = _mapLocal.update { it.copy(sort = DeviceSort.entries[(it.sort.ordinal + 1) % DeviceSort.entries.size]) }
+    /** Another sort is the user's choice: the device list sorts again once, then holds that order. */
+    fun cycleSort() {
+        mapOrder.reset(_stack.value.last().toString(), System.currentTimeMillis())
+        _mapLocal.update { it.copy(sort = DeviceSort.entries[(it.sort.ordinal + 1) % DeviceSort.entries.size]) }
+    }
+
+    /** The maps' device lists (and the product page's) hold their order the way Scan does. */
+    private val mapOrder = StableOrder()
     fun toggleSearch() = _mapLocal.update { it.copy(searching = !it.searching, query = "") }
     fun setQuery(q: String) = _mapLocal.update { it.copy(query = q) }
     fun toggleHeat() = _mapLocal.update { it.copy(heat = !it.heat) }
@@ -720,11 +741,11 @@ class V3ViewModel(
     val mapState: StateFlow<MapUiState?> = _stack.map { it.last() }.distinctUntilChanged().flatMapLatest { route ->
         when (route) {
             is Route.RecordingMap -> recordingMap(route.id)
-            is Route.Product -> sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), _tick.map { liveOfProduct(route.pageId) }, productTitle = route.pageId)
+            is Route.Product -> sightingMap(route.toString(), localData.sightingsOfProduct(route.pageId, 2_000), _tick.map { liveOfProduct(route.pageId) }, productTitle = route.pageId)
             is Route.ProductMap ->
                 if (route.pageId.startsWith(DEMO_PREFIX)) demoMap(route.pageId.removePrefix(DEMO_PREFIX))
-                else sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), _tick.map { liveOfProduct(route.pageId) }, productTitle = route.pageId)
-            is Route.DeviceMap -> sightingMap(localData.sightingsOfDevice(route.addr, 2_000), _tick.map { liveDevice(route.addr) }, deviceAddr = route.addr)
+                else sightingMap(route.toString(), localData.sightingsOfProduct(route.pageId, 2_000), _tick.map { liveOfProduct(route.pageId) }, productTitle = route.pageId)
+            is Route.DeviceMap -> sightingMap(route.toString(), localData.sightingsOfDevice(route.addr, 2_000), _tick.map { liveDevice(route.addr) }, deviceAddr = route.addr)
             else -> flowOf(null)
         }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -733,20 +754,18 @@ class V3ViewModel(
         texts.monthDay(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate())
 
     /** [areaAddrs] (when the filter is on and the store answered) replaces the per-row location test. */
-    private fun List<MapListRowState>.arranged(local: MapLocal, areaAddrs: Set<String>? = null): List<MapListRowState> {
-        val q = local.query.trim().lowercase()
-        val searched = if (q.isEmpty()) this else filter { (it.title + " " + (it.mac ?: "") + " " + it.detail).lowercase().contains(q) }
-        val inArea = when {
-            areaAddrs != null -> searched.filter { it.mac in areaAddrs }
-            local.areaOnly && local.viewport != null -> searched.filter { r -> r.at?.let { local.viewport.contains(it.lat, it.lon) } ?: false }
-            else -> searched
+    /** The device list in its held order ([MapListOrder]), then the search and the "this area" filter. */
+    private fun List<MapListRowState>.arranged(local: MapLocal, listKey: String, areaAddrs: Set<String>? = null): List<MapListRowState> =
+        MapListOrder.arrange(this, local.sort, mapOrder, listKey, System.currentTimeMillis()).filter { r ->
+            val q = local.query.trim().lowercase()
+            val searched = q.isEmpty() || (r.title + " " + (r.mac ?: "") + " " + r.detail).lowercase().contains(q)
+            val inArea = when {
+                areaAddrs != null -> r.mac in areaAddrs
+                local.areaOnly && local.viewport != null -> r.at?.let { local.viewport.contains(it.lat, it.lon) } ?: false
+                else -> true
+            }
+            searched && inArea
         }
-        return when (local.sort) {
-            DeviceSort.Signal -> inArea.sortedByDescending { it.rssi ?: Int.MIN_VALUE }
-            DeviceSort.Recent -> inArea.sortedByDescending { it.lastSeenMs }
-            DeviceSort.Name -> inArea.sortedWith(compareBy({ it.unnamed }, { it.title.lowercase() }, { it.mac }))
-        }
-    }
 
     private val unnamedText get() = texts.string(R.string.unnamed)
 
@@ -786,7 +805,7 @@ class V3ViewModel(
                     lastSeenMs = dev.lastSeenMs,
                     at = dev.bestLocation?.let { LatLon(it.lat, it.lon) },
                 )
-            }.arranged(local, areaAddrs)
+            }.arranged(local, Route.RecordingMap(id).toString(), areaAddrs)
             val points = history.filter { it.recordingId == id && it.addr !in hiddenAddrs }.mapNotNull { s -> s.location?.let { SightingPoint(LatLon(it.lat, it.lon), s.bestRssi ?: -90) } }
             val estimate = if (selected != null) estimatePosition(points) else null
             val heat = thinForHeat(heatRows.filter { it.addr !in hiddenAddrs }.mapNotNull { s -> s.location?.let { LatLon(it.lat, it.lon) } })
@@ -842,6 +861,7 @@ class V3ViewModel(
      * now (from the live scan, placed where the phone heard it the strongest) with what recordings saved.
      */
     private fun sightingMap(
+        listKey: String,
         sightings: Flow<List<Sighting>>,
         live: Flow<List<LiveHit>>,
         productTitle: String? = null,
@@ -889,7 +909,7 @@ class V3ViewModel(
                     lastSeenMs = last,
                     at = hit?.spot?.let { LatLon(it.lat, it.lon) } ?: list.firstOrNull { it.location != null }?.location?.let { LatLon(it.lat, it.lon) },
                 )
-            }.arranged(local)
+            }.arranged(local, listKey)
             val selectedPoints = if (selected != null) {
                 located.filter { it.addr == selected }.map(::point) + listOfNotNull(liveByAddr[selected]?.let(::livePoint))
             } else {

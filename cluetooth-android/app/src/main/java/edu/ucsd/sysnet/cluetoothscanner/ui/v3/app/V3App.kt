@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -23,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +58,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapLibreMap
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapOverlay
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapSheetMemory
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductContent
@@ -120,6 +122,20 @@ fun V3App(
         val notice by vm.headerNotice.collectAsStateWithLifecycle()
         val problem by vm.problem.collectAsStateWithLifecycle()
         val listState = rememberLazyListState()
+        // Every other list's scroll position (and a map sheet's height), kept here above the page switch, so
+        // opening an item and coming back finds the list where it was. Tab lists by tab; pages by their place
+        // in the stack, dropped once that page is left for good.
+        val listStates = remember { HashMap<String, LazyListState>() }
+        val sheetMemories = remember { HashMap<String, MapSheetMemory>() }
+        val discoverRows = remember { HashMap<String, LazyListState>() }
+        fun pageKey(depth: Int) = "page:$depth:${stack.getOrNull(depth)}"
+        fun listStateOf(key: String) = listStates.getOrPut(key) { LazyListState() }
+        val topKey = pageKey(stack.size - 1)
+        SideEffect {
+            val alive = stack.indices.map(::pageKey).toSet()
+            listStates.keys.removeAll { it.startsWith("page:") && it !in alive }
+            sheetMemories.keys.removeAll { it !in alive }
+        }
         val scope = rememberCoroutineScope()
         val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
@@ -196,21 +212,9 @@ fun V3App(
                             AppTab.History -> HistoryTopBar(rec, notice)
                         }
                         is Route.Category -> if (category != null) CategoryTopBar(category, onBack = { vm.back() })
-                        is Route.Product -> ProductTopBar(product?.title.orEmpty(), onBack = { vm.back() })
-                        is Route.RecordingMap -> mapState?.let { state ->
-                            val summary = vm.recordingSummary(route.id)
-                            MapTopBar(state, mapActions) {
-                                RecordingMenu(
-                                    status = summary?.upload,
-                                    inProgress = rec.current?.id == route.id,
-                                    onRetryUpload = vm::uploadNow,
-                                    onExportJsonl = { vm.exportRecording(route.id, GatewayExportFormat.JSONL) },
-                                    onExportParquet = { vm.exportRecording(route.id, GatewayExportFormat.PARQUET) },
-                                    onDelete = { vm.deleteRecordingData(route.id) },
-                                )
-                            }
-                        }
-                        is Route.ProductMap, is Route.DeviceMap -> mapState?.let { MapTopBar(it, mapActions) }
+                        is Route.Product -> ProductTopBar(onBack = { vm.back() })
+                        // Map pages have no top app bar: their title and menu are in the sheet's header.
+                        is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> Unit
                         Route.Settings -> SettingsTopBar { vm.back() }
                     }
                     if (bluetoothOff) BluetoothOffBanner(onEnableBluetooth)
@@ -243,14 +247,21 @@ fun V3App(
                         onMode = vm::setDiscoverMode,
                         onOpenCategory = { vm.open(Route.Category(it.id)) },
                         onOpenProduct = { vm.openProduct(it.id) },
+                        listState = listStateOf("tab:discover:$discoverMode"),
+                        rowStates = discoverRows,
                     )
                     AppTab.History -> HistoryContent(
                         rec, padding,
                         onOpenRecording = { vm.open(Route.RecordingMap(it.id)) },
                         onEditNote = { vm.addNote(it.id) },
+                        listState = listStateOf("tab:history"),
                     )
                 }
-                is Route.Category -> if (category != null) CategoryContent(category, padding, onOpenProduct = { vm.openProduct(it.id) }) else Box(Modifier.fillMaxSize())
+                is Route.Category -> if (category != null) {
+                    CategoryContent(category, padding, onOpenProduct = { vm.openProduct(it.id) }, listState = listStateOf(topKey))
+                } else {
+                    Box(Modifier.fillMaxSize())
+                }
                 is Route.Product -> if (product != null) {
                     // The map state of a product page has no selection of its own: the sheet shows the device.
                     val state = mapState
@@ -258,6 +269,7 @@ fun V3App(
                         product, state, padding,
                         onOpenMap = { vm.openProductMap(product.id) },
                         onDevice = { vm.select(it.id) },
+                        listState = listStateOf(topKey),
                     ) {
                         if (state != null) ProductMapPreview(state, route)
                     }
@@ -265,7 +277,21 @@ fun V3App(
                     Box(Modifier.fillMaxSize())
                 }
                 is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap ->
-                    mapState?.let { MapRoute(it, vm, mapActions, padding) } ?: Box(Modifier.fillMaxSize())
+                    mapState?.let { state ->
+                        val menu: (@Composable () -> Unit)? = (route as? Route.RecordingMap)?.let { r ->
+                            {
+                                RecordingMenu(
+                                    status = vm.recordingSummary(r.id)?.upload,
+                                    inProgress = rec.current?.id == r.id,
+                                    onRetryUpload = vm::uploadNow,
+                                    onExportJsonl = { vm.exportRecording(r.id, GatewayExportFormat.JSONL) },
+                                    onExportParquet = { vm.exportRecording(r.id, GatewayExportFormat.PARQUET) },
+                                    onDelete = { vm.deleteRecordingData(r.id) },
+                                )
+                            }
+                        }
+                        MapRoute(state, vm, mapActions, padding, listStateOf(topKey), sheetMemories.getOrPut(topKey) { MapSheetMemory() }, menu)
+                    } ?: Box(Modifier.fillMaxSize())
                 Route.Settings -> SettingsContent(
                     vm.settings.collectAsStateWithLifecycle().value,
                     SettingsActions(
@@ -289,7 +315,15 @@ fun V3App(
 }
 
 @Composable
-private fun MapRoute(state: MapUiState, vm: V3ViewModel, actions: MapActions, padding: PaddingValues) {
+private fun MapRoute(
+    state: MapUiState,
+    vm: V3ViewModel,
+    actions: MapActions,
+    padding: PaddingValues,
+    listState: LazyListState,
+    sheetMemory: MapSheetMemory,
+    menu: (@Composable () -> Unit)?,
+) {
     val route = vm.stack.collectAsStateWithLifecycle().value.last()
     var offline by remember { mutableStateOf(false) }
     // Frame the camera again when the content first arrives: points load after the selection is made.
@@ -299,7 +333,10 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, actions: MapActions, pa
     } else {
         state.route.size >= 2 || state.productPoints.isNotEmpty()
     }
-    MapContent(state, actions, padding, notice = if (offline) R.string.notice_offline_map else null) { covered ->
+    MapContent(
+        state, actions, padding, notice = if (offline) R.string.notice_offline_map else null,
+        listState = listState, sheetMemory = sheetMemory, menu = menu,
+    ) { covered ->
         MapLibreMap(
             overlay = MapOverlay(
                 route = if (state.selected != null) emptyList() else state.route,
