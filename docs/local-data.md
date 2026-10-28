@@ -69,7 +69,7 @@ matter and `rule.json` and writes `app/src/main/assets/wiki-bundle.json`:
 
 ```json
 { "schema": 1, "version": "2026-10-26+9f9ccfd7",
-  "categories": [{ "id", "label", "label_zh" }],
+  "categories": [{ "id", "label" }],
   "pages": [{ "id", "title", "kind", "one_line", "categories"?, "entity", "has_rule", "rule"? }] }
 ```
 
@@ -83,9 +83,8 @@ matter and `rule.json` and writes `app/src/main/assets/wiki-bundle.json`:
   stand-in: delete its entries once the wiki carries categories. A stale entry
   (unknown category, page gone) only warns; an unknown category in a page's own
   front matter is an error.
-* Labels: English from `categories.json` / `categories.draft.json` of the
-  checkout (or `--categories`), Chinese from `category-labels.zh.json`. Every
-  active category needs both.
+* Labels: English, from `categories.json` / `categories.draft.json` of the
+  checkout (or `--categories`); they are what the app shows.
 * `version` is `<newest page date>+<8 hex of a digest of pages and categories>`:
   it changes whenever anything the app reads changes (there is no way to set it
   by hand, so a changed bundle can never reuse a version). `rules_version` is a
@@ -229,7 +228,7 @@ the first query ran is not missed. Queries run on the IO dispatcher (also
 
 | Call | Result |
 |---|---|
-| `catalog: StateFlow<WikiCatalog?>` | pages and categories (English and Chinese labels); `page(id)`, `category(id)` |
+| `catalog: StateFlow<WikiCatalog?>` | pages and categories (English labels); `page(id)`, `category(id)` |
 | `status: StateFlow<LocalDataStatus>` | `STARTING`, `READY`, `IDENTIFICATION_UNAVAILABLE`, `UNAVAILABLE` (+ message) |
 | `productsInRange(windowMs = 30 000)` | `InRangeSnapshot`: identified products with device count, strongest RSSI, last seen; unidentified count |
 | `previouslySeenProducts()` | `List<CategoryProducts>` (category order of the wiki, then uncategorized) |

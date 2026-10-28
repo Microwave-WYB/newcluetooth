@@ -1,185 +1,116 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.components
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.outlined.BluetoothSearching
-import androidx.compose.material.icons.outlined.Place
-import androidx.compose.material.icons.outlined.RadioButtonChecked
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 
 /**
- * Page title, optional status line and trailing actions. The record button's mini form
- * is passed in as the last action by the shell.
+ * The stock [TopAppBar] every page uses: title, an optional one-line subtitle under it, actions.
+ * While the shell's floating record pill shows, the actions end [LocalRecordPillInset] early so the
+ * pill never covers them; the title keeps the rest of the width.
  */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun V3TopBar(
+fun PageTopBar(
     title: String,
     modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    /** A second line under the subtitle, e.g. a scanner problem; shown in the error color. */
+    notice: String? = null,
     navigation: (@Composable () -> Unit)? = null,
-    status: (@Composable () -> Unit)? = null,
-    reserveRecordSlot: Boolean = true,
-    statusBarInset: Boolean = true,
+    /** Long press on the subtitle, e.g. to copy the coordinates in it. */
+    onSubtitleLongClick: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    Row(
-        modifier
-            .fillMaxWidth()
-            .then(if (statusBarInset) Modifier.statusBarsPadding() else Modifier)
-            .height(64.dp)
-            .padding(start = if (navigation == null) 20.dp else 4.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        navigation?.invoke()
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1)
-            status?.invoke()
-        }
-        actions()
-        // The record button is drawn by the shell on top of this spot.
-        if (reserveRecordSlot) Spacer(Modifier.width(MiniRecordSlotWidth))
-    }
+    TopAppBar(
+        title = {
+            Column {
+                Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (subtitle != null) {
+                    Text(
+                        subtitle,
+                        modifier = if (onSubtitleLongClick != null) Modifier.combinedClickable(onClick = {}, onLongClick = onSubtitleLongClick) else Modifier,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (notice != null) {
+                    Text(notice, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        },
+        modifier = modifier,
+        navigationIcon = { navigation?.invoke() },
+        actions = {
+            actions()
+            Spacer(Modifier.width(LocalRecordPillInset.current))
+        },
+    )
 }
 
 @Composable
-fun StatusLine(text: String, modifier: Modifier = Modifier, dot: Color? = null) {
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        if (dot != null) {
-            Box(Modifier.padding(end = 6.dp).size(7.dp).clip(CircleShape).background(dot))
-        }
-        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-    }
-}
-
-@Composable
-fun TopBarIconButton(icon: ImageVector, description: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier.size(44.dp).clip(CircleShape).clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, description, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(24.dp))
-    }
+fun TopBarIconButton(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = LocalContentColor.current,
+) {
+    IconButton(onClick = onClick, modifier = modifier) { Icon(icon, description, tint = tint) }
 }
 
 @Composable
 fun BackButton(onClick: () -> Unit = {}) =
-    TopBarIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回", onClick)
+    TopBarIconButton(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back), onClick)
 
 @Composable
-fun SearchButton(onClick: () -> Unit = {}) = TopBarIconButton(Icons.Filled.Search, "搜索", onClick)
+fun SearchButton(onClick: () -> Unit = {}) = TopBarIconButton(Icons.Filled.Search, stringResource(R.string.action_search), onClick)
 
 private fun tabIcon(tab: AppTab): ImageVector = when (tab) {
     AppTab.Scan -> Icons.AutoMirrored.Outlined.BluetoothSearching
-    AppTab.Nearby -> Icons.Outlined.Place
-    AppTab.Recordings -> Icons.Outlined.RadioButtonChecked
+    AppTab.Discover -> Icons.Outlined.Explore
+    AppTab.History -> Icons.Outlined.History
 }
 
-/** Bottom navigation with three tabs; a quiet bar with an indicator pill, no elevation. */
+/** The stock [NavigationBar] with the three tabs. */
 @Composable
-fun V3BottomNav(selected: AppTab, onSelect: (AppTab) -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.background(MaterialTheme.colorScheme.surfaceContainerLow)) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().height(64.dp)) {
-            AppTab.entries.forEach { tab ->
-                val on = tab == selected
-                Column(
-                    Modifier.weight(1f).height(64.dp).clickable { onSelect(tab) },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Box(
-                        Modifier.height(28.dp).width(56.dp).clip(RoundedCornerShape(50))
-                            .background(if (on) MaterialTheme.colorScheme.primaryContainer else Color.Transparent),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            tabIcon(tab), null,
-                            tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                    Text(
-                        tab.label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-            }
+fun V3NavigationBar(selected: AppTab, onSelect: (AppTab) -> Unit, modifier: Modifier = Modifier) {
+    NavigationBar(modifier) {
+        AppTab.entries.forEach { tab ->
+            NavigationBarItem(
+                selected = tab == selected,
+                onClick = { onSelect(tab) },
+                icon = { Icon(tabIcon(tab), null) },
+                label = { Text(stringResource(tab.label)) },
+            )
         }
     }
-}
-
-/** The surface of a bottom sheet: rounded top, drag handle, hairline instead of a heavy shadow. */
-@Composable
-fun SheetSurface(
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Surface(
-        modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 8.dp,
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column {
-            Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.outlineVariant))
-            }
-            content()
-        }
-    }
-}
-
-/** Dim layer behind a sheet. */
-@Composable
-fun BoxScope.Scrim(alpha: Float = 0.32f) {
-    Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = alpha)))
-}
-
-/** A dimmed layer with a bottom-aligned sheet on top; tapping the dim area dismisses. */
-@Composable
-fun BoxScope.SheetLayer(
-    onDismiss: () -> Unit = {},
-    scrimAlpha: Float = 0.32f,
-    scrimTopInset: androidx.compose.ui.unit.Dp = 0.dp,
-    sheet: @Composable () -> Unit,
-) {
-    Box(
-        Modifier.matchParentSize().padding(top = scrimTopInset).background(Color.Black.copy(alpha = scrimAlpha))
-            .clickable(interactionSource = null, indication = null, onClick = onDismiss),
-    )
-    Box(Modifier.align(Alignment.BottomCenter)) { sheet() }
 }

@@ -2,62 +2,88 @@ package edu.ucsd.sysnet.cluetoothscanner.ui.v3.app
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import edu.ucsd.sysnet.cluetoothscanner.R
+import edu.ucsd.sysnet.cluetoothscanner.core.GatewayExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordPlacement
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordProblemSnackbar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordSavedSnackbar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.filterScanRows
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryListPage
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.BluetoothOffBanner
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapLibreMap
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapOverlay
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapPage
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyPage
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.RecordingsPage
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapSheetMemory
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.RecordingMenu
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanDeviceSheet
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanPage
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.V3Theme
 import kotlinx.coroutines.launch
 
 /**
- * The v3 app: one [AppShell] (so the record button can move between pages), the current route's
- * page inside it, and the sheets, snackbar and dialogs the routes need.
- *
- * @param legacyContent the pre-v3 sessions/upload screen, shown for [Route.Legacy]
+ * The v3 app: one [AppShell] (a stock Scaffold, so the record button can move between pages) with the
+ * current route's top app bar and content in it, the device sheet, the error snackbar and the note dialog.
  */
 @Composable
-fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Unit) {
+fun V3App(
+    vm: V3ViewModel,
+    /** Bluetooth was turned off after onboarding: a banner with the fix sits under every page's app bar. */
+    bluetoothOff: Boolean = false,
+    onEnableBluetooth: () -> Unit = {},
+) {
     V3Theme {
         val stack by vm.stack.collectAsStateWithLifecycle()
         val route = stack.last()
@@ -82,124 +108,206 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             }
         }
 
-        if (route == Route.Legacy) {
-            BackHandler { vm.back() }
-            legacyContent { vm.back() }
-            return@V3Theme
+        // A recording's export: the core prepares the file, the stock document picker says where it goes.
+        val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            vm.finishExport(uri)
         }
+        LaunchedEffect(vm) { vm.exportFileNames.collect { exportLauncher.launch(it) } }
 
         val recorder by vm.recorder.collectAsStateWithLifecycle()
         val controlBarOpen by vm.controlBarOpen.collectAsStateWithLifecycle()
-        val saved by vm.saved.collectAsStateWithLifecycle()
         val selected by vm.selectedAddr.collectAsStateWithLifecycle()
         val detail by vm.detail.collectAsStateWithLifecycle()
         val scan by vm.scanState.collectAsStateWithLifecycle()
         val notice by vm.headerNotice.collectAsStateWithLifecycle()
         val problem by vm.problem.collectAsStateWithLifecycle()
         val listState = rememberLazyListState()
+        // Every other list's scroll position (and a map sheet's height), kept here above the page switch, so
+        // opening an item and coming back finds the list where it was. Tab lists by tab; pages by their place
+        // in the stack, dropped once that page is left for good.
+        val listStates = remember { HashMap<String, LazyListState>() }
+        val sheetMemories = remember { HashMap<String, MapSheetMemory>() }
+        val discoverRows = remember { HashMap<String, LazyListState>() }
+        fun pageKey(depth: Int) = "page:$depth:${stack.getOrNull(depth)}"
+        fun listStateOf(key: String) = listStates.getOrPut(key) { LazyListState() }
+        val topKey = pageKey(stack.size - 1)
+        SideEffect {
+            val alive = stack.indices.map(::pageKey).toSet()
+            listStates.keys.removeAll { it.startsWith("page:") && it !in alive }
+            sheetMemories.keys.removeAll { it !in alive }
+        }
         val scope = rememberCoroutineScope()
         val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
         val onScan = route == Route.Tab(AppTab.Scan)
-        val isMap = route is Route.RecordingMap || route is Route.ProductMap || route is Route.DeviceMap
-        val sheetOpen = onScan && selected != null && detail != null
+        // The device sheet opens over the Scan list and over a product page's devices.
+        val sheetOpen = (onScan || route is Route.Product) && selected != null && detail != null
         val tab = when (route) {
             is Route.Tab -> route.tab
-            is Route.Category -> AppTab.Nearby
+            is Route.Product, is Route.Category -> AppTab.Discover
             else -> null
         }
 
-        val sortVersion by vm.sortVersion.collectAsStateWithLifecycle()
-        // A re-sort moves the rows under a keyed list; start again from the top.
-        LaunchedEffect(sortVersion) { if (sortVersion > 0) listState.scrollToItem(0) }
-
         // Back: the control bar (closed in AppShell, composed last), the sheet, the selection, then pages;
-        // on the Nearby and Recordings tabs it goes to the Scan tab before leaving the app.
+        // on the Discover and History tabs it goes to the Scan tab before leaving the app.
         BackHandler(enabled = stack.size > 1) { vm.back() }
         BackHandler(enabled = stack.size == 1 && tab != null && tab != AppTab.Scan) { vm.selectTab(AppTab.Scan) }
 
         val detailActions = DeviceDetailActions(
-            onWindowChange = vm::setWindow,
             onDiscoverGatt = vm::discoverGatt,
             onCancelGatt = vm::cancelGatt,
             onShowOnMap = vm::showSelectedOnMap,
         )
 
+        val snackbarHost = remember { SnackbarHostState() }
+        // Only a recording that could not be saved says anything; a saved one is simply in History.
+        val retryLabel = stringResource(R.string.action_retry)
+        LaunchedEffect(problem) {
+            val message = problem ?: return@LaunchedEffect
+            val result = snackbarHost.showSnackbar(message, actionLabel = retryLabel, withDismissAction = true, duration = SnackbarDuration.Indefinite)
+            if (result == SnackbarResult.ActionPerformed) vm.retrySave() else vm.dismissProblem()
+        }
+
+        // Search on the Scan page: it only hides rows, the list keeps its order.
+        var searching by rememberSaveable { mutableStateOf(false) }
+        var query by rememberSaveable { mutableStateOf("") }
+        val mapState by vm.mapState.collectAsStateWithLifecycle()
+        val nearby by vm.nearby.collectAsStateWithLifecycle()
+        val nearbyAll by vm.nearbyAll.collectAsStateWithLifecycle()
+        val discoverMode by vm.discoverMode.collectAsStateWithLifecycle()
+        val rec by vm.recordings.collectAsStateWithLifecycle()
+        val mapActions = MapActions(
+            onBack = { vm.back() },
+            onRowClick = { vm.select(it.id) },
+            onBackToList = { vm.select(null) },
+            onSortClick = vm::cycleSort,
+            onSearchToggle = vm::toggleSearch,
+            onQueryChange = vm::setQuery,
+            onAreaChip = vm::toggleArea,
+            onLayerToggle = vm::toggleHeat,
+            detail = detailActions,
+        )
+        val product = (route as? Route.Product)?.let { vm.productHeader(it.pageId) }
+        val category = (route as? Route.Category)?.let { r -> (nearbyAll.categories + nearbyAll.unrecognized).firstOrNull { it.id == r.id } }
+
         AppShell(
             recorder = recorder,
             callbacks = vm.recorderCallbacks,
-            placement = if (onScan && !sheetOpen && !controlBarOpen) RecordPlacement.Full else RecordPlacement.Mini,
+            placement = recordPlacement(recorder.phase, roomForExpanded = onScan && !sheetOpen && !controlBarOpen),
             tab = tab,
             onTab = vm::selectTab,
-            showScrollToTop = showTop,
-            onScrollToTop = { scope.launch { listState.animateScrollToItem(0) } },
-            floatingMini = isMap,
-            controlBarOpen = controlBarOpen,
-            onDismissControlBar = { vm.setControlBar(false) },
-            overlay = {
-                val d = detail
-                if (sheetOpen && d != null) ScanDeviceSheet(d, detailActions, onDismiss = { vm.select(null) })
-            },
-            snackbar = {
-                val info = saved
-                val trouble = problem
-                if (trouble != null) {
-                    Box(Modifier.align(Alignment.BottomCenter).padding(bottom = (if (tab != null) 64.dp else 0.dp) + 12.dp)) {
-                        RecordProblemSnackbar(trouble, onRetry = vm::retrySave, onDismiss = vm::dismissProblem)
+            topBar = {
+                Column {
+                    when (route) {
+                        is Route.Tab -> when (route.tab) {
+                            AppTab.Scan -> ScanTopBar(
+                                deviceCount = scan.rows.size,
+                                location = scan.location,
+                                notice = notice,
+                                searching = searching,
+                                onSearchToggle = { searching = !searching; if (!searching) query = "" },
+                                onSettings = { vm.open(Route.Settings) },
+                            )
+                            AppTab.Discover -> NearbyTopBar(nearby, notice, discoverMode)
+                            AppTab.History -> HistoryTopBar(rec, notice)
+                        }
+                        is Route.Category -> if (category != null) CategoryTopBar(category, onBack = { vm.back() })
+                        is Route.Product -> ProductTopBar(onBack = { vm.back() })
+                        // Map pages have no top app bar: their title and menu are in the sheet's header.
+                        is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> Unit
+                        Route.Settings -> SettingsTopBar { vm.back() }
                     }
-                } else if (info != null) {
-                    Box(Modifier.align(Alignment.BottomCenter).padding(bottom = (if (tab != null) 64.dp else 0.dp) + 12.dp)) {
-                        RecordSavedSnackbar(
-                            info.summary.durationSeconds, info.summary.sightings,
-                            onAddNote = { vm.addNote(info.recordingId); vm.dismissSaved() },
-                            onView = vm::viewSaved,
-                        )
-                    }
+                    if (bluetoothOff) BluetoothOffBanner(onEnableBluetooth)
                 }
             },
-        ) {
+            showScrollToTop = onScan && showTop,
+            onScrollToTop = { scope.launch { listState.animateScrollToItem(0) } },
+            snackbarHostState = snackbarHost,
+            controlBarOpen = controlBarOpen,
+            onDismissControlBar = { vm.setControlBar(false) },
+            startAllowed = onScan,
+        ) { padding ->
             when (route) {
                 is Route.Tab -> when (route.tab) {
-                    AppTab.Scan -> ScanPage(
-                        rows = scan.rows,
-                        recorder = scan.recorder,
+                    AppTab.Scan -> ScanContent(
+                        rows = filterScanRows(scan.rows, searching, query),
+                        sortVersion = scan.sortVersion,
                         listState = listState,
+                        padding = padding,
                         refreshing = vm.refreshing.collectAsStateWithLifecycle().value,
                         onRefresh = vm::refreshScan,
                         onRowClick = { vm.select(it.id) },
-                        onSettings = { vm.open(Route.Legacy) },
-                        notice = notice,
+                        searching = searching,
+                        query = query,
+                        onQueryChange = { query = it },
                     )
-                    AppTab.Nearby -> {
-                        val nearby by vm.nearby.collectAsStateWithLifecycle()
-                        NearbyPage(
-                            nearby,
-                            notice = notice,
-                            onOpenCategory = { vm.open(Route.Category(it.id)) },
-                            onOpenProduct = { vm.openProduct(it.id) },
-                        )
-                    }
-                    AppTab.Recordings -> {
-                        val rec by vm.recordings.collectAsStateWithLifecycle()
-                        RecordingsPage(rec, notice = notice, onOpenRecording = { vm.open(Route.RecordingMap(it.id)) })
-                    }
+                    AppTab.Discover -> NearbyContent(
+                        nearby, padding,
+                        mode = discoverMode,
+                        onMode = vm::setDiscoverMode,
+                        onOpenCategory = { vm.open(Route.Category(it.id)) },
+                        onOpenProduct = { vm.openProduct(it.id) },
+                        listState = listStateOf("tab:discover:$discoverMode"),
+                        rowStates = discoverRows,
+                    )
+                    AppTab.History -> HistoryContent(
+                        rec, padding,
+                        onOpenRecording = { vm.open(Route.RecordingMap(it.id)) },
+                        onEditNote = { vm.addNote(it.id) },
+                        listState = listStateOf("tab:history"),
+                    )
                 }
-                is Route.Category -> {
-                    val nearby by vm.nearby.collectAsStateWithLifecycle()
-                    val category = (nearby.categories + nearby.unrecognized).firstOrNull { it.id == route.id }
-                    if (category == null) {
-                        Box(Modifier.fillMaxSize())
-                    } else {
-                        CategoryListPage(category, onBack = { vm.back() }, onOpenProduct = { vm.openProduct(it.id) })
+                is Route.Category -> if (category != null) {
+                    CategoryContent(category, padding, onOpenProduct = { vm.openProduct(it.id) }, listState = listStateOf(topKey))
+                } else {
+                    Box(Modifier.fillMaxSize())
+                }
+                is Route.Product -> if (product != null) {
+                    // The map state of a product page has no selection of its own: the sheet shows the device.
+                    val state = mapState
+                    ProductContent(
+                        product, state, padding,
+                        onOpenMap = { vm.openProductMap(product.id) },
+                        onDevice = { vm.select(it.id) },
+                        listState = listStateOf(topKey),
+                    ) {
+                        if (state != null) ProductMapPreview(state, route)
                     }
+                } else {
+                    Box(Modifier.fillMaxSize())
                 }
-                is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> {
-                    val state by vm.mapState.collectAsStateWithLifecycle()
-                    state?.let { MapRoute(it, vm, detailActions) } ?: Box(Modifier.fillMaxSize())
-                }
-                Route.Legacy -> Unit
+                is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap ->
+                    mapState?.let { state ->
+                        val menu: (@Composable () -> Unit)? = (route as? Route.RecordingMap)?.let { r ->
+                            {
+                                RecordingMenu(
+                                    status = vm.recordingSummary(r.id)?.upload,
+                                    inProgress = rec.current?.id == r.id,
+                                    onRetryUpload = vm::uploadNow,
+                                    onExportJsonl = { vm.exportRecording(r.id, GatewayExportFormat.JSONL) },
+                                    onExportParquet = { vm.exportRecording(r.id, GatewayExportFormat.PARQUET) },
+                                    onDelete = { vm.deleteRecordingData(r.id) },
+                                )
+                            }
+                        }
+                        MapRoute(state, vm, mapActions, padding, listStateOf(topKey), sheetMemories.getOrPut(topKey) { MapSheetMemory() }, menu)
+                    } ?: Box(Modifier.fillMaxSize())
+                Route.Settings -> SettingsContent(
+                    vm.settings.collectAsStateWithLifecycle().value,
+                    SettingsActions(
+                        onUserId = vm::setUserId,
+                        onAutoRecord = vm::setAutoRecord,
+                        onWifiOnly = vm::setWifiOnly,
+                        onCodedPhy = vm::setCodedPhy,
+                        onHideUnnamedApple = vm::setHideUnnamedApple,
+                        onUploadNow = vm::uploadNow,
+                    ),
+                    padding,
+                )
             }
         }
+        val d = detail
+        if (sheetOpen && d != null) ScanDeviceSheet(d, detailActions, onDismiss = { vm.select(null) })
 
         val noteTarget by vm.noteTarget.collectAsStateWithLifecycle()
         if (noteTarget != null) NoteDialog(vm)
@@ -207,18 +315,15 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
 }
 
 @Composable
-private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDetailActions) {
-    val actions = MapActions(
-        onBack = { vm.back() },
-        onRowClick = { vm.select(it.id) },
-        onBackToList = { vm.select(null) },
-        onSortClick = vm::cycleSort,
-        onSearchToggle = vm::toggleSearch,
-        onQueryChange = vm::setQuery,
-        onAreaChip = vm::toggleArea,
-        onLayerToggle = vm::toggleHeat,
-        detail = detailActions,
-    )
+private fun MapRoute(
+    state: MapUiState,
+    vm: V3ViewModel,
+    actions: MapActions,
+    padding: PaddingValues,
+    listState: LazyListState,
+    sheetMemory: MapSheetMemory,
+    menu: (@Composable () -> Unit)?,
+) {
     val route = vm.stack.collectAsStateWithLifecycle().value.last()
     var offline by remember { mutableStateOf(false) }
     // Frame the camera again when the content first arrives: points load after the selection is made.
@@ -228,7 +333,10 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDe
     } else {
         state.route.size >= 2 || state.productPoints.isNotEmpty()
     }
-    MapPage(state, actions, notice = if (offline) "离线地图不可用" else null) { covered ->
+    MapContent(
+        state, actions, padding, notice = if (offline) R.string.notice_offline_map else null,
+        listState = listState, sheetMemory = sheetMemory, menu = menu,
+    ) { covered ->
         MapLibreMap(
             overlay = MapOverlay(
                 route = if (state.selected != null) emptyList() else state.route,
@@ -245,6 +353,17 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDe
     }
 }
 
+/** The product page's map: the product's points, framed once; it takes no gestures (the card above it opens the full map). */
+@Composable
+private fun ProductMapPreview(state: MapUiState, route: Route) {
+    MapLibreMap(
+        overlay = MapOverlay(route = emptyList(), points = state.productPoints, estimate = null, heat = emptyList(), fitKey = route to state.productPoints.isNotEmpty()),
+        coveredFraction = { 0f },
+        onGesture = {},
+        onViewport = {},
+    )
+}
+
 @Composable
 private fun NoteDialog(vm: V3ViewModel) {
     // null until the store has answered: the editor starts from its note, never from a placeholder.
@@ -256,30 +375,27 @@ private fun NoteDialog(vm: V3ViewModel) {
     LaunchedEffect(stored) { if (!edited) stored?.let { text = it } }
     AlertDialog(
         onDismissRequest = vm::dismissNote,
-        title = { Text("备注") },
+        title = { Text(stringResource(R.string.note_title)) },
         text = {
-            Box {
-                if (text.isEmpty()) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it; edited = true },
+                enabled = canEdit,
+                placeholder = {
                     Text(
-                        when {
-                            !editable -> "本地数据库不可用，暂时不能编辑"
-                            stored == null -> "读取中…"
-                            else -> "这次录制是在哪里、做什么"
-                        },
-                        color = MaterialTheme.colorScheme.outline,
+                        stringResource(
+                            when {
+                                !editable -> R.string.note_unavailable
+                                stored == null -> R.string.note_loading
+                                else -> R.string.note_hint
+                            },
+                        ),
                     )
-                }
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it; edited = true },
-                    enabled = canEdit,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                )
-            }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
         },
-        confirmButton = { TextButton({ vm.saveNote(text) }, enabled = canEdit) { Text("保存") } },
-        dismissButton = { TextButton(vm::dismissNote) { Text("取消") } },
+        confirmButton = { TextButton({ vm.saveNote(text) }, enabled = canEdit) { Text(stringResource(R.string.action_save)) } },
+        dismissButton = { TextButton(vm::dismissNote) { Text(stringResource(R.string.action_cancel)) } },
     )
 }

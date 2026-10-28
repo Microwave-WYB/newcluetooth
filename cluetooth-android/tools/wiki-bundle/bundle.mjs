@@ -45,9 +45,9 @@ function stringField(fm, key, where) {
 }
 
 /**
- * @param {{wikiDir: string, vocabularyPath?: string, legacy: {kinds: object, categories: object}, labelsZh: object, warn?: (message: string) => void}} options
+ * @param {{wikiDir: string, vocabularyPath?: string, legacy: {kinds: object, categories: object}, warn?: (message: string) => void}} options
  */
-export function buildBundle({ wikiDir, vocabularyPath, legacy, labelsZh, warn = (message) => console.warn(`warning: ${message}`) }) {
+export function buildBundle({ wikiDir, vocabularyPath, legacy, warn = (message) => console.warn(`warning: ${message}`) }) {
   const vocabulary = readVocabulary(wikiDir, vocabularyPath);
   const known = new Map(vocabulary.map((c) => [c.id, c]));
   // The legacy mapping is a stand-in that goes stale as the wiki moves on: say so, never abort on it.
@@ -56,11 +56,6 @@ export function buildBundle({ wikiDir, vocabularyPath, legacy, labelsZh, warn = 
     const valid = ids.filter((id) => known.has(id));
     for (const id of ids) if (!known.has(id)) warn(`legacy-mapping.json: ${page}: category "${id}" is not in the vocabulary; ignored`);
     legacyCategories[page] = valid;
-  }
-  for (const c of vocabulary) {
-    if (typeof labelsZh[c.id] !== "string" || labelsZh[c.id] === "") {
-      throw new Error(`category-labels.zh.json: missing Chinese label for ${c.id}`);
-    }
   }
 
   const content = join(wikiDir, "wiki-content");
@@ -111,7 +106,7 @@ export function buildBundle({ wikiDir, vocabularyPath, legacy, labelsZh, warn = 
     if (!dirs.includes(page)) warn(`legacy-mapping.json: no page ${page} in this wiki; entry ignored`);
   }
 
-  const categories = vocabulary.map((c) => ({ id: c.id, label: c.label, label_zh: labelsZh[c.id] }));
+  const categories = vocabulary.map((c) => ({ id: c.id, label: c.label }));
   // version: changes whenever anything the app reads changes (the date is only for people).
   // rules_version: changes only when a rule does; the app re-matches its stored advertisements
   // on that, not on a retitled page or a relabelled category.

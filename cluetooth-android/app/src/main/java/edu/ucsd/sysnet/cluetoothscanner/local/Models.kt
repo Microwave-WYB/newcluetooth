@@ -20,7 +20,6 @@ data class WikiCategory(
     val id: String,
     /** English label from the wiki's vocabulary. */
     val label: String,
-    @SerialName("label_zh") val labelZh: String,
 )
 
 @Serializable
@@ -197,6 +196,10 @@ data class RecordedDevice(
     val pageIds: List<String>,
     /** Where the strongest located sample was heard. */
     val bestLocation: GeoPoint?,
+    /** Read-only, for a display filter: Apple's company id in one of its advertisements and a name in none. */
+    val unnamedApple: Boolean = false,
+    /** The local name it advertised in the recording (its latest named advertisement), if any. */
+    val name: String? = null,
 )
 
 /** One minute of one device with one advertisement. */
@@ -212,6 +215,11 @@ data class Sighting(
     val location: GeoPoint?,
     val sampleCount: Int,
     val pageIds: List<String>,
+    /** Read-only, for a display filter: the advertisement has Apple's company id / a local name. */
+    val apple: Boolean = false,
+    val named: Boolean = false,
+    /** The local name in that advertisement, if any. */
+    val name: String? = null,
 )
 
 data class RoutePoint(val timeMs: Long, val lat: Double, val lon: Double, val accuracyMeters: Double)

@@ -11,35 +11,40 @@ from pathlib import Path
 
 # (preview function, title, what to look at) in review order.
 SCREENS = [
-    ("ScanList", "扫描 · 列表", "按信号排序，行内迷你曲线；右下角是空闲的录制按钮"),
-    ("ScanRecording", "扫描 · 录制中", "录制按钮展开成胶囊：脉动红点、时间、暂停、停止"),
-    ("ScanPaused", "扫描 · 已暂停", "时间冻结（真机上缓慢闪烁），暂停变成继续"),
-    ("ScanPullToRefresh", "扫描 · 下拉刷新", "下拉时重新排序"),
-    ("ScanScrolledDown", "扫描 · 向下滚动", "回到顶部按钮叠在录制按钮正上方"),
-    ("ScanScrolledDownRecording", "扫描 · 滚动 + 录制中", "胶囊上方的回到顶部按钮"),
-    ("ScanDeviceHalfSheet", "设备详情 · 半屏", "录制按钮缩进右上角；设备详情的共享组件"),
-    ("ScanDeviceHalfSheetNotConnectable", "设备详情 · 半屏 · 不可连接", "按钮置灰并说明原因；迷你胶囊录制中"),
-    ("ScanRecordControlBar", "录制控制条", "点迷你胶囊后从底部出现"),
-    ("ScanSavedSnackbar", "停止后的提示", "已保存 · 时长 · 条数，加备注 / 查看"),
-    ("DeviceFullBroadcast", "设备详情 · 全屏 · 广播", "每个变体一行，展开后是 AD 结构表"),
-    ("DeviceFullGattInProgress", "设备详情 · 全屏 · GATT 进行中", "步骤进度列表"),
-    ("DeviceFullGattDone", "设备详情 · 全屏 · GATT 完成", "服务 → 特征 → 值；错误红色"),
-    ("DeviceFullWiki", "设备详情 · 全屏 · Wiki", "仅已识别设备"),
-    ("DeviceFullNotConnectable", "设备详情 · 全屏 · 不可连接", "GATT 页签里的禁用说明"),
-    ("NearbyHome", "附近", "分类行；范围内在前，带信号点；曾见过的带上次日期"),
-    ("NearbyRecording", "附近 · 录制中", "迷你胶囊（红点 + 时间）在右上角"),
-    ("NearbyPaused", "附近 · 已暂停", "迷你胶囊，灰点"),
-    ("NearbyControlBar", "附近 · 录制控制条", "点迷你胶囊后的底部控制条"),
-    ("NearbyCategoryList", "附近 · 分类列表", "点分类右侧箭头进入"),
-    ("RecordingsList", "录制 · 列表", "按天分组，当前录制置顶"),
-    ("RecordingsListIdle", "录制 · 空闲", "没有置顶项；迷你录制点"),
-    ("RecordingsSavedSnackbar", "录制 · 停止后", "停止后的提示"),
-    ("RecordingMapRoute", "录制详情 · 路线", "默认只显示路线和起止点；底部是设备列表"),
-    ("RecordingMapDeviceSelected", "录制详情 · 选中设备", "只显示该设备的目击点和估计位置；底部切到设备详情"),
-    ("RecordingMapPannedHeatmap", "录制详情 · 平移后 + 热力图", "只看此区域 chip 与密度热力图"),
-    ("ProductMap", "产品地图", "来自“附近”；跨录制的点；列表是该产品的 MAC"),
-    ("RecordControlStates", "录制按钮 · 全部状态", "空闲 / 录制中 / 暂停 · 完整与迷你；回到顶部；提示；控制条"),
-    ("RecordControlBarPaused", "录制控制条 · 已暂停", "继续 / 结束录制"),
+    ("ScanList", "Scan", "Stock TopAppBar (count · location), ListItem rows, NavigationBar, stock FAB"),
+    ("ScanNoLocation", "Scan, no location", "Location unavailable in the subtitle"),
+    ("ScanRecording", "Scan, recording", "Expanded control: blinking dot, time, pause, stop"),
+    ("ScanPaused", "Scan, paused, stale fix", "Gray steady dot, dimmed time; Location stale (2 min)"),
+    ("ScanScrolledDown", "Scan, scrolled", "Scroll-to-top small FAB centered just below the top app bar"),
+    ("ScanScrolledDownRecording", "Scan, scrolled, recording", "Same place while recording; the record control stays bottom-right"),
+    ("ScanDeviceSheet", "Device sheet, recognized device", "Modal sheet (drawn in place in previews): wraps its content, ends below the app bar; Wiki button"),
+    ("ScanDeviceSheetLongName", "Device sheet, long name", "Name ellipsizes; -101 dBm inline; each line on one line"),
+    ("ScanDeviceSheetShortLived", "Device sheet, short-lived, not recognized", "Heard for 4 s; no Wiki button"),
+    ("ScanDeviceSheetGattRecording", "Device sheet, GATT, recording", "Pill over the app bar; the sheet stays below it"),
+    ("ScanDeviceSheetNotConnectable", "Device sheet, not connectable", "Why GATT is disabled"),
+    ("ScanControlSheet", "Control sheet", "Opened from the pill: time, rows, Pause/Resume, Stop"),
+    ("NearbyHome", "Discover, Nearby", "Category ListItems with rows of stock Cards, in range now"),
+    ("NearbyAll", "Discover, All", "The same layout with what was seen before"),
+    ("NearbyRecording", "Discover, recording", "Floating pill"),
+    ("NearbyCategoryList", "Discover, category", "ListItems"),
+    ("ProductPage", "Product page", "Image stand-in, full name, wiki, map preview card, devices"),
+    ("ProductPageNoMap", "Product page, no located sightings", "Record to put it on the map"),
+    ("SettingsPage", "Settings", "Stock ListItems and switches; replaces Scan Sessions"),
+    ("OnboardingPermissions", "Onboarding, permissions", "First launch, step 1 of 4"),
+    ("OnboardingUserId", "Onboarding, user ID", "Replaces the startup dialog"),
+    ("MissingPermission", "Permission revoked later", "Only the missing piece, with its fix"),
+    ("ScanBluetoothOff", "Bluetooth off later", "A stock card under the app bar with Turn on"),
+    ("HistoryList", "History", "Pinned in-progress recording, then days"),
+    ("HistoryIdle", "History, idle", "Round record button"),
+    ("RecordingMapRoute", "Recording map", "Stock TopAppBar; persistent BottomSheetScaffold sheet peeking"),
+    ("RecordingMapListExpanded", "Recording map, list expanded", "The sheet stops below the app bar"),
+    ("RecordingMapDeviceSelected", "Recording map, device", "Device detail in the sheet"),
+    ("RecordingMapDeviceExpanded", "Recording map, device expanded", "GATT tab; below the app bar"),
+    ("RecordingMapPannedHeatmap", "Recording map, panned, density", "Only this area chip"),
+    ("ProductMap", "Product map", "MACs of one product"),
+    ("RecordingMapWithPill", "Recording map, recording", "The same pill as every page"),
+    ("ProductMapWithPillPaused", "Product map, paused", "Gray dot in the pill"),
+    ("RecordControlStates", "Record control, every state", "Stock FAB; Surface + IconButtons; pill; small FAB; control sheet"),
 ]
 
 
@@ -49,14 +54,14 @@ def main() -> None:
     images: dict[tuple[str, str], Path] = {}
     for png in sorted(src.rglob("*.png")):
         # <Function>_<light|dark>_<hash>_0.png
-        m = re.match(r"([A-Za-z0-9]+)_(light|dark)_", png.name)
+        m = re.match(r"([A-Za-z0-9]+)_(light|dark|narrow)_", png.name)
         if m:
             images[(m.group(1), m.group(2))] = png
     rows = []
     missing = []
     for fn, title, note in SCREENS:
         cells = []
-        for mode in ("light", "dark"):
+        for mode in ("light", "dark", "narrow"):
             png = images.get((fn, mode))
             if png is None:
                 missing.append(f"{fn}/{mode}")
@@ -80,7 +85,7 @@ p{margin:2px 0 10px;color:#62656b}.pair{display:flex;gap:20px;flex-wrap:wrap}
 img{width:300px;height:auto;border:1px solid #d5d7db;border-radius:10px;display:block}
 .miss{width:300px;height:200px;border:1px dashed #d93a35;color:#d93a35;display:flex;align-items:center;justify-content:center}
 </style>
-<h1>Cluetooth v3 UI</h1><p class=sub>Fake data, static previews. Left light, right dark. Click for full size.</p>
+<h1>Cluetooth v3 UI</h1><p class=sub>Fake data, static previews. Left to right: light and dark at 411 dp, light at 360 dp. Click for full size.</p>
 """
         + "\n".join(rows)
     )

@@ -1,5 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.model
 
+import androidx.annotation.StringRes
+import edu.ucsd.sysnet.cluetoothscanner.R
 import java.time.LocalDateTime
 
 // Plain UI state for the v3 screens. Nothing here knows about BLE, GATT or storage:
@@ -14,15 +16,7 @@ fun signalOf(rssi: Int): Signal = when {
     else -> Signal.Weak
 }
 
-enum class AddressType(val label: String) {
-    Unknown("地址类型未知"),
-    Public("公共地址"),
-    RandomStatic("随机静态地址"),
-    ResolvablePrivate("可解析私有地址"),
-    NonResolvablePrivate("不可解析私有地址"),
-}
-
-enum class AdvKind(val label: String) { Legacy("传统"), Extended("扩展") }
+enum class AdvKind(@StringRes val label: Int) { Legacy(R.string.adv_legacy), Extended(R.string.adv_extended) }
 
 enum class RecorderPhase { Idle, Recording, Paused }
 
@@ -32,7 +26,11 @@ data class RecorderUiState(
     val sightings: Int = 0,
 )
 
-enum class AppTab(val label: String) { Scan("扫描"), Nearby("附近"), Recordings("录制") }
+enum class AppTab(@StringRes val label: Int) {
+    Scan(R.string.tab_scan),
+    Discover(R.string.tab_discover),
+    History(R.string.tab_history),
+}
 
 // ---- Devices -------------------------------------------------------------------------------
 
@@ -40,12 +38,11 @@ data class DeviceRowState(
     val id: String,
     val name: String?,
     val mac: String,
-    val addressType: AddressType,
     val advKind: AdvKind,
     val connectable: Boolean,
     val rssi: Int,
-    /** Recent RSSI samples, oldest first, for the row sparkline. */
-    val history: List<Int>,
+    /** The last 60 s in 2 s buckets, oldest first, strongest RSSI per bucket; null = nothing heard in it. */
+    val history: List<Int?>,
     /** Not heard for a while; the row stays where it is but is dimmed. */
     val stale: Boolean = false,
 )
@@ -53,24 +50,44 @@ data class DeviceRowState(
 data class ScanUiState(
     val rows: List<DeviceRowState>,
     val recorder: RecorderUiState,
+    val location: ScanLocation = ScanLocation.Unavailable,
+    /**
+     * Bumped with the rows of each sort (the initial one and every pull to refresh), in the same
+     * emission, so the list scrolls to the top only once the sorted rows are on screen.
+     */
+    val sortVersion: Int = 0,
 )
+
+/** What the Scan subtitle says about the phone's own position. */
+sealed interface ScanLocation {
+    data object Unavailable : ScanLocation
+
+    data class Fix(val lat: Double, val lon: Double, val accuracyMeters: Int?) : ScanLocation
+
+    /** The last fix is older than a minute. */
+    data class Stale(val minutes: Int) : ScanLocation
+}
 
 // ---- Device detail -------------------------------------------------------------------------
 
-enum class ChartWindow(val label: String) { OneMinute("1分钟"), FiveMinutes("5分钟"), FifteenMinutes("15分钟") }
+/** One row of the advertising table: a short label and its value; [bytes] values are shown in monospace. */
+data class AdField(val label: String, val value: String, val bytes: Boolean = false)
 
-data class AdStructureRow(val type: String, val typeName: String, val length: Int, val data: String)
+/**
+ * One AD structure as the detail shows it: the table rows it reads as ([fields]: a name as text, UUIDs,
+ * the company and its data, a TX power, else the bytes). [data] stays the exact bytes as hex.
+ */
+data class AdStructureRow(
+    val type: String,
+    val typeName: String,
+    val length: Int,
+    val data: String,
+    val fields: List<AdField> = listOf(AdField(typeName, data.chunked(2).joinToString(" ").lowercase(), bytes = true)),
+)
 
+/** One distinct advertisement a device sent: just its content. */
 data class AdVariantState(
     val id: String,
-    val pduType: String,
-    val phy: String,
-    val sid: Int?,
-    val count: Int,
-    val firstSeen: String,
-    val lastSeen: String,
-    val rssiMin: Int,
-    val rssiMax: Int,
     val structures: List<AdStructureRow>,
 )
 
@@ -97,36 +114,46 @@ sealed interface GattUiState {
     data class Done(
         val steps: List<GattStepState>,
         val services: List<GattServiceState>,
-        /** Outcome in words when it was not a clean finish, e.g. 部分完成 · 需要认证. */
+        /** Outcome in words when it was not a clean finish, e.g. "Partial · Requires authentication". */
         val summary: String? = null,
     ) : GattUiState
 }
 
-/** A wiki family record; only present for recognized devices. */
-data class WikiUiState(
-    val family: String,
-    val summary: String,
-    val facts: List<Pair<String, String>>,
-    val confidence: String,
-)
-
 data class DeviceDetailUiState(
     val device: DeviceRowState,
+    /** The wiki product this device was recognised as, shown under its name. */
+    val productName: String? = null,
     val variants: List<AdVariantState>,
-    val chartWindow: ChartWindow,
-    /** RSSI over [chartWindow], oldest first; null marks a stretch with no samples (a gap). */
+    /** RSSI over the last minute in 1 s buckets, oldest first; null marks a bucket with no samples. */
     val chartSamples: List<Int?>,
+    /** How long the device has been heard, for the "Scanned for ..." caption on short-lived devices; null when unknown. */
+    val chartHeardSeconds: Int? = null,
     val gatt: GattUiState,
-    val wiki: WikiUiState?,
-    /** Non-null disables 发现 GATT and says why. */
+    /** The matched wiki page (`<kind>--<slug>`, the wiki directory name); null when the device is not recognized. */
+    val wikiPageId: String?,
+    /** Non-null disables "Discover GATT" and says why. */
     val gattDisabledReason: String?,
+    /** Where the device probably is, from its located samples; only on the maps, and only when it can be estimated. */
+    val positionEstimate: PositionEstimateState? = null,
 )
 
-enum class DetailTab(val label: String) { Advertising("广播"), Gatt("GATT"), Wiki("Wiki") }
+data class PositionEstimateState(val at: LatLon, val accuracyMeters: Int?)
 
-// ---- Nearby --------------------------------------------------------------------------------
+enum class DetailTab(@StringRes val label: Int) {
+    Advertising(R.string.detail_tab_advertising),
+    Gatt(R.string.detail_tab_gatt),
+}
 
-enum class CategoryIcon { Headphones, Watch, Beacon, Home, Car, Medical, Tracker, Unknown }
+// ---- Discover ------------------------------------------------------------------------------
+
+/** One Material icon per wiki category (the product's first); the stand-in until the wiki has images. */
+enum class CategoryIcon { Headphones, Watch, Beacon, Home, Light, Sensor, Power, Car, Medical, Tracker, Unknown }
+
+/** Discover's switch: what is in range now, or everything seen (the same category layout). */
+enum class DiscoverMode(@StringRes val label: Int) {
+    Nearby(R.string.discover_mode_nearby),
+    All(R.string.discover_mode_all),
+}
 
 data class ProductItemState(
     val id: String,
@@ -150,18 +177,27 @@ data class NearbyUiState(
     val unrecognized: NearbyCategoryState,
 )
 
+/** The product page's header: what the wiki says about it. */
+data class ProductHeaderState(
+    val id: String,
+    val title: String,
+    /** The wiki's one-line description. */
+    val description: String,
+    val icon: CategoryIcon,
+)
+
 // ---- Recordings ----------------------------------------------------------------------------
 
-enum class UploadStatus(val label: String) {
-    Uploaded("已上传"),
-    Uploading("上传中"),
-    Failed("失败"),
+enum class UploadStatus(@StringRes val label: Int) {
+    Uploaded(R.string.upload_uploaded),
+    Uploading(R.string.upload_uploading),
+    Failed(R.string.upload_failed),
 
     /** The core has not reported this recording's upload state. */
-    Unknown("未知"),
+    Unknown(R.string.upload_unknown),
 
     /** The recording had no rows to upload. */
-    Empty("无数据"),
+    Empty(R.string.upload_empty),
 }
 
 data class RecordingSummaryState(
@@ -191,7 +227,11 @@ data class SightingPoint(val at: LatLon, val rssi: Int)
 
 enum class MapMode { Recording, Product }
 
-enum class DeviceSort(val label: String) { Signal("按信号"), Recent("按时间"), Name("按名称") }
+enum class DeviceSort(@StringRes val label: Int) {
+    Signal(R.string.map_sort_by_signal),
+    Recent(R.string.map_sort_by_recency),
+    Name(R.string.map_sort_by_name),
+}
 
 /** One line in the map sheet's list: a device (recording map) or a MAC (product map). */
 data class MapListRowState(
@@ -202,6 +242,8 @@ data class MapListRowState(
     val detail: String,
     val rssi: Int?,
     val lastSeenMs: Long = 0,
+    /** No name is known; shown in the muted "No name" style and sorted last by name. */
+    val unnamed: Boolean = false,
     /** Where the strongest sample was heard; used to filter the list to the visible map area. */
     val at: LatLon? = null,
 )
@@ -228,4 +270,21 @@ data class MapUiState(
     val heat: List<LatLon>,
     /** Why the map is empty (no fixes, nothing seen), shown over it; null otherwise. */
     val emptyNote: String? = null,
+    /** Shown instead of the device count, e.g. while a recording has saved no minute yet. */
+    val listHint: String? = null,
+)
+
+// ---- Settings ------------------------------------------------------------------------------
+
+data class SettingsUiState(
+    val userId: String? = null,
+    val autoRecord: Boolean = false,
+    val wifiOnly: Boolean = false,
+    val codedPhy: Boolean = true,
+    val hideUnnamedApple: Boolean = true,
+    /** Recordings not uploaded yet (pending or failed). */
+    val pendingUploads: Int = 0,
+    /** Something to upload: a pending recording or rows not sealed yet. */
+    val canUploadNow: Boolean = false,
+    val version: String = "",
 )

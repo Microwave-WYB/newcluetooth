@@ -41,6 +41,10 @@ depends = ["wiki-bundle-install"]
 dir = "tools/wiki-bundle"
 run = "node --test"
 
+[tasks.sig-numbers]
+description = "Export a Bluetooth SIG assigned-numbers snapshot (SIG_DIR, default the newest under ~/.local/state/cluetooth-kb/sig) into app/src/main/assets/sig-numbers.tsv"
+run = 'python3 tools/sig-numbers.py ${SIG_DIR:-}'
+
 [tasks.wiki-bundle]
 description = "Export a Wireless Wiki checkout (WIKI_DIR, default ~/Projects/wiki-snapshot) into app/src/main/assets/wiki-bundle.json"
 depends = ["wiki-bundle-install"]

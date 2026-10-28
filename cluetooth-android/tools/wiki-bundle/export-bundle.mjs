@@ -24,7 +24,6 @@ const bundle = buildBundle({
   wikiDir: resolve(values.wiki),
   vocabularyPath: values.categories && resolve(values.categories),
   legacy: readJson("legacy-mapping.json"),
-  labelsZh: readJson("category-labels.zh.json"),
 });
 mkdirSync(dirname(values.out), { recursive: true });
 writeFileSync(values.out, JSON.stringify(bundle, null, 2) + "\n");

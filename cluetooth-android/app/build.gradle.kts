@@ -41,9 +41,6 @@ val cluetoothCoreAbis = (
         }
     }
 val v2UploaderEnabled = true
-val mapsApiKey = providers.gradleProperty("CLUETOOTH_MAPS_API_KEY")
-    .orElse(providers.environmentVariable("CLUETOOTH_MAPS_API_KEY"))
-    .orNull.orEmpty()
 
 val releaseSigningNames = mapOf(
     "storeFile" to "CLUETOOTH_RELEASE_STORE_FILE",
@@ -81,8 +78,6 @@ android {
         versionCode = 12
         versionName = "0.1.0"
         buildConfigField("boolean", "V2_UPLOADER_ENABLED", v2UploaderEnabled.toString())
-        buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
-        manifestPlaceholders["CLUETOOTH_MAPS_API_KEY"] = mapsApiKey
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -307,8 +302,6 @@ dependencies {
 
     // Location Services
     implementation(libs.play.services.location)
-    implementation(libs.play.services.maps)
-    implementation(libs.maps.compose)
     implementation(libs.maplibre.android)
 
     // Serialization

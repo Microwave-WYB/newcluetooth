@@ -7,7 +7,6 @@ import { buildBundle, parseFrontMatter } from "./bundle.mjs";
 
 const read = (name) => JSON.parse(readFileSync(new URL(name, import.meta.url), "utf8"));
 const legacy = read("./legacy-mapping.json");
-const labelsZh = read("./category-labels.zh.json");
 
 const VOCAB = {
   version: 1,
@@ -19,7 +18,6 @@ const VOCAB = {
     ],
   },
 };
-const zh = { "audio-device": "音频设备", printer: "打印机" };
 
 function wiki(pages, vocab = VOCAB) {
   const dir = mkdtempSync(join(tmpdir(), "wiki-"));
@@ -45,13 +43,12 @@ test("old format: JSON front matter, kinds and categories from the mapping", () 
   const bundle = buildBundle({
     wikiDir: dir,
     legacy: { kinds: { model: "device", protocol: "platform" }, categories: { "model--jabra-x": ["audio-device"] } },
-    labelsZh: zh,
   });
   assert.equal(bundle.schema, 1);
   assert.match(bundle.version, /^2026-10-26\+[0-9a-f]{8}$/);
   assert.deepEqual(bundle.categories, [
-    { id: "audio-device", label: "Audio device", label_zh: "音频设备" },
-    { id: "printer", label: "Printer", label_zh: "打印机" },
+    { id: "audio-device", label: "Audio device" },
+    { id: "printer", label: "Printer" },
   ]);
   assert.deepEqual(bundle.pages, [
     {
@@ -71,7 +68,6 @@ test("new format: YAML front matter with categories; real categories beat the ma
   const bundle = buildBundle({
     wikiDir: dir,
     legacy: { kinds: {}, categories: { "device--printer-1": ["audio-device"] } },
-    labelsZh: zh,
   });
   assert.deepEqual(bundle.pages[0].categories, ["printer"]);
   assert.equal(bundle.pages[0].one_line, "A label printer with two lines.");
@@ -96,7 +92,7 @@ test("a BOM in index.md, rule.json and the vocabulary does not break the export"
   bom(join(dir, "categories.draft.json"));
   bom(join(dir, "wiki-content/device--a/index.md"));
   bom(join(dir, "wiki-content/device--a/rule.json"));
-  const bundle = buildBundle({ wikiDir: dir, legacy: noLegacy, labelsZh: zh });
+  const bundle = buildBundle({ wikiDir: dir, legacy: noLegacy });
   assert.deepEqual(bundle.pages[0].rule, { company: [76] });
 });
 
@@ -106,7 +102,6 @@ test("a stale legacy mapping warns instead of aborting", () => {
   const bundle = buildBundle({
     wikiDir: dir,
     legacy: { kinds: { model: "device" }, categories: { "model--a": ["audio-device", "gone"], "model--missing": ["printer"] } },
-    labelsZh: zh,
     warn: (m) => warnings.push(m),
   });
   assert.deepEqual(bundle.pages[0].categories, ["audio-device"]);
@@ -118,15 +113,17 @@ test("a stale legacy mapping warns instead of aborting", () => {
 test("rules_version moves with the rules only; version moves with anything", () => {
   const build = (title, ruleCompany, label) =>
     buildBundle({
-      wikiDir: wiki({ "device--a": { frontMatter: `title: ${title}\nkind: device\none_line: x\nupdated: 2026-10-01`, rule: { company: [ruleCompany] } } }),
+      wikiDir: wiki(
+        { "device--a": { frontMatter: `title: ${title}\nkind: device\none_line: x\nupdated: 2026-10-01`, rule: { company: [ruleCompany] } } },
+        { ...VOCAB, facets: { categories: VOCAB.facets.categories.map((c) => (c.id === "printer" ? { ...c, label } : c)) } },
+      ),
       legacy: noLegacy,
-      labelsZh: { ...zh, printer: label },
     });
-  const base = build("A", 76, "打印机");
+  const base = build("A", 76, "Printer");
   assert.match(base.rules_version, /^[0-9a-f]{16}$/);
-  const retitled = build("B", 76, "打印机");
-  const relabelled = build("A", 76, "印表機");
-  const reruled = build("A", 77, "打印机");
+  const retitled = build("B", 76, "Printer");
+  const relabelled = build("A", 76, "Print device");
+  const reruled = build("A", 77, "Printer");
   assert.equal(retitled.rules_version, base.rules_version);
   assert.equal(relabelled.rules_version, base.rules_version);
   assert.notEqual(retitled.version, base.version);
@@ -136,24 +133,22 @@ test("rules_version moves with the rules only; version moves with anything", () 
 
 test("version depends on content, not on file order or time", () => {
   const pages = (title) => ({ "device--a": { frontMatter: `title: ${title}\nkind: device\none_line: x\nupdated: 2026-10-01` } });
-  const v = (title) => buildBundle({ wikiDir: wiki(pages(title)), legacy: noLegacy, labelsZh: zh }).version;
+  const v = (title) => buildBundle({ wikiDir: wiki(pages(title)), legacy: noLegacy }).version;
   assert.equal(v("A"), v("A"));
   assert.notEqual(v("A"), v("B"));
 });
 
-test("unknown category, unknown kind and missing Chinese label are errors", () => {
+test("unknown category, unknown kind and missing fields are errors", () => {
   const bad = (frontMatter, options = {}) =>
-    buildBundle({ wikiDir: wiki({ "device--a": { frontMatter } }), legacy: noLegacy, labelsZh: zh, ...options });
+    buildBundle({ wikiDir: wiki({ "device--a": { frontMatter } }), legacy: noLegacy, ...options });
   assert.throws(() => bad("title: A\nkind: device\none_line: x\ncategories: [nope]"), /unknown category "nope"/);
   assert.throws(() => bad("title: A\nkind: device\none_line: x\ncategories: [retired]"), /unknown category "retired"/);
   assert.throws(() => bad("title: A\nkind: gadget\none_line: x"), /directory does not start/);
-  assert.throws(() => buildBundle({ wikiDir: wiki({ "gadget--a": { frontMatter: "title: A\nkind: gadget\none_line: x" } }), legacy: noLegacy, labelsZh: zh }), /neither device\|platform\|identifier/);
-  assert.throws(() => bad("title: A\nkind: device\none_line: x", { labelsZh: { "audio-device": "x" } }), /missing Chinese label for printer/);
+  assert.throws(() => buildBundle({ wikiDir: wiki({ "gadget--a": { frontMatter: "title: A\nkind: gadget\none_line: x" } }), legacy: noLegacy }), /neither device\|platform\|identifier/);
   assert.throws(() => bad("title: A\nkind: device"), /one_line must be a non-empty string/);
 });
 
-test("the checked-in mapping and labels cover the draft vocabulary and the old snapshot kinds", () => {
+test("the checked-in mapping covers the draft vocabulary and the old snapshot kinds", () => {
   const kinds = new Set(Object.values(legacy.kinds));
   assert.deepEqual([...kinds].sort(), ["device", "identifier", "platform"]);
-  for (const id of Object.values(legacy.categories).flat()) assert.ok(labelsZh[id], `no Chinese label for ${id}`);
 });
