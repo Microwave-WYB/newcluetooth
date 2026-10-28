@@ -3,6 +3,7 @@ mod core;
 mod encryption;
 mod error;
 mod export;
+mod gatt;
 mod location;
 mod owned_path;
 mod payload;
@@ -18,6 +19,7 @@ pub use config::{CoreConfig, default_core_config};
 pub use core::CluetoothCore;
 pub use error::CoreError;
 pub use export::{DeleteSessionResult, ExportFormat, LegacySessionRows, PreparedExport};
+pub use gatt::GattDiscoveryFile;
 pub use location::LocationFix;
 pub use payload::{
     PayloadFile, PayloadInspection, PayloadResult, PendingUpload, PreparedUpload, ScanEnvironment,

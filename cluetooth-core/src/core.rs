@@ -17,6 +17,7 @@ use crate::export::{
     acknowledge_export as cleanup_export, write_full_export, write_legacy_session_export,
     write_session_export,
 };
+use crate::gatt::{self, GattDiscoveryFile, GattFile};
 use crate::location::{LocationFix, RecentLocationFixes};
 use crate::owned_path::{OwnedSyncStep, ensure_owned_directory, prove_owned_publication_durable};
 use crate::payload::{
@@ -80,6 +81,9 @@ struct CoreInner {
     active: ActivePayload,
     pending: Vec<PayloadFile>,
     archived: Vec<PayloadFile>,
+    /// Manual GATT discoveries share the upload path but never the scan models.
+    gatt_pending: Vec<GattFile>,
+    gatt_archived: Vec<GattFile>,
     sessions: BTreeMap<String, SessionMetadata>,
     active_session_id: Option<String>,
     state: CoreState,
@@ -568,15 +572,95 @@ impl CluetoothCore {
     }
 
     pub fn pending_uploads(&self) -> Vec<PendingUpload> {
-        self.lock_inner()
+        let inner = self.lock_inner();
+        inner
             .pending
             .iter()
             .map(PendingUpload::from)
+            .chain(inner.gatt_pending.iter().map(|file| PendingUpload {
+                payload_id: file.id.clone(),
+                local_path: file.local_path.to_string_lossy().into_owned(),
+                object_path: file.object_path.clone(),
+                row_count: 1,
+                size_bytes: file.size_bytes,
+            }))
             .collect()
+    }
+
+    /// Mints the UUIDv7 that names one GATT discovery (and its object path)
+    /// when the operator starts it.
+    pub fn new_gatt_discovery_id(&self) -> Result<String, CoreError> {
+        let uuid = generate_uuid_v7(self.runtime.now_ms()?, self.runtime.random_bytes()?)?;
+        Ok(uuid.hyphenated().to_string())
+    }
+
+    /// Validates and stores one finished `gatt/v1` discovery for upload. The
+    /// returned update schedules the shared uploader.
+    pub fn save_gatt_discovery(&self, json: String) -> Result<CoreUpdate, CoreError> {
+        let mut inner = self.lock_inner();
+        let file = gatt::save(&self.data_directory, json.as_bytes())?;
+        if !file.archived && !inner.gatt_pending.iter().any(|known| known.id == file.id) {
+            inner.gatt_pending.push(file);
+            inner
+                .gatt_pending
+                .sort_by(|left, right| left.object_path.cmp(&right.object_path));
+        }
+        refresh_upload_state(&self.data_directory, &mut inner)?;
+        let mut update = CoreUpdate::state_only(inner.state.clone());
+        update.effects.push(CoreEffect::ScheduleUpload);
+        Ok(update)
+    }
+
+    /// Every locally retained GATT discovery, oldest first, pending and uploaded.
+    pub fn gatt_discoveries(&self) -> Vec<GattDiscoveryFile> {
+        let inner = self.lock_inner();
+        let mut files: Vec<_> = inner
+            .gatt_pending
+            .iter()
+            .chain(&inner.gatt_archived)
+            .map(GattDiscoveryFile::from)
+            .collect();
+        files.sort_by(|left, right| {
+            (left.created_at_ms, &left.discovery_id)
+                .cmp(&(right.created_at_ms, &right.discovery_id))
+        });
+        files
     }
 
     pub fn prepare_upload(&self, payload_id: String) -> Result<PreparedUpload, CoreError> {
         let mut inner = self.lock_inner();
+        if let Some(file) = inner
+            .gatt_pending
+            .iter()
+            .find(|file| file.id == payload_id)
+            .cloned()
+        {
+            let current = fs::read(&file.local_path).map_err(CoreError::io)?;
+            if current.len() as u64 != file.size_bytes
+                || gatt::validate_gatt_json(&current)? != file.id
+            {
+                return Err(CoreError::upload_state(
+                    "pending gatt discovery changed after validation",
+                ));
+            }
+            let ciphertext_path = self
+                .data_directory
+                .join("upload-cache")
+                .join(&file.object_path);
+            let ciphertext_size_bytes = encrypt_file_atomically(
+                &file.local_path,
+                &ciphertext_path,
+                &self.recipient_public_key,
+            )?;
+            refresh_upload_state(&self.data_directory, &mut inner)?;
+            return Ok(PreparedUpload {
+                payload_id: file.id,
+                ciphertext_path: ciphertext_path.to_string_lossy().into_owned(),
+                object_path: file.object_path,
+                plaintext_size_bytes: file.size_bytes,
+                ciphertext_size_bytes,
+            });
+        }
         let payload = find_pending(&inner, &payload_id)?.clone();
         let plaintext_path = Path::new(&payload.local_path);
         let inspection = inspect_schema_v2_parquet_impl(plaintext_path)?;
@@ -610,7 +694,9 @@ impl CluetoothCore {
         let mut inner = self.lock_inner();
         let marker = success_marker_path(&self.data_directory, &payload_id);
         if !marker.exists() {
-            find_pending(&inner, &payload_id)?;
+            if !inner.gatt_pending.iter().any(|file| file.id == payload_id) {
+                find_pending(&inner, &payload_id)?;
+            }
             write_atomic_state_file(&marker, b"succeeded\n")?;
         }
         if let Some(payload) = inner
@@ -621,6 +707,14 @@ impl CluetoothCore {
         {
             archive_payload(&self.data_directory, &payload)?;
             remove_file_if_exists(&self.ciphertext_path(&payload))?;
+        }
+        if let Some(file) = inner
+            .gatt_pending
+            .iter()
+            .find(|file| file.id == payload_id)
+            .cloned()
+        {
+            gatt::archive(&self.data_directory, &file)?;
         }
         remove_file_if_exists(&failure_marker_path(&self.data_directory, &payload_id))?;
         reconcile_pending_state(&self.data_directory, &mut inner)?;
@@ -634,8 +728,11 @@ impl CluetoothCore {
     ) -> Result<CoreUpdate, CoreError> {
         const MAX_DIAGNOSTIC_BYTES: usize = 512;
         let mut inner = self.lock_inner();
-        let payload = find_pending(&inner, &payload_id)?.clone();
-        remove_file_if_exists(&self.ciphertext_path(&payload))?;
+        let object_path = match inner.gatt_pending.iter().find(|file| file.id == payload_id) {
+            Some(file) => file.object_path.clone(),
+            None => find_pending(&inner, &payload_id)?.object_path.clone(),
+        };
+        remove_file_if_exists(&self.data_directory.join("upload-cache").join(object_path))?;
         let bounded = truncate_utf8_bytes(&message, MAX_DIAGNOSTIC_BYTES).to_owned();
         write_atomic_state_file(
             &failure_marker_path(&self.data_directory, &payload_id),
@@ -672,6 +769,7 @@ impl CluetoothCore {
             });
         let (pending, invalid_pending_payload_count) = discover_pending(&data_directory)?;
         let (archived, _) = discover_archive(&data_directory)?;
+        let (gatt_pending, gatt_archived, invalid_gatt) = gatt::discover(&data_directory)?;
         let mut sessions = discover_session_metadata(&data_directory)?;
         if sessions
             .values()
@@ -687,8 +785,8 @@ impl CluetoothCore {
             }
         }
         let mut state = CoreState::empty();
-        state.pending_upload_count = pending.len() as u64;
-        state.invalid_pending_payload_count = invalid_pending_payload_count;
+        state.pending_upload_count = (pending.len() + gatt_pending.len()) as u64;
+        state.invalid_pending_payload_count = invalid_pending_payload_count + invalid_gatt;
         let mut inner = CoreInner {
             environment: None,
             locations: RecentLocationFixes::new(
@@ -698,6 +796,8 @@ impl CluetoothCore {
             active,
             pending,
             archived,
+            gatt_pending,
+            gatt_archived,
             sessions,
             active_session_id: None,
             state,
@@ -916,7 +1016,7 @@ fn finish_seal(inner: &mut CoreInner, payload: PayloadFile) {
             .sort_by(|left, right| left.object_path.cmp(&right.object_path));
     }
     inner.active = ActivePayload::default();
-    inner.state.pending_upload_count = inner.pending.len() as u64;
+    inner.state.pending_upload_count = (inner.pending.len() + inner.gatt_pending.len()) as u64;
     update_active_state(inner);
 }
 
@@ -1024,7 +1124,7 @@ fn failure_marker_path(root: &Path, payload_id: &str) -> PathBuf {
         .join(format!("{payload_id}.txt"))
 }
 
-fn write_atomic_state_file(path: &Path, contents: &[u8]) -> Result<(), CoreError> {
+pub(crate) fn write_atomic_state_file(path: &Path, contents: &[u8]) -> Result<(), CoreError> {
     let parent = path
         .parent()
         .ok_or_else(|| CoreError::upload_state("state path has no parent"))?;
@@ -1052,7 +1152,7 @@ fn write_atomic_state_file(path: &Path, contents: &[u8]) -> Result<(), CoreError
         .map_err(CoreError::io)
 }
 
-fn remove_file_if_exists(path: &Path) -> Result<(), CoreError> {
+pub(crate) fn remove_file_if_exists(path: &Path) -> Result<(), CoreError> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1104,10 +1204,13 @@ fn schema_of_object_path(object_path: &str) -> Result<ScanSchema, CoreError> {
 fn reconcile_pending_state(root: &Path, inner: &mut CoreInner) -> Result<(), CoreError> {
     let (pending, invalid_pending) = discover_pending(root)?;
     let (archived, invalid_archive) = discover_archive(root)?;
+    let (gatt_pending, gatt_archived, invalid_gatt) = gatt::discover(root)?;
     inner.pending = pending;
     inner.archived = archived;
+    inner.gatt_pending = gatt_pending;
+    inner.gatt_archived = gatt_archived;
     inner.sessions = discover_session_metadata(root)?;
-    inner.state.invalid_pending_payload_count = invalid_pending + invalid_archive;
+    inner.state.invalid_pending_payload_count = invalid_pending + invalid_archive + invalid_gatt;
     reconcile_upload_state(root, inner)
 }
 
@@ -1132,15 +1235,31 @@ fn reconcile_upload_state(root: &Path, inner: &mut CoreInner) -> Result<(), Core
             archive_payload(root, &payload)?;
         }
     }
+    for payload_id in &succeeded_ids {
+        if let Some(file) = inner
+            .gatt_pending
+            .iter()
+            .find(|file| &file.id == payload_id)
+            .cloned()
+        {
+            gatt::archive(root, &file)?;
+        }
+    }
     inner
         .pending
         .retain(|payload| !succeeded_ids.contains(&payload.payload_id));
+    inner
+        .gatt_pending
+        .retain(|file| !succeeded_ids.contains(&file.id));
     inner.archived = discover_archive(root)?.0;
+    inner.gatt_archived = gatt::discover(root)?.1;
 
     let expected_ciphertexts: std::collections::HashSet<PathBuf> = inner
         .pending
         .iter()
-        .map(|payload| root.join("upload-cache").join(&payload.object_path))
+        .map(|payload| &payload.object_path)
+        .chain(inner.gatt_pending.iter().map(|file| &file.object_path))
+        .map(|object_path| root.join("upload-cache").join(object_path))
         .collect();
     let upload_cache = root.join("upload-cache");
     visit_regular_files(&upload_cache, &mut |path| {
@@ -1149,8 +1268,9 @@ fn reconcile_upload_state(root: &Path, inner: &mut CoreInner) -> Result<(), Core
             .and_then(|name| name.to_str())
             .unwrap_or("");
         let owned_temporary = name.starts_with(".cluetooth-upload-") && name.ends_with(".tmp");
-        let orphan_ciphertext =
-            name.ends_with(".parquet.encrypted") && !expected_ciphertexts.contains(path);
+        let orphan_ciphertext = (name.ends_with(".parquet.encrypted")
+            || name.ends_with(".json.encrypted"))
+            && !expected_ciphertexts.contains(path);
         if owned_temporary || orphan_ciphertext {
             remove_file_if_exists(path)?;
         }
@@ -1161,6 +1281,7 @@ fn reconcile_upload_state(root: &Path, inner: &mut CoreInner) -> Result<(), Core
         .pending
         .iter()
         .map(|payload| payload.payload_id.as_str())
+        .chain(inner.gatt_pending.iter().map(|file| file.id.as_str()))
         .collect();
     visit_regular_files(&root.join("upload-state/failed"), &mut |path| {
         let payload_id = path
@@ -1176,9 +1297,25 @@ fn reconcile_upload_state(root: &Path, inner: &mut CoreInner) -> Result<(), Core
     let mut prepared = 0_u64;
     let mut failed = 0_u64;
     let mut last_error = None;
-    for payload in &inner.pending {
-        let ciphertext = root.join("upload-cache").join(&payload.object_path);
-        let expected_size = payload.size_bytes.saturating_add(SEALED_BOX_OVERHEAD_BYTES);
+    let uploads = inner
+        .pending
+        .iter()
+        .map(|payload| {
+            (
+                payload.payload_id.as_str(),
+                payload.object_path.as_str(),
+                payload.size_bytes,
+            )
+        })
+        .chain(
+            inner
+                .gatt_pending
+                .iter()
+                .map(|file| (file.id.as_str(), file.object_path.as_str(), file.size_bytes)),
+        );
+    for (payload_id, object_path, size_bytes) in uploads {
+        let ciphertext = root.join("upload-cache").join(object_path);
+        let expected_size = size_bytes.saturating_add(SEALED_BOX_OVERHEAD_BYTES);
         if fs::metadata(&ciphertext)
             .ok()
             .map(|metadata| metadata.len())
@@ -1188,13 +1325,13 @@ fn reconcile_upload_state(root: &Path, inner: &mut CoreInner) -> Result<(), Core
         } else if ciphertext.exists() {
             remove_file_if_exists(&ciphertext)?;
         }
-        let failure = failure_marker_path(root, &payload.payload_id);
+        let failure = failure_marker_path(root, payload_id);
         if failure.exists() {
             failed += 1;
             last_error = fs::read_to_string(failure).ok();
         }
     }
-    inner.state.pending_upload_count = inner.pending.len() as u64;
+    inner.state.pending_upload_count = (inner.pending.len() + inner.gatt_pending.len()) as u64;
     inner.state.prepared_upload_count = prepared;
     inner.state.failed_upload_count = failed;
     inner.state.last_upload_error = last_error;
@@ -1350,7 +1487,7 @@ fn discover_archive(root: &Path) -> Result<(Vec<PayloadFile>, u64), CoreError> {
     Ok((archived, invalid))
 }
 
-fn visit_regular_files(
+pub(crate) fn visit_regular_files(
     root: &Path,
     visitor: &mut impl FnMut(&Path) -> Result<(), CoreError>,
 ) -> Result<(), CoreError> {
@@ -3126,5 +3263,215 @@ mod tests {
         assert_eq!(lines[1]["primary_phy"], 3);
         assert_eq!(lines[1]["data_status"], 0);
         assert_eq!(lines[1]["is_legacy"], false);
+    }
+
+    fn gatt_json(id: &str) -> String {
+        serde_json::json!({
+            "schema": "gatt/v1",
+            "id": id,
+            "session_id": null,
+            "app_version": "0.1.0-debug",
+            "device": {"model": "Pixel 8", "android": "15"},
+            "target": {
+                "addr": "AA:BB:CC:DD:EE:FF",
+                "addr_type": "random",
+                "name": "sensor",
+                "trigger_adv": {
+                    "raw": "0201060302f0fe",
+                    "rssi": -61,
+                    "scanned_at": "2025-03-25T00:00:00.000Z",
+                    "is_legacy": false,
+                    "primary_phy": 1,
+                    "secondary_phy": 2,
+                    "adv_sid": 1
+                }
+            },
+            "started_at": "2025-03-25T00:00:01.000Z",
+            "ended_at": "2025-03-25T00:00:09.500Z",
+            "location": {"lat": 32.88, "lon": -117.23, "accuracy": 4.5},
+            "outcome": "partial",
+            "stage_reached": "read",
+            "error": {"stage": "read", "status": 19, "name": "GATT_CONN_TERMINATE_PEER_USER"},
+            "disconnect": {"initiator": "remote", "status": 19},
+            "mtu": 247,
+            "phy": {"tx": 2, "rx": 2},
+            "timings_ms": {"connect": 800, "mtu": 120, "discover": 1500, "read": 4000},
+            "services": [{
+                "uuid": "180A", "primary": true, "instance": 12,
+                "characteristics": [{
+                    "uuid": "2A29", "instance": 14, "properties": ["read"],
+                    "value": {"hex": "4d6963726f", "status": "ok"},
+                    "descriptors": [{"uuid": "2901", "value": {"hex": "", "status": "ok"}}]
+                }, {
+                    "uuid": "2A25", "instance": 16, "properties": ["read"],
+                    "value": {"hex": null, "status": "insufficient_authentication"},
+                    "descriptors": []
+                }]
+            }]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn gatt_discovery_is_stored_sealed_uploaded_and_kept_locally() {
+        let directory = tempfile::tempdir().unwrap();
+        let secret = SecretKey::from([7_u8; 32]);
+        let mut gatt_config = config(100);
+        gatt_config.recipient_public_key = secret.public_key().as_bytes().to_vec();
+        let open_gatt = |time: u64| {
+            CluetoothCore::open_with_runtime(
+                directory.path().to_owned(),
+                gatt_config.clone(),
+                Arc::new(DeterministicRuntime {
+                    times: Mutex::new([time].into()),
+                    random: [0x31; 10],
+                }),
+            )
+            .unwrap()
+        };
+        let core = open_gatt(1_742_860_800_000);
+        let id = core.new_gatt_discovery_id().unwrap();
+        assert_eq!(id, "0195ca99-5000-7131-b131-313131313131");
+        let json = gatt_json(&id);
+
+        let update = core.save_gatt_discovery(json.clone()).unwrap();
+        assert!(update.effects.contains(&CoreEffect::ScheduleUpload));
+        assert_eq!(update.state.pending_upload_count, 1);
+        // Saving the same bytes again changes nothing.
+        core.save_gatt_discovery(json.clone()).unwrap();
+        assert_eq!(core.state().pending_upload_count, 1);
+        assert!(
+            core.save_gatt_discovery(json.replace("sensor", "other"))
+                .is_err()
+        );
+
+        let object_path = format!("gatt/v1/2025/03/25/{id}.json.encrypted");
+        let pending = core.pending_uploads();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].object_path, object_path);
+        assert_eq!(fs::read_to_string(&pending[0].local_path).unwrap(), json);
+        assert_eq!(core.gatt_discoveries().len(), 1);
+        assert!(!core.gatt_discoveries()[0].uploaded);
+
+        let prepared = core.prepare_upload(id.clone()).unwrap();
+        assert_eq!(prepared.object_path, object_path);
+        let ciphertext = fs::read(&prepared.ciphertext_path).unwrap();
+        assert_eq!(secret.unseal(&ciphertext).unwrap(), json.as_bytes());
+        assert_eq!(core.state().prepared_upload_count, 1);
+
+        core.mark_upload_failed(id.clone(), "offline".to_owned())
+            .unwrap();
+        assert_eq!(core.state().failed_upload_count, 1);
+        assert!(!Path::new(&prepared.ciphertext_path).exists());
+        assert_eq!(core.pending_uploads().len(), 1);
+
+        let prepared = core.prepare_upload(id.clone()).unwrap();
+        core.mark_upload_succeeded(id.clone()).unwrap();
+        assert!(core.pending_uploads().is_empty());
+        assert_eq!(core.state().pending_upload_count, 0);
+        assert_eq!(core.state().failed_upload_count, 0);
+        assert!(!Path::new(&prepared.ciphertext_path).exists());
+        let kept = directory
+            .path()
+            .join(format!("archive/gatt/v1/2025/03/25/{id}.json"));
+        assert_eq!(fs::read_to_string(&kept).unwrap(), json);
+        assert!(core.gatt_discoveries()[0].uploaded);
+        // Acknowledging again and restarting keep the local copy.
+        core.mark_upload_succeeded(id.clone()).unwrap();
+        drop(core);
+        let reopened = open_gatt(1_742_860_900_000);
+        assert!(reopened.pending_uploads().is_empty());
+        assert_eq!(reopened.gatt_discoveries().len(), 1);
+        assert_eq!(reopened.state().invalid_pending_payload_count, 0);
+    }
+
+    #[test]
+    fn pending_gatt_discovery_and_its_failure_marker_survive_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let core = reopen(&directory, 1_742_860_800_000);
+        let id = core.new_gatt_discovery_id().unwrap();
+        core.save_gatt_discovery(gatt_json(&id)).unwrap();
+        core.prepare_upload(id.clone()).unwrap();
+        core.mark_upload_failed(id.clone(), "boom".to_owned())
+            .unwrap();
+        drop(core);
+
+        let reopened = reopen(&directory, 1_742_860_900_000);
+        assert_eq!(reopened.pending_uploads().len(), 1);
+        assert_eq!(reopened.pending_uploads()[0].payload_id, id);
+        assert_eq!(reopened.state().failed_upload_count, 1);
+        assert_eq!(reopened.state().last_upload_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn invalid_gatt_objects_are_rejected_before_anything_is_stored() {
+        let directory = tempfile::tempdir().unwrap();
+        let core = reopen(&directory, 1_742_860_800_000);
+        let id = core.new_gatt_discovery_id().unwrap();
+        let valid: serde_json::Value = serde_json::from_str(&gatt_json(&id)).unwrap();
+        type Mutation = Box<dyn Fn(&mut serde_json::Value)>;
+        let mutations: Vec<(&str, Mutation)> = vec![
+            ("schema", Box::new(|v| v["schema"] = "gatt/v2".into())),
+            ("id", Box::new(|v| v["id"] = "not-a-uuid".into())),
+            ("outcome", Box::new(|v| v["outcome"] = "done".into())),
+            ("stage", Box::new(|v| v["stage_reached"] = "pair".into())),
+            ("addr", Box::new(|v| v["target"]["addr"] = "aa:bb".into())),
+            (
+                "started",
+                Box::new(|v| v["started_at"] = "yesterday".into()),
+            ),
+            ("location", Box::new(|v| v["location"]["lat"] = 91.into())),
+            ("services", Box::new(|v| v["services"] = "none".into())),
+            (
+                "hex",
+                Box::new(|v| v["services"][0]["characteristics"][0]["value"]["hex"] = "4D".into()),
+            ),
+            (
+                "status",
+                Box::new(|v| {
+                    v["services"][0]["characteristics"][0]["value"]["status"] = "bonded".into();
+                }),
+            ),
+            (
+                "ok without hex",
+                Box::new(|v| {
+                    v["services"][0]["characteristics"][0]["value"]["hex"] =
+                        serde_json::Value::Null;
+                }),
+            ),
+        ];
+        for (name, mutate) in mutations {
+            let mut value = valid.clone();
+            mutate(&mut value);
+            let error = core.save_gatt_discovery(value.to_string()).unwrap_err();
+            assert!(matches!(error, CoreError::InvalidPayload { .. }), "{name}");
+        }
+        assert!(core.save_gatt_discovery("{".to_owned()).is_err());
+        assert!(core.pending_uploads().is_empty());
+        assert!(!directory.path().join("pending/gatt").exists());
+        // error:<n> read statuses are part of the contract.
+        let mut with_error = valid.clone();
+        with_error["services"][0]["characteristics"][1]["value"]["status"] = "error:133".into();
+        core.save_gatt_discovery(with_error.to_string()).unwrap();
+    }
+
+    #[test]
+    fn mismatched_or_corrupt_gatt_files_are_counted_not_uploaded() {
+        let directory = tempfile::tempdir().unwrap();
+        let id = "0195ca99-5000-7313-9313-131313131313";
+        let wrong_date = directory
+            .path()
+            .join(format!("pending/gatt/v1/2025/03/24/{id}.json"));
+        fs::create_dir_all(wrong_date.parent().unwrap()).unwrap();
+        fs::write(&wrong_date, gatt_json(id)).unwrap();
+        let corrupt = directory
+            .path()
+            .join("pending/gatt/v1/2025/03/25/0195ca99-5000-7414-9414-141414141414.json");
+        fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
+        fs::write(&corrupt, b"{}").unwrap();
+        let core = reopen(&directory, 1_742_860_800_000);
+        assert!(core.pending_uploads().is_empty());
+        assert_eq!(core.state().invalid_pending_payload_count, 2);
+        assert!(wrong_date.exists() && corrupt.exists());
     }
 }
