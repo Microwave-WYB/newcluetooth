@@ -18,6 +18,20 @@ Rust prepares one combined JSONL or Parquet artifact for a v2 session and a ZIP 
 
 Maps Compose renders only Rust-derived local route and observation overlays. No Routes, reverse-geocoding, or Static Maps route API is used. Google still receives normal viewport/tile requests. Supply `CLUETOOTH_MAPS_API_KEY` through a Gradle property or environment variable; never check it in. Restrict it to the Android package/signing certificate and enable only Maps SDK for Android. With no key, the detail screen safely shows a map-unavailable message. A future renderer seam is retained if viewport disclosure later requires MapLibre/offline tiles.
 
+## v3 UI previews
+
+`app/src/main/.../ui/v3/` holds the v3 Compose screens (scan, device detail, nearby, recordings, maps) built on plain UI state classes in `ui/v3/model/` and fake data in `FakeData`; nothing there is wired to the repository, GATT engine or MapLibre yet. `app/src/screenshotTest/` renders every screen in light and dark at phone size with the Compose Preview Screenshot Testing plugin. Run `mise run //cluetooth-android:ui-shots /some/dir` to write the PNGs and an `index.html` gallery; layoutlib needs JDK 21, so the task selects `temurin-21` (`mise install java@temurin-21`). The reference PNGs under `app/src/screenshotTestDebug/` are build output and are git-ignored. These tasks are not part of `mise run check`.
+
+### v3 UI wiring
+
+`MainActivity` shows `V3App` (`ui/v3/app/`) once permissions are granted; the old scan screen is gone from the flow and the old sessions/upload screen stays behind the gear icon (`Route.Legacy`). `V3ViewModel` builds every screen's state from:
+
+* `BleScanService.liveScans`, aggregated per MAC by `LiveDeviceTracker` (RSSI history, ad variants) and ordered by `ScanOrder` (one RSSI sort 3 s after the first device, then fixed; pull-to-refresh re-sorts; new devices are appended);
+* `RecordingController` (record button, pill, control bar, stop snackbar) and `CluetoothApplication.localData` (Nearby, Recordings, route, sightings, wiki matches);
+* `GattDiscoveryManager` through `GattPresenter` (progress steps, services, characteristics, errors in words).
+
+Maps use MapLibre (`org.maplibre.gl:android-sdk`, 12.3.1; 13.x is built with Kotlin 2.2 and does not link against this project's 2.0.21) with OpenFreeMap `liberty` / `dark` styles and the OSM/OpenFreeMap attribution drawn by the page. The density layer is blurred circles: MapLibre's `HeatmapLayer` segfaulted intermittently on an Adreno 640. Debug builds accept `am start -n <pkg>.debug/edu.ucsd.sysnet.cluetoothscanner.MainActivity --es v3_demo_map route|selected|heat|product` to open the map page over fake data.
+
 ## Scan payload v3 and manual GATT discovery
 
 New payloads are `scans/v3` (docs/payload-schema-v3.md): extended advertising is scanned with `setLegacy(false)` and `setPhy(PHY_LE_ALL_SUPPORTED)`; the "Scan LE Coded PHY" switch on the Upload screen (default on) selects 1M only when off and is re-read at every scan restart (at least once a minute). Before each scan (re)start `BleScanService` declares the footer facts (device, Android, app version, capabilities, PHY in force) to the core, which seals the payload in progress whenever they change.

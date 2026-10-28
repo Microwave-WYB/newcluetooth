@@ -135,6 +135,7 @@ class LocalDataHub(
 
     private lateinit var db: SqlDatabase
     private lateinit var store: LocalStore
+    @Volatile
     private var matcher: AdvertisementMatcher? = null
     private var rulesVersion: String = ""
     private val jobs = ArrayList<Job>()
@@ -376,6 +377,13 @@ class LocalDataHub(
             jobs += scope.launch { delay(wait); events.trySend(Event.Rematch) }
         }
     }
+
+    /**
+     * The pages one advertisement matches, for a detail page. Safe to call from any thread (the
+     * matcher is immutable once loaded); it does not touch the store's caches. Empty while the
+     * bundle is not loaded.
+     */
+    fun identify(raw: ByteArray, addr: String?): List<String> = matcher?.match(raw, addr).orEmpty()
 
     /** Gives payloads from before schema version 3 their structure key, one batch per turn of the queue. */
     private fun structureKeysStep() {

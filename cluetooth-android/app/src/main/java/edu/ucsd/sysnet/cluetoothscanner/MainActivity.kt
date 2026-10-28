@@ -28,9 +28,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
 import edu.ucsd.sysnet.cluetoothscanner.data.BleRecord
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayLegacyRow
@@ -41,13 +38,10 @@ import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanReadiness
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanReadinessAction
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanViewModel
-import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
-import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
-import edu.ucsd.sysnet.cluetoothscanner.ui.screen.DeviceDetailsBottomSheet
-import edu.ucsd.sysnet.cluetoothscanner.ui.screen.GattDebugPanel
-import edu.ucsd.sysnet.cluetoothscanner.ui.screen.MainScreen
 import edu.ucsd.sysnet.cluetoothscanner.ui.screen.UploadStatusScreen
-import edu.ucsd.sysnet.cluetoothscanner.ui.theme.CluetoothScannerTheme
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.app.V3App
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.app.V3ViewModel
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.V3Theme
 import edu.ucsd.sysnet.cluetoothscanner.utils.DeviceIdManager
 import edu.ucsd.sysnet.cluetoothscanner.utils.CompressionUtils
 import kotlinx.coroutines.CoroutineScope
@@ -103,8 +97,9 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setContent {
-            CluetoothScannerTheme {
-                CluetoothApp()
+            V3Theme {
+                // Gives every Text its content color; without it the screens render black on dark.
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { CluetoothApp() }
             }
         }
     }
@@ -113,7 +108,6 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun CluetoothApp() {
         val context = LocalContext.current
-        val navController = rememberNavController()
 
         val requiredPermissions = remember {
             requiredRuntimePermissions(Build.VERSION.SDK_INT)
@@ -128,7 +122,6 @@ class MainActivity : ComponentActivity() {
         val cluetoothApplication = remember { application as CluetoothApplication }
         // Process-owned (see CluetoothApplication) so a recording outlives this Activity.
         val locationService = cluetoothApplication.locationService
-        val bleScanService = cluetoothApplication.bleScanService
         val uploadService = remember { UploadService(context) }
         val storageService = remember { StorageService(context, serviceScope, uploadService) }
         val exportScope = rememberCoroutineScope()
@@ -169,7 +162,6 @@ class MainActivity : ComponentActivity() {
 
         val scanViewModel: ScanViewModel = viewModel {
             ScanViewModel(
-                bleScanService,
                 locationService,
                 storageService,
                 uploadService,
@@ -269,11 +261,6 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        val bottomSheetState = rememberModalBottomSheetState()
-        var showBottomSheet by remember { mutableStateOf(false) }
-        val selectedItem by scanViewModel.selectedItem.collectAsState()
-
-
         if (showUserIdDialog) {
             UserIdDialog(
                 onConfirm = { userId ->
@@ -285,126 +272,61 @@ class MainActivity : ComponentActivity() {
         }
 
         if (allPermissionsGranted) {
-            NavHost(
-                navController = navController,
-                startDestination = "main"
-            ) {
-                composable("main") {
-                    MainScreen(
-                        viewModel = scanViewModel,
-                        onNavigateToUpload = {
-                            navController.navigate("upload")
-                        },
-                        onShowBottomSheet = {
-                            showBottomSheet = true
-                        }
-                    )
-                }
-
-                composable("upload") {
-                    UploadStatusScreen(
-                        storageService = storageService,
-                        uploadService = uploadService,
-                        scanViewModel = scanViewModel,
-                        onExportSession = { sessionId, format ->
-                            exportScope.launch {
-                                try {
-                                    val prepared = scanViewModel.prepareSessionExport(sessionId, format)
-                                    preparedExport = prepared
-                                    exportLauncher.launch(prepared.suggestedFileName)
-                                } catch (error: Exception) {
-                                    Log.e(TAG, "Session export preparation failed", error)
-                                    Toast.makeText(context, "Export failed: ${error.message ?: "unable to save scans"}", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        },
-                        onExportAll = { format ->
-                            exportScope.launch {
-                                try {
-                                    val legacy = withContext(Dispatchers.IO) {
-                                        storageService.generatedFiles.value.map(::readLegacySessionRows)
-                                    }
-                                    val prepared = scanViewModel.prepareFullExport(format, legacy)
-                                    preparedExport = prepared
-                                    exportLauncher.launch(prepared.suggestedFileName)
-                                } catch (error: Exception) {
-                                    Log.e(TAG, "Full export preparation failed", error)
-                                    Toast.makeText(context, "Export failed: ${error.message ?: "unable to save scans"}", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        },
-                        onExportLegacy = { legacyFile, format ->
-                            exportScope.launch {
-                                try {
-                                    val session = withContext(Dispatchers.IO) { readLegacySessionRows(legacyFile) }
-                                    val prepared = scanViewModel.prepareLegacySessionExport(
-                                        session,
-                                        format,
-                                    )
-                                    preparedExport = prepared
-                                    exportLauncher.launch(prepared.suggestedFileName)
-                                } catch (error: Exception) {
-                                    Log.e(TAG, "Legacy export preparation failed", error)
-                                    Toast.makeText(context, "Export failed: ${error.message ?: "unable to read legacy session"}", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        },
-                        onNavigateBack = {
-                            navController.popBackStack()
-                        }
-                    )
-                }
+            val v3: V3ViewModel = viewModel { V3ViewModel(cluetoothApplication) }
+            // Debug builds: `am start ... --es v3_demo_map selected` opens the map page over fake data.
+            LaunchedEffect(Unit) {
+                if (BuildConfig.DEBUG) intent?.getStringExtra("v3_demo_map")?.let(v3::openDemoMap)
             }
-
-            if (showBottomSheet && selectedItem != null) {
-                ModalBottomSheet(
-                    onDismissRequest = {
-                        showBottomSheet = false
-                        scanViewModel.clearSelection()
-                    },
-                    sheetState = bottomSheetState
-                ) {
-                    val gattManager = cluetoothApplication.gattManager
-                    val gattState by gattManager.state.collectAsState()
-                    var gattStartMessage by remember { mutableStateOf<String?>(null) }
-                    val gattItem = selectedItem!!
-                    DeviceDetailsBottomSheet(
-                        item = gattItem,
-                        onDismiss = {
-                            showBottomSheet = false
-                            scanViewModel.clearSelection()
-                        },
-                        debugPanel = if (BuildConfig.DEBUG) {
-                            {
-                                GattDebugPanel(
-                                    state = gattState,
-                                    onStart = {
-                                        startGattDiscovery(
-                                            context = context,
-                                            manager = gattManager,
-                                            triggers = cluetoothApplication.triggerCache,
-                                            repository = repository,
-                                            addr = gattItem.mac,
-                                            location = locationService.getLastKnownLocation(),
-                                        ).also { result ->
-                                            gattStartMessage = when (result) {
-                                                GattStartResult.Started -> null
-                                                GattStartResult.Busy -> "A discovery is already running"
-                                                GattStartResult.PermissionMissing -> "Bluetooth connect permission is not granted"
-                                                GattStartResult.BluetoothUnavailable -> "Bluetooth is unavailable"
-                                            }
+            V3App(v3) { onBack ->
+                UploadStatusScreen(
+                                storageService = storageService,
+                                uploadService = uploadService,
+                                scanViewModel = scanViewModel,
+                                onExportSession = { sessionId, format ->
+                                    exportScope.launch {
+                                        try {
+                                            val prepared = scanViewModel.prepareSessionExport(sessionId, format)
+                                            preparedExport = prepared
+                                            exportLauncher.launch(prepared.suggestedFileName)
+                                        } catch (error: Exception) {
+                                            Log.e(TAG, "Session export preparation failed", error)
+                                            Toast.makeText(context, "Export failed: ${error.message ?: "unable to save scans"}", Toast.LENGTH_LONG).show()
                                         }
-                                    },
-                                    onCancel = gattManager::cancel,
-                                    onDismissResult = gattManager::dismissResult,
-                                    startMessage = gattStartMessage,
-                                )
-                            }
-                        } else {
-                            null
-                        },
-                    )
-                }
+                                    }
+                                },
+                                onExportAll = { format ->
+                                    exportScope.launch {
+                                        try {
+                                            val legacy = withContext(Dispatchers.IO) {
+                                                storageService.generatedFiles.value.map(::readLegacySessionRows)
+                                            }
+                                            val prepared = scanViewModel.prepareFullExport(format, legacy)
+                                            preparedExport = prepared
+                                            exportLauncher.launch(prepared.suggestedFileName)
+                                        } catch (error: Exception) {
+                                            Log.e(TAG, "Full export preparation failed", error)
+                                            Toast.makeText(context, "Export failed: ${error.message ?: "unable to save scans"}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                },
+                                onExportLegacy = { legacyFile, format ->
+                                    exportScope.launch {
+                                        try {
+                                            val session = withContext(Dispatchers.IO) { readLegacySessionRows(legacyFile) }
+                                            val prepared = scanViewModel.prepareLegacySessionExport(
+                                                session,
+                                                format,
+                                            )
+                                            preparedExport = prepared
+                                            exportLauncher.launch(prepared.suggestedFileName)
+                                        } catch (error: Exception) {
+                                            Log.e(TAG, "Legacy export preparation failed", error)
+                                            Toast.makeText(context, "Export failed: ${error.message ?: "unable to read legacy session"}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                },
+                                onNavigateBack = onBack
+                            )
             }
         } else {
             PermissionScreen(
