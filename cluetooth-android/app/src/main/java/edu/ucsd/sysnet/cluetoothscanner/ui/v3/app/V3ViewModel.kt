@@ -179,7 +179,8 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, ScanUiState(emptyList(), RecorderUiState()))
 
     /** Why scanning is not running, in words; null when it is fine. */
-    val scanNotice: StateFlow<String?> = app.bleScanService.scanStatus.map { status ->
+    val scanNotice: StateFlow<String?> = combine(app.bleScanService.scanStatus, recording.state) { status, rec ->
+        if (rec.scannerDeferred) return@combine "录制在等待蓝牙恢复"
         when (status.state) {
             ScanOperatingState.BLUETOOTH_OFF -> "蓝牙已关闭，打开后继续扫描"
             ScanOperatingState.SCANNER_UNAVAILABLE -> "蓝牙扫描暂时不可用，正在重试"
@@ -212,6 +213,11 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             while (isActive) {
                 publish()
                 delay(1_000)
+            }
+        }
+        viewModelScope.launch {
+            recording.state.map { it.error }.distinctUntilChanged().collect { error ->
+                if (error != null) toasts.trySend("录制：$error")
             }
         }
         viewModelScope.launch {

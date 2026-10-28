@@ -76,7 +76,7 @@ class LiveDeviceTrackerTest {
         assertEquals("ADV_EXT_IND", v[2].pduType)
         assertEquals(listOf("01", "09"), v[0].structures.map { it.type })
         assertEquals("54696c65", v[0].structures[1].data)
-        assertEquals(6, v[0].structures[1].length)
+        assertEquals(5, v[0].structures[1].length)
     }
 
     @Test
