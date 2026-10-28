@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import compression.zstd as zstd
 import sys
 import time
@@ -9,7 +10,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from .decrypt import decrypt_blob_bytes
-from .discover import discover_pending_blobs
+from .discover import discover_pending_blobs, distinct_prefixes
 from .download import read_blob_bytes
 from .gatt_ingest import ingest_gatt_discovery
 from .gatt_v1 import parse_gatt_v1_bytes
@@ -134,6 +135,27 @@ def _ingest_blob(
         return None
 
 
+def _discover(
+    storage_client: StorageClient,
+    database_url: str,
+    bucket_name: str,
+    prefixes: Sequence[str],
+    max_blobs: int | None,
+) -> list[str]:
+    """Pending blobs of every prefix; `max_blobs` applies to each prefix, so a
+    backlog under one root (scans/) cannot starve another (gatt/)."""
+    discovered: dict[str, None] = {}
+    for prefix in distinct_prefixes(prefixes):
+        pending = discover_pending_blobs(
+            storage_client=storage_client,
+            database_url=database_url,
+            bucket_name=bucket_name,
+            prefix=prefix,
+        )
+        discovered.update(dict.fromkeys(itertools.islice(pending, max_blobs)))
+    return list(discovered)
+
+
 async def run_pipeline(
     storage_client: StorageClient,
     database_url: str,
@@ -149,18 +171,9 @@ async def run_pipeline(
     on_progress: Callable[[CycleStats], None] | None = None,
 ) -> CycleStats:
     loop = asyncio.get_running_loop()
-    discovered_blobs = [
-        blob_uri
-        for prefix in prefixes
-        for blob_uri in discover_pending_blobs(
-            storage_client=storage_client,
-            database_url=database_url,
-            bucket_name=bucket_name,
-            prefix=prefix,
-        )
-    ]
-    if max_blobs is not None:
-        discovered_blobs = discovered_blobs[:max_blobs]
+    discovered_blobs = _discover(
+        storage_client, database_url, bucket_name, prefixes, max_blobs
+    )
 
     total_blobs = len(discovered_blobs)
     print(f"discover {total_blobs} pending blobs", flush=True)

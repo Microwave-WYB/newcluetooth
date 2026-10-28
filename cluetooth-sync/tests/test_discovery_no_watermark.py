@@ -1,6 +1,7 @@
 import pytest
 
-from cluetooth_sync.pipeline.discover import discover_pending_blobs
+from cluetooth_sync.pipeline.discover import discover_pending_blobs, distinct_prefixes
+from cluetooth_sync.pipeline.orchestrate import _discover
 
 OLDER_URI = (
     "gs://bucket/scans/v2/2025/03/24/"
@@ -36,3 +37,40 @@ def test_full_listing_discovers_delayed_older_uuid_without_date_watermark(
     assert list(discover_pending_blobs(storage, "db", "bucket", "scans/")) == [
         OLDER_URI
     ]
+
+
+def test_overlapping_prefixes_are_listed_once() -> None:
+    assert distinct_prefixes(["scans/", "gatt/", "scans/", "scans/v3/"]) == [
+        "scans/",
+        "gatt/",
+    ]
+    assert distinct_prefixes(["scans/v3/", "scans/v2/"]) == ["scans/v3/", "scans/v2/"]
+    assert distinct_prefixes([]) == []
+
+
+def test_max_blobs_applies_per_prefix_so_scans_cannot_starve_gatt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = {
+        "scans/": [f"gs://bucket/scans/{n}" for n in range(5)],
+        "gatt/": [f"gs://bucket/gatt/{n}" for n in range(3)],
+    }
+    listed: list[str] = []
+
+    def fake(**kwargs: str) -> object:
+        listed.append(kwargs["prefix"])
+        return iter(pending[kwargs["prefix"]])
+
+    monkeypatch.setattr(
+        "cluetooth_sync.pipeline.orchestrate.discover_pending_blobs", fake
+    )
+
+    found = _discover(object(), "db", "bucket", ["scans/", "gatt/", "scans/v2/"], 2)  # type: ignore[arg-type]
+    assert found == [
+        "gs://bucket/scans/0",
+        "gs://bucket/scans/1",
+        "gs://bucket/gatt/0",
+        "gs://bucket/gatt/1",
+    ]
+    assert listed == ["scans/", "gatt/"]
+    assert len(_discover(object(), "db", "bucket", ["scans/", "gatt/"], None)) == 8  # type: ignore[arg-type]

@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 import polars as pl
 
@@ -35,3 +35,13 @@ def discover_pending_blobs(
             continue
 
         yield blob_uri
+
+
+def distinct_prefixes(prefixes: Sequence[str]) -> list[str]:
+    """Prefixes without repeats and without any that another prefix already covers."""
+    unique = list(dict.fromkeys(prefixes))
+    return [
+        prefix
+        for prefix in unique
+        if not any(other != prefix and prefix.startswith(other) for other in unique)
+    ]
