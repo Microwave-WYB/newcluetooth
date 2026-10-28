@@ -162,7 +162,15 @@ def _ingest_once(
             print(f"skip {discovery.uri}: already ingested", flush=True)
             return 0
 
+        # write_stage commits the session's transaction (Polars' ADBC writer does),
+        # so stage everything before the first write that must stay atomic.
         discovery_table = write_stage(session, discovery_stage(discovery))
+        attribute_table = (
+            write_stage(session, attribute_stage(discovery))
+            if discovery.attributes
+            else None
+        )
+
         raws = create_raws_table(session)
         session.cursor.execute(
             stage_query(
@@ -175,8 +183,7 @@ def _ingest_once(
             [blob_id],
         )
         discovery_id = int(session.cursor.fetch_polars().item(0, "id"))
-        if discovery.attributes:
-            attribute_table = write_stage(session, attribute_stage(discovery))
+        if attribute_table is not None:
             session.cursor.execute(
                 stage_query("gatt/insert_attributes.sql", stage=attribute_table),
                 [discovery_id],
