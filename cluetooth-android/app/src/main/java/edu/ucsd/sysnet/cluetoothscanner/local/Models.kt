@@ -130,6 +130,47 @@ data class SeenProduct(
 /** Previously seen products of one category; [category] is null for pages without one. */
 data class CategoryProducts(val category: WikiCategory?, val products: List<SeenProduct>)
 
+/**
+ * A group of unidentified advertisements sharing a coarse [structure] (company field, else first
+ * 16-bit service UUID, else local-name prefix, else AD shape; see [StructureKey]) that are heard now.
+ */
+data class UnknownInRange(
+    val structure: StructureKey,
+    /**
+     * Unidentified devices heard within the window with an advertisement of this structure. A device that
+     * alternates advertisements of different structures counts in each group, so the groups can add up to
+     * more than [InRangeSnapshot.unidentifiedDeviceCount].
+     */
+    val deviceCount: Int,
+    /** The strongest of those devices' latest RSSI values; null when none reported one. */
+    val strongestRssi: Int?,
+    val lastSeenMs: Long,
+)
+
+/** A group of advertisements no page identifies, from the payload store (kept 30 days after last heard). */
+data class SeenUnknown(
+    val structure: StructureKey,
+    /** Distinct advertisements of this structure that are still unidentified. */
+    val payloadCount: Int,
+    /** How many times those advertisements were heard. */
+    val seenCount: Long,
+    val firstSeenMs: Long,
+    val lastSeenMs: Long,
+)
+
+/**
+ * A latitude/longitude rectangle. Inclusive on all sides. [minLon] greater than [maxLon] means the
+ * rectangle crosses the antimeridian (it covers [minLon, 180] and [-180, maxLon]).
+ */
+data class GeoBounds(val minLat: Double, val minLon: Double, val maxLat: Double, val maxLon: Double) {
+    init {
+        require(minLat.isFinite() && minLon.isFinite() && maxLat.isFinite() && maxLon.isFinite()) { "bounds must be finite" }
+        require(minLat <= maxLat) { "minLat $minLat is above maxLat $maxLat" }
+    }
+
+    val crossesAntimeridian: Boolean get() = minLon > maxLon
+}
+
 // Recordings -----------------------------------------------------------------------------
 
 data class Recording(

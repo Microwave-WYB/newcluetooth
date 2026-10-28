@@ -3,9 +3,13 @@ package edu.ucsd.sysnet.cluetoothscanner.service
 import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Bundle
 import android.os.Looper
 import android.util.Log
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -32,13 +36,26 @@ class LocationService(
     private val _currentLocation = MutableStateFlow<Location?>(null)
     val currentLocation: StateFlow<Location?> = _currentLocation.asStateFlow()
 
-    private val requestState = ActiveRequestState<LocationCallback>()
+    /** One registration with either backend: Play services calls the callback, the platform the listener. */
+    private abstract class Registration : LocationCallback(), LocationListener
 
+    private val requestState = ActiveRequestState<Registration>()
+    private var activeProfile: LocationProfile? = null
+    private var usesFused = true
+
+    /**
+     * Starts location updates at [profile]. Already running at the same profile is a no-op; running
+     * at another one swaps the request in place and keeps the current fix.
+     */
     @SuppressLint("MissingPermission")
-    fun startLocationUpdates() {
+    fun startLocationUpdates(profile: LocationProfile = LocationProfile.LIVE) {
         if (requestState.isActive) {
-            Log.d(TAG, "Location updates already started")
-            return
+            if (activeProfile == profile) {
+                Log.d(TAG, "Location updates already started")
+                return
+            }
+            Log.i(TAG, "Location profile ${activeProfile?.name} -> ${profile.name}")
+            requestState.stop()?.let(::unregister)
         }
 
         if (!isLocationEnabled()) {
@@ -48,51 +65,26 @@ class LocationService(
             return
         }
 
-        Log.i(TAG, "Starting location updates...")
-        val locationRequest = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            LOCATION_UPDATE_INTERVAL,
-        )
-            .setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL)
-            .setMaxUpdateDelayMillis(LOCATION_UPDATE_INTERVAL * 2)
-            .setWaitForAccurateLocation(true)
-            .setMaxUpdateAgeMillis(LOCATION_UPDATE_INTERVAL)
-            .build()
-
+        Log.i(TAG, "Starting location updates (${profile.name})...")
+        activeProfile = profile
         val activeRequest = requestState.begin { generation ->
-            object : LocationCallback() {
+            object : Registration() {
                 override fun onLocationResult(locationResult: LocationResult) {
-                    if (!requestState.accepts(generation)) return
-                    val bestLocation = locationResult.locations.minByOrNull { it.accuracy }
-                        ?: locationResult.lastLocation
-
-                    bestLocation?.let { location ->
-                        val currentLoc = _currentLocation.value
-                        if (
-                            currentLoc == null ||
-                            location.accuracy < currentLoc.accuracy ||
-                            (location.time - currentLoc.time) > LOCATION_UPDATE_INTERVAL
-                        ) {
-                            if (!requestState.accepts(generation)) return
-                            _currentLocation.value = location
-                            forwardLocation(location)
-                            Log.d(
-                                TAG,
-                                "Location updated: ${location.latitude}, " +
-                                    "${location.longitude}, accuracy: ${location.accuracy}m",
-                            )
-                        }
-                    }
+                    // A batch is oldest first; the newest fix is the one that matters.
+                    locationResult.locations.lastOrNull()?.let { deliver(generation, it) }
                 }
+
+                override fun onLocationChanged(location: Location) = deliver(generation, location)
+
+                @Deprecated("Required on API < 29")
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+                override fun onProviderEnabled(provider: String) = Unit
+                override fun onProviderDisabled(provider: String) = Unit
             }
         }
 
         try {
-            fusedLocationClient.requestLocationUpdates(
-                locationRequest,
-                activeRequest.callback,
-                Looper.getMainLooper(),
-            ).addOnFailureListener { error ->
+            register(profile, activeRequest.callback) { error ->
                 handleRegistrationFailure(activeRequest.generation, error)
             }
             if (!requestState.accepts(activeRequest.generation)) return
@@ -105,16 +97,75 @@ class LocationService(
     }
 
     fun stopLocationUpdates() {
-        val callback = requestState.stop()
-        if (callback == null) {
+        val registration = requestState.stop()
+        activeProfile = null
+        if (registration == null) {
             Log.d(TAG, "Location updates already stopped")
         } else {
-            fusedLocationClient.removeLocationUpdates(callback)
+            unregister(registration)
             Log.i(TAG, "Location updates stopped")
         }
         _currentLocation.value = null
         repository.clearLocation()
     }
+
+    /** Play services fused provider when available, otherwise the platform GPS and network providers. */
+    @SuppressLint("MissingPermission")
+    private fun register(profile: LocationProfile, registration: Registration, onFailure: (Exception) -> Unit) {
+        usesFused = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
+        if (usesFused) {
+            val request = LocationRequest.Builder(
+                if (profile.highAccuracy) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                profile.intervalMs,
+            )
+                .setMinUpdateIntervalMillis(profile.minIntervalMs)
+                .setMinUpdateDistanceMeters(profile.minDistanceMeters)
+                // The default for high accuracy is to hold fixes back until they are accurate, which
+                // starves a stationary or indoor recording of points.
+                .setWaitForAccurateLocation(false)
+                .build()
+            fusedLocationClient.requestLocationUpdates(request, registration, Looper.getMainLooper())
+                .addOnFailureListener(onFailure)
+        } else {
+            val providers = if (profile.highAccuracy) {
+                listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            } else {
+                listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
+            }.filter(locationManager::isProviderEnabled)
+                .let { if (profile.highAccuracy) it else it.take(1) }
+            for (provider in providers) {
+                locationManager.requestLocationUpdates(
+                    provider,
+                    profile.intervalMs,
+                    profile.minDistanceMeters,
+                    registration,
+                    Looper.getMainLooper(),
+                )
+            }
+        }
+    }
+
+    private fun unregister(registration: Registration) {
+        if (usesFused) {
+            fusedLocationClient.removeLocationUpdates(registration)
+        } else {
+            locationManager.removeUpdates(registration)
+        }
+    }
+
+    private fun deliver(generation: Long, location: Location) {
+        if (!requestState.accepts(generation)) return
+        if (!acceptsFix(_currentLocation.value?.stamp(), location.stamp())) return
+        _currentLocation.value = location
+        forwardLocation(location)
+        Log.d(
+            TAG,
+            "Location updated: ${location.latitude}, ${location.longitude}, " +
+                "accuracy: ${location.accuracy}m, provider: ${location.provider}",
+        )
+    }
+
+    private fun Location.stamp() = FixStamp(provider, if (hasAccuracy()) accuracy else Float.MAX_VALUE, elapsedRealtimeNanos)
 
     @SuppressLint("MissingPermission")
     private fun getLastKnownLocationAsync(generation: Long) {
@@ -122,9 +173,7 @@ class LocationService(
             .addOnSuccessListener { location ->
                 if (!requestState.accepts(generation)) return@addOnSuccessListener
                 location?.let {
-                    val currentLoc = _currentLocation.value
-                    if (currentLoc == null || it.accuracy < currentLoc.accuracy) {
-                        if (!requestState.accepts(generation)) return@addOnSuccessListener
+                    if (_currentLocation.value == null) {
                         _currentLocation.value = it
                         forwardLocation(it)
                         Log.d(
@@ -184,8 +233,9 @@ class LocationService(
 
     fun forceRestartLocationUpdates() {
         Log.i(TAG, "Force restarting location updates")
+        val profile = activeProfile ?: LocationProfile.LIVE
         stopLocationUpdates()
-        startLocationUpdates()
+        startLocationUpdates(profile)
     }
 
     fun cleanup() {
@@ -194,6 +244,5 @@ class LocationService(
 
     companion object {
         private const val TAG = "LocationService"
-        private const val LOCATION_UPDATE_INTERVAL = 2000L
     }
 }

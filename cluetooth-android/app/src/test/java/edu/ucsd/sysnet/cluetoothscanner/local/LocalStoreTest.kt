@@ -519,6 +519,179 @@ class LocalStoreTest {
         }
     }
 
+    // Schema version 3: structure keys, recording notes, recording-wide sightings ----------------------------------
+
+    @Test
+    fun upgradingAVersion2FileKeepsEverythingAddsTheNoteTableAndBackfillsKeys() {
+        val v2 = JdbcSqlDatabase(createSchema = false)
+        V1_SCHEMA.forEach { v2.execute(it) }
+        LocalSchema.upgrade(1, 2).forEach { v2.execute(it) }
+        val company = byteArrayOf(3, 0xFF.toByte(), 0x4C, 0)
+        v2.execute("INSERT INTO seen_payload (id, hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version) VALUES (1, 'h1', ?, 10, 20, 4, 'r')", listOf(company))
+        v2.execute("INSERT INTO seen_payload (id, hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version) VALUES (2, 'h2', ?, 5, 30, 6, 'r')", listOf(byteArrayOf(2, 1, 6)))
+        v2.execute("INSERT INTO recording (id, started_ms, ended_ms, distance_m, device_count) VALUES ('rec', 1, 2, 3.5, 1)")
+        v2.execute("INSERT INTO sighting_minute VALUES ('rec', 'AA:00:00:00:00:01', 7, 1, 1, 2, -60, 32.0, -117.0, 5.0, 3)")
+
+        LocalSchema.upgrade(2).forEach { v2.execute(it) }
+
+        fun shape(d: SqlDatabase) = d.query("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") { it.string(0) to it.string(1) }.toSet()
+        assertEquals(shape(JdbcSqlDatabase()), shape(v2))
+        fun columns(d: SqlDatabase) = d.query("SELECT name FROM pragma_table_info('seen_payload')") { it.string(0) }
+        assertEquals(columns(JdbcSqlDatabase()), columns(v2))
+        val migrated = LocalStore(v2)
+        assertEquals(1, migrated.sightingsInRecording("rec", null, 10).size)
+        assertEquals("", migrated.recordingNote("rec"))
+        // existing rows have no key until the backfill visited them; nothing is lost meanwhile
+        assertTrue(migrated.seenUnknownStructures().isEmpty())
+        var cursor = 0L
+        var batches = 0
+        while (true) {
+            cursor = migrated.backfillStructureKeys(cursor, limit = 1) ?: break
+            batches++
+        }
+        assertEquals(2, batches)
+        assertEquals(
+            listOf("shape:01/1" to 6L, "company:76" to 4L).sortedBy { it.first },
+            migrated.seenUnknownStructures().map { it.structure.key to it.seenCount }.sortedBy { it.first },
+        )
+        assertNull(migrated.backfillStructureKeys(0)) // done: nothing left to visit
+    }
+
+    @Test
+    fun theWholeMigrationChainFromVersion1ReachesTheCurrentSchema() {
+        val v1 = JdbcSqlDatabase(createSchema = false)
+        V1_SCHEMA.forEach { v1.execute(it) }
+        LocalSchema.upgrade(1).forEach { v1.execute(it) }
+        fun shape(d: SqlDatabase) = d.query("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") { it.string(0) to it.string(1) }.toSet()
+        assertEquals(shape(JdbcSqlDatabase()), shape(v1))
+        assertEquals(3, LocalSchema.VERSION)
+        assertTrue(LocalSchema.upgrade(3).isEmpty())
+    }
+
+    @Test
+    fun aRecordingNoteIsReplacedDeletedWhenBlankAndKeptWithItsRecording() {
+        store.startRecording("r1", t0)
+        assertEquals("", store.recordingNote("r1"))
+        store.setRecordingNote("r1", "Downtown loop\nsecond line", t0)
+        assertEquals("Downtown loop\nsecond line", store.recordingNote("r1"))
+        store.setRecordingNote("r1", "  edited  ", t0 + 1) // kept exactly as typed
+        assertEquals("  edited  ", store.recordingNote("r1"))
+        store.setRecordingNote("r2", "other", t0)
+        assertEquals("  edited  ", store.recordingNote("r1"))
+        store.setRecordingNote("r1", " \n ", t0 + 2)
+        assertEquals("", store.recordingNote("r1"))
+        assertEquals("other", store.recordingNote("r2"))
+    }
+
+    @Test
+    fun noteExpiryFollowsTheRecordingAndSparesFreshOrphans() {
+        val now = t0 + 100L * 24 * 60 * minute
+        store.startRecording("old", now - 60L * 24 * 60 * minute)
+        store.finishRecording("old", now - 60L * 24 * 60 * minute + 1, 0.0)
+        store.startRecording("kept", now - 1_000)
+        store.setRecordingNote("old", "gone with the recording", now - 59L * 24 * 60 * minute)
+        store.setRecordingNote("kept", "stays", now - 500)
+        store.setRecordingNote("early", "written before the recording row", now - 500)
+        store.setRecordingNote("stale-orphan", "orphan", now - 40L * 24 * 60 * minute)
+        store.pruneExpired(now)
+        assertNull(store.recording("old", now))
+        // a note goes with its recording once it is itself old; a young orphan waits for its recording
+        assertEquals("stays", store.recordingNote("kept"))
+        assertEquals("written before the recording row", store.recordingNote("early"))
+        assertEquals("", store.recordingNote("stale-orphan"))
+        assertEquals("", store.recordingNote("old"))
+    }
+
+    @Test
+    fun sightingsInARecordingFilterByBoundsAndStayWithinTheRecording() {
+        store.startRecording("r1", t0)
+        store.startRecording("r2", t0)
+        val a = GeoPoint(32.80, -117.20, 5.0)
+        val b = GeoPoint(32.90, -117.10, 5.0)
+        val c = GeoPoint(33.50, -116.00, 5.0)
+        flush(
+            mapOf(payload("buds-1", t0, t0, 1), payload("bulb-1", t0, t0, 1)),
+            mapOf(
+                key("AA:00:00:00:00:01", t0, "buds-1") to delta(t0, -60, a),
+                key("AA:00:00:00:00:02", t0 + minute, "bulb-1") to delta(t0 + minute, -70, b),
+                key("AA:00:00:00:00:03", t0 + 2 * minute, "buds-1") to delta(t0 + 2 * minute, -80, c),
+                key("AA:00:00:00:00:04", t0 + 3 * minute, "buds-1") to delta(t0 + 3 * minute, -90, null),
+            ),
+            "r1",
+        )
+        flush(minutes = mapOf(key("AA:00:00:00:00:05", t0, "buds-1") to delta(t0, -50, a)), recording = "r2")
+
+        val all = store.sightingsInRecording("r1", null, 100)
+        assertEquals(
+            listOf("AA:00:00:00:00:04", "AA:00:00:00:00:03", "AA:00:00:00:00:02", "AA:00:00:00:00:01"),
+            all.map { it.addr }, // newest first, including the one without a fix
+        )
+        assertNull(all.first().location)
+        assertEquals(listOf("device--buds"), all.first().pageIds)
+        assertEquals(listOf("r1"), all.map { it.recordingId }.distinct())
+        assertEquals(2, store.sightingsInRecording("r1", null, 2).size)
+
+        val inside = store.sightingsInRecording("r1", GeoBounds(32.7, -117.3, 33.0, -117.0), 100)
+        assertEquals(listOf("AA:00:00:00:00:02", "AA:00:00:00:00:01"), inside.map { it.addr }) // unlocated rows are out
+        // inclusive edges
+        assertEquals(1, store.sightingsInRecording("r1", GeoBounds(32.80, -117.20, 32.80, -117.20), 100).size)
+        assertTrue(store.sightingsInRecording("r1", GeoBounds(10.0, 10.0, 11.0, 11.0), 100).isEmpty())
+        assertTrue(store.sightingsInRecording("nope", null, 100).isEmpty())
+        // the limit applies after the bounds
+        assertEquals(1, store.sightingsInRecording("r1", GeoBounds(32.7, -117.3, 33.0, -117.0), 1).size)
+    }
+
+    @Test
+    fun aBoundsRectangleMayCrossTheAntimeridianAndMustBeOrderedInLatitude() {
+        store.startRecording("r1", t0)
+        flush(
+            mapOf(payload("buds-1", t0, t0, 1)),
+            mapOf(
+                key("AA:00:00:00:00:01", t0, "buds-1") to delta(t0, -60, GeoPoint(-17.0, 179.5, 5.0)),
+                key("AA:00:00:00:00:02", t0 + minute, "buds-1") to delta(t0 + minute, -60, GeoPoint(-17.0, -179.5, 5.0)),
+                key("AA:00:00:00:00:03", t0 + 2 * minute, "buds-1") to delta(t0 + 2 * minute, -60, GeoPoint(-17.0, 0.0, 5.0)),
+            ),
+            "r1",
+        )
+        val box = GeoBounds(-20.0, 179.0, -15.0, -179.0)
+        assertTrue(box.crossesAntimeridian)
+        assertEquals(setOf("AA:00:00:00:00:01", "AA:00:00:00:00:02"), store.sightingsInRecording("r1", box, 100).map { it.addr }.toSet())
+        try {
+            GeoBounds(10.0, 0.0, 5.0, 1.0)
+            org.junit.Assert.fail("minLat above maxLat")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message!!.contains("minLat"))
+        }
+    }
+
+    @Test
+    fun unknownStructuresGroupUnmatchedPayloadsOnly() {
+        val company = byteArrayOf(3, 0xFF.toByte(), 0x4C, 0)
+        val serviceNoName = byteArrayOf(3, 3, 0xA0.toByte(), 0xFE.toByte())
+        flush(
+            mapOf(
+                payload("buds-1", t0, t0 + 10, 5), // matched: not unknown
+                sha256Hex(company) to PayloadDelta(company, t0, t0 + 100, 3),
+                sha256Hex(company + byteArrayOf(2, 9, 'x'.code.toByte())) to PayloadDelta(company + byteArrayOf(2, 9, 'x'.code.toByte()), t0 - 50, t0 + 50, 2),
+                sha256Hex(serviceNoName) to PayloadDelta(serviceNoName, t0, t0 + 200, 1),
+            ),
+        )
+        val unknown = store.seenUnknownStructures()
+        assertEquals(listOf("uuid:FEA0", "company:76"), unknown.map { it.structure.key }) // latest first
+        val c = unknown[1]
+        assertEquals(2, c.payloadCount)
+        assertEquals(5L, c.seenCount)
+        assertEquals(t0 - 50, c.firstSeenMs)
+        assertEquals(t0 + 100, c.lastSeenMs)
+        assertEquals(76, c.structure.companyId)
+
+        // a bundle that now matches one of them takes it out of the group
+        val after = FakeMatcher("v2", mapOf("device--buds" to "buds", "device--bulb" to "x"))
+        store.rematchAll(after, "v2", t0 + 1_000)
+        assertEquals(listOf("uuid:FEA0", "company:76"), store.seenUnknownStructures().map { it.structure.key })
+        assertEquals(1, store.seenUnknownStructures()[1].payloadCount)
+    }
+
     private companion object {
         /** The version-1 schema, as it was before seen_product (kept here to test the migration). */
         val V1_SCHEMA = listOf(
