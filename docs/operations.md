@@ -86,7 +86,8 @@ coefficients are to be tuned against bought-device ground truth.
 
 - **Cycles.** Each cycle performs a full GCS listing of every prefix (`scans/` and
   `gatt/` by default; `--prefix` repeats, `CLUETOOTH_PREFIX` is space-separated, and
-  an environment that still sets only `scans/` does not see GATT objects), skips blobs
+  an environment that still sets only `scans/` does not see GATT objects;
+  `--max-blobs` applies to each prefix), skips blobs
   that are `success = true` or still inside their retry backoff, and then
   downloads and ingests the rest with bounded worker pools.
 - **Per-blob failures.** A failed download, a routing rejection, or a decrypt or
@@ -107,8 +108,8 @@ coefficients are to be tuned against bought-device ground truth.
     ingested like v2 with the extra PDU columns, and its Parquet footer goes to
     `blobs.meta`. `gatt/v1/YYYY/MM/DD/<uuidv7>.json.encrypted` is one manual
     GATT discovery: it goes to `gatt_discoveries`/`gatt_attributes`, and its
-    trigger advertisement to `payloads`. Both contracts are in
-    `docs/payload-schema-v3.md`. Any other `scans/v3/` or `gatt/` path, and
+    trigger advertisement to `payloads`. The producer contracts are in
+    `docs/payload-schema-v3.md` and the server-side rules in `docs/schema.md`. Any other `scans/v3/` or `gatt/` path, and
     every other `<root>/v<N>/` path, is rejected like the historical ones.
   - Historical `scans/schema=v2/...` objects are rejected before download. They
     are recorded as failed and left untouched in GCS. Their backoff caps at one
@@ -265,9 +266,14 @@ Nothing in this section has been run against production. It needs the owner.
 3. Only then release a producer that writes `scans/v3/` or `gatt/v1/`.
 
 Rolling back (`dbmate down`, once) drops the GATT tables (recreating the empty
-legacy ones) and **deletes minute rows that carry a v3 key field**, which
-`cluetooth rebuild` can regenerate from the archive for scans; GATT
-discoveries can only be re-ingested by resetting their blobs. A minute row
+legacy ones), **deletes the minute rows that carry a v3 key field**, resets the
+ledger entries of the `scans/v3/` and `gatt/v1/` blobs (`success` null, no
+attempts, so they are pending again), and recomputes the stats of the affected
+payloads from the remaining rows. Older sync code rejects those objects
+(unsupported path, hourly backoff) until the migration is applied again, after
+which they are ingested afresh. The rollback refuses (and changes nothing) if a
+`scans/v3/` blob also contributed to minute rows without v3 key fields, since
+those rows cannot be taken apart; rebuild those minutes first. A minute row
 claimed by a WiGLE batch blocks the delete and aborts the rollback.
 
 ## Restart / stop

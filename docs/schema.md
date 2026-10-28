@@ -9,7 +9,9 @@ sighting minute.
 Definitions in `db/db/migrations/20261026000000_minute_index_schema.sql` and
 `20261027120000_payload_v3_gatt.sql` (the v3 key and the GATT tables); a
 readable snapshot is `db/schema.sql`. The producer contracts are
-`docs/payload-schema-v2.md` and `docs/payload-schema-v3.md`.
+`docs/payload-schema-v2.md` and `docs/payload-schema-v3.md` (the producer
+contracts, owned by the core branch); the server-side rules are under
+"Ingesting scan v3 and gatt/v1" below.
 
 ## Tables
 
@@ -55,8 +57,8 @@ data_status)`. The session is part of the key because v2 objects carry no
 uploader identity; one row holds one payload. The last six are the producer v3
 PDU fields (null for legacy and v2 sightings): they say which kind of
 advertisement was received, so the same bytes seen as a legacy PDU and as an
-extended PDU on another PHY or set are separate rows. See
-`docs/payload-schema-v3.md` for why they are key columns.
+extended PDU on another PHY or set are separate rows. See "Aggregation key"
+below for why they are key columns.
 
 | column group | columns | merge rule |
 |---|---|---|
@@ -104,7 +106,7 @@ a whole-database analysis ever needs that.
 - `blobs` — the processing ledger, now with `id`, `session_id`, `uploader_id`
   and the retry columns (`attempts`, `next_attempt_at`). `meta` (jsonb) holds
   the Parquet footer entries of a v3 file (`cluetooth.*` keys without the
-  prefix: device model, Android version, app version, scanner capabilities, ...)
+  prefix, e.g. `device_model`, `app_version`)
   or the device and app fields of a GATT object; `app_version` is filled from
   the footer when the object name carries none.
 - `adv_enrichments` — passive enrichment output per `(addr, payload_id)`,
@@ -144,8 +146,116 @@ only when read) and `read_status` (`ok`, `insufficient_authentication`,
 `error:<n>`; null for services). A partial discovery keeps every attribute that
 was discovered; unread ones are `not_read` or carry the failure status.
 
-Group devices by GATT structure with `profile_hash`; see
-`docs/payload-schema-v3.md` for its definition.
+Group devices by GATT structure with `profile_hash`; see "profile_hash" below.
+
+## Ingesting scan v3 and gatt/v1
+
+The producer contracts (paths, columns, footer keys, GATT object) are in
+`docs/payload-schema-v3.md`. This is what the sync side does with them.
+
+**Routing.** `scans/v3/YYYY/MM/DD/<uuidv7>.parquet.encrypted` and
+`gatt/v1/YYYY/MM/DD/<uuidv7>.json.encrypted` follow the v2 UUID/date rules.
+Everything else under `scans/v3/` or `gatt/`, and any other `<root>/v<N>/`
+path, is rejected and recorded as failed. `cluetooth sync` lists `scans/` and
+`gatt/` by default (`--prefix` repeats; `CLUETOOTH_PREFIX` is space-separated);
+`--max-blobs` applies per prefix and overlapping prefixes are listed once.
+
+**Scan v3 values.** The exact 18-column schema is required. Accepted ranges:
+`primary_phy` 1 or 3, `secondary_phy` 0 to 3, `adv_sid` 0 to 15,
+`adv_tx_power` -127 to 126, `periodic_interval` 1 to 65536, `data_status` 0 to
+2 (Android's constants, stored as they are), `addr_type` 0 to 255 (0 public,
+1 random). Android's in-band "absent" values are mapped to null in case a
+producer sends them: `rssi` 127, `adv_sid` 255, `adv_tx_power` 127,
+`periodic_interval` 0.
+
+**Footer metadata.** `cluetooth.payload_schema = v3` and `cluetooth.payload_id`
+must match the path. Every other `cluetooth.*` entry is stored in `blobs.meta`
+(prefix removed, values as strings, NUL characters removed); nothing besides
+those two is required, so a producer that adds keys loses nothing and one that
+omits some is not rejected. Each `cluetooth.*` key may occur once. Absent
+patterns can then be read against the file's capabilities (the producer's
+scanner-capability keys), e.g. `select meta ->> 'device_model' from blobs where
+uri = ...`.
+`cluetooth.scan_session_id` fills the session and `cluetooth.app_version` fills
+`blobs.app_version`. A valid empty file is accepted with its meta.
+
+### Aggregation key
+
+`addr_type`, `is_legacy`, `primary_phy`, `secondary_phy`, `adv_sid` and
+`data_status` are part of the `sighting_minutes` key; `adv_tx_power` and
+`periodic_interval` are not.
+
+- The six key fields say which kind of advertisement was received, which the
+  payload bytes cannot: the same bytes can arrive as a legacy PDU and as an
+  extended PDU on 2M or Coded from one address in one minute, and different
+  sets of one device carry identical data. Merging them into one row would lose
+  what extended advertising adds. The earlier "first non-null wins" merge of
+  these columns depended on ingest order, so a rebuild could not reproduce it;
+  with them in the key every column is a sum, min, max or best sample.
+- `adv_tx_power` and `periodic_interval` describe the set, not its identity.
+  They merge as the maximum, which is order-independent.
+- Rows of legacy and v2 sightings have null in all six, and the key treats nulls
+  as equal, so their keys are unchanged. A producer that does not report a
+  field (null) stays apart from one that does.
+- Cost: a device that changes PDU kind within a minute gets one row per kind.
+  The WiGLE export keeps one CSV row per minute row, so it can now emit several
+  rows for an address-minute (one per PDU kind); this already happened for
+  several payloads or sessions per address-minute, the rows are identical in
+  MAC and nearly in position, and WiGLE keys on the MAC, so the export is not
+  changed. `adv_shapes.minutes` counts distinct minutes.
+- `adv_length` stays unused (it equals the payload's raw length).
+- The merge joins use plain equality on `minute`, `addr` and `payload_id` and
+  `is not distinct from` on the nullable key columns. A single row-wise
+  `is not distinct from` comparison would force nested loops (8 s against 5 ms
+  for 20k keys); `tests/test_merge_plan.py` checks the plan.
+
+### gatt/v1
+
+Validation is strict about types and values and tolerant about absence.
+Required: `schema` (`gatt/v1`), `id` (equal to the path UUID), `target.addr`
+(uppercase MAC), `started_at`, `outcome`, `stage_reached`, `services` (may be
+empty). Everything else may be absent or null, but must have the documented type
+and range when present: `outcome` in `complete|partial|failed|cancelled`,
+`stage_reached` in `connect|mtu|discover|read|disconnect`, `mtu` 23 to 517, `phy`
+1 to 3, `timings_ms` nonnegative, `location` paired, finite and in range,
+timestamps ISO-8601 with an offset (stored as UTC), `ended_at` not before
+`started_at`. A `value` is `{hex, status}`: `ok` needs `hex` (even-length, at
+most 512 bytes, empty allowed); any other status needs `hex` null or empty; an
+absent `value` is `not_read`. Unknown keys are allowed and kept in `raw`;
+duplicate keys, `NaN` and `Infinity` are rejected. NUL characters are removed
+from every string value (PostgreSQL text and jsonb cannot hold them; the archive
+keeps the original) and a NUL in a key is rejected. `target.name` is not
+stored as a column (names come from advertisements); it stays in `raw`.
+
+**UUID notation.** Lowercase, and a Bluetooth Base UUID is shortened to 4 hex
+digits (16-bit) or 8 (32-bit), which is the notation of `ad_structures.uuids`:
+`180A`, `180a` and `0000180a-0000-1000-8000-00805f9b34fb` are the same service
+and GATT services join advertisements.
+
+**profile_hash.** The hex SHA-256 of the compact JSON (`separators=(",", ":")`)
+of
+
+```text
+[[service_uuid, [[characteristic_uuid, [property, ...], [descriptor_uuid, ...]], ...]], ...]
+```
+
+in document order, with each characteristic's properties sorted and unique and
+UUIDs normalized as above. Values, read statuses, instance ids, `primary`, MTU
+and outcome are not part of it, so a partial and a complete discovery of the
+same device, or two devices with the same GATT database, hash equally. It is
+null when no service was discovered.
+
+### Concurrency
+
+One transaction per object, but Polars' ADBC `write_database` commits the
+session's transaction, which releases the ledger row lock and the
+transaction-level advisory locks. Every ingest therefore takes a session-level
+advisory lock on the blob (`pg_advisory_lock(1, hashtext(uri))`, held until the
+connection closes) before it reads `blobs.success`: a second process waits, then
+sees the first one's result and skips the object. `blobs/mark_failed.sql` never
+overwrites `success = true`. The transaction-level shared lock that makes
+`cluetooth rebuild` wait is still released by that commit (known issue, not
+changed here).
 
 ## Write paths
 

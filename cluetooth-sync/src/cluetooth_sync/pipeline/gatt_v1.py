@@ -1,4 +1,4 @@
-"""Validation of one `gatt/v1` JSON object (docs/payload-schema-v3.md).
+"""Validation of one `gatt/v1` JSON object (docs/payload-schema-v3.md, docs/schema.md).
 
 The object is small, so it is read with the standard JSON parser and checked by
 hand. Required keys are `schema`, `id`, `started_at`, `outcome`,

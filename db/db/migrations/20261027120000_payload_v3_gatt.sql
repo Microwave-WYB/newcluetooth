@@ -95,7 +95,7 @@ drop table gatt_discoveries;
 
 -- One row per GATT discovery object (gatt/v1). `raw` is the full JSON.
 -- profile_hash is sha256 (lowercase hex) of the canonical structure without
--- values and instance ids (docs/payload-schema-v3.md); null when no service was
+-- values and instance ids (docs/schema.md); null when no service was
 -- discovered.
 create table gatt_discoveries (
   id bigint generated always as identity primary key,

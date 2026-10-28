@@ -63,7 +63,8 @@ one aggregate row per sighting minute:
     `best_score`, `best_seen`).
   - The producer v3 PDU fields `addr_type`, `is_legacy`, `primary_phy`,
     `secondary_phy`, `adv_sid` and `data_status` are part of the key (null for
-    legacy and v2); see `docs/payload-schema-v3.md`.
+    legacy and v2); see `docs/schema.md` ("Ingesting scan v3 and gatt/v1") and
+    the producer contract `docs/payload-schema-v3.md`.
   - The best sample's score coefficients are **provisional**.
 - `adv_shapes`
   - A plain **view** over `sighting_minutes` plus `payload_fields`. Filter or

@@ -41,12 +41,14 @@ def _payload_id(uri: str) -> str:
 
 FOOTER = {
     "cluetooth.device_model": "Pixel 8",
-    "cluetooth.android_version": "15",
+    "cluetooth.android_release": "15",
+    "cluetooth.android_sdk": "35",
     "cluetooth.app_version": "0.2.0",
-    "cluetooth.le_extended_advertising_supported": "true",
-    "cluetooth.le_coded_phy_supported": "true",
-    "cluetooth.le_max_advertising_data_length": "1650",
-    "cluetooth.scan_phy": "all_supported",
+    "cluetooth.cap.ext_adv": "true",
+    "cluetooth.cap.coded_phy": "true",
+    "cluetooth.cap.max_adv_len": "1650",
+    "cluetooth.scan.phy": "all_supported",
+    "cluetooth.scan.legacy_only": "false",
 }
 
 
@@ -249,12 +251,14 @@ def test_valid_v3_file_prepares_columns_and_footer_meta() -> None:
         "payload_schema": "v3",
         "payload_id": _payload_id(V3_URI),
         "device_model": "Pixel 8",
-        "android_version": "15",
+        "android_release": "15",
+        "android_sdk": "35",
         "app_version": "0.2.0",
-        "le_extended_advertising_supported": "true",
-        "le_coded_phy_supported": "true",
-        "le_max_advertising_data_length": "1650",
-        "scan_phy": "all_supported",
+        "cap.ext_adv": "true",
+        "cap.coded_phy": "true",
+        "cap.max_adv_len": "1650",
+        "scan.phy": "all_supported",
+        "scan.legacy_only": "false",
     }
 
 
@@ -498,7 +502,7 @@ def test_v3_ingest_fills_columns_and_blob_meta(database_url: str) -> None:
     assert ledger["app_version"] == "0.2.0"
     meta = json.loads(ledger["meta"])
     assert meta["payload_id"] == _payload_id(uri)
-    assert meta["le_max_advertising_data_length"] == "1650"
+    assert meta["cap.max_adv_len"] == "1650"
     assert meta["device_model"] == "Pixel 8"
 
 
@@ -645,7 +649,7 @@ def test_valid_empty_v3_file_is_successful_and_keeps_its_meta(
     uri = _uri("b8")
     assert _ingest(database_url, uri, _parquet(_frame([]), uri)) == 0
     ledger = pl.read_database_uri(
-        "select success, app_version, meta ->> 'le_coded_phy_supported' as coded "
+        "select success, app_version, meta ->> 'cap.coded_phy' as coded "
         "from blobs where uri = $1",
         database_url,
         engine="adbc",

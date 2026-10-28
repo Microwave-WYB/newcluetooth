@@ -17,7 +17,7 @@ from .payload_v2 import (
 
 PAYLOAD_SCHEMA_VERSION = "v3"
 FOOTER_KEY_PREFIX = "cluetooth."
-# The v2 columns, in order, then the v3 columns (docs/payload-schema-v3.md).
+# The v2 columns, in order, then the v3 columns (docs/payload-schema-v3.md, docs/schema.md).
 PAYLOAD_V3_POLARS_SCHEMA: SchemaDict = {
     **PAYLOAD_V2_POLARS_SCHEMA,
     "is_legacy": pl.Boolean,
