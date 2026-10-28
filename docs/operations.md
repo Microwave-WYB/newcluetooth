@@ -84,7 +84,10 @@ coefficients are to be tuned against bought-device ground truth.
 
 `sync-continuous` runs `cluetooth-sync` with `CLUETOOTH_POLL_INTERVAL_SECONDS` set:
 
-- **Cycles.** Each cycle performs a full GCS listing of `scans/`, skips blobs
+- **Cycles.** Each cycle performs a full GCS listing of every prefix (`scans/` and
+  `gatt/` by default; `--prefix` repeats, `CLUETOOTH_PREFIX` is space-separated, and
+  an environment that still sets only `scans/` does not see GATT objects;
+  `--max-blobs` applies to each prefix), skips blobs
   that are `success = true` or still inside their retry backoff, and then
   downloads and ingests the rest with bounded worker pools.
 - **Per-blob failures.** A failed download, a routing rejection, or a decrypt or
@@ -101,6 +104,13 @@ coefficients are to be tuned against bought-device ground truth.
 - **Formats.**
   - Legacy flat `scans/<ts>_<id>_0.0.1–0.0.4.jsonl.zst.encrypted` and
     `scans/v2/YYYY/MM/DD/<uuidv7>.parquet.encrypted` are ingested.
+  - `scans/v3/YYYY/MM/DD/<uuidv7>.parquet.encrypted` (extended advertising) is
+    ingested like v2 with the extra PDU columns, and its Parquet footer goes to
+    `blobs.meta`. `gatt/v1/YYYY/MM/DD/<uuidv7>.json.encrypted` is one manual
+    GATT discovery: it goes to `gatt_discoveries`/`gatt_attributes`, and its
+    trigger advertisement to `payloads`. The producer contracts are in
+    `docs/payload-schema-v3.md` and the server-side rules in `docs/schema.md`. Any other `scans/v3/` or `gatt/` path, and
+    every other `<root>/v<N>/` path, is rejected like the historical ones.
   - Historical `scans/schema=v2/...` objects are rejected before download. They
     are recorded as failed and left untouched in GCS. Their backoff caps at one
     retry per hour.
@@ -236,6 +246,38 @@ sampled object. The new tables are 47 MB where the old ones were 407 MB. See
      restructure runbook above, which stops the sync and runs the backfill in
      between.
 6. Watch `docker compose logs -f sync-continuous` and `docker compose ps`.
+
+## Deploying payload v3 and GATT (not executed)
+
+Nothing in this section has been run against production. It needs the owner.
+
+1. Take a dump (above). The migration `20261027120000_payload_v3_gatt` is quick
+   but not metadata-only:
+   - It adds four nullable columns to `sighting_minutes` and replaces its unique
+     key. Rebuilding that index on every partition takes a short
+     `ACCESS EXCLUSIVE` lock and time proportional to the table (about 740k rows
+     on 2026-10-25). Stop `sync-continuous` first.
+   - It drops `gatt_discoveries` and `gatt_attributes` and creates new ones. It
+     aborts with `refusing to replace them` if either legacy table holds a row.
+     Check first: `select count(*) from gatt_discoveries;` and from
+     `gatt_attributes` (no code ever wrote to them).
+2. Apply it (`docker compose run --rm --no-deps migrate`), build the image, and
+   start `sync-continuous` with `CLUETOOTH_PREFIX` unset or `scans/ gatt/`.
+3. Only then release a producer that writes `scans/v3/` or `gatt/v1/`.
+
+Rolling back (`dbmate down`, once) drops the GATT tables (recreating the empty
+legacy ones), **deletes the minute rows that only `scans/v3/` blobs fed** (any
+row with a v3 key field, and any row whose blobs are all `scans/v3/` blobs, so a
+v3 file from an old Android with all-null PDU fields goes too), resets the
+ledger entries of the `scans/v3/` and `gatt/v1/` blobs (`success` null, no
+attempts, so they are pending again), and recomputes the stats of the affected
+payloads from the remaining rows in one pass (about 2 s for 1M rows and 2k
+payloads). Older sync code rejects those objects (unsupported path, hourly
+backoff) until the migration is applied again, after which they are ingested
+afresh. The rollback refuses, changing nothing, only if a minute row mixes
+`scans/v3/` blobs with other blobs, since such a row cannot be taken apart;
+rebuild those minutes first. A minute row claimed by a WiGLE batch blocks the
+delete and aborts the rollback.
 
 ## Restart / stop
 

@@ -1,16 +1,19 @@
 import asyncio
+import itertools
 import compression.zstd as zstd
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Sequence
 from concurrent.futures import Executor
 from dataclasses import dataclass
 
 import polars as pl
 
 from .decrypt import decrypt_blob_bytes
-from .discover import discover_pending_blobs
+from .discover import discover_pending_blobs, distinct_prefixes
 from .download import read_blob_bytes
+from .gatt_ingest import ingest_gatt_discovery
+from .gatt_v1 import parse_gatt_v1_bytes
 from .ingest import (
     insert_prepared_scans,
     mark_blob_failed,
@@ -19,6 +22,7 @@ from .ingest import (
 )
 from .payload_route import PayloadRouteKind, route_payload_uri
 from .payload_v2 import prepare_payload_v2_parquet_bytes
+from .payload_v3 import prepare_payload_v3_parquet_bytes
 from .storage import StorageClient
 
 
@@ -77,13 +81,26 @@ def _read_blob_bookkept(
         return None
 
 
-def parse_blob(blob: BlobBytes, private_key: bytes) -> pl.DataFrame:
-    """Route, decrypt and parse one stored object into prepared sightings."""
+def parse_blob_with_meta(
+    blob: BlobBytes, private_key: bytes
+) -> tuple[pl.DataFrame, dict[str, str] | None]:
+    """Route, decrypt and parse one scan object: sightings and footer metadata."""
     route = route_payload_uri(blob.uri)
+    if route.kind is PayloadRouteKind.GATT_V1_JSON:
+        raise ValueError("a gatt/v1 object has no scan sightings")
     decrypted_bytes = decrypt_blob_bytes(blob.encrypted_bytes, private_key)
     if route.kind is PayloadRouteKind.LEGACY_JSONL_ZSTD:
-        return prepare_scan_jsonl_bytes(zstd.decompress(decrypted_bytes), blob.uri)
-    return prepare_payload_v2_parquet_bytes(decrypted_bytes, route)
+        return prepare_scan_jsonl_bytes(
+            zstd.decompress(decrypted_bytes), blob.uri
+        ), None
+    if route.kind is PayloadRouteKind.PAYLOAD_V3_PARQUET:
+        return prepare_payload_v3_parquet_bytes(decrypted_bytes, route)
+    return prepare_payload_v2_parquet_bytes(decrypted_bytes, route), None
+
+
+def parse_blob(blob: BlobBytes, private_key: bytes) -> pl.DataFrame:
+    """Route, decrypt and parse one scan object into prepared sightings."""
+    return parse_blob_with_meta(blob, private_key)[0]
 
 
 def _ingest_blob(
@@ -93,23 +110,57 @@ def _ingest_blob(
 ) -> int | None:
     """Return inserted row count, or None after recording a failure."""
     try:
-        scans = parse_blob(blob, private_key)
+        route = route_payload_uri(blob.uri)
+        if route.kind is PayloadRouteKind.GATT_V1_JSON:
+            decrypted_bytes = decrypt_blob_bytes(blob.encrypted_bytes, private_key)
+            return ingest_gatt_discovery(
+                database_url,
+                parse_gatt_v1_bytes(decrypted_bytes, route),
+                mark_failure=False,
+                skip_if_succeeded=True,
+            )
+        scans, meta = parse_blob_with_meta(blob, private_key)
         if scans.is_empty():
-            mark_blob_succeeded_empty(database_url, blob.uri)
+            mark_blob_succeeded_empty(database_url, blob.uri, meta)
             return 0
         return insert_prepared_scans(
-            database_url, scans, mark_failure=False, skip_if_succeeded=True
+            database_url,
+            scans,
+            meta=meta,
+            mark_failure=False,
+            skip_if_succeeded=True,
         )
     except Exception as exc:
         _record_failure(database_url, blob.uri, exc)
         return None
 
 
+def _discover(
+    storage_client: StorageClient,
+    database_url: str,
+    bucket_name: str,
+    prefixes: Sequence[str],
+    max_blobs: int | None,
+) -> list[str]:
+    """Pending blobs of every prefix; `max_blobs` applies to each prefix, so a
+    backlog under one root (scans/) cannot starve another (gatt/)."""
+    discovered: dict[str, None] = {}
+    for prefix in distinct_prefixes(prefixes):
+        pending = discover_pending_blobs(
+            storage_client=storage_client,
+            database_url=database_url,
+            bucket_name=bucket_name,
+            prefix=prefix,
+        )
+        discovered.update(dict.fromkeys(itertools.islice(pending, max_blobs)))
+    return list(discovered)
+
+
 async def run_pipeline(
     storage_client: StorageClient,
     database_url: str,
     bucket_name: str,
-    prefix: str,
+    prefixes: Sequence[str],
     private_key: bytes,
     download_executor: Executor,
     ingest_executor: Executor,
@@ -120,15 +171,9 @@ async def run_pipeline(
     on_progress: Callable[[CycleStats], None] | None = None,
 ) -> CycleStats:
     loop = asyncio.get_running_loop()
-    blob_uris: Iterator[str] = discover_pending_blobs(
-        storage_client=storage_client,
-        database_url=database_url,
-        bucket_name=bucket_name,
-        prefix=prefix,
+    discovered_blobs = _discover(
+        storage_client, database_url, bucket_name, prefixes, max_blobs
     )
-    discovered_blobs = list(blob_uris)
-    if max_blobs is not None:
-        discovered_blobs = discovered_blobs[:max_blobs]
 
     total_blobs = len(discovered_blobs)
     print(f"discover {total_blobs} pending blobs", flush=True)

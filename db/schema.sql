@@ -6,6 +6,13 @@
 -- stripped of psql meta-commands, SET lines and the version banner.
 -- The schema is defined by db/db/migrations/; this file is a readable snapshot.
 
+-- Name: wigle; Type: SCHEMA; Schema: -
+--
+
+CREATE SCHEMA wigle;
+
+
+--
 -- Name: postgis; Type: EXTENSION; Schema: -
 --
 
@@ -475,8 +482,6 @@ CREATE FUNCTION public.sighting_sample_score(rssi smallint, accuracy real) RETUR
 $$;
 
 
-
-
 --
 -- Name: ad_structures; Type: TABLE; Schema: public
 --
@@ -639,7 +644,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 )
 PARTITION BY RANGE (minute);
 
@@ -753,12 +763,26 @@ ALTER TABLE public.blobs ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 --
 
 CREATE TABLE public.gatt_attributes (
-    discovery_id integer NOT NULL,
+    discovery_id bigint NOT NULL,
     attribute_id integer NOT NULL,
     parent_attribute_id integer,
     kind text NOT NULL,
-    uuid text,
-    data jsonb NOT NULL
+    uuid text NOT NULL,
+    is_primary boolean,
+    instance integer,
+    properties text[],
+    value bytea,
+    read_status text,
+    CONSTRAINT gatt_attributes_kind CHECK ((kind = ANY (ARRAY['service'::text, 'characteristic'::text, 'descriptor'::text]))),
+    CONSTRAINT gatt_attributes_parent CHECK (((kind = 'service'::text) = (parent_attribute_id IS NULL))),
+    CONSTRAINT gatt_attributes_properties CHECK (((kind = 'characteristic'::text) OR (properties IS NULL))),
+    CONSTRAINT gatt_attributes_read CHECK (
+CASE kind
+    WHEN 'service'::text THEN ((value IS NULL) AND (read_status IS NULL))
+    ELSE ((read_status IS NOT NULL) AND ((value IS NULL) OR (read_status = 'ok'::text)))
+END),
+    CONSTRAINT gatt_attributes_read_status CHECK (((read_status IS NULL) OR (read_status = ANY (ARRAY['ok'::text, 'insufficient_authentication'::text, 'insufficient_encryption'::text, 'read_not_permitted'::text, 'timeout'::text, 'not_read'::text])) OR (read_status ~ '^error:-?[0-9]+$'::text))),
+    CONSTRAINT gatt_attributes_service_fields CHECK (((kind = 'service'::text) OR (is_primary IS NULL)))
 );
 
 
@@ -767,17 +791,53 @@ CREATE TABLE public.gatt_attributes (
 --
 
 CREATE TABLE public.gatt_discoveries (
-    id integer NOT NULL,
-    blob text,
+    id bigint NOT NULL,
+    blob_id bigint NOT NULL,
+    discovery_uuid uuid NOT NULL,
+    session_id uuid,
+    app_version text,
+    device_model text,
+    android_version text,
     addr macaddr NOT NULL,
-    discovered_at timestamp with time zone NOT NULL,
-    raw_adv bytea,
-    raw_profile jsonb NOT NULL,
-    profile_hash text,
+    addr_type text,
+    trigger_payload_id bigint,
+    trigger_rssi smallint,
+    trigger_scanned_at timestamp with time zone,
+    trigger_is_legacy boolean,
+    trigger_primary_phy smallint,
+    trigger_secondary_phy smallint,
+    trigger_adv_sid smallint,
+    started_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone,
     lat double precision,
     lon double precision,
     accuracy real,
-    location public.geometry(Point,4326)
+    location public.geometry(Point,4326),
+    outcome text NOT NULL,
+    stage_reached text NOT NULL,
+    error_stage text,
+    error_status integer,
+    error_name text,
+    disconnect_initiator text,
+    disconnect_status integer,
+    mtu smallint,
+    phy_tx smallint,
+    phy_rx smallint,
+    connect_ms integer,
+    mtu_ms integer,
+    discover_ms integer,
+    read_ms integer,
+    profile_hash text,
+    raw jsonb NOT NULL,
+    CONSTRAINT gatt_discoveries_accuracy_semantics CHECK ((((accuracy IS NULL) OR (lat IS NOT NULL)) AND ((accuracy IS NULL) OR ((accuracy >= (0)::double precision) AND (accuracy < 'Infinity'::real))))),
+    CONSTRAINT gatt_discoveries_coordinates_paired CHECK (((lat IS NULL) = (lon IS NULL))),
+    CONSTRAINT gatt_discoveries_ended CHECK (((ended_at IS NULL) OR (ended_at >= started_at))),
+    CONSTRAINT gatt_discoveries_lat_range CHECK (((lat IS NULL) OR ((lat >= ('-90'::integer)::double precision) AND (lat <= (90)::double precision)))),
+    CONSTRAINT gatt_discoveries_lon_range CHECK (((lon IS NULL) OR ((lon >= ('-180'::integer)::double precision) AND (lon <= (180)::double precision)))),
+    CONSTRAINT gatt_discoveries_mtu_range CHECK (((mtu IS NULL) OR ((mtu >= 23) AND (mtu <= 517)))),
+    CONSTRAINT gatt_discoveries_outcome CHECK ((outcome = ANY (ARRAY['complete'::text, 'partial'::text, 'failed'::text, 'cancelled'::text]))),
+    CONSTRAINT gatt_discoveries_phy_range CHECK ((((phy_tx IS NULL) OR ((phy_tx >= 1) AND (phy_tx <= 3))) AND ((phy_rx IS NULL) OR ((phy_rx >= 1) AND (phy_rx <= 3))))),
+    CONSTRAINT gatt_discoveries_stage CHECK ((stage_reached = ANY (ARRAY['connect'::text, 'mtu'::text, 'discover'::text, 'read'::text, 'disconnect'::text])))
 );
 
 
@@ -785,20 +845,14 @@ CREATE TABLE public.gatt_discoveries (
 -- Name: gatt_discoveries_id_seq; Type: SEQUENCE; Schema: public
 --
 
-CREATE SEQUENCE public.gatt_discoveries_id_seq
-    AS integer
+ALTER TABLE public.gatt_discoveries ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.gatt_discoveries_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: gatt_discoveries_id_seq; Type: SEQUENCE OWNED BY; Schema: public
---
-
-ALTER SEQUENCE public.gatt_discoveries_id_seq OWNED BY public.gatt_discoveries.id;
+    CACHE 1
+);
 
 
 --
@@ -968,7 +1022,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1027,7 +1086,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1072,7 +1136,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1117,7 +1186,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1162,7 +1236,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1207,7 +1286,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1252,7 +1336,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1297,7 +1386,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1342,7 +1436,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1387,7 +1486,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1432,7 +1536,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1477,7 +1586,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1522,7 +1636,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1567,7 +1686,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1612,7 +1736,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1657,7 +1786,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1702,7 +1836,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1747,7 +1886,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1792,7 +1936,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1837,7 +1986,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1882,7 +2036,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1927,7 +2086,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -1972,7 +2136,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2017,7 +2186,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2062,7 +2236,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2107,7 +2286,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2152,7 +2336,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2197,7 +2386,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2242,7 +2436,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2287,7 +2486,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2332,7 +2536,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2377,7 +2586,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2422,7 +2636,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2467,7 +2686,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2512,7 +2736,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2557,7 +2786,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2602,7 +2836,12 @@ END) STORED,
     is_legacy boolean,
     primary_phy smallint,
     secondary_phy smallint,
-    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision)))))
+    adv_sid smallint,
+    adv_tx_power smallint,
+    periodic_interval integer,
+    data_status smallint,
+    CONSTRAINT sighting_minutes_extent_range CHECK ((((min_lat IS NULL) OR ((min_lat >= ('-90'::integer)::double precision) AND (min_lat <= (90)::double precision))) AND ((max_lat IS NULL) OR ((max_lat >= ('-90'::integer)::double precision) AND (max_lat <= (90)::double precision))) AND ((min_lon IS NULL) OR ((min_lon >= ('-180'::integer)::double precision) AND (min_lon <= (180)::double precision))) AND ((max_lon IS NULL) OR ((max_lon >= ('-180'::integer)::double precision) AND (max_lon <= (180)::double precision))))),
+    CONSTRAINT sighting_minutes_v3_ranges CHECK ((((primary_phy IS NULL) OR (primary_phy = ANY (ARRAY[1, 3]))) AND ((secondary_phy IS NULL) OR ((secondary_phy >= 0) AND (secondary_phy <= 3))) AND ((adv_sid IS NULL) OR ((adv_sid >= 0) AND (adv_sid <= 15))) AND ((periodic_interval IS NULL) OR ((periodic_interval >= 1) AND (periodic_interval <= 65536))) AND ((data_status IS NULL) OR ((data_status >= 0) AND (data_status <= 2))) AND ((addr_type IS NULL) OR ((addr_type >= 0) AND (addr_type <= 255)))))
 );
 
 
@@ -2696,6 +2935,40 @@ CREATE SEQUENCE public.wigle_upload_batches_id_seq
 --
 
 ALTER SEQUENCE public.wigle_upload_batches_id_seq OWNED BY public.wigle_upload_batches.id;
+
+
+--
+-- Name: responses; Type: TABLE; Schema: wigle
+--
+
+CREATE TABLE wigle.responses (
+    id bigint NOT NULL,
+    endpoint text NOT NULL,
+    params jsonb NOT NULL,
+    params_hash text NOT NULL,
+    search_after text,
+    next_search_after text,
+    total bigint,
+    http_status integer,
+    error text,
+    caller text,
+    called_at timestamp with time zone DEFAULT now() NOT NULL,
+    response jsonb
+);
+
+
+--
+-- Name: responses_id_seq; Type: SEQUENCE; Schema: wigle
+--
+
+ALTER TABLE wigle.responses ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME wigle.responses_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 
 
 --
@@ -2958,13 +3231,6 @@ ALTER TABLE ONLY public.sighting_minutes ATTACH PARTITION public.sighting_minute
 
 
 --
--- Name: gatt_discoveries id; Type: DEFAULT; Schema: public
---
-
-ALTER TABLE ONLY public.gatt_discoveries ALTER COLUMN id SET DEFAULT nextval('public.gatt_discoveries_id_seq'::regclass);
-
-
---
 -- Name: recipe_interaction_runs id; Type: DEFAULT; Schema: public
 --
 
@@ -3050,35 +3316,19 @@ ALTER TABLE ONLY public.gatt_attributes
 
 
 --
--- Name: gatt_discoveries gatt_discoveries_accuracy_semantics; Type: CHECK CONSTRAINT; Schema: public
+-- Name: gatt_discoveries gatt_discoveries_blob_id_key; Type: CONSTRAINT; Schema: public
 --
 
-ALTER TABLE public.gatt_discoveries
-    ADD CONSTRAINT gatt_discoveries_accuracy_semantics CHECK ((((accuracy IS NULL) OR (lat IS NOT NULL)) AND ((accuracy IS NULL) OR ((accuracy >= (0)::double precision) AND (accuracy < 'Infinity'::real))))) NOT VALID;
-
-
---
--- Name: gatt_discoveries gatt_discoveries_coordinates_paired; Type: CHECK CONSTRAINT; Schema: public
---
-
-ALTER TABLE public.gatt_discoveries
-    ADD CONSTRAINT gatt_discoveries_coordinates_paired CHECK (((lat IS NULL) = (lon IS NULL))) NOT VALID;
+ALTER TABLE ONLY public.gatt_discoveries
+    ADD CONSTRAINT gatt_discoveries_blob_id_key UNIQUE (blob_id);
 
 
 --
--- Name: gatt_discoveries gatt_discoveries_lat_range; Type: CHECK CONSTRAINT; Schema: public
+-- Name: gatt_discoveries gatt_discoveries_discovery_uuid_key; Type: CONSTRAINT; Schema: public
 --
 
-ALTER TABLE public.gatt_discoveries
-    ADD CONSTRAINT gatt_discoveries_lat_range CHECK (((lat IS NULL) OR ((lat >= ('-90'::integer)::double precision) AND (lat <= (90)::double precision)))) NOT VALID;
-
-
---
--- Name: gatt_discoveries gatt_discoveries_lon_range; Type: CHECK CONSTRAINT; Schema: public
---
-
-ALTER TABLE public.gatt_discoveries
-    ADD CONSTRAINT gatt_discoveries_lon_range CHECK (((lon IS NULL) OR ((lon >= ('-180'::integer)::double precision) AND (lon <= (180)::double precision)))) NOT VALID;
+ALTER TABLE ONLY public.gatt_discoveries
+    ADD CONSTRAINT gatt_discoveries_discovery_uuid_key UNIQUE (discovery_uuid);
 
 
 --
@@ -3182,7 +3432,7 @@ ALTER TABLE ONLY public.schema_migrations
 --
 
 ALTER TABLE ONLY public.sighting_minutes
-    ADD CONSTRAINT sighting_minutes_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3190,7 +3440,7 @@ ALTER TABLE ONLY public.sighting_minutes
 --
 
 ALTER TABLE ONLY public.sighting_minutes_default
-    ADD CONSTRAINT sighting_minutes_default_minute_addr_payload_id_uploader_id_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_default_minute_addr_payload_id_uploader_id_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3214,7 +3464,7 @@ ALTER TABLE ONLY public.sighting_minutes_default
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m01
-    ADD CONSTRAINT sighting_minutes_y2025m01_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m01_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3230,7 +3480,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m01
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m02
-    ADD CONSTRAINT sighting_minutes_y2025m02_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m02_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3246,7 +3496,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m02
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m03
-    ADD CONSTRAINT sighting_minutes_y2025m03_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m03_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3262,7 +3512,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m03
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m04
-    ADD CONSTRAINT sighting_minutes_y2025m04_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m04_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3278,7 +3528,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m04
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m05
-    ADD CONSTRAINT sighting_minutes_y2025m05_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m05_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3294,7 +3544,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m05
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m06
-    ADD CONSTRAINT sighting_minutes_y2025m06_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m06_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3310,7 +3560,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m06
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m07
-    ADD CONSTRAINT sighting_minutes_y2025m07_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m07_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3326,7 +3576,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m07
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m08
-    ADD CONSTRAINT sighting_minutes_y2025m08_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m08_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3342,7 +3592,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m08
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m09
-    ADD CONSTRAINT sighting_minutes_y2025m09_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m09_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3358,7 +3608,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m09
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m10
-    ADD CONSTRAINT sighting_minutes_y2025m10_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m10_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3374,7 +3624,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m10
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m11
-    ADD CONSTRAINT sighting_minutes_y2025m11_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m11_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3390,7 +3640,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m11
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2025m12
-    ADD CONSTRAINT sighting_minutes_y2025m12_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2025m12_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3406,7 +3656,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2025m12
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m01
-    ADD CONSTRAINT sighting_minutes_y2026m01_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m01_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3422,7 +3672,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m01
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m02
-    ADD CONSTRAINT sighting_minutes_y2026m02_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m02_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3438,7 +3688,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m02
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m03
-    ADD CONSTRAINT sighting_minutes_y2026m03_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m03_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3454,7 +3704,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m03
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m04
-    ADD CONSTRAINT sighting_minutes_y2026m04_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m04_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3470,7 +3720,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m04
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m05
-    ADD CONSTRAINT sighting_minutes_y2026m05_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m05_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3486,7 +3736,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m05
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m06
-    ADD CONSTRAINT sighting_minutes_y2026m06_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m06_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3502,7 +3752,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m06
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m07
-    ADD CONSTRAINT sighting_minutes_y2026m07_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m07_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3518,7 +3768,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m07
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m08
-    ADD CONSTRAINT sighting_minutes_y2026m08_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m08_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3534,7 +3784,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m08
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m09
-    ADD CONSTRAINT sighting_minutes_y2026m09_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m09_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3550,7 +3800,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m09
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m10
-    ADD CONSTRAINT sighting_minutes_y2026m10_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m10_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3566,7 +3816,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m10
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m11
-    ADD CONSTRAINT sighting_minutes_y2026m11_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m11_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3582,7 +3832,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m11
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2026m12
-    ADD CONSTRAINT sighting_minutes_y2026m12_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2026m12_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3598,7 +3848,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2026m12
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m01
-    ADD CONSTRAINT sighting_minutes_y2027m01_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m01_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3614,7 +3864,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m01
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m02
-    ADD CONSTRAINT sighting_minutes_y2027m02_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m02_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3630,7 +3880,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m02
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m03
-    ADD CONSTRAINT sighting_minutes_y2027m03_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m03_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3646,7 +3896,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m03
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m04
-    ADD CONSTRAINT sighting_minutes_y2027m04_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m04_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3662,7 +3912,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m04
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m05
-    ADD CONSTRAINT sighting_minutes_y2027m05_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m05_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3678,7 +3928,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m05
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m06
-    ADD CONSTRAINT sighting_minutes_y2027m06_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m06_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3694,7 +3944,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m06
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m07
-    ADD CONSTRAINT sighting_minutes_y2027m07_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m07_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3710,7 +3960,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m07
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m08
-    ADD CONSTRAINT sighting_minutes_y2027m08_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m08_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3726,7 +3976,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m08
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m09
-    ADD CONSTRAINT sighting_minutes_y2027m09_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m09_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3742,7 +3992,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m09
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m10
-    ADD CONSTRAINT sighting_minutes_y2027m10_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m10_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3758,7 +4008,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m10
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m11
-    ADD CONSTRAINT sighting_minutes_y2027m11_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m11_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3774,7 +4024,7 @@ ALTER TABLE ONLY public.sighting_minutes_y2027m11
 --
 
 ALTER TABLE ONLY public.sighting_minutes_y2027m12
-    ADD CONSTRAINT sighting_minutes_y2027m12_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id);
+    ADD CONSTRAINT sighting_minutes_y2027m12_minute_addr_payload_id_uploader_i_key UNIQUE NULLS NOT DISTINCT (minute, addr, payload_id, uploader_id, session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, data_status);
 
 
 --
@@ -3831,6 +4081,14 @@ ALTER TABLE ONLY public.wigle_upload_batches
 
 ALTER TABLE ONLY public.wigle_upload_batches
     ADD CONSTRAINT wigle_upload_batches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: responses responses_pkey; Type: CONSTRAINT; Schema: wigle
+--
+
+ALTER TABLE ONLY wigle.responses
+    ADD CONSTRAINT responses_pkey PRIMARY KEY (id);
 
 
 --
@@ -3967,13 +4225,6 @@ CREATE INDEX gatt_discoveries_addr_idx ON public.gatt_discoveries USING btree (a
 
 
 --
--- Name: gatt_discoveries_discovered_at_idx; Type: INDEX; Schema: public
---
-
-CREATE INDEX gatt_discoveries_discovered_at_idx ON public.gatt_discoveries USING btree (discovered_at);
-
-
---
 -- Name: gatt_discoveries_location_idx; Type: INDEX; Schema: public
 --
 
@@ -3985,6 +4236,20 @@ CREATE INDEX gatt_discoveries_location_idx ON public.gatt_discoveries USING gist
 --
 
 CREATE INDEX gatt_discoveries_profile_hash_idx ON public.gatt_discoveries USING btree (profile_hash);
+
+
+--
+-- Name: gatt_discoveries_started_at_idx; Type: INDEX; Schema: public
+--
+
+CREATE INDEX gatt_discoveries_started_at_idx ON public.gatt_discoveries USING btree (started_at);
+
+
+--
+-- Name: gatt_discoveries_trigger_payload_idx; Type: INDEX; Schema: public
+--
+
+CREATE INDEX gatt_discoveries_trigger_payload_idx ON public.gatt_discoveries USING btree (trigger_payload_id) WHERE (trigger_payload_id IS NOT NULL);
 
 
 --
@@ -4594,6 +4859,27 @@ CREATE INDEX wigle_upload_batch_scans_old_scan_idx ON public.wigle_upload_batch_
 --
 
 CREATE INDEX wigle_upload_batches_status_idx ON public.wigle_upload_batches USING btree (status, id);
+
+
+--
+-- Name: responses_called_at_idx; Type: INDEX; Schema: wigle
+--
+
+CREATE INDEX responses_called_at_idx ON wigle.responses USING btree (called_at);
+
+
+--
+-- Name: responses_params_gin_idx; Type: INDEX; Schema: wigle
+--
+
+CREATE INDEX responses_params_gin_idx ON wigle.responses USING gin (params jsonb_path_ops);
+
+
+--
+-- Name: responses_params_page_idx; Type: INDEX; Schema: wigle
+--
+
+CREATE INDEX responses_params_page_idx ON wigle.responses USING btree (params_hash, search_after);
 
 
 --
@@ -5671,11 +5957,27 @@ ALTER TABLE ONLY public.gatt_attributes
 
 
 --
--- Name: gatt_discoveries gatt_discoveries_blob_fkey; Type: FK CONSTRAINT; Schema: public
+-- Name: gatt_attributes gatt_attributes_discovery_id_parent_attribute_id_fkey; Type: FK CONSTRAINT; Schema: public
+--
+
+ALTER TABLE ONLY public.gatt_attributes
+    ADD CONSTRAINT gatt_attributes_discovery_id_parent_attribute_id_fkey FOREIGN KEY (discovery_id, parent_attribute_id) REFERENCES public.gatt_attributes(discovery_id, attribute_id);
+
+
+--
+-- Name: gatt_discoveries gatt_discoveries_blob_id_fkey; Type: FK CONSTRAINT; Schema: public
 --
 
 ALTER TABLE ONLY public.gatt_discoveries
-    ADD CONSTRAINT gatt_discoveries_blob_fkey FOREIGN KEY (blob) REFERENCES public.blobs(uri);
+    ADD CONSTRAINT gatt_discoveries_blob_id_fkey FOREIGN KEY (blob_id) REFERENCES public.blobs(id);
+
+
+--
+-- Name: gatt_discoveries gatt_discoveries_trigger_payload_id_fkey; Type: FK CONSTRAINT; Schema: public
+--
+
+ALTER TABLE ONLY public.gatt_discoveries
+    ADD CONSTRAINT gatt_discoveries_trigger_payload_id_fkey FOREIGN KEY (trigger_payload_id) REFERENCES public.payloads(id);
 
 
 --
@@ -5743,7 +6045,4 @@ ALTER TABLE ONLY public.wigle_upload_batch_scans_old
 
 
 --
--- PostgreSQL database dump complete
 --
-
-

@@ -75,8 +75,18 @@ def create_wigle_upload_batch(
     batch_size: int,
     filename: str,
 ) -> WigleBatch | None:
+    """Claim up to `batch_size` pending address-minutes (one CSV row each).
+
+    Every minute row of a claimed address-minute is recorded as a member, so the
+    address-minute counts as uploaded even if another payload, session or PDU
+    kind of it is merged in later.
+    """
     client_token = uuid.uuid4().hex
     with db.session(database_url) as session:
+        # Creators run one at a time: a group spans several rows, and row locks
+        # (skip locked) cannot guard a group.
+        session.cursor.execute(_WIGLE_BATCH_LOCK)
+        session.cursor.fetch_polars()
         session.cursor.execute(
             """
             insert into wigle_upload_batches (status, filename, client_token)
@@ -85,40 +95,29 @@ def create_wigle_upload_batch(
             [filename, client_token],
         )
         session.cursor.execute(
-            """
+            f"""
             with batch as (
               select id
               from wigle_upload_batches
               where client_token = $2
             ),
             candidate as materialized (
-              select m.id, m.minute
+              select m.minute, m.addr
               from sighting_minutes m
               where m.location is not null
                 and m.best_rssi is not null
-                and not exists (
-                  select 1
-                  from wigle_upload_batch_minutes bm
-                  join wigle_upload_batches b
-                    on b.id = bm.batch_id
-                  where bm.minute_id = m.id
-                    and bm.minute = m.minute
-                    and b.status in (
-                      'created',
-                      'exported',
-                      'uploading',
-                      'uploaded',
-                      'completed'
-                    )
-                )
-              order by m.minute, m.id
+                and not exists ({_WIGLE_NOT_CLAIMED})
+              group by m.minute, m.addr
+              order by m.minute, m.addr
               limit $1
-              for update of m skip locked
             )
             insert into wigle_upload_batch_minutes (batch_id, minute_id, minute)
-            select batch.id, candidate.id, candidate.minute
+            select batch.id, g.id, g.minute
             from batch
             cross join candidate
+            join sighting_minutes g
+              on g.minute = candidate.minute
+             and g.addr = candidate.addr
             """,
             [batch_size, client_token],
         )
@@ -132,12 +131,15 @@ def create_wigle_upload_batch(
             stats as (
               select
                 bm.batch_id,
-                count(*)::bigint as row_count,
+                count(distinct (m.minute, m.addr))::bigint as row_count,
                 min(bm.minute_id)::bigint as min_item_id,
                 max(bm.minute_id)::bigint as max_item_id
               from wigle_upload_batch_minutes bm
               join batch
                 on batch.id = bm.batch_id
+              join sighting_minutes m
+                on m.id = bm.minute_id
+               and m.minute = bm.minute
               group by bm.batch_id
             )
             update wigle_upload_batches b
@@ -572,30 +574,82 @@ def _write_preheader_csv(output: TextIO, row: list[str]) -> None:
     )
 
 
-_WIGLE_ROW_COLUMNS = """
-          m.addr::text as "MAC",
-          coalesce(f.local_name, '') as "SSID",
+# One WiGLE row per address per minute, whatever the payloads, sessions,
+# uploaders or PDU kinds behind it. `scope` is the set of minute rows the CSV
+# covers; the row carries
+#   * the position, RSSI, accuracy and time of the best located sample among
+#     them, ranked as the minute table ranks its samples (higher score, then
+#     smaller accuracy, then earlier);
+#   * the most recent non-empty local name of any of them (latest last_seen);
+#   * the first manufacturer id of the best row's payload.
+_WIGLE_COLLAPSE = """
+        names as (
+          select
+            s.minute,
+            s.addr,
+            (
+              array_agg(f.local_name order by s.last_seen desc nulls last, s.id desc)
+                filter (where nullif(f.local_name, '') is not null)
+            )[1] as local_name
+          from scope s
+          join payload_fields f
+            on f.payload_id = s.payload_id
+          group by s.minute, s.addr
+        ),
+        ranked as (
+          select
+            s.*,
+            f.manufacturer_ids,
+            row_number() over (
+              partition by s.minute, s.addr
+              order by
+                (s.location is null or s.best_rssi is null),
+                s.best_score desc nulls last,
+                greatest(coalesce(s.best_accuracy, 50), 1),
+                s.best_seen,
+                s.id
+            ) as rank
+          from scope s
+          join payload_fields f
+            on f.payload_id = s.payload_id
+        )
+        select
+          r.addr::text as "MAC",
+          coalesce(n.local_name, '') as "SSID",
           {auth_mode}::text as "AuthMode",
-          to_char(m.best_seen at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as "FirstSeen",
+          to_char(r.best_seen at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as "FirstSeen",
           '0' as "Channel",
           '' as "Frequency",
-          m.best_rssi::text as "RSSI",
-          st_y(m.location::geometry)::text as "CurrentLatitude",
-          st_x(m.location::geometry)::text as "CurrentLongitude",
+          r.best_rssi::text as "RSSI",
+          st_y(r.location::geometry)::text as "CurrentLatitude",
+          st_x(r.location::geometry)::text as "CurrentLongitude",
           '' as "AltitudeMeters",
-          coalesce(m.best_accuracy::text, '') as "AccuracyMeters",
+          coalesce(r.best_accuracy::text, '') as "AccuracyMeters",
           '' as "RCOIs",
-          coalesce(f.manufacturer_ids[1]::text, '') as "MfgrId",
+          coalesce(r.manufacturer_ids[1]::text, '') as "MfgrId",
           'BLE' as "Type"
+        from ranked r
+        join names n
+          on n.minute = r.minute
+         and n.addr = r.addr
+        where r.rank = 1
+          and r.location is not null
+          and r.best_rssi is not null
+        order by r.minute, r.addr
 """
 
+# Is any minute row of the address-minute of `m` in an active batch? One member
+# claims the whole address-minute, so a row merged in later never re-uploads it.
 _WIGLE_NOT_CLAIMED = """
             select 1
-            from wigle_upload_batch_minutes bm
+            from sighting_minutes g
+            join wigle_upload_batch_minutes bm
+              on bm.minute_id = g.id
+             and bm.minute = g.minute
             join wigle_upload_batches b
               on b.id = bm.batch_id
-            where bm.minute_id = m.id
-              and bm.minute = m.minute
+            where g.minute = m.minute
+              and g.addr = m.addr
               and b.status in (
                 'created',
                 'exported',
@@ -605,49 +659,63 @@ _WIGLE_NOT_CLAIMED = """
               )
 """
 
+# Serializes batch creation (a transaction-level advisory lock).
+_WIGLE_BATCH_LOCK = "select true as locked from pg_advisory_xact_lock(4381022502)"
 
-# One WiGLE row per sighting minute: the minute's best sample (position, its
-# RSSI, accuracy and time).
+
+# Pending address-minutes (or all of them, with $3), `$2` of them at most (0 for
+# no limit), every minute row of each as the scope.
 def _pending_wigle_rows_sql() -> str:
     return f"""
-        select
-          {_WIGLE_ROW_COLUMNS.format(auth_mode="$1")}
-        from sighting_minutes m
-        join payload_fields f
-          on f.payload_id = m.payload_id
-        where m.location is not null
-          and m.best_rssi is not null
-          and (
-            $3::boolean
-            or not exists ({_WIGLE_NOT_CLAIMED})
-          )
-        order by m.minute, m.id
-        limit nullif($2::bigint, 0)
+        with groups as (
+          select m.minute, m.addr
+          from sighting_minutes m
+          where m.location is not null
+            and m.best_rssi is not null
+            and (
+              $3::boolean
+              or not exists ({_WIGLE_NOT_CLAIMED})
+            )
+          group by m.minute, m.addr
+          order by m.minute, m.addr
+          limit nullif($2::bigint, 0)
+        ),
+        scope as (
+          select m.*
+          from groups
+          join sighting_minutes m
+            on m.minute = groups.minute
+           and m.addr = groups.addr
+        ),
+        {_WIGLE_COLLAPSE.format(auth_mode="$1")}
     """
 
 
 def _count_pending_wigle_rows_sql() -> str:
     return f"""
         select count(*)::bigint as row_count
-        from sighting_minutes m
-        where m.location is not null
-          and m.best_rssi is not null
-          and not exists ({_WIGLE_NOT_CLAIMED})
+        from (
+          select 1
+          from sighting_minutes m
+          where m.location is not null
+            and m.best_rssi is not null
+            and not exists ({_WIGLE_NOT_CLAIMED})
+          group by m.minute, m.addr
+        ) pending
     """
 
 
 def _batch_wigle_rows_sql() -> str:
     return f"""
-        select
-          {_WIGLE_ROW_COLUMNS.format(auth_mode="$2")}
-        from wigle_upload_batch_minutes bm
-        join sighting_minutes m
-          on m.id = bm.minute_id
-         and m.minute = bm.minute
-        join payload_fields f
-          on f.payload_id = m.payload_id
-        where bm.batch_id = $1
-        order by m.minute, m.id
+        with scope as (
+          select m.*
+          from wigle_upload_batch_minutes bm
+          join sighting_minutes m
+            on m.id = bm.minute_id
+           and m.minute = bm.minute
+          where bm.batch_id = $1
+        ),
+        {_WIGLE_COLLAPSE.format(auth_mode="$2")}
     """
 
 
