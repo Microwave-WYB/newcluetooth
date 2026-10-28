@@ -222,7 +222,12 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDe
     val route = vm.stack.collectAsStateWithLifecycle().value.last()
     var offline by remember { mutableStateOf(false) }
     // Frame the camera again when the content first arrives: points load after the selection is made.
-    val hasContent = state.route.size >= 2 || state.productPoints.isNotEmpty() || state.selectedPoints.isNotEmpty() || state.estimate != null
+    // Only what the overlay draws counts: with a selection that is its points or estimate, not the route.
+    val hasContent = if (state.selected != null) {
+        state.selectedPoints.isNotEmpty() || state.estimate != null
+    } else {
+        state.route.size >= 2 || state.productPoints.isNotEmpty()
+    }
     MapPage(state, actions, notice = if (offline) "离线地图不可用" else null) { covered ->
         MapLibreMap(
             overlay = MapOverlay(

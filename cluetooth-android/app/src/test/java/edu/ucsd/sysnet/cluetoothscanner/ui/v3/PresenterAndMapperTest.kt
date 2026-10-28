@@ -34,7 +34,9 @@ import edu.ucsd.sysnet.cluetoothscanner.service.ScanOperatingState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattNames
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
+import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingOutcome
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.estimatePosition
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.toRecorderUi
@@ -284,5 +286,36 @@ class NoticesTest {
         assertNull(Notices.location(true, 59_000))
         assertNull(Notices.location(true, 60_000))
         assertEquals("定位已超过 1 分钟没有更新，轨迹暂停", Notices.location(true, 60_001))
+    }
+}
+
+class RecordingOutcomeTest {
+    @Test
+    fun aSealedRecordingIsSaved() {
+        assertEquals(
+            RecordingOutcome.Kind.Saved,
+            RecordingOutcome.atStop(ScanTransitionState.FINALIZING, startSeen = false, hasSummary = true),
+        )
+    }
+
+    @Test
+    fun aStartThatNeverRanIsAFailedStart() {
+        assertEquals(
+            RecordingOutcome.Kind.StartFailed,
+            RecordingOutcome.atStop(ScanTransitionState.STARTING, startSeen = true, hasSummary = false),
+        )
+    }
+
+    @Test
+    fun aRejectedScannerIsReportedOnlyWhenTheStartWasSeen() {
+        assertEquals(
+            RecordingOutcome.Kind.ScannerRejected,
+            RecordingOutcome.atStop(ScanTransitionState.FINALIZING, startSeen = true, hasSummary = false),
+        )
+        // A ViewModel created mid-finalization joins at FINALIZING and never saw a start: say nothing.
+        assertEquals(
+            RecordingOutcome.Kind.None,
+            RecordingOutcome.atStop(ScanTransitionState.FINALIZING, startSeen = false, hasSummary = false),
+        )
     }
 }

@@ -57,32 +57,44 @@ class LiveDeviceTracker {
         var max = Int.MIN_VALUE
     }
 
-    /** One RSSI average per second in primitive arrays; the oldest second is overwritten when full. */
+    /**
+     * One RSSI average per second in primitive arrays. It starts small and doubles up to [MAX_BUCKETS];
+     * only a full-size ring wraps, overwriting the oldest second, so before that `head` stays 0.
+     */
     private class RssiRing {
-        private val seconds = LongArray(MAX_BUCKETS)
-        private val sums = IntArray(MAX_BUCKETS)
-        private val counts = IntArray(MAX_BUCKETS)
+        private var seconds = LongArray(INITIAL_BUCKETS)
+        private var sums = IntArray(INITIAL_BUCKETS)
+        private var counts = IntArray(INITIAL_BUCKETS)
+        private var capacity = INITIAL_BUCKETS
         private var head = 0
         private var size = 0
 
         fun add(second: Long, rssi: Int) {
             if (size > 0) {
-                val last = (head + size - 1) % MAX_BUCKETS
+                val last = (head + size - 1) % capacity
                 if (seconds[last] == second) {
                     sums[last] += rssi
                     counts[last]++
                     return
                 }
             }
-            val index = if (size < MAX_BUCKETS) (head + size++) % MAX_BUCKETS else head.also { head = (head + 1) % MAX_BUCKETS }
+            if (size == capacity && capacity < MAX_BUCKETS) grow()
+            val index = if (size < capacity) (head + size++) % capacity else head.also { head = (head + 1) % capacity }
             seconds[index] = second
             sums[index] = rssi
             counts[index] = 1
         }
 
+        private fun grow() {
+            capacity = minOf(capacity * 2, MAX_BUCKETS)
+            seconds = seconds.copyOf(capacity)
+            sums = sums.copyOf(capacity)
+            counts = counts.copyOf(capacity)
+        }
+
         inline fun forEach(block: (second: Long, sum: Int, count: Int) -> Unit) {
             for (i in 0 until size) {
-                val index = (head + i) % MAX_BUCKETS
+                val index = (head + i) % capacity
                 block(seconds[index], sums[index], counts[index])
             }
         }
@@ -213,7 +225,8 @@ class LiveDeviceTracker {
     fun variants(addr: String): List<AdVariantState> {
         val d = devices[addr] ?: return emptyList()
         val time = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
-        return d.variants.values.map { v ->
+        // The map is access-ordered (for eviction); the table is shown in the order the variants first appeared.
+        return d.variants.values.sortedWith(compareBy<Variant> { it.firstMs }.thenBy { it.key.hash }).map { v ->
             AdVariantState(
                 id = "v${v.key.flags}-${v.key.hash}-${v.key.size}",
                 pduType = pduType(v.legacy, v.connectable),
@@ -231,6 +244,7 @@ class LiveDeviceTracker {
 
     companion object {
         const val MAX_BUCKETS = 900
+        const val INITIAL_BUCKETS = 16
         const val MAX_VARIANTS = 24
         const val CHART_POINTS = 120
         const val STALE_AFTER_MS = 20_000L
