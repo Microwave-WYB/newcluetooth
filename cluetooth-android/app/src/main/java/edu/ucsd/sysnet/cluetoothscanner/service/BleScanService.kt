@@ -2,6 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.service
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
@@ -18,7 +19,13 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
+import edu.ucsd.sysnet.cluetoothscanner.BuildConfig
+import edu.ucsd.sysnet.cluetoothscanner.ble.AdvertisementTrigger
+import edu.ucsd.sysnet.cluetoothscanner.ble.AdvertisementTriggerCache
+import edu.ucsd.sysnet.cluetoothscanner.ble.ScanV3Fields
+import edu.ucsd.sysnet.cluetoothscanner.ble.buildScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.requiredBluetoothPermissions
+import edu.ucsd.sysnet.cluetoothscanner.utils.AppSettings
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreScanInput
 import edu.ucsd.sysnet.cluetoothscanner.data.BleRecord
 import edu.ucsd.sysnet.cluetoothscanner.repository.CluetoothRepository
@@ -38,6 +45,7 @@ class BleScanService(
     private val context: Context,
     private val locationService: LocationService,
     private val repository: CluetoothRepository,
+    private val triggerCache: AdvertisementTriggerCache = AdvertisementTriggerCache(),
 ) {
 
     private var bluetoothLeScanner: BluetoothLeScanner? = null
@@ -189,7 +197,11 @@ class BleScanService(
             return ScannerStartOutcome.STARTED
         }
 
-        val settings = buildScanSettings()
+        val codedPhyEnabled = AppSettings.isCodedPhyEnabled(context)
+        val settings = buildScanSettings(codedPhyEnabled)
+        // The footer of the next payload must describe this scan. The core's command
+        // queue is ordered, so this precedes every observation of the new scan.
+        repository.configureScan(scanEnvironment(adapter, codedPhyEnabled))
 
         val activeRequest = scanRequestState.begin(::scanCallbackForGeneration)
         return try {
@@ -311,6 +323,7 @@ class BleScanService(
             val location = locationService.getLastKnownLocation()
             val scanRecord = scanResult.scanRecord
             val advertisementData = scanRecord?.bytes?.copyOf() ?: byteArrayOf()
+            val v3 = scanV3Fields(scanResult, device)
 
             val bleRecord = BleRecord(
                 mac = mac,
@@ -323,6 +336,18 @@ class BleScanService(
             )
 
             if (!scanRequestState.accepts(generation)) return
+            triggerCache.put(
+                AdvertisementTrigger(
+                    addr = mac,
+                    device = device,
+                    addrType = v3.addrType,
+                    name = scanRecord?.deviceName,
+                    raw = advertisementData,
+                    rssi = rssi.takeUnless { it == 127 },
+                    scannedAtMs = scannedAtMs,
+                    fields = v3,
+                ),
+            )
             // Preserve the current UI record stream; 0.0.5 persistence is owned by Rust.
             scanResults.trySend(bleRecord)
             val admission = repository.recordObservation(
@@ -339,6 +364,14 @@ class BleScanService(
                     } else {
                         null
                     },
+                    isLegacy = v3.isLegacy,
+                    primaryPhy = v3.primaryPhy,
+                    secondaryPhy = v3.secondaryPhy,
+                    advSid = v3.advSid,
+                    advTxPower = v3.advTxPower,
+                    periodicInterval = v3.periodicInterval,
+                    dataStatus = v3.dataStatus,
+                    addrType = v3.addrType,
                 ),
             )
             when (admission) {
@@ -401,7 +434,13 @@ class BleScanService(
             val nextRequest = scanRequestState.begin(::scanCallbackForGeneration)
             try {
                 scanner.stopScan(previousCallback)
-                val settings = buildScanSettings()
+                // Re-read the switch so a change takes effect at the next restart, and
+                // keep the payload footer in step with the settings actually in force.
+                val codedPhyEnabled = AppSettings.isCodedPhyEnabled(context)
+                val settings = buildScanSettings(codedPhyEnabled)
+                bluetoothAdapter()?.let { adapter ->
+                    repository.configureScan(scanEnvironment(adapter, codedPhyEnabled))
+                }
                 scanner.startScan(null, settings, nextRequest.callback)
                 Log.i(TAG, "BLE scan restarted (generation ${nextRequest.generation})")
                 schedulePeriodicScanRestart()
@@ -496,14 +535,51 @@ class BleScanService(
         private const val DEFERRED_RECOVERY_RETRY_MS = 1_000L
     }
 
-    // Receive extended advertisements as well as legacy ones where supported (API 26+).
-    private fun buildScanSettings(): ScanSettings {
+    // Receive extended advertisements as well as legacy ones where supported (API 26+),
+    // on every PHY the controller can scan unless the Coded PHY switch is off.
+    private fun buildScanSettings(codedPhyEnabled: Boolean): ScanSettings {
         val builder = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             builder.setLegacy(false)
+            builder.setPhy(
+                if (codedPhyEnabled) ScanSettings.PHY_LE_ALL_SUPPORTED else BluetoothDevice.PHY_LE_1M,
+            )
         }
         return builder.build()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun scanEnvironment(adapter: BluetoothAdapter, codedPhyEnabled: Boolean) =
+        buildScanEnvironment(
+            deviceModel = Build.MODEL,
+            androidRelease = Build.VERSION.RELEASE,
+            sdkInt = Build.VERSION.SDK_INT,
+            appVersion = BuildConfig.VERSION_NAME,
+            extendedAdvertisingSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                adapter.isLeExtendedAdvertisingSupported,
+            codedPhySupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                adapter.isLeCodedPhySupported,
+            maxAdvertisingDataLength = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                adapter.leMaximumAdvertisingDataLength
+            } else {
+                31
+            },
+            codedPhyEnabled = codedPhyEnabled,
+        )
+
+    private fun scanV3Fields(scanResult: ScanResult, device: BluetoothDevice): ScanV3Fields {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return ScanV3Fields.ABSENT
+        return ScanV3Fields.from(
+            isLegacy = scanResult.isLegacy,
+            primaryPhy = scanResult.primaryPhy,
+            secondaryPhy = scanResult.secondaryPhy,
+            advertisingSid = scanResult.advertisingSid,
+            txPower = scanResult.txPower,
+            periodicAdvertisingInterval = scanResult.periodicAdvertisingInterval,
+            dataStatus = scanResult.dataStatus,
+            addressType = if (Build.VERSION.SDK_INT >= 35) device.addressType else null,
+        )
     }
 }

@@ -1,6 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.service
 
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreGateway
+import edu.ucsd.sysnet.cluetoothscanner.core.EXPECTED_CORE_API_VERSION
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreLocationInput
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreScanInput
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayCoreState
@@ -190,7 +191,7 @@ private class UploadFakeCore(private val ciphertext: File) : CoreGateway {
         latestLocalName = null,
     )
 
-    override fun apiVersion() = 6u
+    override fun apiVersion() = EXPECTED_CORE_API_VERSION
     override fun state() = state
     override fun refresh() = update()
     override fun updateLocation(fix: CoreLocationInput) = error("unexpected")
