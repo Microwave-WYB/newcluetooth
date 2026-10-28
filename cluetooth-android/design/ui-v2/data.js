@@ -253,11 +253,12 @@
   DEVICES.filter((d) => d.name === "JBL Flip 6").forEach((d) => (gattRead[d.addr] = { ok: true, steps: gattSteps(GATT.services), services: GATT.services }));
 
   // ---- sessions: the stored recordings plus the ones recorded in this run ----
-  let current = null, runs = 0;
+  let current = null, runs = 0, firstRun = false; // firstRun: the demo of a brand-new user, no stored recordings
   const finished = [];
+  const stored = () => (firstRun ? [] : RECORDINGS.filter((r) => !r.current));
   /** The union of all local data: every session's devices (each at its strongest point) and every route. */
   function allSessions() {
-    const all = [...(current ? [current] : []), ...finished, ...RECORDINGS.filter((r) => !r.current && r.devices > 0)];
+    const all = [...(current ? [current] : []), ...finished, ...stored().filter((r) => r.devices > 0)];
     const best = {};
     for (const r of all) for (const p of r.points) if (!best[p.addr] || p.rssi > best[p.addr].rssi) best[p.addr] = p;
     const points = Object.values(best);
@@ -303,7 +304,9 @@
     /** The user's current location. */
     getMyLocation: () => ({ at: [CENTER.lon + 0.0004, CENTER.lat + 0.00012], lat: 32.88012, lon: -117.23421, accuracy: 8 }),
     /** All finished sessions, newest first: this run's recordings, then the stored ones (including ones without data). */
-    getRecordings: () => [...finished, ...RECORDINGS.filter((r) => !r.current)].map(({ points, ...r }) => clone(r)),
+    getRecordings: () => [...finished, ...stored()].map(({ points, ...r }) => clone(r)),
+    /** Demo only: behave like a brand-new install with no recordings. */
+    useFirstRunDemo: () => { firstRun = true; },
     /** The session being recorded, or null. */
     getCurrentRecording: () => (current ? clone(current) : null),
     /** One session with its route and one strongest point per device. */

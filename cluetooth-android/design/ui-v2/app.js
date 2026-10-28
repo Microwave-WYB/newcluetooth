@@ -352,7 +352,7 @@
     const days = [...new Set(recs.map((r) => r.day))];
     $(".side", phone).innerHTML = UI.sidebar({
       current: cur && { id: cur.id, title: "Current session", sub: `Started ${cur.time} · ${cur.devices} devices` },
-      all: (() => { const v = D.getAllSessionsView(); return { sub: `${v.sessions} sessions · ${v.devices} devices` }; })(),
+      all: (() => { const v = D.getAllSessionsView(); return v.sessions ? { sub: `${v.sessions} sessions · ${v.devices} devices` } : null; })(),
       days: days.map((day) => ({ label: dayLabel(day), sessions: recs.filter((r) => r.day === day).map((r) => ({ id: r.id, title: r.time, sub: recSummary(r) })) })),
       selected: S.session,
     });
@@ -1012,7 +1012,8 @@
     "ob-auto": (el) => { S.obAuto = !S.obAuto; el.setAttribute("aria-checked", S.obAuto); },
     "ob-next": () => { S.ob++; renderOnboarding(); },
     "ob-back": () => { S.ob--; renderOnboarding(); },
-    "ob-done": () => { location.href = `${location.pathname}?state=${S.obAuto ? 2 : 1}`; },
+    // a new user has no recordings yet: first run, recording straight away if they chose to
+    "ob-done": () => { location.href = `${location.pathname}?state=${S.obAuto ? "2&first=1" : "first"}`; },
   };
 
   phone.addEventListener("click", (e) => {
@@ -1048,17 +1049,24 @@
     if (e.target.id === "top-q") { S.query = e.target.value; renderDiscover(); }
   });
 
-  /** Launch. ?state=1..4 jumps to a demo state; without it, "Record when the app opens" decides between 1 and 2. */
+  /** Launch. Recording when "Record when the app opens" is on; otherwise All sessions, or only the location for a
+   *  brand-new user. Demo states: ?state=1 (All sessions), 2 (recording), 3 (after Stop), 4 (a history session),
+   *  first (first run, no recordings ever); 5 is the old name of 1. */
   function boot() {
     renderMain();
     updateChrome();
     S.map = createMainMap($("#main-map"));
-    const state = +new URLSearchParams(location.search).get("state") || (S.settings.autoRecord ? 2 : 1);
+    const q = new URLSearchParams(location.search).get("state");
+    if (q === "first" || new URLSearchParams(location.search).get("first")) D.useFirstRunDemo();
+    const state = q === "first" ? 1 : +q || (S.settings.autoRecord ? 2 : 1);
     if (state === 2 || state === 3) startRecording();
     if (state === 3) stopRecording();
     if (state === 4) showSession("r1", false);
-    if (state === 5) showSession("all", false);
-    if (state === 1) showSession(null, false);
+    if (state === 1 || state === 5) showDefault();
+  }
+  /** Not recording: All sessions, or nothing but the location when there are no recordings at all. */
+  function showDefault() {
+    showSession(D.getAllSessionsView().sessions ? "all" : null, false);
   }
 
   // ---- Gallery (#gallery): every component in each state, built from the same UI functions ----
@@ -1077,13 +1085,13 @@
       <h1>Cluetooth UI v2 components</h1>
       <p>Each component in each state, rendered by the same functions as the app. <a href="./">Open the app</a></p>
 
-      ${sect("Demo states", "?state=1..5 · #onboarding")}
+      ${sect("Demo states", "?state=1..4, ?state=first · #onboarding")}
       <div class="g-row g-links">
-        <a href="./?state=1">1 · Just opened, not recording</a>
+        <a href="./?state=1">1 · Opened, not recording: All sessions</a>
         <a href="./?state=2">2 · Recording</a>
         <a href="./?state=3">3 · After Stop (frozen)</a>
         <a href="./?state=4">4 · History session</a>
-        <a href="./?state=5">5 · All sessions</a>
+        <a href="./?state=first">First run (no recordings yet)</a>
         <a href="./#onboarding">Onboarding</a>
       </div>
 
