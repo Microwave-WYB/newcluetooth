@@ -18,6 +18,7 @@ SCREENS = [
     ("ScanScrolledDown", "Scan, scrolled down", "Scroll-to-top button stacked above the round button"),
     ("ScanScrolledDownRecording", "Scan, scrolled, recording", "Scroll-to-top above the expanded button"),
     ("ScanDeviceHalfSheet", "Device sheet, half height", "Shared device-detail component"),
+    ("ScanDeviceHalfSheetShortLived", "Device sheet, short-lived", "First heard 20 s ago: the few buckets at the right edge, the time axis, and the Heard for caption"),
     ("ScanDeviceHalfSheetNotConnectable", "Device sheet, not connectable", "Disabled button with the reason; the sheet covers Scan, so the recording control is the floating pill"),
     ("ScanRecordControlBar", "Control bar", "Opens from the pill: time, rows, Pause/Resume, Stop"),
     ("ScanSavedSnackbar", "After Stop", "Saved, duration, rows; Add note / View"),

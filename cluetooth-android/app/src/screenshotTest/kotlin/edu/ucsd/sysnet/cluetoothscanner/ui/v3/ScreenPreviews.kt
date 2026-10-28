@@ -136,6 +136,9 @@ fun ScanScrolledDownRecording() = Frame {
 fun ScanDeviceHalfSheet() = Frame { ScanPreview(FakeData.scan, detail = FakeData.detailHalf) }
 
 @PreviewTest @PhonePreview @Composable
+fun ScanDeviceHalfSheetShortLived() = Frame { ScanPreview(FakeData.scan, detail = FakeData.detailShortLived) }
+
+@PreviewTest @PhonePreview @Composable
 fun ScanDeviceHalfSheetNotConnectable() = Frame {
     ScanPreview(FakeData.scan.copy(recorder = FakeData.recording), detail = FakeData.detailNotConnectable)
 }

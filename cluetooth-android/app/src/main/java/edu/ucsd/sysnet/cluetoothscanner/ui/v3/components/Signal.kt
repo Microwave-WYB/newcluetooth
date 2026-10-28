@@ -26,7 +26,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.layout.offset
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBuckets
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -67,38 +72,71 @@ fun RssiText(rssi: Int, modifier: Modifier = Modifier, size: Int = 15, textAlign
     )
 }
 
-/** About 56x20 dp: gray line, last point colored by signal. */
+/**
+ * Draws bucketed RSSI the one way for the sparkline and the chart: consecutive buckets with data are
+ * joined (the line breaks only across a long gap, [RssiBuckets.MAX_GAP_BUCKETS]), a lone bucket is a
+ * small dot in the line color, and the last bucket carries the single end marker in its band's color.
+ *
+ * Bucket `i` of `n` sits at `(i + 1) / n` of the plot width, so the last bucket (the one that
+ * contains now) is at the right edge and x only ever increases with time.
+ */
+private fun DrawScope.drawBuckets(
+    buckets: List<Int?>,
+    xOf: (Int) -> Float,
+    yOf: (Int) -> Float,
+    line: Color,
+    strokeWidth: Float,
+    dotRadius: Float,
+    endRadius: Float,
+    endColor: Color?,
+) {
+    val plan = RssiBuckets.plan(buckets)
+    plan.lines.forEach { run ->
+        val path = Path()
+        run.forEachIndexed { k, p -> if (k == 0) path.moveTo(xOf(p.index), yOf(p.rssi)) else path.lineTo(xOf(p.index), yOf(p.rssi)) }
+        drawPath(path, line, style = Stroke(strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+    plan.dots.forEach { drawCircle(line, dotRadius, Offset(xOf(it.index), yOf(it.rssi))) }
+    plan.end?.let { if (endColor != null) drawCircle(endColor, endRadius, Offset(xOf(it.index), yOf(it.rssi))) }
+}
+
+/** About 56x20 dp: the last 60 s in 2 s buckets, gray line, the last bucket colored by its band. */
 @Composable
-fun Sparkline(history: List<Int>, modifier: Modifier = Modifier) {
+fun Sparkline(history: List<Int?>, modifier: Modifier = Modifier) {
     val line = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
-    val last = history.lastOrNull()
-    val lastColor = if (last != null) signalColor(last) else line
+    val end = RssiBuckets.endMarker(history)
+    val endColor = if (end != null) signalColor(end.rssi) else null
     Canvas(modifier.size(width = 56.dp, height = 20.dp)) {
-        if (history.isEmpty()) return@Canvas
+        if (end == null) return@Canvas
         val pad = 3.dp.toPx()
         val lo = -100f
         val hi = -35f
-        fun pt(i: Int, v: Int) = Offset(
-            pad + (size.width - 2 * pad) * (if (history.size == 1) 1f else i.toFloat() / (history.size - 1)),
-            pad + (size.height - 2 * pad) * (1f - (v.coerceIn(-100, -35) - lo) / (hi - lo)),
+        val n = history.size
+        drawBuckets(
+            history,
+            xOf = { i -> pad + (size.width - 2 * pad) * (i + 1) / n },
+            yOf = { v -> pad + (size.height - 2 * pad) * (1f - (v.coerceIn(-100, -35) - lo) / (hi - lo)) },
+            line = line, strokeWidth = 1.25.dp.toPx(), dotRadius = 1.5.dp.toPx(), endRadius = 2.5.dp.toPx(), endColor = endColor,
         )
-        if (history.size >= 2) {
-            val path = Path()
-            history.forEachIndexed { i, v -> pt(i, v).let { if (i == 0) path.moveTo(it.x, it.y) else path.lineTo(it.x, it.y) } }
-            drawPath(path, line, style = Stroke(1.25.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        }
-        drawCircle(lastColor, 2.5.dp.toPx(), pt(history.lastIndex, history.last()))
     }
 }
 
+/** The chart's fixed value range; -65 and -80 are the band edges. */
+private const val CHART_LO = -100f
+private const val CHART_HI = -30f
+
+private fun chartFraction(rssi: Float) = (CHART_HI - rssi) / (CHART_HI - CHART_LO)
+
 /**
- * The larger detail chart. Faint bands mark the -65 and -80 thresholds; the line is the
- * primary color with the last point in the signal color.
+ * The detail chart: a fixed window that ends at now on the right edge, with its start labelled on
+ * the left, 60 buckets of the strongest RSSI, faint -65 / -80 lines with labels, and one end marker.
+ * A device heard for less than a tenth of the window gets a "Heard for ..." caption.
  */
 @Composable
 fun RssiChart(
     samples: List<Int?>,
     window: ChartWindow,
+    heardSeconds: Int?,
     onWindowChange: (ChartWindow) -> Unit,
     modifier: Modifier = Modifier,
     chartHeight: Dp = 150.dp,
@@ -107,6 +145,8 @@ fun RssiChart(
     val line = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
     val label = MaterialTheme.colorScheme.onSurfaceVariant
+    val end = RssiBuckets.endMarker(samples)
+    val endColor = if (end != null) signalColor(end.rssi) else null
     Column(modifier) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.signal_strength), style = MaterialTheme.typography.labelMedium, color = label, modifier = Modifier.weight(1f))
@@ -127,50 +167,43 @@ fun RssiChart(
         }
         Box(Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Canvas(Modifier.fillMaxWidth().height(chartHeight)) {
-                val lo = -100f
-                val hi = -40f
-                fun y(v: Number) = size.height * (1f - (v.toFloat().coerceIn(lo, hi) - lo) / (hi - lo))
-                val strongTop = y(hi)
-                val y65 = y(-65)
-                val y80 = y(-80)
-                drawRect(extra.signalGreen.copy(alpha = 0.07f), Offset(0f, strongTop), androidx.compose.ui.geometry.Size(size.width, y65 - strongTop))
-                drawRect(extra.signalYellow.copy(alpha = 0.07f), Offset(0f, y65), androidx.compose.ui.geometry.Size(size.width, y80 - y65))
-                drawRect(extra.signalRed.copy(alpha = 0.07f), Offset(0f, y80), androidx.compose.ui.geometry.Size(size.width, size.height - y80))
-                drawLine(grid, Offset(0f, y65), Offset(size.width, y65), 1.dp.toPx())
-                drawLine(grid, Offset(0f, y80), Offset(size.width, y80), 1.dp.toPx())
-                fun x(i: Int) = if (samples.size <= 1) size.width else size.width * i / (samples.size - 1)
-                val path = Path()
-                var pen = false
-                samples.forEachIndexed { i, v ->
-                    if (v == null) {
-                        pen = false
-                    } else if (!pen) {
-                        path.moveTo(x(i), y(v))
-                        pen = true
-                    } else {
-                        path.lineTo(x(i), y(v))
-                    }
-                }
-                drawPath(path, line, style = Stroke(1.75.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                // A lone sample between two gaps has no line to show it.
-                samples.forEachIndexed { i, v ->
-                    if (v != null && (i == 0 || samples[i - 1] == null) && (i == samples.lastIndex || samples[i + 1] == null)) {
-                        drawCircle(line, 2.dp.toPx(), Offset(x(i), y(v)))
-                    }
-                }
-                val lastIndex = samples.indexOfLast { it != null }
-                if (lastIndex >= 0) {
-                    val last = samples[lastIndex]!!
-                    val lastColor = when (signalOf(last)) {
-                        Signal.Strong -> extra.signalGreen
-                        Signal.Fair -> extra.signalYellow
-                        Signal.Weak -> extra.signalRed
-                    }
-                    drawCircle(lastColor, 4.dp.toPx(), Offset(x(lastIndex), y(last)))
+                fun y(v: Float) = size.height * chartFraction(v.coerceIn(CHART_LO, CHART_HI))
+                val y65 = y(-65f)
+                val y80 = y(-80f)
+                // Everything is drawn inside the plot area.
+                clipRect {
+                    drawRect(extra.signalGreen.copy(alpha = 0.07f), Offset(0f, 0f), Size(size.width, y65))
+                    drawRect(extra.signalYellow.copy(alpha = 0.07f), Offset(0f, y65), Size(size.width, y80 - y65))
+                    drawRect(extra.signalRed.copy(alpha = 0.07f), Offset(0f, y80), Size(size.width, size.height - y80))
+                    drawLine(grid, Offset(0f, y65), Offset(size.width, y65), 1.dp.toPx())
+                    drawLine(grid, Offset(0f, y80), Offset(size.width, y80), 1.dp.toPx())
+                    val pad = 5.dp.toPx() // room for the end marker at the right edge
+                    val n = samples.size
+                    drawBuckets(
+                        samples,
+                        xOf = { i -> pad + (size.width - 2 * pad) * (i + 1) / n },
+                        yOf = { v -> y(v.toFloat()) },
+                        line = line, strokeWidth = 1.75.dp.toPx(), dotRadius = 2.25.dp.toPx(), endRadius = 4.dp.toPx(), endColor = endColor,
+                    )
                 }
             }
-            Text("-65", fontFamily = MonoFamily, fontSize = 10.sp, color = label, modifier = Modifier.align(Alignment.TopStart).padding(top = chartHeight * (25f / 60f) - 14.dp))
-            Text("-80", fontFamily = MonoFamily, fontSize = 10.sp, color = label, modifier = Modifier.align(Alignment.TopStart).padding(top = chartHeight * (40f / 60f) - 14.dp))
+            Text("-65", fontFamily = MonoFamily, fontSize = 10.sp, color = label, modifier = Modifier.align(Alignment.TopStart).offset(y = chartHeight * chartFraction(-65f) - 14.dp))
+            Text("-80", fontFamily = MonoFamily, fontSize = 10.sp, color = label, modifier = Modifier.align(Alignment.TopStart).offset(y = chartHeight * chartFraction(-80f) - 14.dp))
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.chart_axis_start, window.startMinutes), style = MaterialTheme.typography.labelSmall, color = label)
+            if (RssiBuckets.isShortLived(heardSeconds, window.seconds)) {
+                Text(
+                    stringResource(R.string.chart_heard_for, formatDuration(heardSeconds ?: 0, LocalTexts.current)),
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = label,
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                Box(Modifier.weight(1f))
+            }
+            Text(stringResource(R.string.chart_axis_now), style = MaterialTheme.typography.labelSmall, color = label)
         }
     }
 }

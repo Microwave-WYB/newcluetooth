@@ -17,6 +17,19 @@ object FakeData {
         return List(n) { (base + r.nextInt(-wobble, wobble + 1)).coerceIn(-100, -35) }
     }
 
+    /** 30 buckets (2 s each): one short gap that keeps the line, one long gap that breaks it, a lone bucket. */
+    private fun sparkBuckets(seed: Int, base: Int): List<Int?> {
+        val values = history(seed, base, n = 30)
+        return values.mapIndexed { i, v ->
+            when {
+                seed % 3 == 0 && i in 9..14 -> null // six empty buckets: the line breaks
+                i in 20..21 -> null // two empty buckets: the line stays joined
+                i == 17 && seed % 3 == 0 -> v // a lone bucket between the two
+                else -> v
+            }
+        }
+    }
+
     private fun row(
         seed: Int,
         name: String?,
@@ -33,7 +46,7 @@ object FakeData {
         advKind = kind,
         connectable = connectable,
         rssi = rssi,
-        history = history(seed, rssi).dropLast(1) + rssi,
+        history = sparkBuckets(seed, rssi),
     )
 
     /** Sorted by RSSI; the last two arrived after the sort and are appended, so they are out of order. */
@@ -82,7 +95,17 @@ object FakeData {
         ),
     )
 
-    private fun chart(seed: Int, base: Int, n: Int) = history(seed, base, wobble = 6, n = n)
+    /** 60 buckets ending now: [firstBucket] is where the device was first heard; a long gap and a lone bucket in between. */
+    private fun chart(seed: Int, base: Int, n: Int, firstBucket: Int = 0): List<Int?> =
+        history(seed, base, wobble = 6, n = n).mapIndexed { i, v ->
+            when {
+                i < firstBucket -> null
+                i in 24..30 && firstBucket == 0 -> null
+                i == 33 && firstBucket == 0 -> v
+                i in 34..35 && firstBucket == 0 -> null
+                else -> v
+            }
+        }
 
     private val doneSteps = listOf(
         GattStepState("Connect", StepStatus.Done, "0.6 s"),
@@ -148,17 +171,22 @@ object FakeData {
         window: ChartWindow = ChartWindow.FiveMinutes,
         wiki: WikiUiState? = this.wiki,
         gattDisabledReason: String? = null,
+        firstBucket: Int = 0,
+        heardSeconds: Int? = null,
     ) = DeviceDetailUiState(
         device = device,
         variants = variants,
         chartWindow = window,
-        chartSamples = chart(device.id.hashCode(), device.rssi, n = 60),
+        chartSamples = chart(device.id.hashCode(), device.rssi, n = 60, firstBucket = firstBucket),
+        chartHeardSeconds = heardSeconds,
         gatt = gatt,
         wiki = wiki,
         gattDisabledReason = gattDisabledReason,
     )
 
     val detailHalf = detail()
+    /** First heard 20 s ago: a handful of buckets at the right edge and the "Heard for 20 s" caption. */
+    val detailShortLived = detail(firstBucket = 56, heardSeconds = 20)
     val detailGattProgress = detail(gatt = GattUiState.InProgress(progressSteps))
     val detailGattDone = detail(gatt = GattUiState.Done(doneSteps, gattServices))
     val detailNotConnectable = detail(

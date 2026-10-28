@@ -2,6 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.ui.v3
 
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBuckets
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ScanOrder
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AddressType
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdvKind
@@ -41,7 +42,7 @@ class LiveDeviceTrackerTest {
     }
 
     @Test
-    fun theLastPointOfTheSparklineAndChartIsTheCurrentRssi() {
+    fun theEndMarkerOfTheSparklineAndChartIsTheNewestBucket() {
         val t = LiveDeviceTracker()
         // Two seconds ago strong, now weak, with the weak sample in a fresh second.
         t.onSample(sample(rssi = -50, t = 1_000_000))
@@ -49,8 +50,9 @@ class LiveDeviceTrackerTest {
         val now = 1_002_000L
         val row = t.row("AA:BB:CC:DD:EE:01", now)!!
         assertEquals(-82, row.rssi)
-        assertEquals(-82, row.history.last())
-        assertEquals(-82, t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).last())
+        assertEquals(-82, RssiBuckets.endMarker(row.history)!!.rssi)
+        assertEquals(30, row.history.size) // 60 s in 2 s buckets
+        assertEquals(-82, RssiBuckets.endMarker(t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).buckets)!!.rssi)
     }
 
     @Test
@@ -62,15 +64,15 @@ class LiveDeviceTrackerTest {
     }
 
     @Test
-    fun chartAveragesPerSecondAndHonoursTheWindow() {
+    fun chartTakesTheStrongestPerBucketAndHonoursTheWindow() {
         val t = LiveDeviceTracker()
-        // Two samples in one second average to -55; an old sample leaves the 1 minute window.
+        // Two samples in one second give the stronger, -50; an old sample leaves the 1 minute window.
         t.onSample(sample(rssi = -50, t = 1_000_000))
         t.onSample(sample(rssi = -60, t = 1_000_400))
         t.onSample(sample(rssi = -80, t = 1_100_000))
         val now = 1_100_500L
-        assertEquals(listOf(-80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).filterNotNull())
-        assertEquals(listOf(-55, -80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FiveMinutes, now).filterNotNull())
+        assertEquals(listOf(-80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).buckets.filterNotNull())
+        assertEquals(listOf(-50, -80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FiveMinutes, now).buckets.filterNotNull())
     }
 
     @Test
@@ -97,11 +99,11 @@ class LiveDeviceTrackerTest {
         val t = LiveDeviceTracker()
         t.onSample(sample(rssi = -50, t = 1_000_000))
         t.onSample(sample(rssi = -60, t = 1_030_000))
-        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, 1_030_500)
+        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, 1_030_500).buckets
         assertEquals(60, series.size)
         assertEquals(-60, series.last())
-        assertEquals(-50, series[series.size - 31])
-        assertTrue(series.subList(series.size - 29, series.size - 1).all { it == null })
+        assertEquals(-50, series[29])
+        assertTrue(series.subList(30, 59).all { it == null })
     }
 
     @Test
@@ -124,10 +126,11 @@ class LiveDeviceTrackerTest {
         // More seconds than the ring holds: the oldest are overwritten, the chart still sees the newest.
         for (i in 0 until 1_000) t.onSample(sample(rssi = -40 - (i % 50), t = 1_000_000L + i * 1_000L))
         val now = 1_000_000L + 999 * 1_000L
-        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FifteenMinutes, now)
-        assertEquals(LiveDeviceTracker.CHART_POINTS, series.size)
+        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FifteenMinutes, now).buckets
+        assertEquals(60, series.size) // 15 s buckets
         assertTrue(series.all { it != null })
-        assertEquals(-40 - (999 % 50), series.last())
+        // the last bucket holds seconds 985..999: the strongest of them is i = 985 (985 % 50 = 35)
+        assertEquals(-40 - 35, series.last())
     }
 
     @Test

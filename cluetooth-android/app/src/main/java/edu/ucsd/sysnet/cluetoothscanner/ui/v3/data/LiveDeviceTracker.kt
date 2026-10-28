@@ -58,13 +58,12 @@ class LiveDeviceTracker {
     }
 
     /**
-     * One RSSI average per second in primitive arrays. It starts small and doubles up to [MAX_BUCKETS];
+     * The strongest RSSI of each second in primitive arrays. It starts small and doubles up to [MAX_BUCKETS];
      * only a full-size ring wraps, overwriting the oldest second, so before that `head` stays 0.
      */
     private class RssiRing {
         private var seconds = LongArray(INITIAL_BUCKETS)
-        private var sums = IntArray(INITIAL_BUCKETS)
-        private var counts = IntArray(INITIAL_BUCKETS)
+        private var maxes = IntArray(INITIAL_BUCKETS)
         private var capacity = INITIAL_BUCKETS
         private var head = 0
         private var size = 0
@@ -73,29 +72,26 @@ class LiveDeviceTracker {
             if (size > 0) {
                 val last = (head + size - 1) % capacity
                 if (seconds[last] == second) {
-                    sums[last] += rssi
-                    counts[last]++
+                    if (rssi > maxes[last]) maxes[last] = rssi
                     return
                 }
             }
             if (size == capacity && capacity < MAX_BUCKETS) grow()
             val index = if (size < capacity) (head + size++) % capacity else head.also { head = (head + 1) % capacity }
             seconds[index] = second
-            sums[index] = rssi
-            counts[index] = 1
+            maxes[index] = rssi
         }
 
         private fun grow() {
             capacity = minOf(capacity * 2, MAX_BUCKETS)
             seconds = seconds.copyOf(capacity)
-            sums = sums.copyOf(capacity)
-            counts = counts.copyOf(capacity)
+            maxes = maxes.copyOf(capacity)
         }
 
-        inline fun forEach(block: (second: Long, sum: Int, count: Int) -> Unit) {
+        inline fun forEach(block: (second: Long, max: Int) -> Unit) {
             for (i in 0 until size) {
                 val index = (head + i) % capacity
-                block(seconds[index], sums[index], counts[index])
+                block(seconds[index], maxes[index])
             }
         }
     }
@@ -182,44 +178,19 @@ class LiveDeviceTracker {
         )
     }
 
-    /**
-     * The last point of the sparkline is the value shown as the number, so the number's colour and the
-     * last point's colour always agree (bins are averages and may lag by a second or two).
-     */
-    private fun withCurrent(series: List<Int>, current: Int?): List<Int> =
-        if (current == null || series.isEmpty()) series else series.dropLast(1) + current
+    /** The last 60 seconds in 2 s buckets (the strongest RSSI of each; null = nothing heard). */
+    private fun sparkline(d: Device, nowMs: Long): List<Int?> = bucketed(d, nowMs, SPARK_WINDOW_SEC, SPARK_BUCKET_SEC)
 
-    /** About 24 points covering the last 60 seconds, averaged per bin; empty bins are skipped. */
-    private fun sparkline(d: Device, nowMs: Long): List<Int> = withCurrent(binned(d, nowMs / 1000, 60, 24).filterNotNull(), d.rssi)
-
-    /**
-     * RSSI over the window for the detail chart, at most [CHART_POINTS] bins, oldest first; a bin with
-     * no sample is null so the chart can show the gap. The last bin is the current RSSI.
-     */
-    fun chart(addr: String, window: ChartWindow, nowMs: Long): List<Int?> {
-        val d = devices[addr] ?: return emptyList()
-        val seconds = when (window) {
-            ChartWindow.OneMinute -> 60
-            ChartWindow.FiveMinutes -> 300
-            ChartWindow.FifteenMinutes -> 900
-        }
-        val bins = binned(d, nowMs / 1000, seconds, minOf(seconds, CHART_POINTS))
-        val current = d.rssi
-        return if (current == null || bins.isEmpty()) bins else bins.dropLast(1) + current
+    /** The detail chart series: 60 buckets of the window size (1 s, 5 s or 15 s each), ending now. */
+    fun chart(addr: String, window: ChartWindow, nowMs: Long): RssiSeries {
+        val d = devices[addr] ?: return RssiSeries(List(window.seconds / window.bucketSeconds) { null }, null)
+        return RssiSeries(bucketed(d, nowMs, window.seconds, window.bucketSeconds), ((nowMs - d.firstSeenMs) / 1000).toInt().coerceAtLeast(0))
     }
 
-    private fun binned(d: Device, nowSec: Long, windowSec: Int, bins: Int): List<Int?> {
-        val sums = IntArray(bins)
-        val counts = IntArray(bins)
-        val start = nowSec - windowSec + 1
-        d.ring.forEach { second, sum, count ->
-            if (second in start..nowSec) {
-                val idx = (((second - start) * bins) / windowSec).toInt().coerceIn(0, bins - 1)
-                sums[idx] += sum
-                counts[idx] += count
-            }
-        }
-        return List(bins) { if (counts[it] > 0) sums[it] / counts[it] else null }
+    private fun bucketed(d: Device, nowMs: Long, windowSec: Int, bucketSec: Int): List<Int?> {
+        val bucketer = RssiBucketer(nowMs / 1000, windowSec, bucketSec)
+        d.ring.forEach { second, max -> bucketer.add(second, max) }
+        return bucketer.buckets()
     }
 
     fun variants(addr: String): List<AdVariantState> {
@@ -246,7 +217,8 @@ class LiveDeviceTracker {
         const val MAX_BUCKETS = 900
         const val INITIAL_BUCKETS = 16
         const val MAX_VARIANTS = 24
-        const val CHART_POINTS = 120
+        const val SPARK_WINDOW_SEC = 60
+        const val SPARK_BUCKET_SEC = 2
         const val STALE_AFTER_MS = 20_000L
         const val FORGET_AFTER_MS = 30 * 60_000L
 

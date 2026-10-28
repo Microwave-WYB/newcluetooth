@@ -139,8 +139,9 @@ fun DeviceDetailHalf(
                         stringResource(if (device.connectable) R.string.connectable else R.string.not_connectable),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
                     )
-                    Text(" · ", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(" · ", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     Text(
                         stringResource(
                             R.string.variants_link,
@@ -148,6 +149,8 @@ fun DeviceDetailHalf(
                         ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.clickable(onClick = onExpand),
                     )
                 }
@@ -164,7 +167,7 @@ fun DeviceDetailHalf(
                 Text("dBm", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        RssiChart(detail.chartSamples, detail.chartWindow, onWindowChange, Modifier.padding(top = 14.dp))
+        RssiChart(detail.chartSamples, detail.chartWindow, detail.chartHeardSeconds, onWindowChange, Modifier.padding(top = 14.dp))
         detail.positionEstimate?.let { PositionEstimateRow(it) }
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (running) {

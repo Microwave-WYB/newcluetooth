@@ -51,8 +51,8 @@
         <item quantity="other">%1$s minutes</item>
     </plurals>
     <plurals name="ad_variants">
-        <item quantity="one">%1$s advertising variant</item>
-        <item quantity="other">%1$s advertising variants</item>
+        <item quantity="one">%1$s variant</item>
+        <item quantity="other">%1$s variants</item>
     </plurals>
     <plurals name="times_heard">
         <item quantity="one">%1$s time</item>
@@ -111,6 +111,9 @@
     <string name="chart_1_min">1 min</string>
     <string name="chart_5_min">5 min</string>
     <string name="chart_15_min">15 min</string>
+    <string name="chart_axis_start">−%1$d min</string>
+    <string name="chart_axis_now">now</string>
+    <string name="chart_heard_for">Heard for %1$s</string>
     <string name="detail_tab_advertising">Advertising</string>
     <string name="detail_tab_gatt">GATT</string>
     <string name="detail_tab_wiki">Wiki</string>

@@ -31,6 +31,8 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveScanList
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBucketer
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiSeries
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LocationFix
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.scanLocationOf
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
@@ -435,6 +437,13 @@ class V3ViewModel(
     /** The detail of the selected device, or null; collected by the maps only while something is selected. */
     private val selectedDetail: Flow<DeviceDetailUiState?> = _selected.flatMapLatest { a -> if (a == null) flowOf(null) else detail }
 
+    /** A device that is not being heard now: its stored minutes (strongest RSSI per minute) on the same time axis. */
+    private fun historySeries(history: List<Sighting>, window: ChartWindow, nowMs: Long): RssiSeries {
+        val bucketer = RssiBucketer(nowMs / 1000, window.seconds, window.bucketSeconds)
+        history.forEach { s -> s.bestRssi?.let { bucketer.add(s.minuteMs / 1000, it) } }
+        return RssiSeries(bucketer.buckets(), null)
+    }
+
     private fun buildDetail(
         addr: String,
         window: ChartWindow,
@@ -458,7 +467,7 @@ class V3ViewModel(
             id = addr, name = page?.title, mac = addr, addressType = AddressType.Unknown, advKind = AdvKind.Legacy,
             connectable = false, rssi = history.firstNotNullOfOrNull { it.bestRssi } ?: -100, history = emptyList(), stale = true,
         )
-        val samples: List<Int?> = if (live != null) chart else history.mapNotNull { it.bestRssi }.reversed().takeLast(120)
+        val series: RssiSeries = if (live != null) chart else historySeries(history, window, now)
         val engine = gattFor(addr, g, saved)
         val busyElsewhere = g is EngineGattState.Running && g.request.target.addr != addr
         val reason = when {
@@ -473,7 +482,8 @@ class V3ViewModel(
             device = row,
             variants = variants,
             chartWindow = window,
-            chartSamples = samples,
+            chartSamples = series.buckets,
+            chartHeardSeconds = series.heardSeconds,
             gatt = engine,
             wiki = page?.let {
                 WikiUiState(

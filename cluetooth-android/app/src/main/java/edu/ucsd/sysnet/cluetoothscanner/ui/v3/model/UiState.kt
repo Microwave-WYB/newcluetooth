@@ -50,8 +50,8 @@ data class DeviceRowState(
     val advKind: AdvKind,
     val connectable: Boolean,
     val rssi: Int,
-    /** Recent RSSI samples, oldest first, for the row sparkline. */
-    val history: List<Int>,
+    /** The last 60 s in 2 s buckets, oldest first, strongest RSSI per bucket; null = nothing heard in it. */
+    val history: List<Int?>,
     /** Not heard for a while; the row stays where it is but is dimmed. */
     val stale: Boolean = false,
 )
@@ -74,10 +74,11 @@ sealed interface ScanLocation {
 
 // ---- Device detail -------------------------------------------------------------------------
 
-enum class ChartWindow(@StringRes val label: Int) {
-    OneMinute(R.string.chart_1_min),
-    FiveMinutes(R.string.chart_5_min),
-    FifteenMinutes(R.string.chart_15_min),
+/** The window length, its bucket size (60 buckets each) and the label of its left edge. */
+enum class ChartWindow(@StringRes val label: Int, val seconds: Int, val bucketSeconds: Int, val startMinutes: Int) {
+    OneMinute(R.string.chart_1_min, 60, 1, 1),
+    FiveMinutes(R.string.chart_5_min, 300, 5, 5),
+    FifteenMinutes(R.string.chart_15_min, 900, 15, 15),
 }
 
 data class AdStructureRow(val type: String, val typeName: String, val length: Int, val data: String)
@@ -137,6 +138,8 @@ data class DeviceDetailUiState(
     val chartWindow: ChartWindow,
     /** RSSI over [chartWindow], oldest first; null marks a stretch with no samples (a gap). */
     val chartSamples: List<Int?>,
+    /** How long the device has been heard, for the "Heard for ..." caption on short-lived devices; null when unknown. */
+    val chartHeardSeconds: Int? = null,
     val gatt: GattUiState,
     val wiki: WikiUiState?,
     /** Non-null disables "Discover GATT" and says why. */
