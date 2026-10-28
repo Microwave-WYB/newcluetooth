@@ -367,9 +367,13 @@ These rules come from the owner. Every change to `cluetooth-android/app/.../ui/`
   - the blinking dot.
 - The UI is English only. Use plain text labels, no check or cross symbols.
 
+- Never show the same information twice on one screen, for example a title in the top bar and again in the body.
+
 **Lists**
 - A list the user can tap must never re-order by itself. Sort once, when the list appears or the user changes the sort. After that, rows keep their positions: values update in place and new rows are appended. Only an explicit action re-sorts (pull-to-refresh or changing the sort).
+- Enforce this in the code structure, not by watching the screen. Each list keeps an explicit order state (a list of keys) that only user actions change. Live data only updates the values of keys already in it and appends new keys. Cover it with a unit test that feeds changing RSSI and asserts the order is unchanged.
 - Scan sorts once by RSSI 3 s after the first device. Stale rows dim in place.
+- Opening an item from a list and coming back (with Back, by closing the sheet or by returning from a page) must restore the list exactly where it was: the same scroll position, the same order and the same sheet height. The user must never have to scroll down again to reach the next item.
 
 **Vocabulary**
 - Use "scan", never "heard": "Scanned now", "8 scanned now", "Last scanned 2 h ago".
@@ -387,9 +391,14 @@ These rules come from the owner. Every change to `cluetooth-android/app/.../ui/`
 - The chart covers the last 1 minute only, with no window selector. The end marker is the current reading, with the same value and color as the number. There are no band text labels, only the −65 and −80 ticks.
 - Discover GATT is a filled `Button`. View on map and Wiki are `FilledTonalButton`s.
 
+**Maps**
+- Map pages have no top app bar, so the map fills the screen under the status bar. System back leaves the page. The page title (for example the recording time, distance and device count) goes in the sheet's peek header.
+- The map sheet never covers the whole map. Fully expanded, it stops at about 60% of the screen height, so the map always stays visible above it.
+- The density (heat) layer is on by default. It is drawn with circles; `HeatmapLayer` crashes on the Adreno 640 test phone, so do not use it.
+
 **Filters**
 - "Hide unnamed Apple devices" is on by default. It hides every 0x004C device without a local name and affects the UI only, never recording or data.
 
 **Verification**
-- Before handing over a build, run it on the emulator AVD `cluetooth-test`, and on the test phone `R58M81J3YJV` when it's connected. Check every screen you touched, including watching each list for 60 s. Check `logcat -b crash`.
+- Before handing over a build, run it on the emulator AVD `cluetooth-test`, and on the test phone `R58M81J3YJV` when it's connected. Check every screen you touched, and check `logcat -b crash`. Behaviour that the code guarantees (list order, state restoration) is proven by unit tests, not by watching the screen for a long time.
 - Name APKs `cluetooth-0.1.0-debug-<sha8>.apk`. Never overwrite an existing APK.
