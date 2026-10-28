@@ -44,6 +44,28 @@ class StructureKeyTest {
         assertEquals("name:Hue", StructureKey.of(byteArrayOf(4, 8, 'H'.code.toByte(), 'u'.code.toByte(), 'e'.code.toByte())).key)
         // blank names fall through to the shape
         assertEquals("shape:09/1", key(2, 9, 0x20))
+        assertEquals("shape:09/1", key(2, 9, 0x00))
+    }
+
+    @Test
+    fun theLocalNameFollowsTheDatabaseRule() {
+        fun named(type: Int, vararg data: Int) = intArrayOf(data.size + 1, type, *data)
+        val short = named(8, 'S'.code, 'h'.code)
+        val full = named(9, 'F'.code, 'u'.code)
+        // the Complete name wins over the Shortened one, in either order
+        assertEquals("name:Fu", key(*short, *full))
+        assertEquals("name:Fu", key(*full, *short))
+        assertEquals("name:Sh", key(*short))
+        // trailing NULs are stripped, an interior NUL is kept (and is not a letter)
+        assertEquals("name:ab", key(*named(9, 'a'.code, 'b'.code, 0, 0)))
+        assertEquals("name:ab", key(*named(9, 'a'.code, 'b'.code, 0, 'c'.code)))
+        // multi-byte UTF-8 is read as text
+        assertEquals("name:é", key(*named(9, 0xC3, 0xA9)))
+        // invalid UTF-8 is no name, and the chosen structure's verdict is final (no fallback to the other)
+        assertEquals("shape:09/2", key(*named(9, 0xC3, 0x28)))
+        assertEquals("shape:08/2,09/2", key(*short, *named(9, 0xFF, 0xFE)))
+        // the first structure of the type decides
+        assertEquals("name:One", key(*named(9, 'O'.code, 'n'.code, 'e'.code), *named(9, 'T'.code)))
     }
 
     @Test

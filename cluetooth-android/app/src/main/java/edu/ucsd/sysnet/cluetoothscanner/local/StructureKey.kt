@@ -49,7 +49,8 @@ data class StructureKey(val kind: StructureKind, val value: String) {
         fun of(raw: ByteArray): StructureKey {
             var company: Int? = null
             var uuid: String? = null
-            var name: String? = null
+            var complete: ByteArray? = null // first Complete Local Name (0x09) data
+            var shortened: ByteArray? = null // first Shortened Local Name (0x08) data
             val shape = StringBuilder()
             var items = 0
             var i = 0
@@ -74,24 +75,40 @@ data class StructureKey(val kind: StructureKind, val value: String) {
                     0x02, 0x03, 0x16 -> if (uuid == null && length >= 2) {
                         uuid = hex2(raw[start + 1].toInt()) + hex2(raw[start].toInt()) // little endian on the air
                     }
-                    0x08, 0x09 -> if (name == null) {
-                        // UTF-8 with replacement, NUL removed, like the SQL/Python name derivation
-                        name = String(raw, start, length, Charsets.UTF_8).replace("\u0000", "").trim()
-                            .takeIf { it.isNotEmpty() }
-                    }
+                    0x09 -> if (complete == null) complete = raw.copyOfRange(start, end)
+                    0x08 -> if (shortened == null) shortened = raw.copyOfRange(start, end)
                 }
                 i = end
             }
             company?.let { return StructureKey(StructureKind.COMPANY, it.toString()) }
             uuid?.let { return StructureKey(StructureKind.SERVICE_UUID, it) }
-            name?.let { namePrefix(it) }?.let { return StructureKey(StructureKind.LOCAL_NAME, it) }
+            (complete ?: shortened)?.let { utf8OrNull(it) }?.let { namePrefix(it) }?.let { return StructureKey(StructureKind.LOCAL_NAME, it) }
             return StructureKey(StructureKind.AD_SHAPE, if (items == 0) "-" else shape.toString())
+        }
+
+        /**
+         * The database's local name (`ble_utf8_or_null`): trailing NULs removed, null when empty or not valid
+         * UTF-8. Like `payload_fields`, the Complete Local Name (0x09) is preferred over the Shortened one
+         * (0x08), and that structure's name is final: if it is invalid there is no name.
+         */
+        private fun utf8OrNull(data: ByteArray): String? {
+            var end = data.size
+            while (end > 0 && data[end - 1].toInt() == 0) end--
+            if (end == 0) return null
+            return try {
+                Charsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(data, 0, end)).toString()
+            } catch (_: java.nio.charset.CharacterCodingException) {
+                null
+            }
         }
 
         private fun namePrefix(name: String): String? {
             val letters = name.takeWhile { it.isLetter() }.take(MAX_NAME_LETTERS)
             val prefix = letters.ifEmpty { name.take(NAME_FALLBACK_CHARS) }
-            return prefix.filterNot { it.isISOControl() || it == '�' }.ifEmpty { null }
+            return prefix.filterNot { it.isISOControl() }.takeIf { it.isNotBlank() }
         }
 
         private val HEX = "0123456789ABCDEF".toCharArray()
