@@ -20,7 +20,7 @@
   --div: #0000001a;
   --blue: #0064d4;
   --on-blue: #fff;
-  --scrim: rgba(0, 0, 0, 0.4);
+  --scrim: rgba(0, 0, 0, 0.32); /* behind the device sheet; solid, no blur */
   --dim-strip: rgba(0, 0, 0, 0.16); /* the map strip beside the open sidebar */
 
   /* ---- Color: Cluetooth ---- */
@@ -91,6 +91,7 @@
   --fab-dot: 18px;
   --icon-btn: 40px;         /* round icon button: also its touch target */
   --icon-btn-glyph: 16px;
+  --gmark: 12px;            /* a GATT step's status mark */
   --chip-h: 34px;
   --chip-pad: 14px;
   --chip-gap: 6px;
@@ -151,6 +152,7 @@
   --t-page: 0.32s;
   --t-morph: 0.36s;
   --t-blink: 1s;
+  --t-spin: 0.8s;           /* the GATT step spinner */
   --dim: 0.42;             /* stale rows, faded map points */
 }
 
@@ -169,7 +171,7 @@
     --div: #ffffff1f;
     --blue: #3b9bff;
     --on-blue: #fff;
-    --scrim: rgba(0, 0, 0, 0.55);
+    --scrim: rgba(0, 0, 0, 0.5);
     --dim-strip: rgba(0, 0, 0, 0.35);
 
     --rssi-strong: #4cc27f;

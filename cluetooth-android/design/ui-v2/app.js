@@ -36,6 +36,7 @@
     car: '<path d="M3 17v-4l2-6h14l2 6v4z"/><path d="M3 13h18"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/>',
     medical: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
     external: '<path d="M7 17 17 7M9 7h8v8"/>',
+    close: '<path d="M6 6l12 12M18 6 6 18"/>',
     list: '<path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
     grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
     panelClose: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M16 15l-3-3 3-3"/>',
@@ -148,9 +149,10 @@
     /** DiscoverHead: the view switch (it shows the view it switches TO), then Nearby / All while live, else the view's name.
      *  In the product view it is the back button. */
     discoverHead: ({ view, live, mode, product }) => product
-      ? `${UI.iconButton({ name: "back", label: "Back", action: "product-back" })}`
+      ? `${UI.iconButton({ name: "back", label: "Back", action: "sheet-back" })}<span></span><span></span>`
       : `${UI.iconButton({ name: view === "list" ? "grid" : "list", label: view === "list" ? "Show categories" : "Show the device list", action: "disc-view" })}
-         ${live ? UI.segmented([{ id: "nearby", label: "Nearby" }, { id: "all", label: "All" }], mode, "disc-mode") : `<span class="disc-title">${view === "list" ? "Devices" : "Products"}</span>`}`,
+         ${live ? UI.segmented([{ id: "nearby", label: "Nearby" }, { id: "all", label: "All" }], mode, "disc-mode") : `<span class="disc-title">${view === "list" ? "Devices" : "Products"}</span>`}
+         <span></span>`,
 
     /** ProductView: inside the Discover sheet; the background map shows the product's points. */
     productView: (p, rows) => `
@@ -193,19 +195,20 @@
         <text x="${x0}" y="${ht - 2}">−1 min</text><text x="${w}" y="${ht - 2}" text-anchor="end">now</text></svg>`;
     },
 
-    /** DeviceSheet: name, product link, MAC with RSSI, chart, Advertising / GATT tabs. The map behind shows its sightings. */
-    deviceSheet: (d, { tab, gatt, chartW }) => `
-      <div class="handle"></div>
+    /** DeviceHead: name, product wiki link, MAC with RSSI, and the neutral close button at the top right. */
+    deviceHead: (d) => `
         <div class="dev-head">
+          ${UI.iconButton({ name: "close", label: "Close", action: "device-close" })}
           <div class="dev-name"><b class="${d.name ? "" : "none"}">${d.name ? esc(d.name) : "No name"}</b></div>
           ${d.productName ? `<a class="dev-product" href="${esc(d.wikiUrl)}" target="_blank" rel="noopener">${esc(d.productName)}${icon("external")}</a>` : ""}
           <div class="dev-sub">${d.addr}<span class="dev-rssi band-${band(d.rssi)}">${minus(d.rssi)} dBm</span></div>
-        </div>
-      <div class="sheet-body">
+        </div>`,
+
+    /** DeviceBody: the 1-minute chart, then the Advertising / GATT tabs. The map behind shows its sightings. */
+    deviceBody: (d, { tab, gatt, chartW }) => `
         ${d.history ? `<div class="chart-wrap">${UI.chart(d.history, d.rssi, chartW)}</div>` : ""}
         <div class="dev-tabs" id="dev-seg">${UI.segmented([{ id: "adv", label: "Advertising" }, { id: "gatt", label: "GATT" }], tab, "dev-tab")}</div>
-        <div id="dev-tab">${tab === "adv" ? UI.advertising(d) : UI.gatt(gatt, d.addr)}</div>
-      </div>`,
+        <div id="dev-tab">${tab === "adv" ? UI.advertising(d) : UI.gattTab(gatt ? { phase: "done", result: gatt, shown: gatt.steps.length, addr: d.addr } : { phase: "idle", addr: d.addr })}</div>`,
 
     /** Advertising tab: the Details list, then the raw Len / Type / Data table. */
     advertising: (d) => {
@@ -222,11 +225,33 @@
           ${d.structures.map((s) => `<tr><td class="num">${s.length}</td><td>0x${s.type}</td><td>${s.data}</td></tr>`).join("")}</table>`;
     },
 
-    /** GATT tab: one line and the Discover GATT button until it has been read, then the services in place. */
-    gatt: (g, addr = "") => g
-      ? g.services.map((s) => `<div class="gatt-svc"><b>${esc(s.name)}</b><div class="dev-sub">${s.uuid}</div>
-          ${s.chars.map(([n, u, p, v]) => `<div class="gatt-char">${esc(n)}<span>${u} · ${esc(p)}</span><span>${esc(v)}</span></div>`).join("")}</div>`).join("")
-      : `<div class="gatt-empty"><p>GATT hasn't been read for this device yet.</p>${UI.button({ kind: "primary", label: "Discover GATT", action: "gatt", value: addr })}</div>`,
+    /** GATT services and characteristics. */
+    gattServices: (services) => services.map((s) => `<div class="gatt-svc"><b>${esc(s.name)}</b><div class="dev-sub">${s.uuid}</div>
+          ${s.chars.map(([n, u, p, v]) => `<div class="gatt-char">${esc(n)}<span>${u} · ${esc(p)}</span><span>${esc(v)}</span></div>`).join("")}</div>`).join(""),
+
+    /** GATT steps: rows 0..shown-1 finished (done or failed), row `running` with a spinner (and its progress). */
+    gattSteps: (steps, shown, running = -1, progress = "") => `<div class="gsteps">${steps.map((st, i) => {
+      if (i === running) return `<div class="gstep running"><span class="gmark" aria-label="Running"></span><span>${esc(st.label)}</span><span class="gdetail">${esc(progress)}</span></div>`;
+      if (i >= shown) return "";
+      return `<div class="gstep ${st.failed ? "failed" : "done"}"><span class="gmark" aria-label="${st.failed ? "Failed" : "Done"}"></span><span>${esc(st.label)}</span><span class="gdetail">${esc(st.detail)}</span></div>`;
+    }).join("")}</div>`,
+
+    /** GATT tab. idle: the note and one full-width "Discover GATT"; confirm: the same row turns into Cancel | I am
+     *  authorized (the note stays, nothing moves); running / failed / done: the steps, then Try again or the results. */
+    gattTab: ({ phase, result, shown = 0, running = -1, progress = "", addr = "" }) => {
+      if (phase === "idle" || phase === "confirm") return `
+        <div class="gatt-flow ${phase === "confirm" ? "confirm" : ""}" data-addr="${addr}">
+          <p class="gatt-note">Only connect to devices you own or have permission to test.</p>
+          <div class="gatt-ctl">
+            <button class="btn tonal gatt-cancel" data-action="gatt-cancel" tabindex="${phase === "confirm" ? 0 : -1}">Cancel</button>
+            <button class="btn primary gatt-go" data-action="gatt-go" data-value="${addr}">${phase === "confirm" ? "I am authorized" : "Discover GATT"}</button>
+          </div>
+        </div>`;
+      const failed = phase === "failed";
+      return `<div class="gatt-flow">${UI.gattSteps(result.steps, shown, running, progress)}
+        ${failed ? `<div class="gatt-retry">${UI.button({ kind: "tonal", label: "Try again", action: "gatt-retry", value: addr })}</div>` : ""}
+        ${phase === "done" ? UI.gattServices(result.services) : ""}</div>`;
+    },
 
     /** MapMarker: one device point (its category icon) or a cluster (dominant icon and count). */
     markerPoint: (p, { sel, faded } = {}) =>
@@ -274,8 +299,12 @@
       ${UI.menuButton(false)}
       ${UI.topSearch(false)}
       <div id="pages"></div>
-      <div class="scrim sheet-scrim" data-action="sheet-close"></div>
-      <section class="sheet dev-sheet" aria-label="Device" data-snaps="collapsed expanded"></section>`;
+      <div class="scrim dev-scrim" data-action="device-close"></div>
+      <section class="sheet dev-sheet" aria-label="Device" data-snaps="dismissed expanded">
+        <div class="handle"></div>
+        <div class="dev-top" id="dev-top"></div>
+        <div class="sheet-body" id="dev-body"></div>
+      </section>`;
   }
 
   /** The Discover sheet: categories or the device list (Nearby / All only while live), or one product. */
@@ -287,9 +316,10 @@
     const mode = S.live ? S.discoverMode : "all";
     const q = S.query.trim().toLowerCase();
     const head = $("#disc-head"), chips = $("#disc-chips"), body = $("#disc-body");
-    head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, product: S.product });
-    if (S.product) {
-      const p = D.getProduct(S.product);
+    const top = S.nav[S.nav.length - 1];
+    head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, product: !!top });
+    if (top) {
+      const p = D.getProduct(top.id);
       chips.innerHTML = "";
       body.innerHTML = UI.productView(p, productDevices(p).filter((d) => nameMatch(d.name, q)).map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`);
     } else if (S.discView === "list") {
@@ -492,6 +522,12 @@
       requestAnimationFrame(() => { queued = false; syncMarkers(); });
     });
     map.on("click", (e) => { if (!e.originalEvent.target.closest(".mk")) M.clear(); });
+    // the user panning or zooming the map (drag, pinch, wheel, double-tap) collapses the Discover sheet;
+    // camera moves made by the app have no originalEvent
+    map.on("movestart", (e) => {
+      const ds = $(".disc-sheet", phone);
+      if (e.originalEvent && ds.classList.contains("open") && sheetState(ds) !== "collapsed") setSheetState(ds, "collapsed");
+    });
 
     function setPoints(points) {
       M.points = points;
@@ -533,14 +569,14 @@
       const below = Math.max(sheetCover(), 320);
       if (move && at) map.easeTo({ center: at, zoom: Math.max(map.getZoom(), 18.2), padding: { top: 0, bottom: below, left: 0, right: 0 }, duration: 600 });
       paintSelection();
-      openSheet(addr, { onMap: true });
     });
+    /** Removes the highlight; unless quiet, a tap on empty map also leaves the device view. */
     M.clear = (quiet) => {
       if (!M.sel || !M.ready) return;
       M.sel = null;
       map.getSource("sightings").setData(fc([]));
       paintSelection();
-      if (!quiet) closeSheet(true);
+      if (!quiet) closeDevice();
     };
     M.zoomCluster = async (id, lngLat) => {
       const z = await map.getSource("devices").getClusterExpansionZoom(+id);
@@ -558,7 +594,7 @@
   const S = {
     session: null, live: false, order: [],
     recorder: "idle", paused: false, recMap: null,
-    discoverMode: "nearby", discView: "categories", product: null, catScroll: 0,
+    discoverMode: "nearby", discView: "categories", nav: [], device: null, // nav: the sheet's stack above the base view (a product)
     devCat: "all", query: "",
     settings: { ...SETTINGS }, stack: [], map: null,
     ob: 0, obAuto: true, obAllowed: [false, false, false],
@@ -601,7 +637,7 @@
   function showSession(id, live) {
     S.session = id;
     S.live = !!(id && live);
-    S.product = null;
+    S.nav = [];
     S.order = id ? D.getSessionDevices(id).sort((a, b) => b.rssi - a.rssi).map((d) => d.addr) : []; // sorted once
     const sess = id && D.getRecording(id);
     S.map.setSession(sess, id ? sessionPoints() : []);
@@ -660,34 +696,13 @@
     if (!S.session || S.session === id) showSession(id, false);
   }
 
-  // ---- Device sheet ----
-  function openSheet(addr, { onMap = false } = {}) {
-    const d = D.getDevice(addr);
-    S.sheet = { addr, onMap, tab: "adv" };
-    const sheet = $(".dev-sheet", phone);
-    sheet.innerHTML = UI.deviceSheet(d, { tab: "adv", gatt: D.getDeviceGatt(addr), chartW: phone.clientWidth - 32 });
-    $(".sheet-body", sheet).scrollTop = 0;
-    sheet.style.setProperty("--peek", `${$(".handle", sheet).offsetHeight + $(".dev-head", sheet).offsetHeight}px`);
-    // on the map it opens collapsed so the selection stays visible; elsewhere expanded
-    setSheetState(sheet, onMap ? "collapsed" : "expanded");
-    sheet.classList.add("open");
-    $(".sheet-scrim", phone).classList.toggle("on", !onMap);
-  }
-  function closeSheet(fromMap = false) {
-    if (!S.sheet) return;
-    const wasMap = S.sheet.onMap;
-    S.sheet = null;
-    $(".dev-sheet", phone).classList.remove("open");
-    $(".sheet-scrim", phone).classList.remove("on");
-    if (wasMap && !fromMap) S.map.clear(true);
-  }
-
   // ---- Sheet snapping ----
   // Each sheet lists its snap states in data-snaps: the device sheet "collapsed expanded", the Discover sheet
   // "collapsed half full". The sheet is always its full height; a state is a translateY offset (px from the top).
-  const SNAP_STATES = ["collapsed", "half", "full", "expanded"];
+  const SNAP_STATES = ["dismissed", "collapsed", "half", "full", "expanded"];
   const sheetState = (sheet) => SNAP_STATES.find((st) => sheet.classList.contains(st)) || null;
   function setSheetState(sheet, state) {
+    if (state === "dismissed") return closeDevice();
     SNAP_STATES.forEach((st) => sheet.classList.toggle(st, st === state));
     if (sheet.classList.contains("disc-sheet")) liftRecorder();
   }
@@ -695,7 +710,7 @@
     const h = sheet.offsetHeight, peek = parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 92;
     const hv = tok("--discover-sheet-half"); // e.g. "67cqh": a share of the phone's height
     const half = hv.endsWith("cqh") ? (phone.clientHeight * parseFloat(hv)) / 100 : parseFloat(hv) || h;
-    const at = { collapsed: h - peek, half: Math.max(0, h - half), full: 0, expanded: 0 };
+    const at = { dismissed: h + 8, collapsed: h - peek, half: Math.max(0, h - half), full: 0, expanded: 0 };
     return sheet.dataset.snaps.split(" ").map((st) => ({ st, y: at[st] })).sort((a, b) => b.y - a.y); // lowest first
   }
   /** How much of the screen bottom the Discover sheet covers. */
@@ -705,11 +720,11 @@
     const o = snapOffsets(ds).find((x) => x.st === sheetState(ds));
     return ds.offsetHeight - (o ? o.y : 0);
   }
-  /** On release: a flick goes to the next state in its direction, otherwise the nearest state. */
-  function snapTo(sheet, y, v) {
-    const offs = snapOffsets(sheet);
+  /** On release: a flick moves exactly one state from where the drag started; otherwise the nearest state. */
+  function snapTo(sheet, y, v, from) {
+    const offs = snapOffsets(sheet), i = Math.max(0, offs.findIndex((o) => o.st === from));
     let pick;
-    if (Math.abs(v) > 0.4) pick = v < 0 ? offs.filter((o) => o.y < y - 1).pop() || offs[offs.length - 1] : offs.find((o) => o.y > y + 1) || offs[0];
+    if (Math.abs(v) > 0.4) pick = offs[v < 0 ? Math.min(i + 1, offs.length - 1) : Math.max(i - 1, 0)];
     else pick = offs.reduce((a, b) => (Math.abs(b.y - y) < Math.abs(a.y - y) ? b : a));
     setSheetState(sheet, pick.st);
   }
@@ -724,14 +739,16 @@
   phone.addEventListener("pointerdown", (e) => {
     const sheet = e.target.closest(".sheet.open:not(.static)");
     if (!sheet || e.button > 0) return;
-    const onHead = !!e.target.closest(".handle, .dev-head, .disc-head");
-    const body = sheet.classList.contains("disc-sheet") && e.target.closest(".sheet-body, .disc-chips");
+    const onHead = !!e.target.closest(".handle, .dev-top, .disc-head");
+    // touches on the Discover sheet's content are handled by the touch listeners below (native scrolling)
+    const body = sheet.classList.contains("disc-sheet") && e.pointerType !== "touch" && e.target.closest(".sheet-body, .disc-chips");
     if (!onHead && !body) return;
     if (onHead && e.target.closest("a, button") && !e.target.closest(".handle")) return; // header controls are taps
     const scroller = $(".sheet-body", sheet);
     const offs = snapOffsets(sheet), top = offs[offs.length - 1].y, bottom = offs[0].y;
-    let y = (offs.find((o) => o.st === sheetState(sheet)) || offs[0]).y, lastY = e.clientY, moved = false, sheetMoved = false;
-    const y0 = e.clientY, samples = [[e.timeStamp, e.clientY]];
+    const from = sheetState(sheet);
+    let y = (offs.find((o) => o.st === from) || offs[0]).y, lastY = e.clientY, moved = false, sheetMoved = false;
+    const y0 = e.clientY, samples = [[performance.now(), e.clientY]];
     const move = (ev) => {
       if (!moved && Math.abs(ev.clientY - y0) < 6) return;
       if (!moved) { moved = true; sheet.setPointerCapture(ev.pointerId); sheet.classList.add("dragging"); }
@@ -745,7 +762,7 @@
         }
       }
       if (dy) { y = Math.max(top, Math.min(bottom, y + dy)); sheetMoved = true; sheet.style.transform = `translateY(${y}px)`; }
-      samples.push([ev.timeStamp, ev.clientY]);
+      samples.push([performance.now(), ev.clientY]);
       if (samples.length > 5) samples.shift();
     };
     const up = () => {
@@ -756,7 +773,7 @@
       sheet.style.transform = "";
       if (!moved) {
         // a tap on the handle: collapsed rises one step, anything else goes back down
-        if (onHead && e.target.closest(".handle, .dev-head, .disc-head") && !e.target.closest("a, button"))
+        if (onHead && sheet.classList.contains("disc-sheet") && !e.target.closest("a, button"))
           setSheetState(sheet, sheetState(sheet) === "collapsed" ? nextUp(sheet) : "collapsed");
         return;
       }
@@ -764,12 +781,56 @@
       setTimeout(() => (suppressClick = false), 0);
       if (!sheetMoved) return;
       const [t0, p0] = samples[0], [t1, p1] = samples[samples.length - 1];
-      snapTo(sheet, y, (p1 - p0) / Math.max(1, t1 - t0)); // px per ms, positive is down
+      snapTo(sheet, y, (p1 - p0) / Math.max(1, t1 - t0), from); // px per ms, positive is down
     };
     sheet.addEventListener("pointermove", move);
     sheet.addEventListener("pointerup", up);
     sheet.addEventListener("pointercancel", up);
   });
+  // Touch on a sheet's content (the Discover sheet and the device sheet). At Full the browser scrolls natively (momentum, glide). The gesture is
+  // taken over only when the sheet is not at Full (dragging moves it), or at scrollTop 0 when the finger moves down
+  // (that lowers it). The decision is made on the first move, while touchmove can still be cancelled.
+  phone.addEventListener("touchstart", (e) => {
+    const sheet = e.target.closest(".disc-sheet.open, .dev-sheet.open");
+    if (!sheet || e.touches.length > 1 || !e.target.closest(".sheet-body, .disc-chips")) return;
+    const scroller = $(".sheet-body", sheet), offs = snapOffsets(sheet), from = sheetState(sheet);
+    const top = offs[offs.length - 1].y, bottom = offs[0].y;
+    const t = e.touches[0], y0 = t.clientY, samples = [[performance.now(), y0]];
+    let mode = null, y = (offs.find((o) => o.st === from) || offs[0]).y, lastY = y0;
+    const move = (ev) => {
+      const cy = ev.touches[0].clientY;
+      if (!mode) {
+        if (Math.abs(cy - y0) < 6) return;
+        const atTop = from === offs[offs.length - 1].st; // Full, or the device sheet's open state
+        mode = !atTop || (scroller.scrollTop <= 0 && cy > y0) ? "sheet" : "native";
+        if (mode === "sheet") sheet.classList.add("dragging");
+      }
+      if (mode === "native") return;
+      ev.preventDefault();
+      let dy = cy - lastY;
+      lastY = cy;
+      if (dy < 0 && y <= top) { scroller.scrollTop -= dy; dy = 0; } // reached Full within this gesture: scroll
+      if (dy) { y = Math.max(top, Math.min(bottom, y + dy)); sheet.style.transform = `translateY(${y}px)`; }
+      samples.push([performance.now(), cy]);
+      if (samples.length > 5) samples.shift();
+    };
+    const end = () => {
+      phone.removeEventListener("touchmove", move);
+      phone.removeEventListener("touchend", end);
+      phone.removeEventListener("touchcancel", end);
+      if (mode !== "sheet") return;
+      sheet.classList.remove("dragging");
+      sheet.style.transform = "";
+      suppressClick = true;
+      setTimeout(() => (suppressClick = false), 0);
+      const [t0, p0] = samples[0], [t1, p1] = samples[samples.length - 1];
+      snapTo(sheet, y, (p1 - p0) / Math.max(1, t1 - t0), from);
+    };
+    phone.addEventListener("touchmove", move, { passive: false });
+    phone.addEventListener("touchend", end);
+    phone.addEventListener("touchcancel", end);
+  }, { passive: true });
+
   // A wheel or trackpad does the same on the Discover sheet: down raises it to Full first, up at the top lowers it.
   let wheelLock = 0;
   phone.addEventListener("wheel", (e) => {
@@ -789,25 +850,85 @@
     b.setAttribute("aria-label", open ? "Close sidebar" : "Sessions and settings");
     b.setAttribute("aria-expanded", open);
   }
+  // ---- Navigation inside the Discover sheet: the base view (categories or list), then a product ----
+  /** Pushes a level; the scroll position of the level below is kept for Back. */
+  function pushSheet(entry) {
+    const body = $("#disc-body");
+    entry.below = body.scrollTop;
+    S.nav.push(entry);
+    renderDiscover();
+    body.scrollTop = 0;
+  }
+  /** Back: pops one level and restores exactly what was below (content, scroll, filters). */
+  function popSheet() {
+    const e = S.nav.pop();
+    if (!e) return;
+    if (e.kind === "product") S.map.setPoints(sessionPoints());
+    renderDiscover();
+    $("#disc-body").scrollTop = e.below;
+  }
   /** The product view: the background map shows only that product's points. */
   function openProduct(id) {
     const p = D.getProduct(id);
-    S.catScroll = $("#disc-body").scrollTop;
-    S.product = id;
-    closeSheet();
     const pts = productDevices(p).map((d) => { const b = d.best ? { at: d.best, rssi: d.rssi } : bestPoint(d.addr); return b && { addr: d.addr, at: b.at, rssi: b.rssi, category: d.category }; }).filter(Boolean);
     S.map.setPoints(pts);
     S.map.fit(pts.map((x) => x.at));
-    renderDiscover();
-    $("#disc-body").scrollTop = 0;
+    pushSheet({ kind: "product", id });
   }
-  function closeProduct() {
-    S.product = null;
-    closeSheet();
-    S.map.setPoints(sessionPoints());
-    renderDiscover();
-    $("#disc-body").scrollTop = S.catScroll; // back to the categories at the same place
+
+  // ---- The device sheet: a second sheet over the Discover sheet (Google Maps' place sheet) ----
+  // Open (up to below the top row) or dismissed, nothing in between. A solid scrim dims everything behind it;
+  // the Discover sheet underneath keeps its state, view, scroll and filters.
+  function openDevice(addr, move) {
+    const d = D.getDevice(addr), sheet = $(".dev-sheet", phone);
+    stopGatt();
+    S.device = { addr, tab: "adv" };
+    $("#dev-top").innerHTML = UI.deviceHead(d);
+    $("#dev-body").innerHTML = UI.deviceBody(d, { tab: "adv", gatt: D.getDeviceGatt(addr), chartW: phone.clientWidth - 32 });
+    $("#dev-body").scrollTop = 0;
+    S.map.select(addr, move);
+    setSheetState(sheet, "expanded");
+    sheet.classList.add("open");
+    $(".dev-scrim", phone).classList.add("on");
   }
+  // The GATT discovery's steps are revealed on a short timer chain: the prototype's only timer, to show the sequence.
+  function gattTabNow(addr) {
+    const run = S.gattRun && S.gattRun.addr === addr ? S.gattRun : null;
+    if (run) return UI.gattTab(run.view);
+    const g = D.getDeviceGatt(addr);
+    return UI.gattTab(g ? { phase: "done", result: g, shown: g.steps.length, addr } : { phase: "idle", addr });
+  }
+  function runGatt(addr) {
+    stopGatt();
+    const result = D.discoverGatt(addr);
+    const frames = [];
+    result.steps.forEach((st, i) => {
+      frames.push({ phase: "running", shown: i, running: i });
+      if (st.progress && !st.failed) frames.push({ phase: "running", shown: i, running: i, progress: st.progress });
+      if (st.failed) frames.push({ phase: "failed", shown: i + 1 });
+    });
+    if (result.ok) frames.push({ phase: "done", shown: result.steps.length });
+    const run = (S.gattRun = { addr, timers: [], view: null });
+    const show = (f) => {
+      run.view = { ...f, result, addr };
+      const tab = $("#dev-tab");
+      if (S.device && S.device.addr === addr && S.device.tab === "gatt" && tab) tab.innerHTML = UI.gattTab(run.view);
+      if (f.phase !== "running") S.gattRun = f.phase === "failed" ? run : null; // a finished run is read from the data next time
+    };
+    frames.forEach((f, k) => run.timers.push(setTimeout(() => show(f), k === 0 ? 0 : 450 + k * 450)));
+  }
+  function stopGatt() { if (S.gattRun) S.gattRun.timers.forEach(clearTimeout); S.gattRun = null; }
+
+  function closeDevice() {
+    if (!S.device) return;
+    stopGatt();
+    S.device = null;
+    const sheet = $(".dev-sheet", phone);
+    sheet.classList.remove("open", "expanded");
+    $(".dev-scrim", phone).classList.remove("on");
+    S.map.clear(true);
+  }
+
   /** The top-right search: the button opens the field across the top row; an empty field closes again. */
   function setSearch(open) {
     const el = $(".top-search", phone), input = $("#top-q");
@@ -819,7 +940,7 @@
   }
 
   const ACTIONS = {
-    back: () => { closeSheet(); pop(); },
+    back: () => pop(),
     sidebar: () => setDrawer(!phone.classList.contains("side-open")),
     "side-close": () => setDrawer(false),
     session: (el) => {
@@ -838,17 +959,37 @@
     wiki: (el) => open(`https://wirelesswiki.org/p/${el.dataset.value}`, "_blank", "noopener"),
     "open-session-map": () => { setRecorder("capsule"); popAll(); S.map.fit(D.getCurrentRecording().route); },
     product: (el) => openProduct(el.dataset.value),
-    "product-back": () => closeProduct(),
-    device: (el) => S.map.select(el.dataset.value, true),
-    "sheet-close": () => closeSheet(),
+    "sheet-back": () => popSheet(),
+    "device-close": () => closeDevice(),
+    device: (el) => openDevice(el.dataset.value, true),
     "dev-tab": (el) => {
-      S.sheet.tab = el.dataset.value;
-      const d = D.getDevice(S.sheet.addr);
-      $("#dev-seg").innerHTML = UI.segmented([{ id: "adv", label: "Advertising" }, { id: "gatt", label: "GATT" }], S.sheet.tab, "dev-tab");
-      $("#dev-tab").innerHTML = S.sheet.tab === "adv" ? UI.advertising(d) : UI.gatt(D.getDeviceGatt(S.sheet.addr), S.sheet.addr);
+      const t = S.device;
+      t.tab = el.dataset.value;
+      const d = D.getDevice(t.addr);
+      $("#dev-seg").innerHTML = UI.segmented([{ id: "adv", label: "Advertising" }, { id: "gatt", label: "GATT" }], t.tab, "dev-tab");
+      $("#dev-tab").innerHTML = t.tab === "adv" ? UI.advertising(d) : gattTabNow(t.addr);
     },
-    gatt: (el) => { D.discoverGatt(el.dataset.value); $("#dev-tab").innerHTML = UI.gatt(D.getDeviceGatt(el.dataset.value), el.dataset.value); },
-    "map-point": (el) => S.map.select(el.dataset.value, false),
+    // GATT: the button turns into Cancel | I am authorized (the prompt every time); authorized starts the discovery
+    "gatt-go": (el) => {
+      const flow = el.closest(".gatt-flow");
+      if (!flow.classList.contains("confirm")) {
+        flow.classList.add("confirm");
+        el.textContent = "I am authorized";
+        $(".gatt-cancel", flow).tabIndex = 0;
+      } else runGatt(el.dataset.value);
+    },
+    "gatt-cancel": (el) => {
+      const flow = el.closest(".gatt-flow");
+      flow.classList.remove("confirm");
+      $(".gatt-go", flow).textContent = "Discover GATT";
+      el.tabIndex = -1;
+    },
+    "gatt-retry": (el) => {
+      $("#dev-tab").innerHTML = UI.gattTab({ phase: "idle", addr: el.dataset.value });
+      const go = $(".gatt-go", phone);
+      requestAnimationFrame(() => ACTIONS["gatt-go"](go)); // straight to the prompt
+    },
+    "map-point": (el) => openDevice(el.dataset.value, false),
     "map-cluster": (el) => S.map.zoomCluster(el.dataset.value, [+el.dataset.lng, +el.dataset.lat]),
     "dev-cat": (el) => {
       S.devCat = el.dataset.value;
@@ -896,7 +1037,8 @@
   // Escape stands in for system back: the topmost layer closes first.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || location.hash) return;
-    if (S.sheet) closeSheet();
+    if (S.device) closeDevice();
+    else if (S.nav.length) popSheet();
     else if (phone.classList.contains("side-open")) setDrawer(false);
     else if ($(".top-search.open", phone)) setSearch(false);
     else if (S.recorder === "panel") setRecorder("capsule");
@@ -927,7 +1069,6 @@
     const groups = D.getProducts("all", "now");
     const inRange = groups[0].products[0], before = groups.flatMap((g) => g.products).find((p) => !p.inRange), unknown = groups[groups.length - 1].products[0];
     const sheetDev = devs.find((d) => d.name === "JBL Flip 6");
-    const noMap = devs.find((d) => d.name && !D.getDeviceSightings(d.addr).length) || devs[devs.length - 1];
     const cell = (label, html, style = "") => `<div class="g-cell"><div class="g-box" style="${style}">${html}</div><small>${label}</small></div>`;
     const sect = (name, toks) => `<div class="g-sect">${name}<span class="g-tok">${toks}</span></div>`;
     const swatch = (t) => `<div class="g-cell"><div class="g-sw" style="background: var(${t})"></div><small>${t}</small></div>`;
@@ -1022,12 +1163,19 @@
           days: [{ label: "Today · Oct 28", sessions: [{ id: "a", title: "6:05 PM", sub: "23 min · 1.8 km · 214 devices" }, { id: "b", title: "12:10 PM", sub: "8 min · 41 devices" }] }] })}</nav>`, "width: 338px; height: 420px; padding: 0")}
         ${cell("not recording, history session selected", `<nav class="side static">${UI.sidebar({ current: null, selected: "a",
           days: [{ label: "Today · Oct 28", sessions: [{ id: "a", title: "6:05 PM", sub: "23 min · 1.8 km · 214 devices" }, { id: "b", title: "12:10 PM", sub: "8 min · 41 devices" }] }] })}</nav>`, "width: 338px; height: 420px; padding: 0")}</div>
-      ${sect("DeviceSheet", ".sheet · --sheet-expanded-h, --r-sheet, --panel, --shadow-sheet, --chart-h; product link --blue + ↗; RssiChart ticks −65/−80 only")}
+      ${sect("Device sheet (over the Discover sheet)", ".dev-sheet · open or dismissed; --sheet-expanded-h; close button .ib neutral; --scrim behind; RssiChart ticks −65/−80 only")}
       <div class="g-row">
-        ${cell("identified, Advertising", `<section class="sheet static">${UI.deviceSheet(sheetDev, { tab: "adv", gatt: D.getDeviceGatt(sheetDev.addr), chartW: 380, mapId: "g-dev-1" })}</section>`, "width: 412px; padding: 0")}
-        ${cell("GATT read", `<section class="sheet static">${UI.deviceSheet(sheetDev, { tab: "gatt", gatt: D.getDeviceGatt(sheetDev.addr), chartW: 380, mapId: "g-dev-2" })}</section>`, "width: 412px; padding: 0")}
-        ${cell("unidentified, no name, GATT not read", `<section class="sheet static">${UI.deviceSheet(noName, { tab: "gatt", gatt: null, chartW: 380, mapId: "g-dev-3" })}</section>`, "width: 412px; padding: 0")}
-        ${cell("no located sightings: no map card", `<section class="sheet static">${UI.deviceSheet(noMap, { tab: "adv", gatt: null, chartW: 380 })}</section>`, "width: 412px; padding: 0")}
+        ${[["identified, Advertising", sheetDev, "adv", D.getDeviceGatt(sheetDev.addr)], ["GATT read", sheetDev, "gatt", D.getDeviceGatt(sheetDev.addr)], ["unidentified, no name, GATT not read", noName, "gatt", null]]
+          .map(([label, d, tab, gatt]) => cell(label, `<section class="sheet static dev-sheet"><div class="handle"></div><div class="dev-top">${UI.deviceHead(d)}</div><div class="sheet-body">${UI.deviceBody(d, { tab, gatt, chartW: 380 })}</div></section>`, "width: 412px; padding: 0")).join("")}
+      </div>
+      ${sect("GATT tab flow", ".gatt-flow · note always shown; Discover GATT → Cancel | I am authorized; steps .gstep (spinner, done, failed --rssi-weak); Try again")}
+      <div class="g-row">
+        ${(() => { const r = { ok: true, steps: [{ label: "Connecting…", detail: "0.8 s" }, { label: "Discovering services…", detail: "5 services" }, { label: "Reading characteristics", detail: "18/18", progress: "12/18" }, { label: "Disconnected", detail: "" }], services: (D.getDeviceGatt(sheetDev.addr) || { services: [] }).services };
+          const f = { ok: false, steps: [{ label: "Connecting…", detail: "0.8 s" }, { label: "Discovering services…", detail: "5 services" }, { label: "Reading characteristics", detail: "Disconnected unexpectedly", failed: true }], services: [] };
+          const box = (label, html) => cell(label, `<section class="sheet static dev-sheet"><div class="sheet-body">${html}</div></section>`, "width: 380px; padding: 12px 0");
+          return [box("1 · before discovery", UI.gattTab({ phase: "idle" })), box("2 · confirm", UI.gattTab({ phase: "confirm" })),
+            box("3 · running (reading 12/18)", UI.gattTab({ phase: "running", result: r, shown: 2, running: 2, progress: "12/18" })),
+            box("4 · failed", UI.gattTab({ phase: "failed", result: f, shown: 3 })), box("5 · done, with results", UI.gattTab({ phase: "done", result: r, shown: 4 }))].join(""); })()}
       </div>
       ${sect("MapMarker", ".mk · --marker, --marker-icon, --fill1, --shadow-float; muted --map-muted; faded --dim; RouteMark .route-mark")}
       <div class="g-row">

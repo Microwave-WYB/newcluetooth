@@ -236,8 +236,21 @@
   };
 
   // GATT already read: the JBL speaker
+  /** A discovery's steps: Connecting, Discovering services, Reading characteristics, Disconnected. A failed step
+   *  carries its reason and ends the list. */
+  function gattSteps(services, fail) {
+    const chars = services.reduce((n, sv) => n + sv.chars.length, 0);
+    const steps = [
+      { label: "Connecting…", detail: "0.8 s" },
+      { label: "Discovering services…", detail: `${services.length} services` },
+      { label: "Reading characteristics", detail: `${chars}/${chars}`, progress: `${Math.ceil(chars * 0.6)}/${chars}` },
+      { label: "Disconnected", detail: "" },
+    ];
+    if (!fail) return steps;
+    return [...steps.slice(0, fail.at), { ...steps[fail.at], failed: true, detail: fail.reason }];
+  }
   const gattRead = {};
-  DEVICES.filter((d) => d.name === "JBL Flip 6").forEach((d) => (gattRead[d.addr] = GATT));
+  DEVICES.filter((d) => d.name === "JBL Flip 6").forEach((d) => (gattRead[d.addr] = { ok: true, steps: gattSteps(GATT.services), services: GATT.services }));
 
   // ---- sessions: the stored recordings plus the ones recorded in this run ----
   let current = null, runs = 0;
@@ -270,16 +283,20 @@
     getDeviceSightings: (addr) => clone(sightings(addr)),
     /** The last GATT discovery of a device, or null if it hasn't been read. */
     getDeviceGatt: (addr) => (gattRead[addr] ? clone(gattRead[addr]) : null),
-    /** Runs a (static) GATT discovery: afterwards getDeviceGatt returns the services. */
+    /** Runs a (static) GATT discovery and returns { ok, steps, services }. Non-connectable devices time out while
+     *  connecting; "ELK-BLEDOM" drops the connection while its characteristics are read. */
     discoverGatt: (addr) => {
       const d = DEVICE[addr];
       if (!d) return null;
-      gattRead[addr] = { services: [
+      const services = [
         { name: "Generic Access", uuid: "1800", chars: [["Device Name", "2A00", "Read", d.name || "(empty)"], ["Appearance", "2A01", "Read", "Unknown"]] },
         { name: "Device Information", uuid: "180A", chars: [["Manufacturer Name String", "2A29", "Read", COMPANY_NAMES[d.company] || "No value"]] },
         { name: "Unknown service", uuid: "0000fff0-0000-1000-8000-00805f9b34fb", chars: [["Unknown characteristic", "0000fff1-0000-1000-8000-00805f9b34fb", "Notify", "No value"]] },
-      ] };
-      return clone(gattRead[addr]);
+      ];
+      const fail = !d.connectable ? { at: 0, reason: "Timed out" } : d.name === "ELK-BLEDOM" ? { at: 2, reason: "Disconnected unexpectedly" } : null;
+      const result = { ok: !fail, steps: gattSteps(services, fail), services: fail ? [] : services };
+      if (!fail) gattRead[addr] = result;
+      return clone(result);
     },
     /** "All sessions": every device and product of every session, frozen. Its id ("all") works wherever a session id does. */
     getAllSessionsView: () => { const v = allSessions(); const { points, ...meta } = v; return clone(meta); },

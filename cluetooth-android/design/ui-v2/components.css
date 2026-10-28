@@ -237,9 +237,14 @@ button.item:active { background: var(--fill2); }
 .item .chev { color: var(--t3); }
 .sect { font-size: var(--small-size); line-height: var(--small-line); color: var(--t3); padding: 16px var(--gutter) 4px; }
 
-/* ---------- Scrim (behind the device sheet) ---------- */
-.scrim { position: absolute; inset: 0; z-index: 70; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity var(--t-std); }
+/* ---------- Device sheet: a second sheet over everything, with a solid scrim behind it ---------- */
+.scrim { position: absolute; inset: 0; z-index: 80; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity var(--t-page) var(--ease); }
 .scrim.on { opacity: 1; pointer-events: auto; }
+.dev-sheet { z-index: 81; }
+.dev-top { flex: none; touch-action: none; cursor: grab; }
+.dev-top .dev-head { position: relative; padding-right: calc(var(--gutter) + var(--icon-btn) + 8px); }
+.dev-top .dev-head > .ib { position: absolute; top: 0; right: var(--edge); }
+.dev-sheet .sheet-body { touch-action: pan-y; }
 
 /* ---------- Sidebar: a full-height panel that pushes the map ---------- */
 .main { position: absolute; inset: 0; z-index: 0; overflow: hidden; transition: transform var(--t-std) var(--ease); }
@@ -287,8 +292,7 @@ button.item:active { background: var(--fill2); }
 .sheet.open.half { transform: translateY(calc(100% - var(--discover-sheet-half))); }
 .sheet.dragging { transition: none; }
 .sheet.static { position: relative; transform: none; visibility: visible; height: auto; border-radius: var(--r-sheet); }
-.sheet .handle, .sheet .dev-head { cursor: grab; touch-action: none; }
-.sheet-scrim { z-index: 80; }
+.sheet .handle { cursor: grab; touch-action: none; }
 .handle { flex: none; display: grid; place-items: center; height: 20px; width: 100%; }
 .handle::before { content: ""; width: var(--handle-w); height: var(--handle-h); border-radius: var(--r-pill); background: var(--div); }
 .sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--gutter); touch-action: pan-y; }
@@ -301,8 +305,27 @@ button.item:active { background: var(--fill2); }
 .dev-rssi { margin-left: 8px; font-size: var(--sub-size); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
 .dev-product { display: inline-flex; align-items: center; gap: 4px; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--blue); text-decoration: none; }
 .dev-product .icon { width: 14px; height: 14px; }
-.gatt-empty { padding: 8px var(--gutter); }
-.gatt-empty p { margin: 0 0 10px; color: var(--t2); font-size: 14px; }
+.gatt-flow { padding: 8px var(--gutter); }
+.gatt-flow .gatt-svc { padding-left: 0; padding-right: 0; }
+.gatt-note { margin: 0 0 10px; color: var(--t2); font-size: var(--sub-size); line-height: var(--sub-line); }
+/* one full-width button that turns, in place, into Cancel | I am authorized */
+.gatt-ctl { display: flex; gap: 0; transition: gap var(--t-std) var(--ease); }
+.gatt-ctl .btn { min-width: 0; overflow: hidden; }
+.gatt-go { flex: 1 1 0; }
+.gatt-cancel { flex: 0 0 0; padding: 0; opacity: 0; pointer-events: none; transition: flex-grow var(--t-std) var(--ease), opacity var(--t-std), padding var(--t-std); }
+.gatt-flow.confirm .gatt-ctl { gap: 8px; }
+.gatt-flow.confirm .gatt-cancel { flex-grow: 1; padding: 0 18px; opacity: 1; pointer-events: auto; }
+.gsteps { display: flex; flex-direction: column; }
+.gstep { display: grid; grid-template-columns: var(--gmark) 1fr auto; align-items: center; gap: 10px; min-height: 36px; font-size: 14px; animation: gstep-in var(--t-std) var(--ease); }
+.gdetail { color: var(--t2); font-size: var(--sub-size); font-variant-numeric: tabular-nums; }
+.gmark { width: var(--gmark); height: var(--gmark); border-radius: 50%; justify-self: center; }
+.gstep.done .gmark { background: var(--rssi-strong); }
+.gstep.failed .gmark { background: var(--rssi-weak); }
+.gstep.failed .gdetail { color: var(--rssi-weak); }
+.gstep.running .gmark { border: 2px solid var(--div); border-top-color: var(--blue); animation: spin var(--t-spin) linear infinite; }
+.gatt-retry { padding-top: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes gstep-in { from { opacity: 0; transform: translateY(-4px); } }
 .dev-sub { font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); font-variant-numeric: tabular-nums; }
 .chart { display: block; width: 100%; height: var(--chart-h); }
 .chart .line { fill: none; stroke: var(--t2); stroke-width: 1.6; stroke-linejoin: round; }
@@ -343,8 +366,14 @@ button.item:active { background: var(--fill2); }
 
 /* ---------- Main map screen ---------- */
 .disc-sheet { z-index: 12; height: var(--discover-sheet-full); }
-.disc-sheet .sheet-body, .disc-sheet .disc-chips { touch-action: none; } /* the sheet drives scrolling (raise first) */
-.disc-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 0 var(--edge) 10px; touch-action: none; cursor: grab; }
+/* native scrolling (with momentum) only at Full; below Full a drag moves the sheet instead (JS) */
+.disc-sheet .sheet-body { touch-action: pan-y; }
+.disc-sheet:not(.full) .sheet-body { overflow-y: hidden; }
+.disc-sheet .disc-chips { touch-action: pan-x; }
+/* view switch at the left, the segmented control (or title) centered on the sheet, an equal empty column at the right */
+.disc-head { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; padding: 0 var(--edge) 10px; touch-action: none; cursor: grab; }
+.disc-head > :first-child { justify-self: start; }
+
 .disc-head .seg { width: 184px; }
 .disc-chips .chips { position: static; padding: 0 var(--edge) 10px; }
 .disc-sheet .hero { margin: 0 var(--edge); border-radius: var(--r-item); }
