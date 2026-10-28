@@ -1,0 +1,331 @@
+[
+ {
+  "name": "iBeacon: company 76 then 02 15",
+  "rule": {
+   "struct": {
+    "ad": 255,
+    "company": 76,
+    "bytes": {
+     "offset": 0,
+     "value": "0215"
+    }
+   },
+   "desc": "iBeacon"
+  },
+  "advertisements": [
+   {
+    "hex": "0201061aff4c0002150000000000000000000000000000000000010002c5",
+    "expect": true
+   },
+   {
+    "hex": "0201061eff4c00121900000000000000000000000000000000000000000000000000",
+    "expect": false,
+    "why": "Find My, not iBeacon"
+   },
+   {
+    "hex": "02010604ff4c0002",
+    "expect": false,
+    "why": "too short for the bytes"
+   },
+   {
+    "hex": "0201061aff59000215000000000000000000000000000000000000000000",
+    "expect": false,
+    "why": "other company"
+   }
+  ]
+ },
+ {
+  "name": "Govee: any of two name prefixes, but not Apple's company field",
+  "rule": {
+   "all": [
+    {
+     "any": [
+      {
+       "name": {
+        "prefix": "Govee_H"
+       },
+       "desc": "Govee_H"
+      },
+      {
+       "name": {
+        "prefix": "ihoment_H"
+       },
+       "desc": "ihoment firmware"
+      }
+     ]
+    },
+    {
+     "not": {
+      "company": [
+       76
+      ]
+     }
+    }
+   ]
+  },
+  "advertisements": [
+   {
+    "hex": "0201061109476f7665655f48363136385f41314232",
+    "expect": true
+   },
+   {
+    "hex": "020106110869686f6d656e745f48363139395f3143",
+    "expect": true,
+    "why": "shortened name counts"
+   },
+   {
+    "hex": "0201060c09676f7665655f4836313638",
+    "expect": false,
+    "why": "case-sensitive"
+   },
+   {
+    "hex": "0201060c09476f7665655f483631363803ff4c00",
+    "expect": false,
+    "why": "not: company 76"
+   },
+   {
+    "hex": "0201060909476f7665655f2548",
+    "expect": false,
+    "why": "% is literal, not a wildcard"
+   }
+  ]
+ },
+ {
+  "name": "Names: equals, case-insensitive prefix, regex, AD type 0x09 only",
+  "rule": {
+   "any": [
+    {
+     "name": {
+      "equals": "Aranet4"
+     }
+    },
+    {
+     "name": {
+      "prefix": "elk-bledom",
+      "case": "insensitive"
+     }
+    },
+    {
+     "name": {
+      "regex": "ihoment_H[0-9]{4}_[0-9A-Fa-f]{2}"
+     }
+    },
+    {
+     "name": {
+      "prefix": "LongOnly",
+      "ad": [
+       9
+      ]
+     }
+    }
+   ]
+  },
+  "advertisements": [
+   {
+    "hex": "02010608094172616e657434",
+    "expect": true
+   },
+   {
+    "hex": "0201060e094172616e657434203132333435",
+    "expect": false,
+    "why": "equals is exact"
+   },
+   {
+    "hex": "0201060d09454c4b2d424c45444f4d3035",
+    "expect": true
+   },
+   {
+    "hex": "020106110969686f6d656e745f48363136385f6131",
+    "expect": true
+   },
+   {
+    "hex": "020106100969686f6d656e745f483631365f4131",
+    "expect": false,
+    "why": "3 digits"
+   },
+   {
+    "hex": "0201060a084c6f6e674f6e6c7958",
+    "expect": false,
+    "why": "0x08 not allowed here"
+   },
+   {
+    "hex": "0201060a094172616e6574340000",
+    "expect": true,
+    "why": "NUL padding is removed from names"
+   }
+  ]
+ },
+ {
+  "name": "UUID only in the complete 16-bit list",
+  "rule": {
+   "uuid": {
+    "in": [
+     "FEAA"
+    ],
+    "ad": [
+     3
+    ]
+   }
+  },
+  "advertisements": [
+   {
+    "hex": "0201060303aafe",
+    "expect": true
+   },
+   {
+    "hex": "02010605030d18aafe",
+    "expect": true,
+    "why": "second UUID in the list"
+   },
+   {
+    "hex": "0201060516aafe00e7",
+    "expect": false,
+    "why": "service data not allowed here"
+   },
+   {
+    "hex": "0201060302aafe",
+    "expect": false
+   }
+  ]
+ },
+ {
+  "name": "Service data with a masked byte and a length",
+  "rule": {
+   "struct": {
+    "ad": 22,
+    "uuid": "FFF6",
+    "len": [
+     6,
+     12
+    ],
+    "bytes": {
+     "offset": 0,
+     "value": "00",
+     "mask": "f0"
+    }
+   }
+  },
+  "advertisements": [
+   {
+    "hex": "0201060a16f6ff0f001122334455",
+    "expect": true
+   },
+   {
+    "hex": "0201060a16f6ff10001122334455",
+    "expect": false,
+    "why": "high nibble differs"
+   },
+   {
+    "hex": "0201060516f6ff0f00",
+    "expect": false,
+    "why": "too short"
+   },
+   {
+    "hex": "0201060a1695fe0f001122334455",
+    "expect": false,
+    "why": "other UUID"
+   }
+  ]
+ },
+ {
+  "name": "Shape: advertising packet only, anything may follow",
+  "rule": {
+   "shape": {
+    "items": [
+     "01/1",
+     "FF/*",
+     "09/5-8"
+    ],
+    "rest": true
+   }
+  },
+  "advertisements": [
+   {
+    "hex": "02010605ff000000000709616263646566",
+    "expect": true
+   },
+   {
+    "hex": "0201060aff00000000000000000006096162636465020a00",
+    "expect": true,
+    "why": "scan response part follows"
+   },
+   {
+    "hex": "02010605ff000000000b096162636465666768696a",
+    "expect": false,
+    "why": "name too long"
+   },
+   {
+    "hex": "05ff000000000709616263646566",
+    "expect": false,
+    "why": "no flags first"
+   }
+  ]
+ },
+ {
+  "name": "No name at all; mesh beacon types",
+  "rule": {
+   "all": [
+    {
+     "not": {
+      "struct": {
+       "ad": [
+        8,
+        9
+       ]
+      }
+     }
+    },
+    {
+     "struct": {
+      "ad": [
+       41,
+       42,
+       43
+      ]
+     }
+    }
+   ]
+  },
+  "advertisements": [
+   {
+    "hex": "020106062b0000000000",
+    "expect": true
+   },
+   {
+    "hex": "020106062b0000000000020978",
+    "expect": false
+   },
+   {
+    "hex": "02010603032718",
+    "expect": false
+   }
+  ]
+ },
+ {
+  "name": "Address OUI (no address in the lab corpus: never matches there)",
+  "rule": {
+   "addr": {
+    "oui": [
+     "001A7D"
+    ]
+   }
+  },
+  "advertisements": [
+   {
+    "hex": "020106",
+    "addr": "00:1a:7d:12:34:56",
+    "expect": true
+   },
+   {
+    "hex": "020106",
+    "addr": "00:1a:7e:12:34:56",
+    "expect": false
+   },
+   {
+    "hex": "020106",
+    "expect": false,
+    "why": "address unknown"
+   }
+  ]
+ }
+]

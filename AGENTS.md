@@ -19,12 +19,16 @@ The design goal is:
 - `cluetooth-core/`
   - Owns platform-neutral observation batching, pending Parquet state (new
     payloads are schema v3, v2 stays readable) and local `gatt/v1` object storage.
+  - Owns the on-device wiki rule matcher (`src/matcher/`, `RuleMatcher` over UniFFI).
   - Uses Rust, Polars, UUIDv7, Zstd Parquet, and UniFFI.
 - `cluetooth-android/`
   - Owns BLE/location/UI/Firebase/WorkManager platform integration. Phase 4
     forwards new observations to Rust, uploads Rust-prepared ciphertext (scan v2
     and v3, `gatt/v1`), runs the manual GATT engine (debug trigger only), and
     retains strict pre-0.0.5 legacy pending-file upload.
+  - Also keeps the phone-local stores (`local/`: seen products, recordings,
+    sighting history, route) and the build-time wiki bundle exporter
+    (`tools/wiki-bundle/`, Node); see `docs/local-data.md`.
 - `cluetooth-sync/`
   - Owns the sync and ingestion pipeline.
   - Uses Python, Polars, ADBC PostgreSQL, PyNaCl, Google Cloud Storage, Typer,

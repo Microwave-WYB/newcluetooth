@@ -5,6 +5,7 @@ mod error;
 mod export;
 mod gatt;
 mod location;
+mod matcher;
 mod owned_path;
 mod payload;
 mod payload_identity;
@@ -21,6 +22,10 @@ pub use error::CoreError;
 pub use export::{DeleteSessionResult, ExportFormat, LegacySessionRows, PreparedExport};
 pub use gatt::GattDiscoveryFile;
 pub use location::LocationFix;
+pub use matcher::{
+    AddrContext, AddrType, AdvAddressType, Compiled, MatcherError, Node, RuleMatcher, Structure,
+    compile, evaluate_rule, regex_ok, structures,
+};
 pub use payload::{
     PayloadFile, PayloadInspection, PayloadResult, PendingUpload, PreparedUpload, ScanEnvironment,
     SchemaV2Row, SchemaV3Row,

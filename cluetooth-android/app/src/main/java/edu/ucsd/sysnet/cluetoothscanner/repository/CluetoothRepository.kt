@@ -14,6 +14,7 @@ import edu.ucsd.sysnet.cluetoothscanner.core.GatewayLegacySessionRows
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayRecordResult
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayScanSession
 import edu.ucsd.sysnet.cluetoothscanner.core.EXPECTED_CORE_API_VERSION
+import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataSink
 import edu.ucsd.sysnet.cluetoothscanner.service.ObjectFileUploader
 import edu.ucsd.sysnet.cluetoothscanner.service.PayloadUploadCoordinator
 import edu.ucsd.sysnet.cluetoothscanner.service.PayloadUploadSummary
@@ -134,6 +135,8 @@ class CluetoothRepository(
     private val ingressHighWatermark: Int = DEFAULT_INGRESS_HIGH_WATERMARK,
     private val ingressLowWatermark: Int = DEFAULT_INGRESS_LOW_WATERMARK,
     private val onUploadNeeded: () -> Unit = {},
+    /** Fed with every observation, location and recording boundary; see [LocalDataSink]. */
+    private val localData: LocalDataSink = LocalDataSink.None,
 ) : AutoCloseable {
     private val repositoryJob = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + repositoryJob)
@@ -197,10 +200,12 @@ class CluetoothRepository(
     }
 
     fun updateLocation(fix: CoreLocationInput) {
+        localData.onLocation(fix)
         submit(CoreCommand.UpdateLocation(fix))
     }
 
     fun clearLocation() {
+        localData.onLocationCleared()
         submit(CoreCommand.ClearLocation)
     }
 
@@ -214,6 +219,7 @@ class CluetoothRepository(
 
     fun recordObservation(observation: CoreScanInput): ObservationAdmission {
         if (closing.get()) return ObservationAdmission.REJECTED_DEGRADED
+        localData.onAdvertisement(observation.addr, observation.rssi, observation.raw, observation.scannedAtMs)
         val retained = queuedObservations.incrementAndGet()
         if (commands.trySend(CoreCommand.RecordObservation(observation)).isFailure) {
             queuedObservations.decrementAndGet()
@@ -373,6 +379,21 @@ class CluetoothRepository(
         .lastOrNull { it.status == edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionStatus.ACTIVE }
         ?.sessionId
 
+    // A recording is a core scan session; the local stores keep history and route only for it.
+    private var recordingId: String? = null
+
+    private fun beginRecording(sessionId: String) {
+        if (recordingId == sessionId) return
+        recordingId = sessionId
+        localData.onRecordingStarted(sessionId, System.currentTimeMillis())
+    }
+
+    private fun endRecording() {
+        val id = recordingId ?: return
+        recordingId = null
+        localData.onRecordingFinished(id, System.currentTimeMillis())
+    }
+
     private fun submit(command: CoreCommand) {
         if (commands.trySend(command).isFailure) {
             LOGGER.warning("Rejected core command ${command::class.java.simpleName}; ingress is closed")
@@ -390,12 +411,12 @@ class CluetoothRepository(
                 pendingCommand = null
                 when (command) {
                     CoreCommand.StartSession -> {
-                        gateway.await().startScanSession()
+                        beginRecording(gateway.await().startScanSession())
                         publishGatewaySnapshot()
                     }
                     is CoreCommand.StartSessionAcknowledged -> {
                         val succeeded = try {
-                            gateway.await().startScanSession()
+                            beginRecording(gateway.await().startScanSession())
                             publishGatewaySnapshot()
                             true
                         } catch (cancelled: CancellationException) {
@@ -441,6 +462,7 @@ class CluetoothRepository(
                             val openedGateway = gateway.await()
                             val apiVersion = openedGateway.apiVersion()
                             val committed = openedGateway.finishScanSession()
+                            endRecording()
                             runCatching {
                                 publishCoreUpdate(
                                     openedGateway,

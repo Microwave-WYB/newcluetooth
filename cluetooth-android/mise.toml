@@ -30,8 +30,25 @@ printf '%s\n' "$output"
 case "$output" in *"cluetoothHostChecks requires literal true"*) ;; *) exit 1 ;; esac
 '''
 
+[tasks.wiki-bundle-install]
+description = "Install the exporter's locked Node dependencies (yaml); no scripts run"
+dir = "tools/wiki-bundle"
+run = "npm ci --ignore-scripts --no-audit --no-fund"
+
+[tasks.wiki-bundle-test]
+description = "Unit tests of the wiki bundle exporter (Node's built-in test runner)"
+depends = ["wiki-bundle-install"]
+dir = "tools/wiki-bundle"
+run = "node --test"
+
+[tasks.wiki-bundle]
+description = "Export a Wireless Wiki checkout (WIKI_DIR, default ~/Projects/wiki-snapshot) into app/src/main/assets/wiki-bundle.json"
+depends = ["wiki-bundle-install"]
+dir = "tools/wiki-bundle"
+run = 'node export-bundle.mjs --wiki "${WIKI_DIR:-$HOME/Projects/wiki-snapshot}"'
+
 [tasks.check]
-run = ["mise run //cluetooth-android:host-guard-check", "mise run //cluetooth-android:test", "mise run //cluetooth-android:lint"]
+run = ["mise run //cluetooth-android:host-guard-check", "mise run //cluetooth-android:wiki-bundle-test", "mise run //cluetooth-android:test", "mise run //cluetooth-android:lint"]
 
 [tasks.build]
 description = "Product debug APKs (requires matching .debug Firebase client); no install or launch"
