@@ -84,6 +84,56 @@ test("parseFrontMatter reads both formats", () => {
   assert.throws(() => parseFrontMatter("no front matter"), /no front matter/);
 });
 
+test("front matter tolerates a BOM, CRLF and a closing --- with no newline after it", () => {
+  assert.deepEqual(parseFrontMatter("\uFEFF---\r\ntitle: a\r\n---\r\nbody"), { title: "a" });
+  assert.deepEqual(parseFrontMatter("---\ntitle: a\n---"), { title: "a" });
+  assert.deepEqual(parseFrontMatter("---\ntitle: a\n---  \n"), { title: "a" });
+});
+
+test("a BOM in index.md, rule.json and the vocabulary does not break the export", () => {
+  const dir = wiki({ "device--a": { frontMatter: "title: A\nkind: device\none_line: x", rule: { company: [76] } } });
+  const bom = (file) => writeFileSync(file, "\uFEFF" + readFileSync(file, "utf8"));
+  bom(join(dir, "categories.draft.json"));
+  bom(join(dir, "wiki-content/device--a/index.md"));
+  bom(join(dir, "wiki-content/device--a/rule.json"));
+  const bundle = buildBundle({ wikiDir: dir, legacy: noLegacy, labelsZh: zh });
+  assert.deepEqual(bundle.pages[0].rule, { company: [76] });
+});
+
+test("a stale legacy mapping warns instead of aborting", () => {
+  const dir = wiki({ "model--a": { frontMatter: JSON.stringify({ title: "A", kind: "model", one_line: "x" }) } });
+  const warnings = [];
+  const bundle = buildBundle({
+    wikiDir: dir,
+    legacy: { kinds: { model: "device" }, categories: { "model--a": ["audio-device", "gone"], "model--missing": ["printer"] } },
+    labelsZh: zh,
+    warn: (m) => warnings.push(m),
+  });
+  assert.deepEqual(bundle.pages[0].categories, ["audio-device"]);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /model--a: category "gone" is not in the vocabulary/);
+  assert.match(warnings[1], /no page model--missing/);
+});
+
+test("rules_version moves with the rules only; version moves with anything", () => {
+  const build = (title, ruleCompany, label) =>
+    buildBundle({
+      wikiDir: wiki({ "device--a": { frontMatter: `title: ${title}\nkind: device\none_line: x\nupdated: 2026-10-01`, rule: { company: [ruleCompany] } } }),
+      legacy: noLegacy,
+      labelsZh: { ...zh, printer: label },
+    });
+  const base = build("A", 76, "打印机");
+  assert.match(base.rules_version, /^[0-9a-f]{16}$/);
+  const retitled = build("B", 76, "打印机");
+  const relabelled = build("A", 76, "印表機");
+  const reruled = build("A", 77, "打印机");
+  assert.equal(retitled.rules_version, base.rules_version);
+  assert.equal(relabelled.rules_version, base.rules_version);
+  assert.notEqual(retitled.version, base.version);
+  assert.notEqual(relabelled.version, base.version);
+  assert.notEqual(reruled.rules_version, base.rules_version);
+});
+
 test("version depends on content, not on file order or time", () => {
   const pages = (title) => ({ "device--a": { frontMatter: `title: ${title}\nkind: device\none_line: x\nupdated: 2026-10-01` } });
   const v = (title) => buildBundle({ wikiDir: wiki(pages(title)), legacy: noLegacy, labelsZh: zh }).version;

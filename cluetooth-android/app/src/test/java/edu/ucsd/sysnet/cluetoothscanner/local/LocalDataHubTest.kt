@@ -6,6 +6,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -23,18 +25,28 @@ class LocalDataHubTest {
     private val now = AtomicLong(1_800_000_000_000L)
     private val rules = mapOf("device--buds" to "buds", "device--bulb" to "bulb", "device--multi" to "multi")
 
+    private var matcherOf: FakeMatcher? = null
+
     private fun hub(
         version: String = "v1",
         matchRules: Map<String, String> = rules,
         bundle: () -> String = { bundleJson(version, *PAGES) },
         addressRules: Map<String, String> = emptyMap(),
+        database: SqlDatabase = UncloseableDatabase(db),
+        heavyIntervalMs: Long = 0,
+        shareLingerMs: Long = 0,
+        createMatcher: (String) -> AdvertisementMatcher = { FakeMatcher(version, matchRules, addressRules).also { m -> matcherOf = m } },
     ) = LocalDataHub(
-        openDatabase = { UncloseableDatabase(db) },
+        openDatabase = { database },
         loadBundleJson = bundle,
-        createMatcher = { FakeMatcher(version, matchRules, addressRules) },
+        createMatcher = createMatcher,
         scope = scope,
         clock = now::get,
         flushIntervalMs = 3_600_000,
+        lightQueryIntervalMs = 0,
+        heavyQueryIntervalMs = heavyIntervalMs,
+        shareLingerMs = shareLingerMs,
+        pruneIntervalMs = 3_600_000,
     ).also { it.start() }
 
     private fun fix(atMs: Long, lat: Double = 32.0, lon: Double = -117.0, accuracy: Double = 5.0) =
@@ -185,7 +197,7 @@ class LocalDataHubTest {
     }
 
     @Test
-    fun aNewBundleVersionRematchesAtStartAndReportsNewlyIdentifiedPayloads() = runBlocking {
+    fun aNewRulesVersionRematchesInTheBackgroundAndReportsNewlyIdentifiedPayloads() = runBlocking {
         val first = hub(version = "v1", matchRules = mapOf("device--buds" to "buds"))
         first.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
         first.onAdvertisement("AA:00:00:00:00:02", -60, adv("bulb-1"), now.get())
@@ -193,16 +205,9 @@ class LocalDataHubTest {
         assertNull(first.pendingRematchReport().firstValue())
         first.close()
 
-        val second = LocalDataHub(
-            openDatabase = { UncloseableDatabase(db) },
-            loadBundleJson = { bundleJson("v2", *PAGES) },
-            createMatcher = { FakeMatcher("v2", rules) },
-            scope = scope,
-            clock = now::get,
-            flushIntervalMs = 3_600_000,
-        ).also { it.start() }
-        val report = second.pendingRematchReport().firstValue()
-        assertNotNull(report)
+        val second = hub(version = "v2")
+        // startup does not wait for the re-match; the report appears once it ran
+        val report = withTimeout(10_000) { second.pendingRematchReport().first { it != null } }
         assertEquals("v1", report!!.fromVersion)
         assertEquals("v2", report.toVersion)
         assertEquals(2, report.payloadsChecked)
@@ -213,6 +218,37 @@ class LocalDataHubTest {
         assertEquals(
             setOf("device--buds", "device--bulb"),
             second.previouslySeenProducts().firstValue().flatMap { it.products }.map { it.page.id }.toSet(),
+        )
+    }
+
+    @Test
+    fun relabellingTheBundleWithoutTouchingRulesDoesNotRematch() = runBlocking {
+        val first = hub(version = "v1", bundle = { bundleJson("v1", "r1", PAGES.toList()) })
+        first.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
+        first.flushNow()
+        first.close()
+        val second = hub(version = "v2", bundle = { bundleJson("v2", "r1", PAGES.toList()) })
+        second.flushNow()
+        assertEquals("v2", second.catalog.value?.version)
+        assertEquals(0, db.query("SELECT COUNT(*) FROM rematch_run") { it.long(0) }.single().toInt())
+    }
+
+    @Test
+    fun aBigRematchDoesNotBlockStartupOrIngest() = runBlocking {
+        val store = LocalStore(db)
+        val t = now.get()
+        val payloads = (0 until 3_000).associate { sha256Hex(adv("item-$it-buds")) to PayloadDelta(adv("item-$it-buds"), t, t, 1L) }
+        store.flush(FlushBatch(payloads, emptyMap(), null, emptyList(), 0.0), HashMap(), "old") { _, _ -> emptyList() }
+        val hub = hub(version = "new")
+        // ingest is served while the re-match is still going (it runs a batch per turn of the queue)
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-live"), now.get())
+        hub.flushNow()
+        val report = withTimeout(30_000) { hub.pendingRematchReport().first { it != null } }
+        assertEquals(3_000, report!!.payloadsChecked) // the live payload was matched on arrival
+        assertEquals(3_000, report.newlyIdentified.size)
+        assertEquals(
+            3_001,
+            hub.previouslySeenProducts().firstValue().single().products.single().payloadCount,
         )
     }
 
@@ -229,6 +265,152 @@ class LocalDataHubTest {
         now.set(t + 1)
         val snapshot = hub.productsInRange().firstValue()
         assertEquals(1, snapshot.unidentifiedDeviceCount)
+    }
+
+    @Test
+    fun aMatcherThatCannotLoadOnlyDisablesIdentification() = runBlocking {
+        val hub = hub(createMatcher = { throw UnsatisfiedLinkError("libcluetooth_core.so") })
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t)
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.flushNow()
+        assertEquals(LocalDataStatus.State.IDENTIFICATION_UNAVAILABLE, hub.status.value.state)
+        assertNull(hub.catalog.value)
+        assertEquals(1, hub.sightingsOfDevice("AA:00:00:00:00:01").firstValue().size)
+        assertTrue(hub.previouslySeenProducts().firstValue().isEmpty())
+    }
+
+    @Test
+    fun anUnopenableDatabaseDegradesToEmptyDataInsteadOfCrashing() = runBlocking {
+        val broken = LocalDataHub(
+            openDatabase = { throw java.io.IOException("disk I/O error") },
+            loadBundleJson = { bundleJson("v1", *PAGES) },
+            createMatcher = { FakeMatcher("v1", rules) },
+            scope = scope,
+            clock = now::get,
+        ).also { it.start() }
+        withTimeout(10_000) { broken.status.first { it.state == LocalDataStatus.State.UNAVAILABLE } }
+        assertEquals("disk I/O error", broken.status.value.message)
+        // every query completes with empty data; none throws
+        assertTrue(broken.recordings().firstValue().isEmpty())
+        assertNull(broken.recording("x").firstValue())
+        assertTrue(broken.previouslySeenProducts().firstValue().isEmpty())
+        assertTrue(broken.previouslySeenProducts("audio").firstValue().isEmpty())
+        assertTrue(broken.devicesInRecording("x").firstValue().isEmpty())
+        assertTrue(broken.route("x").firstValue().isEmpty())
+        assertTrue(broken.sightingsOfDevice("AA").firstValue().isEmpty())
+        assertTrue(broken.sightingsOfProduct("x").firstValue().isEmpty())
+        assertNull(broken.pendingRematchReport().firstValue())
+        assertEquals(0, broken.productsInRange().firstValue().totalDeviceCount)
+        // the scan callback keeps working and nothing piles up
+        repeat(20_000) { broken.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), now.get()) }
+        broken.onRecordingStarted("rec", now.get())
+        broken.flushNow()
+        broken.acknowledgeRematch(1)
+    }
+
+    @Test
+    fun aFailingQueryEmitsTheFallbackInsteadOfThrowing() = runBlocking {
+        val hub = hub()
+        hub.flushNow()
+        db.execute("DROP TABLE recording")
+        assertTrue(hub.recordings().firstValue().isEmpty())
+    }
+
+    @Test
+    fun theMatcherRunsOncePerDistinctPayloadUnlessRulesLookAtTheAddress() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        repeat(10) { i -> repeat(5) { hub.onAdvertisement("AA:00:00:00:00:0$i", -60, adv("buds-1"), t + it) } }
+        hub.flushNow()
+        assertEquals(1, matcherOf!!.calls.get())
+
+        val withAddr = hub(addressRules = mapOf("device--bulb" to "AA:00"))
+        repeat(10) { i -> withAddr.onAdvertisement("AA:00:00:00:00:0$i", -60, adv("buds-1"), t) }
+        withAddr.flushNow()
+        assertTrue(matcherOf!!.calls.get() >= 10)
+    }
+
+    @Test
+    fun aDeviceAlternatingAdvertisementTypesKeepsBothProducts() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("bulb-1"), t + 1_000)
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t + 2_000)
+        hub.flushNow()
+        now.set(t + 3_000)
+        val snapshot = hub.productsInRange().firstValue()
+        assertEquals(1, snapshot.totalDeviceCount)
+        assertEquals(setOf("device--buds", "device--bulb"), snapshot.products.map { it.page.id }.toSet())
+        // once the older payload is out of the window only the newer one counts
+        now.set(t + 31_500)
+        assertEquals(listOf("device--buds"), hub.productsInRange().firstValue().products.map { it.page.id })
+    }
+
+    @Test
+    fun anExtendedAdvertisementOver255BytesIsStoredWhole() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        // flags + three 201-byte manufacturer structures + a name: 6xx bytes, as extended advertising allows
+        val raw = byteArrayOf(2, 1, 6) +
+            (0 until 3).flatMap { i -> listOf<Byte>(-55, -1, 0x4C, 0) + List(198) { i.toByte() } } +
+            byteArrayOf(5, 9) + "buds".toByteArray()
+        assertTrue(raw.size > 600)
+        hub.onRecordingStarted("rec-1", t)
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, raw, t)
+        hub.flushNow()
+        val stored = db.query("SELECT raw, hash FROM seen_payload") { it.blob(0) to it.string(1) }.single()
+        assertTrue(raw.contentEquals(stored.first))
+        assertEquals(sha256Hex(raw), stored.second)
+        assertEquals(listOf("device--buds"), hub.sightingsOfDevice("AA:00:00:00:00:01").firstValue().single().pageIds)
+    }
+
+    @Test
+    fun aWriteToAnotherTableGroupDoesNotRerunAQuery() = runBlocking {
+        val counting = CountingDatabase(db)
+        val hub = hub(database = counting)
+        val t = now.get()
+        val job = launch { hub.previouslySeenProducts().collect { } }
+        withTimeout(10_000) { while (counting.count("FROM seen_product") < 1) delay(5) }
+        assertEquals(1, counting.count("FROM seen_product"))
+
+        // recordings, routes and locations are other groups
+        hub.onRecordingStarted("rec-1", t)
+        hub.onLocation(CoreLocationInput(32.0, -117.0, 5.0, t, t))
+        hub.flushNow()
+        delay(100)
+        assertEquals(1, counting.count("FROM seen_product"))
+
+        // a new payload is the same group: it runs again
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.flushNow()
+        withTimeout(10_000) { while (counting.count("FROM seen_product") < 2) delay(5) }
+        job.cancel()
+    }
+
+    @Test
+    fun collectorsOfTheSameQuerySharedOneExecutionAndHeavyOnesAreThrottled() = runBlocking {
+        val counting = CountingDatabase(db)
+        val hub = hub(database = counting, heavyIntervalMs = 10_000, shareLingerMs = 60_000)
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t)
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.flushNow()
+
+        val results = List(3) { mutableListOf<List<Sighting>>() }
+        val jobs = results.map { sink -> launch { hub.sightingsOfDevice("AA:00:00:00:00:01").collect { sink += it } } }
+        withTimeout(10_000) { while (results.any { it.isEmpty() }) delay(5) }
+        assertEquals(1, counting.count("FROM sighting_minute s JOIN seen_payload"))
+
+        // more sightings arrive: the heavy query waits out its interval instead of re-running at once
+        repeat(5) { i ->
+            hub.onAdvertisement("AA:00:00:00:00:01", -50 - i, adv("buds-1"), t + 1_000L * (i + 1))
+            hub.flushNow()
+        }
+        delay(100)
+        assertEquals(1, counting.count("FROM sighting_minute s JOIN seen_payload"))
+        jobs.forEach { it.cancel() }
     }
 
     @Test

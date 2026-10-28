@@ -208,7 +208,6 @@ class CluetoothRepository(
 
     fun recordObservation(observation: CoreScanInput): ObservationAdmission {
         if (closing.get()) return ObservationAdmission.REJECTED_DEGRADED
-        localData.onAdvertisement(observation.addr, observation.rssi, observation.raw, observation.scannedAtMs)
         val retained = queuedObservations.incrementAndGet()
         if (commands.trySend(CoreCommand.RecordObservation(observation)).isFailure) {
             queuedObservations.decrementAndGet()
@@ -216,6 +215,8 @@ class CluetoothRepository(
             pauseIngress()
             return ObservationAdmission.REJECTED_DEGRADED
         }
+        // Only what the core admitted is counted locally, so both views agree.
+        localData.onAdvertisement(observation.addr, observation.rssi, observation.raw, observation.scannedAtMs)
         if (retained >= ingressHighWatermark) {
             pauseIngress()
             return ObservationAdmission.PAUSE_REQUIRED

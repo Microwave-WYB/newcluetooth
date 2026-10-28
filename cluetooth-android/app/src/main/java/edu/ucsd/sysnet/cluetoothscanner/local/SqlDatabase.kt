@@ -3,6 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.local
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteOpenHelper
 import android.database.sqlite.SQLiteStatement
 
@@ -15,7 +16,7 @@ import android.database.sqlite.SQLiteStatement
  * affinity), never as `MAX(col, ?)`-style value comparisons. The test implementation
  * binds query arguments as text too, so such a mistake fails there as well. Write
  * statements ([execute], [insert]) bind typed values. SQL stays within SQLite 3.9
- * (API 24): no UPSERT, window functions or RETURNING.
+ * (API 24): no UPSERT, window functions or returning clauses.
  */
 interface SqlDatabase : AutoCloseable {
     /** Runs a statement; returns the number of rows changed. Args: Long, Int, Double, String, ByteArray, null. */
@@ -100,7 +101,16 @@ class AndroidSqlDatabase private constructor(private val db: SQLiteDatabase) : S
     companion object {
         const val FILE_NAME = "local-data.db"
 
-        fun open(context: Context, name: String = FILE_NAME): AndroidSqlDatabase {
+        /** Opens the database; a file SQLite cannot read is deleted and recreated once. */
+        fun open(context: Context, name: String = FILE_NAME): AndroidSqlDatabase = try {
+            openHelper(context, name)
+        } catch (error: SQLiteException) {
+            java.util.logging.Logger.getLogger("LocalData").log(java.util.logging.Level.WARNING, "Recreating unreadable $name", error)
+            context.deleteDatabase(name)
+            openHelper(context, name)
+        }
+
+        private fun openHelper(context: Context, name: String): AndroidSqlDatabase {
             val helper = object : SQLiteOpenHelper(context.applicationContext, name, null, LocalSchema.VERSION) {
                 override fun onConfigure(db: SQLiteDatabase) {
                     db.enableWriteAheadLogging()
@@ -110,8 +120,13 @@ class AndroidSqlDatabase private constructor(private val db: SQLiteDatabase) : S
                     LocalSchema.CREATE.forEach(db::execSQL)
                 }
 
+                // It is a cache: start over rather than migrate, in either direction.
                 override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                    LocalSchema.upgrade(oldVersion).forEach(db::execSQL)
+                    LocalSchema.reset().forEach(db::execSQL)
+                }
+
+                override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                    LocalSchema.reset().forEach(db::execSQL)
                 }
             }
             return AndroidSqlDatabase(helper.writableDatabase)

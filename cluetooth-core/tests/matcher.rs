@@ -981,6 +981,186 @@ fn every_rule_matches_its_positive_and_rejects_its_negative_advertisements() {
 
 // Python cross-check ----------------------------------------------------------------
 
+fn python(request: Value) -> Vec<bool> {
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/python/reference_rules.py"
+    );
+    let mut child = Command::new("python3")
+        .args(["-I", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect(
+            "python3 is required for the cross-check (mise installs it at the repository root)",
+        );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(request.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "python failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+/// An extended advertisement of 3 x 201-byte manufacturer structures, flags and a name: over 600 bytes.
+fn extended_advertisement() -> Vec<u8> {
+    let mut raw = hex("020106");
+    for i in 0..3u8 {
+        raw.extend([201, 0xFF, 0x4C, 0x00]);
+        raw.extend(vec![i; 198]);
+    }
+    raw.extend([12, 0x09]);
+    raw.extend(b"Extended-ID");
+    raw
+}
+
+#[test]
+fn extended_advertisements_beyond_255_bytes_parse_in_full() {
+    let raw = extended_advertisement();
+    assert_eq!(raw.len(), 3 + 3 * 202 + 13);
+    assert_eq!(structures(&raw).len(), 5);
+    assert!(eval(
+        &json!({"name": {"equals": "Extended-ID"}}),
+        &raw,
+        None,
+        None
+    ));
+    let shape =
+        json!({"shape": {"items": ["01/1", "FF/200", "FF/200", "FF/200", "09/11"], "rest": false}});
+    assert!(eval(&shape, &raw, None, None));
+    // the last manufacturer structure is the one filled with 2
+    let last = json!({"struct": {"ad": 255, "company": 76, "len": 198, "bytes": {"offset": 197, "value": "02"}}});
+    assert!(eval(&last, &raw, None, None));
+    let first_only = json!({"struct": {"ad": 255, "bytes": {"offset": 0, "value": "05"}}});
+    assert!(!eval(&first_only, &raw, None, None));
+    // cut inside the name: the structures before it still count, the name does not
+    let cut = &raw[..raw.len() - 4];
+    assert_eq!(structures(cut).len(), 4);
+    assert!(eval(&last, cut, None, None));
+    assert!(!eval(&json!({"name": {"prefix": "Ext"}}), cut, None, None));
+    // the longest possible structure: 255 bytes after the length byte
+    let mut long = vec![255u8, 0x09];
+    long.extend(vec![b'a'; 254]);
+    assert!(eval(
+        &json!({"name": {"regex": "a{254}"}}),
+        &long,
+        None,
+        None
+    ));
+}
+
+#[test]
+fn matcher_reports_whether_any_rule_uses_the_address() {
+    let without = json!({"version": "x", "pages": [{"id": "a", "rule": {"company": [76]}}]});
+    let with = json!({"version": "x", "pages": [
+        {"id": "a", "rule": {"company": [76]}},
+        {"id": "b", "rule": {"all": [{"company": [1]}, {"not": {"addr": {"type": "random"}}}]}}
+    ]});
+    assert!(
+        !RuleMatcher::from_bundle_json(without.to_string())
+            .unwrap()
+            .uses_address_rules()
+    );
+    assert!(
+        RuleMatcher::from_bundle_json(with.to_string())
+            .unwrap()
+            .uses_address_rules()
+    );
+    assert!(
+        !RuleMatcher::from_bundle_json(BUNDLE.to_string())
+            .unwrap()
+            .uses_address_rules()
+    );
+}
+
+/// (pattern, Some(expected)) where the grammar decides; None where only agreement is required.
+const REGEX_CORPUS: &[(&str, Option<bool>)] = &[
+    ("abc", Some(true)),
+    ("ResMed \\d{6}", Some(true)),
+    ("ihoment_H[0-9]{4}_[0-9A-Fa-f]{2}", Some(true)),
+    ("a|b", Some(true)),
+    ("(ab)+c?", Some(true)),
+    ("x*?", Some(true)),
+    ("[a-c]+", Some(true)),
+    ("[^0-9]", Some(true)),
+    ("[\\d.]", Some(true)),
+    ("[\\-a]", Some(true)),
+    ("a{2,}", Some(true)),
+    ("[a&&b]", Some(false)),
+    ("[a~~b]", Some(false)),
+    ("[a--b]", Some(false)),
+    ("[a||b]", Some(false)),
+    ("[\\w]", Some(false)),
+    ("\\w", Some(false)),
+    ("[[a]]", Some(false)),
+    ("[a[b]]", Some(false)),
+    ("[[:alpha:]]", Some(false)),
+    ("a*+", Some(false)),
+    ("a++", Some(false)),
+    ("a?+", Some(false)),
+    ("a{2}+", Some(false)),
+    ("a**", Some(false)),
+    ("a*{2}", Some(false)),
+    ("(?i)a", Some(false)),
+    ("(?=a)b", Some(false)),
+    ("(a)\\1", Some(false)),
+    ("[]a]", Some(false)),
+    ("a{", Some(false)),
+    ("[a-]", None),
+    ("[-a]", None),
+    ("[a\\-z]", None),
+    ("a{,3}", None),
+    ("a{2", None),
+    ("[\\d-z]", None),
+    ("[a-\\d]", None),
+    ("[z-a]", None),
+    ("\\.", None),
+    ("\\ ", None),
+    ("a|", None),
+    ("|a", None),
+    ("()", None),
+    ("(|a)", None),
+    ("[^]a]", None),
+    ("[\\]]", None),
+    ("é+", None),
+    ("[é-ü]", None),
+    ("a&&b", None),
+    ("a~~b", None),
+    ("a--b", None),
+    ("[&]", None),
+    ("[~]", None),
+    ("[|]", None),
+    ("[{}()]", None),
+    ("(a|b)*?c", None),
+    ("a??", None),
+    ("a+?", None),
+    ("a{1,2}?", None),
+    ("a{1,2}??", None),
+    ("a{1}{2}", None),
+];
+
+#[test]
+fn regex_grammar_agrees_with_python_and_rejects_the_divergent_corners() {
+    let patterns: Vec<&str> = REGEX_CORPUS.iter().map(|(p, _)| *p).collect();
+    let py = python(json!({ "regexes": patterns }));
+    assert_eq!(py.len(), REGEX_CORPUS.len());
+    for ((pattern, expected), py) in REGEX_CORPUS.iter().zip(py) {
+        let rust = regex_ok(pattern);
+        assert_eq!(rust, py, "Rust and Python disagree on {pattern:?}");
+        if let Some(expected) = expected {
+            assert_eq!(rust, *expected, "{pattern:?}");
+        }
+    }
+}
+
 #[test]
 fn rust_and_python_evaluators_agree_on_every_rule_and_advertisement() {
     let synthetic = synthesize();
@@ -1015,12 +1195,20 @@ fn rust_and_python_evaluators_agree_on_every_rule_and_advertisement() {
     ] {
         ads.push((hex(h), None, None));
     }
+    let extended = extended_advertisement();
+    ads.push((extended[..extended.len() - 4].to_vec(), None, None));
+    ads.push((extended, None, None));
     ads.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     ads.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1 && a.2 == b.2);
 
     let mut rules: Vec<Value> = synthetic.iter().map(|s| s.rule.clone()).collect();
     rules.extend(cases.iter().map(|c| c["rule"].clone()));
     rules.push(json!({"not": {"company": [76]}}));
+    rules.push(json!({"name": {"equals": "Extended-ID"}}));
+    rules.push(json!({"struct": {"ad": 255, "company": 76, "len": 198, "bytes": {"offset": 197, "value": "02"}}}));
+    rules.push(
+        json!({"shape": {"items": ["01/1", "FF/200", "FF/200", "FF/200", "09/11"], "rest": false}}),
+    );
     rules.push(json!({"all": [{"addr": {"type": "random"}}, {"not": {"name": {"prefix": "~"}}}]}));
 
     let mut requests = Vec::new();
@@ -1043,32 +1231,7 @@ fn rust_and_python_evaluators_agree_on_every_rule_and_advertisement() {
         }
     }
 
-    let script = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/python/reference_rules.py"
-    );
-    let mut child = Command::new("python3")
-        .args(["-I", script])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect(
-            "python3 is required for the cross-check (mise installs it at the repository root)",
-        );
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(json!({"cases": requests}).to_string().as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "python failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let python: Vec<bool> = serde_json::from_slice(&output.stdout).unwrap();
+    let python = python(json!({"cases": requests}));
     assert_eq!(python.len(), expected_rust.len());
     let disagreements: BTreeSet<String> = (0..python.len())
         .filter(|i| python[*i] != expected_rust[*i])

@@ -10,6 +10,15 @@ interface AdvertisementMatcher {
     /** The wiki bundle version the rules come from. */
     val bundleVersion: String
 
+    /** `page-id: reason` for rules that were skipped; empty for a healthy bundle. */
+    val ruleErrors: List<String> get() = emptyList()
+
+    /**
+     * Whether any rule looks at the address. When none does, [match] depends on the bytes
+     * alone, so callers can cache results by payload and skip the address.
+     */
+    val usesAddressRules: Boolean get() = false
+
     /**
      * Ids of the matching pages, in bundle order. [addr] (`AA:BB:CC:DD:EE:FF`) and
      * [addrType] feed the rules' `addr` conditions; without an address those never match.
@@ -21,8 +30,8 @@ interface AdvertisementMatcher {
 class NativeAdvertisementMatcher private constructor(private val native: RuleMatcher) : AdvertisementMatcher {
     override val bundleVersion: String = native.bundleVersion()
 
-    /** `page-id: reason` for rules the matcher skipped; empty for a healthy bundle. */
-    val ruleErrors: List<String> = native.ruleErrors()
+    override val ruleErrors: List<String> = native.ruleErrors()
+    override val usesAddressRules: Boolean = native.usesAddressRules()
 
     override fun match(raw: ByteArray, addr: String?, addrType: AddressType?): List<String> =
         native.matchAdvertisement(

@@ -66,6 +66,7 @@ pub struct RuleMatcher {
     version: String,
     rules: Vec<(String, Compiled)>,
     errors: Vec<String>,
+    uses_address: bool,
 }
 
 impl RuleMatcher {
@@ -106,10 +107,12 @@ impl RuleMatcher {
                 Err(e) => errors.push(format!("{}: {e}", page.id)),
             }
         }
+        let uses_address = rules.iter().any(|(_, rule)| rule.uses_address());
         Ok(Arc::new(Self {
             version,
             rules,
             errors,
+            uses_address,
         }))
     }
 
@@ -121,6 +124,12 @@ impl RuleMatcher {
     /// Number of compiled rules.
     pub fn rule_count(&self) -> u32 {
         self.rules.len() as u32
+    }
+
+    /// Whether any compiled rule looks at the address. When none does, the result
+    /// for an advertisement depends on its bytes alone and can be cached by payload.
+    pub fn uses_address_rules(&self) -> bool {
+        self.uses_address
     }
 
     /// `page-id: reason` for every rule that was skipped.

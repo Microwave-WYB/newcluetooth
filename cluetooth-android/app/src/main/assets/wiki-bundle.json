@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "version": "2026-10-26+9f9ccfd7",
+  "rules_version": "82f6f951efdf6f32",
   "categories": [
     {
       "id": "asset-tracker",

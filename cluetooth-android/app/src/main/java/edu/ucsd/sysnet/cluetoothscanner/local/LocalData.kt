@@ -1,6 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.local
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -8,6 +9,9 @@ import kotlinx.coroutines.flow.StateFlow
  * on collection and again after the underlying data changed (writes are batched
  * about once a second), so collect it from a lifecycle-aware scope. Queries run
  * off the main thread; collecting on the main thread is fine.
+ *
+ * Queries are shared between collectors of the same key and only re-run when a
+ * table they read changed, at most once a second (heavy ones once every 5 s).
  *
  * Nothing here uploads anything. Sighting history and routes are only written
  * while a recording (scan session) is active; the seen-payload store is also
@@ -18,6 +22,12 @@ import kotlinx.coroutines.flow.StateFlow
 interface LocalData {
     /** The wiki bundle (pages, categories, Chinese labels); null until the asset is loaded. */
     val catalog: StateFlow<WikiCatalog?>
+
+    /**
+     * Whether the layer works. When it does not, every query below emits empty data
+     * (and never throws), and this says why; show it, don't crash on it.
+     */
+    val status: StateFlow<LocalDataStatus> get() = READY_STATUS_FLOW
 
     // Nearby --------------------------------------------------------------------------
 
@@ -59,6 +69,7 @@ interface LocalData {
     suspend fun acknowledgeRematch(reportId: Long)
 
     companion object {
+        private val READY_STATUS_FLOW: StateFlow<LocalDataStatus> = MutableStateFlow(LocalDataStatus.READY_STATUS)
         const val DEFAULT_IN_RANGE_WINDOW_MS = 30_000L
         const val DEFAULT_SIGHTING_LIMIT = 2_000
     }

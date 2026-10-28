@@ -22,7 +22,7 @@ class LocalStoreTest {
         recording: String? = null,
         route: List<RoutePoint> = emptyList(),
         distance: Double = 0.0,
-    ) = store.flush(FlushBatch(payloads, minutes, recording, route, distance, true), ids, "v1") { _, raw -> matcher.match(raw) }
+    ) = store.flush(FlushBatch(payloads, minutes, recording, route, distance), ids, "v1") { _, raw -> matcher.match(raw) }
 
     private fun payload(name: String, first: Long, last: Long, count: Long) =
         sha256Hex(adv(name)) to PayloadDelta(adv(name), first, last, count)
@@ -114,6 +114,7 @@ class LocalStoreTest {
             route = listOf(RoutePoint(t0 + 2, 32.0, -117.0, 4.0), RoutePoint(t0 + 1, 32.001, -117.0, 4.0)),
             distance = 111.2,
         )
+        store.refreshDeviceCount("r1") // its own statement, not part of a flush
         // active recording
         val active = store.recordings(t0 + 90_000).single()
         assertTrue(active.active)
@@ -174,7 +175,7 @@ class LocalStoreTest {
         val loc = GeoPoint(1.0, 1.0, 1.0)
         flush(
             mapOf(
-                payload("buds-old", now - 50 * day, now - 50 * day, 1), // matched, old: stays
+                payload("buds-old", now - 50 * day, now - 50 * day, 1), // matched, old: expires too
                 payload("noise-old", now - 50 * day, now - 50 * day, 1), // unmatched, old, unreferenced: goes
                 payload("noise-ref", now - 50 * day, now - 50 * day, 1), // unmatched, old, but a recent sighting uses it: stays
                 payload("noise-new", now - day, now - day, 1), // unmatched, recent: stays
@@ -189,7 +190,10 @@ class LocalStoreTest {
         assertEquals(listOf(now - 10 * day), store.sightingsOfDevice("AA:00:00:00:00:01", 10).map { it.minuteMs })
         assertTrue(store.route("old").isEmpty())
         val hashes = db.query("SELECT hash FROM seen_payload") { it.string(0) }.toSet()
-        assertEquals(setOf("buds-old", "noise-ref", "noise-new").map { sha256Hex(adv(it)) }.toSet(), hashes)
+        assertEquals(setOf("noise-ref", "noise-new").map { sha256Hex(adv(it)) }.toSet(), hashes)
+        // the expired payload's page is still a previously seen product
+        assertEquals(listOf("device--buds"), store.seenProducts(catalog).map { it.page.id })
+        assertEquals(0, db.query("SELECT COUNT(*) FROM payload_match") { it.long(0) }.single().toInt())
     }
 
     @Test
@@ -220,21 +224,21 @@ class LocalStoreTest {
             ),
         )
         // the first run on existing data only records the version: v1 already matched everything inserted
-        assertNull(store.pendingRematchReport().also { store.rematchIfNeeded(matcher, t0) })
+        assertNull(store.pendingRematchReport().also { store.rematchAll(matcher, "v1", t0) })
         assertNull(store.pendingRematchReport())
     }
 
     @Test
     fun aFirstBundleOnAnEmptyStoreRunsNothing() {
-        assertNull(LocalStore(JdbcSqlDatabase()).rematchIfNeeded(matcher, t0))
+        assertNull(LocalStore(JdbcSqlDatabase()).rematchAll(matcher, "v1", t0))
     }
 
     @Test
     fun aNewBundleRematchesEveryPayloadAndRecordsTheNewlyIdentified() {
         seed()
-        assertNull(store.rematchIfNeeded(matcher, t0)) // same version: nothing to do
+        assertNull(store.rematchAll(matcher, "v1", t0)) // same rules: nothing to do
         val v2 = FakeMatcher("v2", mapOf("device--buds" to "buds", "device--bulb" to "bulb", "device--multi" to "lamp"))
-        val runId = store.rematchIfNeeded(v2, t0 + 1_000)
+        val runId = store.rematchAll(v2, "v2", t0 + 1_000)
         assertNotNull(runId)
         val report = store.pendingRematchReport()!!
         assertEquals(runId, report.id)
@@ -249,14 +253,14 @@ class LocalStoreTest {
         )
         store.acknowledgeRematch(report.id)
         assertNull(store.pendingRematchReport())
-        assertNull(store.rematchIfNeeded(v2, t0 + 2_000))
+        assertNull(store.rematchAll(v2, "v2", t0 + 2_000))
     }
 
     @Test
     fun losingAMatchIsNotNewlyIdentified() {
         seed()
         val v2 = FakeMatcher("v2", mapOf("device--bulb" to "lamp"))
-        store.rematchIfNeeded(v2, t0 + 1_000)
+        store.rematchAll(v2, "v2", t0 + 1_000)
         // buds-1 lost its match; lamp-1 gained one (it had none before)
         val report = store.pendingRematchReport()!!
         assertEquals(listOf(sha256Hex(adv("lamp-1"))), report.newlyIdentified.map { it.payloadHash })
@@ -268,17 +272,140 @@ class LocalStoreTest {
         seed()
         val broken = FakeMatcher("v2", mapOf("device--bulb" to "lamp")).also { it.failAfter = 1 }
         try {
-            store.rematchIfNeeded(broken, t0 + 1_000)
+            store.rematchAll(broken, "v2", t0 + 1_000)
             error("expected the matcher to fail")
         } catch (expected: IllegalStateException) {
             assertEquals("matcher failed", expected.message)
         }
-        // the batch rolled back as a whole, nothing is half-updated; the run row survives
+        // matching happens before the write: nothing is half-updated; the run row survives
         val run = db.query("SELECT id FROM rematch_run WHERE to_version = 'v2' AND finished_ms IS NULL") { it.long(0) }
         assertEquals(1, run.size)
-        val resumed = store.rematchIfNeeded(FakeMatcher("v2", mapOf("device--bulb" to "lamp")), t0 + 5_000)
+        val resumed = store.rematchAll(FakeMatcher("v2", mapOf("device--bulb" to "lamp")), "v2", t0 + 5_000)
         assertEquals(run.single(), resumed)
         assertEquals(1, db.query("SELECT COUNT(*) FROM rematch_run WHERE to_version = 'v2'") { it.long(0) }.single().toInt())
         assertEquals(3, store.pendingRematchReport()!!.payloadsChecked)
+    }
+
+    // Expiry, summaries, rollback, scale --------------------------------------------------------------
+
+    @Test
+    fun theProductSummaryCountsAndSurvivesPayloadExpiry() {
+        val day = 24 * 60 * minute
+        val now = t0 + 100 * day
+        flush(mapOf(payload("buds-1", now - 50 * day, now - 49 * day, 3), payload("buds-2", now - 50 * day, now - 48 * day, 2)))
+        flush(mapOf(payload("buds-1", now - 40 * day, now - 40 * day, 4)))
+        val before = store.seenProducts(catalog).single()
+        assertEquals("device--buds", before.page.id)
+        assertEquals(2, before.payloadCount) // two distinct payloads; hearing one again adds no payload
+        assertEquals(9L, before.seenCount)
+        assertEquals(now - 50 * day, before.firstSeenMs)
+        assertEquals(now - 40 * day, before.lastSeenMs)
+        assertEquals(
+            db.query("SELECT id FROM seen_payload WHERE hash = ?", listOf(sha256Hex(adv("buds-1")))) { it.long(0) }.single(),
+            db.query("SELECT last_payload_id FROM seen_product") { it.long(0) }.single(),
+        )
+
+        store.pruneExpired(now)
+        assertEquals(0, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertEquals(before, store.seenProducts(catalog).single())
+    }
+
+    @Test
+    fun rotatingPayloadsExpireInBoundedSteps() {
+        val day = 24 * 60 * minute
+        val now = t0 + 100 * day
+        // a beacon that changes its advertisement every few minutes: 3 000 matched payloads in one day
+        flush((0 until 3_000).associate { payload("buds-$it", now - 45 * day, now - 45 * day, 1) })
+        assertEquals(3_000, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertTrue("one step is bounded, more is left", store.pruneStep(now))
+        assertEquals(1_000, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertFalse(store.pruneStep(now))
+        assertEquals(0, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertEquals(3_000, store.seenProducts(catalog).single().payloadCount)
+    }
+
+    @Test
+    fun oldSightingsAndRoutesGoInBoundedSteps() {
+        val day = 24 * 60 * minute
+        val now = t0 + 100 * day
+        store.startRecording("r1", now - 45 * day)
+        flush(
+            mapOf(payload("buds-1", now - 45 * day, now - 45 * day, 1)),
+            (0 until 3).associate { d ->
+                key("AA:00:00:00:00:01", now - (45 - d) * day, "buds-1") to delta(now - (45 - d) * day, -60, null)
+            } + (key("AA:00:00:00:00:01", now - day, "buds-1") to delta(now - day, -60, null)),
+            "r1",
+            route = listOf(RoutePoint(now - 44 * day, 1.0, 1.0, 1.0), RoutePoint(now - day, 1.0, 1.0, 1.0)),
+        )
+        var steps = 0
+        while (store.pruneStep(now)) steps++
+        assertTrue("three old days take more than one step", steps >= 1)
+        assertEquals(listOf(now - day), store.sightingsOfDevice("AA:00:00:00:00:01", 10).map { it.minuteMs })
+        assertEquals(listOf(now - day), store.route("r1").map { it.timeMs })
+    }
+
+    @Test
+    fun aRolledBackFlushLeavesNoIdsInTheCache() {
+        store.startRecording("r1", t0)
+        val a = payload("buds-a", t0, t0, 1)
+        val b = payload("bulb-b", t0, t0, 1)
+        try {
+            store.flush(FlushBatch(mapOf(a, b), emptyMap(), "r1", emptyList(), 0.0), ids, "v1") { hash, raw ->
+                if (hash == b.first) error("boom") else matcher.match(raw)
+            }
+            org.junit.Assert.fail("the flush should fail")
+        } catch (expected: IllegalStateException) {
+            assertEquals("boom", expected.message)
+        }
+        assertTrue("nothing was committed, so nothing may be cached", ids.isEmpty())
+        assertEquals(0, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertTrue(store.seenProducts(catalog).isEmpty())
+
+        // AUTOINCREMENT hands the rolled-back id 1 out again, to a different payload
+        flush(mapOf(payload("other-c", t0, t0, 1)))
+        flush(
+            mapOf(a),
+            mapOf(key("AA:00:00:00:00:01", t0, "buds-a") to delta(t0, -60, null)),
+            "r1",
+        )
+        val sighting = store.sightingsOfDevice("AA:00:00:00:00:01", 10).single()
+        assertEquals(sha256Hex(adv("buds-a")), sighting.payloadHash)
+        assertEquals(listOf("device--buds"), sighting.pageIds)
+        assertEquals(ids[sha256Hex(adv("buds-a"))], db.query("SELECT id FROM seen_payload WHERE hash = ?", listOf(sha256Hex(adv("buds-a")))) { it.long(0) }.single())
+    }
+
+    @Test
+    fun aLargeRematchRunsInKeysetBatchesAndUpdatesTheSummary() {
+        // 2 500 payloads: v1 knows none of them, v2 matches the even ones
+        val payloads = (0 until 2_500).associate { payload("item-$it-${if (it % 2 == 0) "buds" else "zzzz"}", t0, t0 + it, 2) }
+        store.flush(FlushBatch(payloads, emptyMap(), null, emptyList(), 0.0), ids, "v1") { _, _ -> emptyList() }
+        val v1 = FakeMatcher("v1", emptyMap())
+        assertNull(store.rematchAll(v1, "v1", t0)) // everything was inserted at "v1" already
+        val v2 = FakeMatcher("v2", mapOf("device--buds" to "buds"))
+        val run = store.beginRematch("v2", t0 + 1)!!
+        var batches = 0
+        while (store.rematchBatch(v2, "v2", run, t0 + 2)) batches++
+        assertEquals(5, batches) // 500 per batch, then the empty one that finishes the run
+        assertEquals(2_500, db.query("SELECT payloads_checked FROM rematch_run WHERE id = ?", listOf(run)) { it.long(0) }.single().toInt())
+        assertEquals(2_500, v2.calls.get())
+        val report = store.pendingRematchReport()!!
+        assertEquals(1_250, report.newlyIdentified.size)
+        val product = store.seenProducts(catalog).single()
+        assertEquals(1_250, product.payloadCount)
+        assertEquals(2_500L, product.seenCount)
+        // a second pass has nothing left to do
+        assertNull(store.rematchAll(v2, "v2", t0 + 3))
+    }
+
+    @Test
+    fun aPayloadThatExpiredComesBackAsANewRow() {
+        flush(mapOf(payload("buds-1", t0, t0, 1)))
+        val first = ids.getValue(sha256Hex(adv("buds-1")))
+        val day = 24 * 60 * minute
+        store.pruneExpired(t0 + 40 * day)
+        ids.clear() // what the hub does after a prune step
+        flush(mapOf(payload("buds-1", t0 + 41 * day, t0 + 41 * day, 1)))
+        assertEquals(1, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertTrue(ids.getValue(sha256Hex(adv("buds-1"))) >= first)
     }
 }

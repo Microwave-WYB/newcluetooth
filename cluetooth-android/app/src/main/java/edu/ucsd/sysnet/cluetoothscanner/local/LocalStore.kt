@@ -3,9 +3,12 @@ package edu.ucsd.sysnet.cluetoothscanner.local
 import java.security.MessageDigest
 
 private const val MINUTE_MS = 60_000L
-const val SIGHTING_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
-private const val META_BUNDLE_VERSION = "bundle_version"
+const val RETENTION_MS = 30L * 24 * 60 * 60 * 1000
+private const val META_RULES_VERSION = "rules_version"
 private const val REMATCH_BATCH = 500
+private const val PRUNE_BATCH = 2_000
+private const val PRUNE_SIGHTING_MINUTES = 6L * 60
+private const val PRUNE_ROUTE_MS = 6L * 60 * 60 * 1000
 
 /** A payload heard since the last flush. */
 class PayloadDelta(val raw: ByteArray, var firstSeenMs: Long, var lastSeenMs: Long, var count: Long)
@@ -45,45 +48,107 @@ class FlushBatch(
     val recordingId: String?,
     val route: List<RoutePoint>,
     val distanceMeters: Double,
-    val refreshDeviceCount: Boolean,
 )
 
-fun sha256Hex(raw: ByteArray): String =
-    MessageDigest.getInstance("SHA-256").digest(raw).joinToString("") { "%02x".format(it) }
+private val HEX = "0123456789abcdef".toCharArray()
+private val SHA256 = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
+
+/** SHA-256 as 64 lowercase hex characters. */
+fun sha256Hex(raw: ByteArray): String {
+    val digest = SHA256.get()!!.digest(raw)
+    val out = CharArray(digest.size * 2)
+    for (i in digest.indices) {
+        val b = digest[i].toInt()
+        out[2 * i] = HEX[(b shr 4) and 0xF]
+        out[2 * i + 1] = HEX[b and 0xF]
+    }
+    return String(out)
+}
 
 /**
  * All SQL of the local database. Synchronous; the hub serializes writers and runs
- * queries on a background dispatcher.
+ * queries on a background dispatcher. SQL stays within SQLite 3.9 (API 24).
  */
 class LocalStore(private val db: SqlDatabase) {
-    // Startup -----------------------------------------------------------------------------
+    /** Rows the latest [pruneStep] deleted; the caller bumps its change signals only when it is above zero. */
+    var lastPruneDeleted: Int = 0
+        private set
+
+    // Expiry ---------------------------------------------------------------------------------
 
     /**
-     * Drops sighting history, routes and recordings older than 30 days, and
-     * unmatched payloads nobody references and nobody heard for 30 days. Matched
-     * payloads stay: they are the "previously seen products".
+     * One bounded step of expiry (each step is one short transaction): sighting history, routes,
+     * recordings and payloads older than 30 days. Returns true while more is left to delete, so the
+     * caller can interleave other work between steps.
+     *
+     * A payload expires once nobody heard it for 30 days, matched or not, unless a sighting or an
+     * unacknowledged re-match still refers to it. [seen_product] keeps what "previously seen
+     * products" needs, so rotating payloads (beacons that change their advertisement every few
+     * minutes) cost 30 days of rows, not forever.
      */
-    fun pruneExpired(nowMs: Long) = db.transaction {
-        val cutoffMs = nowMs - SIGHTING_RETENTION_MS
+    fun pruneStep(nowMs: Long): Boolean {
+        var deleted = 0
+        val more = db.transaction { pruneStepIn(nowMs) { deleted += it } }
+        lastPruneDeleted = deleted
+        return more
+    }
+
+    private fun pruneStepIn(nowMs: Long, deleted: (Int) -> Unit): Boolean {
+        val cutoffMs = nowMs - RETENTION_MS
         val cutoffMinute = cutoffMs / MINUTE_MS
-        db.execute("DELETE FROM sighting_minute WHERE minute < ?", listOf(cutoffMinute))
-        db.execute("DELETE FROM recording_route WHERE time_ms < ?", listOf(cutoffMs))
-        db.execute(
-            "DELETE FROM recording WHERE COALESCE(ended_ms, started_ms) < ? AND " +
-                "NOT EXISTS (SELECT 1 FROM sighting_minute s WHERE s.recording_id = recording.id)",
-            listOf(cutoffMs),
+        var more = false
+
+        val oldestMinute = db.query("SELECT MIN(minute) FROM sighting_minute") { it.longOrNull(0) }.firstOrNull()
+        if (oldestMinute != null && oldestMinute < cutoffMinute) {
+            val upTo = minOf(cutoffMinute, oldestMinute + PRUNE_SIGHTING_MINUTES)
+            deleted(db.execute("DELETE FROM sighting_minute WHERE minute < ?", listOf(upTo)))
+            if (upTo < cutoffMinute) more = true
+        }
+        val oldestRoute = db.query("SELECT MIN(time_ms) FROM recording_route") { it.longOrNull(0) }.firstOrNull()
+        if (oldestRoute != null && oldestRoute < cutoffMs) {
+            val upTo = minOf(cutoffMs, oldestRoute + PRUNE_ROUTE_MS)
+            deleted(db.execute("DELETE FROM recording_route WHERE time_ms < ?", listOf(upTo)))
+            if (upTo < cutoffMs) more = true
+        }
+        deleted(
+            db.execute(
+                "DELETE FROM recording WHERE COALESCE(ended_ms, started_ms) < ? AND " +
+                    "NOT EXISTS (SELECT 1 FROM sighting_minute s WHERE s.recording_id = recording.id)",
+                listOf(cutoffMs),
+            ),
         )
-        db.execute(
-            "DELETE FROM seen_payload WHERE last_seen_ms < ? " +
-                "AND NOT EXISTS (SELECT 1 FROM payload_match m WHERE m.payload_id = seen_payload.id) " +
+        deleted(
+            db.execute(
+                "DELETE FROM newly_identified WHERE run_id IN (SELECT id FROM rematch_run WHERE started_ms < ?)",
+                listOf(cutoffMs),
+            ),
+        )
+        deleted(db.execute("DELETE FROM rematch_run WHERE started_ms < ? AND finished_ms IS NOT NULL", listOf(cutoffMs)))
+
+        val expired = db.query(
+            "SELECT id FROM seen_payload WHERE last_seen_ms < ? " +
                 "AND NOT EXISTS (SELECT 1 FROM sighting_minute s WHERE s.payload_id = seen_payload.id) " +
-                "AND NOT EXISTS (SELECT 1 FROM newly_identified n WHERE n.payload_id = seen_payload.id)",
-            listOf(cutoffMs),
-        )
+                "AND NOT EXISTS (SELECT 1 FROM newly_identified n WHERE n.payload_id = seen_payload.id) " +
+                "ORDER BY id LIMIT ?",
+            listOf(cutoffMs, PRUNE_BATCH),
+        ) { it.long(0) }
+        if (expired.isNotEmpty()) {
+            // ids come from our own query: safe to inline
+            val ids = expired.joinToString(",")
+            db.execute("DELETE FROM payload_match WHERE payload_id IN ($ids)")
+            deleted(db.execute("DELETE FROM seen_payload WHERE id IN ($ids)"))
+            if (expired.size == PRUNE_BATCH) more = true
+        }
+        return more
+    }
+
+    /** Runs [pruneStep] until nothing is left; for tests and startup-style callers. */
+    fun pruneExpired(nowMs: Long) {
+        while (pruneStep(nowMs)) Unit
     }
 
     /** A recording the process died in has no end; it ended at the last thing recorded for it. */
-    fun closeOrphanRecordings() = db.transaction {
+    fun closeOrphanRecordings() {
         val orphans = db.query("SELECT id, started_ms FROM recording WHERE ended_ms IS NULL") {
             it.string(0) to it.long(1)
         }
@@ -100,56 +165,84 @@ class LocalStore(private val db: SqlDatabase) {
         }
     }
 
+    // Re-match on a rules change -----------------------------------------------------------------
+
     /**
-     * Re-matches every stored payload when [matcher]'s bundle differs from the one the
-     * stored matches belong to, recording which payloads went from unmatched to matched.
-     * Resumable: payloads already at the new version are skipped, and an unfinished run
-     * for the same target version is continued. Returns the run id, or null when nothing ran.
+     * Starts (or resumes) the re-match of the stored payloads whose matches were made under other
+     * rules than [rulesVersion]. Returns the run id, or null when there is nothing to do.
+     * Then call [rematchBatch] until it returns false.
      */
-    fun rematchIfNeeded(matcher: AdvertisementMatcher, nowMs: Long): Long? {
-        val target = matcher.bundleVersion
-        val stored = meta(META_BUNDLE_VERSION)
-        if (stored == target) return null
-        val hasPayloads = db.query("SELECT 1 FROM seen_payload LIMIT 1") { it.long(0) }.isNotEmpty()
-        if (!hasPayloads) {
-            setMeta(META_BUNDLE_VERSION, target)
+    fun beginRematch(rulesVersion: String, nowMs: Long): Long? {
+        // Stale = stored under other rules (or none, e.g. heard while the bundle failed to load).
+        val stale = db.query(
+            "SELECT 1 FROM seen_payload WHERE match_version IS NULL OR match_version != ? LIMIT 1",
+            listOf(rulesVersion),
+        ) { it.long(0) }.isNotEmpty()
+        val stored = meta(META_RULES_VERSION)
+        if (!stale) {
+            if (stored != rulesVersion) setMeta(META_RULES_VERSION, rulesVersion)
             return null
         }
         val resumed = db.query(
             "SELECT id FROM rematch_run WHERE to_version = ? AND finished_ms IS NULL ORDER BY id DESC LIMIT 1",
-            listOf(target),
+            listOf(rulesVersion),
         ) { it.long(0) }.firstOrNull()
-        val runId = resumed ?: db.insert(
+        return resumed ?: db.insert(
             "INSERT INTO rematch_run (from_version, to_version, started_ms) VALUES (?, ?, ?)",
-            listOf(stored, target, nowMs),
+            listOf(stored, rulesVersion, nowMs),
         )
-        while (true) {
-            val batch = db.query(
-                "SELECT id, raw FROM seen_payload WHERE match_version IS NULL OR match_version != ? ORDER BY id LIMIT ?",
-                listOf(target, REMATCH_BATCH),
-            ) { it.long(0) to it.blob(1) }
-            if (batch.isEmpty()) break
+    }
+
+    /**
+     * Re-matches the next batch of payloads (keyset pagination on the run's cursor) and records the
+     * ones that went from unmatched to matched. Matching happens before the write, so a matcher
+     * failure leaves the batch untouched and the run resumable. Returns false when the run is done.
+     */
+    fun rematchBatch(matcher: AdvertisementMatcher, rulesVersion: String, runId: Long, nowMs: Long): Boolean {
+        class Row(val id: Long, val raw: ByteArray, val firstMs: Long, val lastMs: Long, val seen: Long)
+        val cursor = db.query("SELECT cursor_id FROM rematch_run WHERE id = ?", listOf(runId)) { it.long(0) }.first()
+        val batch = db.query(
+            "SELECT id, raw, first_seen_ms, last_seen_ms, seen_count FROM seen_payload " +
+                "WHERE id > ? AND (match_version IS NULL OR match_version != ?) ORDER BY id LIMIT ?",
+            listOf(cursor, rulesVersion, REMATCH_BATCH),
+        ) { Row(it.long(0), it.blob(1), it.long(2), it.long(3), it.long(4)) }
+        if (batch.isEmpty()) {
             db.transaction {
-                for ((id, raw) in batch) {
-                    val before = db.query("SELECT 1 FROM payload_match WHERE payload_id = ? LIMIT 1", listOf(id)) { 1 }
-                    val after = matcher.match(raw)
-                    db.execute("DELETE FROM payload_match WHERE payload_id = ?", listOf(id))
-                    after.forEach { page ->
-                        db.execute("INSERT OR IGNORE INTO payload_match (payload_id, page_id) VALUES (?, ?)", listOf(id, page))
-                    }
-                    db.execute("UPDATE seen_payload SET match_version = ? WHERE id = ?", listOf(target, id))
-                    db.execute("UPDATE rematch_run SET payloads_checked = payloads_checked + 1 WHERE id = ?", listOf(runId))
-                    if (before.isEmpty() && after.isNotEmpty()) {
-                        db.execute("INSERT OR IGNORE INTO newly_identified (run_id, payload_id) VALUES (?, ?)", listOf(runId, id))
-                    }
-                }
+                db.execute("UPDATE rematch_run SET finished_ms = ? WHERE id = ?", listOf(nowMs, runId))
+                setMeta(META_RULES_VERSION, rulesVersion)
             }
+            return false
         }
+        val after = batch.map { matcher.match(it.raw) }
         db.transaction {
-            db.execute("UPDATE rematch_run SET finished_ms = ? WHERE id = ?", listOf(nowMs, runId))
-            setMeta(META_BUNDLE_VERSION, target)
+            val before = pagesOfPayloads(batch.map { it.id })
+            batch.forEachIndexed { i, row ->
+                val now = after[i]
+                val was = before[row.id].orEmpty()
+                db.execute("DELETE FROM payload_match WHERE payload_id = ?", listOf(row.id))
+                now.forEach { page ->
+                    db.execute("INSERT OR IGNORE INTO payload_match (payload_id, page_id) VALUES (?, ?)", listOf(row.id, page))
+                }
+                db.execute("UPDATE seen_payload SET match_version = ? WHERE id = ?", listOf(rulesVersion, row.id))
+                if (was.isEmpty() && now.isNotEmpty()) {
+                    db.execute("INSERT OR IGNORE INTO newly_identified (run_id, payload_id) VALUES (?, ?)", listOf(runId, row.id))
+                }
+                // a page this payload did not match before now counts it in the page's summary
+                (now - was.toSet()).forEach { page -> addToProduct(page, row.firstMs, row.lastMs, row.seen, 1, row.id) }
+            }
+            db.execute(
+                "UPDATE rematch_run SET payloads_checked = payloads_checked + ?, cursor_id = ? WHERE id = ?",
+                listOf(batch.size, batch.last().id, runId),
+            )
         }
-        return runId
+        return true
+    }
+
+    /** The whole re-match in one call; returns the run id, or null when the rules did not change. */
+    fun rematchAll(matcher: AdvertisementMatcher, rulesVersion: String, nowMs: Long): Long? {
+        val run = beginRematch(rulesVersion, nowMs) ?: return null
+        while (rematchBatch(matcher, rulesVersion, run, nowMs)) Unit
+        return run
     }
 
     private fun meta(key: String): String? =
@@ -159,23 +252,19 @@ class LocalStore(private val db: SqlDatabase) {
         db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", listOf(key, value))
     }
 
-    // Recording lifecycle -----------------------------------------------------------------
+    // Recording lifecycle -----------------------------------------------------------------------
 
     fun startRecording(id: String, startedMs: Long) {
         db.execute("INSERT OR IGNORE INTO recording (id, started_ms) VALUES (?, ?)", listOf(id, startedMs))
     }
 
     fun finishRecording(id: String, endedMs: Long, distanceMeters: Double) {
-        db.transaction {
-            db.execute(
-                "UPDATE recording SET ended_ms = ?, distance_m = ? WHERE id = ?",
-                listOf(endedMs, distanceMeters, id),
-            )
-            refreshDeviceCount(id)
-        }
+        db.execute("UPDATE recording SET ended_ms = ?, distance_m = ? WHERE id = ?", listOf(endedMs, distanceMeters, id))
+        refreshDeviceCount(id)
     }
 
-    private fun refreshDeviceCount(recordingId: String) {
+    /** Counts the recording's distinct addresses. Its own statement: never inside a write batch. */
+    fun refreshDeviceCount(recordingId: String) {
         db.execute(
             "UPDATE recording SET device_count = " +
                 "(SELECT COUNT(*) FROM (SELECT DISTINCT addr FROM sighting_minute WHERE recording_id = ?)) WHERE id = ?",
@@ -183,56 +272,88 @@ class LocalStore(private val db: SqlDatabase) {
         )
     }
 
-    // The hot path -------------------------------------------------------------------------
+    // The hot path --------------------------------------------------------------------------------
 
     /**
-     * Writes a batch in one transaction. [payloadIds] caches hash -> row id across
-     * flushes; [matchesOf] gives the pages of a new payload and [matchVersion] the bundle
-     * they come from.
+     * Writes a batch in one transaction. [payloadIds] caches hash -> row id across flushes; it is
+     * updated only after the commit, because a rolled-back insert hands its AUTOINCREMENT id out
+     * again. [matchesOf] gives the pages of a new payload and [matchVersion] the rules they come from.
      */
     fun flush(
         batch: FlushBatch,
         payloadIds: MutableMap<String, Long>,
         matchVersion: String,
         matchesOf: (hash: String, raw: ByteArray) -> List<String>,
-    ) = db.transaction {
-        for ((hash, delta) in batch.payloads) {
-            val known = payloadIds[hash] ?: db.query("SELECT id FROM seen_payload WHERE hash = ?", listOf(hash)) { it.long(0) }.firstOrNull()
-            if (known == null) {
-                val id = db.insert(
-                    "INSERT INTO seen_payload (hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version) VALUES (?, ?, ?, ?, ?, ?)",
-                    listOf(hash, delta.raw, delta.firstSeenMs, delta.lastSeenMs, delta.count, matchVersion),
-                )
-                matchesOf(hash, delta.raw).forEach {
-                    db.execute("INSERT OR IGNORE INTO payload_match (payload_id, page_id) VALUES (?, ?)", listOf(id, it))
+    ) {
+        val resolved = HashMap<String, Long>()
+        db.transaction {
+            val existing = HashMap<String, Long>()
+            for (hash in batch.payloads.keys) {
+                val id = payloadIds[hash]
+                    ?: db.query("SELECT id FROM seen_payload WHERE hash = ?", listOf(hash)) { it.long(0) }.firstOrNull()
+                if (id != null) existing[hash] = id
+            }
+            val knownPages = pagesOfPayloads(existing.values.toList())
+            for ((hash, delta) in batch.payloads) {
+                val known = existing[hash]
+                if (known == null) {
+                    val id = db.insert(
+                        "INSERT INTO seen_payload (hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version) VALUES (?, ?, ?, ?, ?, ?)",
+                        listOf(hash, delta.raw, delta.firstSeenMs, delta.lastSeenMs, delta.count, matchVersion),
+                    )
+                    val pages = matchesOf(hash, delta.raw)
+                    pages.forEach {
+                        db.execute("INSERT OR IGNORE INTO payload_match (payload_id, page_id) VALUES (?, ?)", listOf(id, it))
+                        addToProduct(it, delta.firstSeenMs, delta.lastSeenMs, delta.count, 1, id)
+                    }
+                    resolved[hash] = id
+                } else {
+                    db.execute(
+                        "UPDATE seen_payload SET seen_count = seen_count + ?, " +
+                            "first_seen_ms = CASE WHEN first_seen_ms < ? THEN first_seen_ms ELSE ? END, " +
+                            "last_seen_ms = CASE WHEN last_seen_ms > ? THEN last_seen_ms ELSE ? END WHERE id = ?",
+                        listOf(delta.count, delta.firstSeenMs, delta.firstSeenMs, delta.lastSeenMs, delta.lastSeenMs, known),
+                    )
+                    knownPages[known].orEmpty().forEach {
+                        addToProduct(it, delta.firstSeenMs, delta.lastSeenMs, delta.count, 0, known)
+                    }
+                    resolved[hash] = known
                 }
-                payloadIds[hash] = id
-            } else {
-                db.execute(
-                    "UPDATE seen_payload SET seen_count = seen_count + ?, " +
-                        "first_seen_ms = CASE WHEN first_seen_ms < ? THEN first_seen_ms ELSE ? END, " +
-                        "last_seen_ms = CASE WHEN last_seen_ms > ? THEN last_seen_ms ELSE ? END WHERE id = ?",
-                    listOf(delta.count, delta.firstSeenMs, delta.firstSeenMs, delta.lastSeenMs, delta.lastSeenMs, known),
-                )
-                payloadIds[hash] = known
+            }
+            val recordingId = batch.recordingId
+            if (recordingId != null) {
+                for ((key, delta) in batch.minutes) {
+                    val payloadId = resolved[key.payloadHash] ?: payloadIds[key.payloadHash]
+                        ?: db.query("SELECT id FROM seen_payload WHERE hash = ?", listOf(key.payloadHash)) { it.long(0) }.first()
+                    writeMinute(recordingId, key, payloadId, delta)
+                }
+                for (p in batch.route) {
+                    db.execute(
+                        "INSERT OR IGNORE INTO recording_route (recording_id, time_ms, lat, lon, accuracy) VALUES (?, ?, ?, ?, ?)",
+                        listOf(recordingId, p.timeMs, p.lat, p.lon, p.accuracyMeters),
+                    )
+                }
+                db.execute("UPDATE recording SET distance_m = ? WHERE id = ?", listOf(batch.distanceMeters, recordingId))
             }
         }
-        val recordingId = batch.recordingId
-        if (recordingId != null) {
-            for ((key, delta) in batch.minutes) {
-                val payloadId = payloadIds[key.payloadHash]
-                    ?: db.query("SELECT id FROM seen_payload WHERE hash = ?", listOf(key.payloadHash)) { it.long(0) }.first()
-                writeMinute(recordingId, key, payloadId, delta)
-            }
-            for (p in batch.route) {
-                db.execute(
-                    "INSERT OR IGNORE INTO recording_route (recording_id, time_ms, lat, lon, accuracy) VALUES (?, ?, ?, ?, ?)",
-                    listOf(recordingId, p.timeMs, p.lat, p.lon, p.accuracyMeters),
-                )
-            }
-            db.execute("UPDATE recording SET distance_m = ? WHERE id = ?", listOf(batch.distanceMeters, recordingId))
-            if (batch.refreshDeviceCount) refreshDeviceCount(recordingId)
-        }
+        payloadIds.putAll(resolved) // committed
+    }
+
+    /** Adds heard payload stats to a page's summary (no UPSERT before SQLite 3.24: insert, else update). */
+    private fun addToProduct(page: String, firstMs: Long, lastMs: Long, count: Long, payloads: Int, payloadId: Long) {
+        val inserted = db.execute(
+            "INSERT OR IGNORE INTO seen_product (page_id, first_seen_ms, last_seen_ms, seen_count, payload_count, last_payload_id) " +
+                "VALUES (?, ?, ?, ?, ?, ?)",
+            listOf(page, firstMs, lastMs, count, payloads, payloadId),
+        )
+        if (inserted > 0) return
+        db.execute(
+            "UPDATE seen_product SET seen_count = seen_count + ?, payload_count = payload_count + ?, " +
+                "last_payload_id = CASE WHEN ? >= last_seen_ms THEN ? ELSE last_payload_id END, " +
+                "first_seen_ms = CASE WHEN first_seen_ms < ? THEN first_seen_ms ELSE ? END, " +
+                "last_seen_ms = CASE WHEN last_seen_ms > ? THEN last_seen_ms ELSE ? END WHERE page_id = ?",
+            listOf(count, payloads, lastMs, payloadId, firstMs, firstMs, lastMs, lastMs, page),
+        )
     }
 
     private fun writeMinute(recordingId: String, key: MinuteKey, payloadId: Long, d: MinuteDelta) {
@@ -269,11 +390,11 @@ class LocalStore(private val db: SqlDatabase) {
         )
     }
 
-    // Queries ------------------------------------------------------------------------------
+    // Queries -------------------------------------------------------------------------------------
 
+    /** Every product ever seen, from the per-page summary (survives payload expiry). */
     fun seenProducts(catalog: WikiCatalog): List<SeenProduct> = db.query(
-        "SELECT m.page_id, MIN(p.first_seen_ms), MAX(p.last_seen_ms), COUNT(*), SUM(p.seen_count) " +
-            "FROM payload_match m JOIN seen_payload p ON p.id = m.payload_id GROUP BY m.page_id",
+        "SELECT page_id, first_seen_ms, last_seen_ms, payload_count, seen_count FROM seen_product",
     ) { r ->
         catalog.page(r.string(0))?.let { page -> SeenProduct(page, r.long(1), r.long(2), r.long(3).toInt(), r.long(4)) }
     }.filterNotNull()
@@ -348,13 +469,14 @@ class LocalStore(private val db: SqlDatabase) {
                 ),
             )
         }
-        val pages = pagesOf(rows.map { it.payloadId }.toSet())
+        val pages = pagesOfPayloads(rows.map { it.payloadId })
         return rows.map { it.sighting.copy(pageIds = pages[it.payloadId].orEmpty()) }
     }
 
-    private fun pagesOf(payloadIds: Set<Long>): Map<Long, List<String>> {
+    /** payload id -> matched page ids (sorted), for the given payloads. */
+    private fun pagesOfPayloads(payloadIds: Collection<Long>): Map<Long, List<String>> {
         val out = HashMap<Long, MutableList<String>>()
-        for (chunk in payloadIds.chunked(500)) {
+        for (chunk in payloadIds.toSet().chunked(500)) {
             // ids are numbers from our own query: safe to inline
             db.query(
                 "SELECT payload_id, page_id FROM payload_match WHERE payload_id IN (${chunk.joinToString(",")}) ORDER BY page_id",
@@ -377,7 +499,7 @@ class LocalStore(private val db: SqlDatabase) {
                 "WHERE n.run_id = ? ORDER BY p.seen_count DESC, p.id",
             listOf(run.id),
         ) { Row(it.long(0), it.string(1), it.long(2)) }
-        val pages = pagesOf(rows.map { it.payloadId }.toSet())
+        val pages = pagesOfPayloads(rows.map { it.payloadId })
         return RematchReport(
             run.id, run.from, run.to, run.at, run.checked,
             rows.map { NewlyIdentified(it.hash, pages[it.payloadId].orEmpty(), it.seenCount) },
