@@ -9,7 +9,12 @@ from polars._typing import SchemaDict
 
 import cluetooth_sync.pipeline.db as db
 from cluetooth_sync.pipeline.gatt_v1 import GattDiscovery
-from cluetooth_sync.pipeline.ingest import ensure_blob, run_with_retries, write_stage
+from cluetooth_sync.pipeline.ingest import (
+    ensure_blob,
+    lock_blob,
+    run_with_retries,
+    write_stage,
+)
 from cluetooth_sync.pipeline.queries import read_query, stage_query
 from cluetooth_sync.pipeline.sightings import create_raws_table, store_payloads
 
@@ -149,6 +154,7 @@ def _ingest_once(
     with db.session(database_url) as session:
         session.cursor.execute(read_query("sightings/ingest_lock.sql"))
         session.cursor.fetch_polars()
+        lock_blob(session, discovery.uri)
         blob_id, already_succeeded = ensure_blob(
             session,
             discovery.uri,

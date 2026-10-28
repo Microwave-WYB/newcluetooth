@@ -234,6 +234,7 @@ def _insert_prepared_scans_once(
     with db.session(database_url) as session:
         session.cursor.execute(read_query("sightings/ingest_lock.sql"))
         session.cursor.fetch_polars()
+        lock_blob(session, gcs_blob_uri)
         uploader_id = ensure_uploader(session, uploader)
         blob_id, already_succeeded = ensure_blob(
             session, gcs_blob_uri, uploader_id, app_version, blob_session_id, meta
@@ -248,6 +249,16 @@ def _insert_prepared_scans_once(
         merge_batch(session, batch, update_payload_stats=True)
         session.cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])
     return stage.height
+
+
+def lock_blob(session: db.DatabaseSession, gcs_blob_uri: str) -> None:
+    """Hold the blob's advisory lock until the session's connection closes.
+
+    Take it before `ensure_blob` and check `success` after it: whoever waited
+    here sees the other process's committed result and skips the blob.
+    """
+    session.cursor.execute(read_query("blobs/lock.sql"), [gcs_blob_uri])
+    session.cursor.fetch_polars()
 
 
 def ensure_uploader(session: db.DatabaseSession, uploader: str | None) -> int | None:
@@ -308,6 +319,7 @@ def mark_blob_succeeded_empty(
 ) -> None:
     uploader, app_version = blob_identity(gcs_blob_uri, meta)
     with db.session(database_url) as session:
+        lock_blob(session, gcs_blob_uri)
         uploader_id = ensure_uploader(session, uploader)
         ensure_blob(session, gcs_blob_uri, uploader_id, app_version, None, meta)
         session.cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])
