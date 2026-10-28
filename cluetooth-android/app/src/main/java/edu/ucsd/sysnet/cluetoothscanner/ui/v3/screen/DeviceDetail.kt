@@ -45,6 +45,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.BackButton
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.appendMac
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiChart
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiText
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.V3TopBar
@@ -71,7 +72,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.extra
 private fun MacLine(detail: DeviceDetailUiState) {
     Text(
         text = buildAnnotatedString {
-            withStyle(SpanStyle(fontFamily = MonoFamily)) { append(detail.device.mac) }
+            appendMac(detail.device.mac)
             append(" · ${detail.device.addressType.label}")
         },
         style = MaterialTheme.typography.bodySmall,
@@ -160,18 +161,22 @@ fun DeviceDetailFull(
     onTab: (DetailTab) -> Unit,
     onToggleVariant: (String) -> Unit,
     onDiscoverGatt: () -> Unit,
+    onCancelGatt: () -> Unit,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
+    /** False when a sheet already pads for the status bar. */
+    statusBarInset: Boolean = true,
 ) {
     val device = detail.device
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         V3TopBar(
             title = device.name ?: "未命名",
             navigation = { BackButton(onCollapse) },
+            statusBarInset = statusBarInset,
             status = {
                 Text(
                     buildAnnotatedString {
-                        withStyle(SpanStyle(fontFamily = MonoFamily)) { append(device.mac) }
+                        appendMac(device.mac)
                         append(" · ${device.addressType.label}")
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -208,7 +213,7 @@ fun DeviceDetailFull(
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             when (tab) {
                 DetailTab.Advertising -> AdvertisingTab(detail.variants, expandedVariantId, onToggleVariant)
-                DetailTab.Gatt -> GattTab(detail, onDiscoverGatt)
+                DetailTab.Gatt -> GattTab(detail, onDiscoverGatt, onCancelGatt)
                 DetailTab.Wiki -> detail.wiki?.let { WikiTab(it) }
             }
             Spacer(Modifier.height(32.dp))
@@ -300,7 +305,7 @@ private fun TableHeader(text: String, modifier: Modifier, align: TextAlign? = nu
 // ---- GATT ----------------------------------------------------------------------------------
 
 @Composable
-private fun GattTab(detail: DeviceDetailUiState, onDiscover: () -> Unit) {
+private fun GattTab(detail: DeviceDetailUiState, onDiscover: () -> Unit, onCancel: () -> Unit) {
     when (val g = detail.gatt) {
         GattUiState.NotStarted -> Column(Modifier.padding(20.dp)) {
             Text("还没有读取过这个设备的 GATT。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -311,11 +316,27 @@ private fun GattTab(detail: DeviceDetailUiState, onDiscover: () -> Unit) {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
             }
         }
-        is GattUiState.InProgress -> GattSteps(g.steps)
+        is GattUiState.InProgress -> {
+            GattSteps(g.steps)
+            OutlinedButton(onClick = onCancel, modifier = Modifier.padding(start = 20.dp, top = 4.dp)) { Text("取消") }
+        }
         is GattUiState.Done -> {
             GattSteps(g.steps)
-            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            if (g.summary != null) {
+                Text(
+                    g.summary,
+                    Modifier.padding(horizontal = 20.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
             g.services.forEach { GattServiceBlock(it) }
+            OutlinedButton(
+                onClick = onDiscover,
+                enabled = detail.gattDisabledReason == null,
+                modifier = Modifier.padding(start = 20.dp, top = 12.dp),
+            ) { Text("再次发现 GATT") }
         }
     }
 }

@@ -274,10 +274,13 @@ object FakeData {
 
     // ---- Maps ----
 
-    val route: List<MapPoint> = listOf(
-        MapPoint(0.14f, 0.18f), MapPoint(0.20f, 0.20f), MapPoint(0.31f, 0.21f), MapPoint(0.42f, 0.24f),
-        MapPoint(0.50f, 0.33f), MapPoint(0.52f, 0.43f), MapPoint(0.60f, 0.50f), MapPoint(0.70f, 0.52f),
-        MapPoint(0.78f, 0.58f), MapPoint(0.80f, 0.68f), MapPoint(0.74f, 0.76f), MapPoint(0.62f, 0.80f),
+    /** Unit-square coordinates to a made-up spot on a campus-sized patch. */
+    private fun geo(x: Float, y: Float) = LatLon(32.8900 - y * 0.008, -117.2400 + x * 0.012)
+
+    val route: List<LatLon> = listOf(
+        geo(0.14f, 0.18f), geo(0.20f, 0.20f), geo(0.31f, 0.21f), geo(0.42f, 0.24f),
+        geo(0.50f, 0.33f), geo(0.52f, 0.43f), geo(0.60f, 0.50f), geo(0.70f, 0.52f),
+        geo(0.78f, 0.58f), geo(0.80f, 0.68f), geo(0.74f, 0.76f), geo(0.62f, 0.80f),
     )
 
     private fun ring(cx: Float, cy: Float, r: Float, n: Int, seed: Int, rssiBase: Int): List<SightingPoint> {
@@ -287,7 +290,7 @@ object FakeData {
             val d = r * (0.3f + rnd.nextFloat())
             val dist = d / r
             SightingPoint(
-                MapPoint(cx + (d * cos(a)).toFloat(), cy + (d * sin(a)).toFloat()),
+                geo(cx + (d * cos(a)).toFloat(), cy + (d * sin(a)).toFloat()),
                 (rssiBase - dist * 24 + rnd.nextInt(-3, 4)).toInt(),
             )
         }
@@ -296,25 +299,25 @@ object FakeData {
     private val selectedPoints = ring(0.54f, 0.42f, 0.17f, 16, 7, -46)
 
     private val mapRows = listOf(
-        MapListRowState("m1", "WH-1000XM5", false, "88:C9:E8:20:4B:D7 · 412 次", -49),
-        MapListRowState("m2", "Mi Smart Band 8", false, "C8:0F:10:3A:91:5E · 380 次", -52),
-        MapListRowState("m3", "未命名", false, "5B:21:7C:E0:19:A4 · 96 次", -58),
-        MapListRowState("m4", "Tile", false, "D4:6E:0E:7F:33:C2 · 211 次", -63),
-        MapListRowState("m5", "JBL Flip 6", false, "F8:5C:7D:09:AA:16 · 54 次", -68),
-        MapListRowState("m6", "未命名", false, "4F:90:B3:5D:62:0E · 33 次", -74),
-        MapListRowState("m7", "Govee_H6159_8C2A", false, "E3:11:08:8C:2A:7F · 120 次", -79),
-        MapListRowState("m8", "[TV] Samsung 7 Series", false, "B4:3A:28:6E:C1:05 · 18 次", -86),
+        MapListRowState("m1", "WH-1000XM5", "88:C9:E8:20:4B:D7", "412 次", -49),
+        MapListRowState("m2", "Mi Smart Band 8", "C8:0F:10:3A:91:5E", "380 次", -52),
+        MapListRowState("m3", "未命名", "5B:21:7C:E0:19:A4", "96 次", -58),
+        MapListRowState("m4", "Tile", "D4:6E:0E:7F:33:C2", "211 次", -63),
+        MapListRowState("m5", "JBL Flip 6", "F8:5C:7D:09:AA:16", "54 次", -68),
+        MapListRowState("m6", "未命名", "4F:90:B3:5D:62:0E", "33 次", -74),
+        MapListRowState("m7", "Govee_H6159_8C2A", "E3:11:08:8C:2A:7F", "120 次", -79),
+        MapListRowState("m8", "[TV] Samsung 7 Series", "B4:3A:28:6E:C1:05", "18 次", -86),
     )
 
-    private val heat: List<MapPoint> = buildList {
+    private val heat: List<LatLon> = buildList {
         val rnd = Random(11)
         route.zipWithNext().forEach { (a, b) ->
             repeat(10) {
-                val t = rnd.nextFloat()
-                add(MapPoint(a.x + (b.x - a.x) * t + rnd.nextFloat() * 0.04f, a.y + (b.y - a.y) * t + rnd.nextFloat() * 0.04f))
+                val t = rnd.nextDouble()
+                add(LatLon(a.lat + (b.lat - a.lat) * t + rnd.nextDouble() * 0.0003, a.lon + (b.lon - a.lon) * t + rnd.nextDouble() * 0.0004))
             }
         }
-        repeat(30) { add(MapPoint(0.54f + rnd.nextFloat() * 0.1f - 0.05f, 0.42f + rnd.nextFloat() * 0.1f - 0.05f)) }
+        repeat(30) { add(geo(0.54f + rnd.nextFloat() * 0.1f - 0.05f, 0.42f + rnd.nextFloat() * 0.1f - 0.05f)) }
     }
 
     val recordingMap = MapUiState(
@@ -337,7 +340,8 @@ object FakeData {
     val recordingMapSelected = recordingMap.copy(
         selected = detail(),
         selectedPoints = selectedPoints,
-        estimate = MapPoint(0.545f, 0.425f),
+        estimate = geo(0.545f, 0.425f),
+        estimateAccuracyMeters = 12,
     )
 
     val recordingMapPanned = recordingMap.copy(showAreaChip = true, heatmap = true, heat = heat)
@@ -349,9 +353,9 @@ object FakeData {
         recorder = idle,
         route = emptyList(),
         rows = listOf(
-            MapListRowState("p1", "88:C9:E8:20:4B:D7", true, "3 次录制 · 最近 10月27日", -49),
-            MapListRowState("p2", "88:C9:E8:20:4B:E1", true, "1 次录制 · 10月24日", -71),
-            MapListRowState("p3", "88:C9:E8:77:0A:3C", true, "1 次录制 · 10月19日", -83),
+            MapListRowState("p1", "WH-1000XM5", "88:C9:E8:20:4B:D7", "3 次录制 · 最近 10月27日", -49),
+            MapListRowState("p2", "WH-1000XM5", "88:C9:E8:20:4B:E1", "1 次录制 · 10月24日", -71),
+            MapListRowState("p3", "WH-1000XM5", "88:C9:E8:77:0A:3C", "1 次录制 · 10月19日", -83),
         ),
         sort = DeviceSort.Signal,
         productPoints = ring(0.36f, 0.35f, 0.1f, 12, 21, -55) +

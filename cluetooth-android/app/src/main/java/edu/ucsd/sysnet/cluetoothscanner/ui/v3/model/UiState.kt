@@ -15,6 +15,7 @@ fun signalOf(rssi: Int): Signal = when {
 }
 
 enum class AddressType(val label: String) {
+    Unknown("地址类型未知"),
     Public("公共地址"),
     RandomStatic("随机静态地址"),
     ResolvablePrivate("可解析私有地址"),
@@ -45,6 +46,8 @@ data class DeviceRowState(
     val rssi: Int,
     /** Recent RSSI samples, oldest first, for the row sparkline. */
     val history: List<Int>,
+    /** Not heard for a while; the row stays where it is but is dimmed. */
+    val stale: Boolean = false,
 )
 
 data class ScanUiState(
@@ -88,7 +91,12 @@ data class GattServiceState(val uuid: String, val name: String?, val characteris
 sealed interface GattUiState {
     data object NotStarted : GattUiState
     data class InProgress(val steps: List<GattStepState>) : GattUiState
-    data class Done(val steps: List<GattStepState>, val services: List<GattServiceState>) : GattUiState
+    data class Done(
+        val steps: List<GattStepState>,
+        val services: List<GattServiceState>,
+        /** Outcome in words when it was not a clean finish, e.g. 部分完成 · 需要认证. */
+        val summary: String? = null,
+    ) : GattUiState
 }
 
 /** A wiki family record; only present for recognized devices. */
@@ -164,10 +172,9 @@ data class RecordingsUiState(
 
 // ---- Maps ----------------------------------------------------------------------------------
 
-/** A point in the placeholder map's unit square; the MapLibre map will use lat/lon instead. */
-data class MapPoint(val x: Float, val y: Float)
+data class LatLon(val lat: Double, val lon: Double)
 
-data class SightingPoint(val at: MapPoint, val rssi: Int)
+data class SightingPoint(val at: LatLon, val rssi: Int)
 
 enum class MapMode { Recording, Product }
 
@@ -177,9 +184,10 @@ enum class DeviceSort(val label: String) { Signal("按信号"), Recent("按时�
 data class MapListRowState(
     val id: String,
     val title: String,
-    val titleMono: Boolean,
-    val subtitle: String,
-    val rssi: Int,
+    /** Shown in tight monospace after [detail] is not needed; null for rows without an address. */
+    val mac: String?,
+    val detail: String,
+    val rssi: Int?,
 )
 
 data class MapUiState(
@@ -187,15 +195,22 @@ data class MapUiState(
     val title: String,
     val subtitle: String,
     val recorder: RecorderUiState,
-    val route: List<MapPoint>,
+    val route: List<LatLon>,
     val rows: List<MapListRowState>,
     val sort: DeviceSort,
+    val query: String = "",
+    val searching: Boolean = false,
     /** Product map: the product's points across recordings (no route). */
     val productPoints: List<SightingPoint>,
     val selected: DeviceDetailUiState?,
     val selectedPoints: List<SightingPoint>,
-    val estimate: MapPoint?,
+    val estimate: LatLon?,
+    val estimateAccuracyMeters: Int? = null,
     val showAreaChip: Boolean,
+    /** The chip is on: the list shows only what is inside the visible map area. */
+    val areaOnly: Boolean = false,
     val heatmap: Boolean,
-    val heat: List<MapPoint>,
+    val heat: List<LatLon>,
+    /** Why the map is empty (no fixes, nothing seen), shown over it; null otherwise. */
+    val emptyNote: String? = null,
 )

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -48,12 +49,14 @@ fun V3TopBar(
     modifier: Modifier = Modifier,
     navigation: (@Composable () -> Unit)? = null,
     status: (@Composable () -> Unit)? = null,
+    reserveRecordSlot: Boolean = true,
+    statusBarInset: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
         modifier
             .fillMaxWidth()
-            .statusBarsPadding()
+            .then(if (statusBarInset) Modifier.statusBarsPadding() else Modifier)
             .height(64.dp)
             .padding(start = if (navigation == null) 20.dp else 4.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -64,6 +67,8 @@ fun V3TopBar(
             status?.invoke()
         }
         actions()
+        // The record button is drawn by the shell on top of this spot.
+        if (reserveRecordSlot) Spacer(Modifier.width(MiniRecordSlotWidth))
     }
 }
 
@@ -166,9 +171,14 @@ fun BoxScope.Scrim(alpha: Float = 0.32f) {
 
 /** A dimmed layer with a bottom-aligned sheet on top; tapping the dim area dismisses. */
 @Composable
-fun BoxScope.SheetLayer(onDismiss: () -> Unit = {}, sheet: @Composable () -> Unit) {
+fun BoxScope.SheetLayer(
+    onDismiss: () -> Unit = {},
+    scrimAlpha: Float = 0.32f,
+    scrimTopInset: androidx.compose.ui.unit.Dp = 0.dp,
+    sheet: @Composable () -> Unit,
+) {
     Box(
-        Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.32f))
+        Modifier.matchParentSize().padding(top = scrimTopInset).background(Color.Black.copy(alpha = scrimAlpha))
             .clickable(interactionSource = null, indication = null, onClick = onDismiss),
     )
     Box(Modifier.align(Alignment.BottomCenter)) { sheet() }

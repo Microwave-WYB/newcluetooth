@@ -16,6 +16,10 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.TopBarIconButton
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.appendMac
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -31,6 +35,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -89,7 +94,7 @@ fun ScanRow(row: DeviceRowState, onClick: () -> Unit, modifier: Modifier = Modif
             }
             Text(
                 text = buildAnnotatedString {
-                    withStyle(SpanStyle(fontFamily = MonoFamily)) { append(row.mac) }
+                    appendMac(row.mac)
                     append(" · ${row.advKind.label}")
                     if (row.connectable) append(" · 可连接")
                 },
@@ -98,8 +103,8 @@ fun ScanRow(row: DeviceRowState, onClick: () -> Unit, modifier: Modifier = Modif
                 maxLines = 1,
             )
         }
-        Sparkline(row.history)
-        RssiText(row.rssi, Modifier.width(38.dp), textAlign = TextAlign.End)
+        Sparkline(row.history, Modifier.alpha(if (row.stale) 0.4f else 1f))
+        RssiText(row.rssi, Modifier.width(38.dp).alpha(if (row.stale) 0.4f else 1f), textAlign = TextAlign.End)
     }
 }
 
@@ -152,62 +157,28 @@ fun ScanList(
     }
 }
 
+/** Scan page content: top bar and the list. The shell around it draws the record button and nav. */
 @Composable
-fun ScanScreen(
-    state: ScanUiState,
-    callbacks: RecorderCallbacks,
+fun ScanPage(
+    rows: List<DeviceRowState>,
+    recorder: RecorderUiState,
+    listState: LazyListState,
     modifier: Modifier = Modifier,
-    listState: LazyListState = rememberLazyListState(),
     refreshing: Boolean = false,
     onRefresh: () -> Unit = {},
-    /** Non-null opens the half-height device sheet. */
-    detail: DeviceDetailUiState? = null,
-    controlBarOpen: Boolean = false,
-    saved: SavedRecording? = null,
-    onTab: (AppTab) -> Unit = {},
     onRowClick: (DeviceRowState) -> Unit = {},
-    onDismissSheet: () -> Unit = {},
+    onSearch: () -> Unit = {},
+    onSettings: (() -> Unit)? = null,
 ) {
-    val scope = rememberCoroutineScope()
-    val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
-    val sheetOpen = detail != null || controlBarOpen
-    AppShell(
-        tab = AppTab.Scan,
-        onTab = onTab,
-        recorder = state.recorder,
-        callbacks = callbacks,
-        placement = if (sheetOpen) RecordPlacement.Mini else RecordPlacement.Full,
-        modifier = modifier,
-        showScrollToTop = showTop,
-        onScrollToTop = { scope.launch { listState.animateScrollToItem(0) } },
-        overlay = {
-            if (detail != null) {
-                SheetLayer(onDismissSheet) {
-                    SheetSurface(Modifier.fillMaxHeight(0.54f)) {
-                        DeviceDetailHalf(detail, {}, {}, {}, {})
-                    }
-                }
-            }
-            if (controlBarOpen) {
-                SheetLayer(onDismissSheet) { RecordControlBar(state.recorder, callbacks) }
-            }
-            if (saved != null) {
-                Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp + 12.dp)) {
-                    RecordSavedSnackbar(saved.durationSeconds, saved.sightings)
-                }
-            }
-        },
-        topBar = { recordSlot ->
-            V3TopBar(
-                title = "扫描",
-                status = { RecorderStatus(state.recorder, "未录制 · ${state.rows.size} 台") },
-                actions = {
-                    SearchButton()
-                    recordSlot()
-                },
-            )
-        },
-    ) {
-        ScanList(state.rows, listState, refreshing, onRefresh, onRowClick, Modifier.fillMaxSize())
+    Column(modifier.fillMaxSize()) {
+        V3TopBar(
+            title = "扫描",
+            status = { RecorderStatus(recorder, "未录制 · ${rows.size} 台") },
+            actions = {
+                SearchButton(onSearch)
+                if (onSettings != null) TopBarIconButton(Icons.Filled.Settings, "设置", onSettings)
+            },
+        )
+        ScanList(rows, listState, refreshing, onRefresh, onRowClick, Modifier.weight(1f))
     }
 }

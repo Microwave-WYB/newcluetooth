@@ -129,38 +129,36 @@ private fun CategorySection(
 }
 
 @Composable
-fun NearbyScreen(
+fun NearbyPage(
     state: NearbyUiState,
-    callbacks: RecorderCallbacks,
     modifier: Modifier = Modifier,
-    controlBarOpen: Boolean = false,
-    onTab: (AppTab) -> Unit = {},
     onOpenCategory: (NearbyCategoryState) -> Unit = {},
     onOpenProduct: (ProductItemState) -> Unit = {},
 ) {
     val inRange = (state.categories + state.unrecognized).sumOf { c -> c.items.count { it.strongestRssi != null } }
-    AppShell(
-        tab = AppTab.Nearby,
-        onTab = onTab,
-        recorder = state.recorder,
-        callbacks = callbacks,
-        placement = RecordPlacement.Mini,
-        modifier = modifier,
-        overlay = { if (controlBarOpen) SheetLayer { RecordControlBar(state.recorder, callbacks) } },
-        topBar = { recordSlot ->
-            V3TopBar(
-                title = "附近",
-                status = { RecorderStatus(state.recorder, "$inRange 个产品在范围内") },
-                actions = { recordSlot() },
-            )
-        },
-    ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    Column(modifier.fillMaxSize()) {
+        V3TopBar(
+            title = "附近",
+            status = { RecorderStatus(state.recorder, "$inRange 个产品在范围内") },
+        )
+        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
             items(state.categories, key = { it.id }) { c ->
                 CategorySection(c, { onOpenCategory(c) }, onOpenProduct)
             }
-            item(key = state.unrecognized.id) {
-                CategorySection(state.unrecognized, { onOpenCategory(state.unrecognized) }, onOpenProduct)
+            if (state.unrecognized.items.isNotEmpty()) {
+                item(key = state.unrecognized.id) {
+                    CategorySection(state.unrecognized, { onOpenCategory(state.unrecognized) }, onOpenProduct)
+                }
+            }
+            if (state.categories.isEmpty() && state.unrecognized.items.isEmpty()) {
+                item(key = "empty") {
+                    Text(
+                        "还没有识别出附近的产品。",
+                        Modifier.padding(20.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
@@ -168,34 +166,21 @@ fun NearbyScreen(
 
 /** The arrow's destination: every product of one category as a vertical list. */
 @Composable
-fun CategoryListScreen(
+fun CategoryListPage(
     category: NearbyCategoryState,
-    recorder: edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState,
-    callbacks: RecorderCallbacks,
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
-    onTab: (AppTab) -> Unit = {},
     onOpenProduct: (ProductItemState) -> Unit = {},
 ) {
     val now = category.items.filter { it.strongestRssi != null }
     val before = category.items.filter { it.strongestRssi == null }
-    AppShell(
-        tab = AppTab.Nearby,
-        onTab = onTab,
-        recorder = recorder,
-        callbacks = callbacks,
-        placement = RecordPlacement.Mini,
-        modifier = modifier,
-        topBar = { recordSlot ->
-            V3TopBar(
-                title = category.title,
-                navigation = { BackButton(onBack) },
-                status = { StatusLine("${now.size} 个在范围内 · 共 ${category.items.size} 个") },
-                actions = { recordSlot() },
-            )
-        },
-    ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    Column(modifier.fillMaxSize()) {
+        V3TopBar(
+            title = category.title,
+            navigation = { BackButton(onBack) },
+            status = { StatusLine("${now.size} 个在范围内 · 共 ${category.items.size} 个") },
+        )
+        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
             if (now.isNotEmpty()) {
                 item { ListLabel("在范围内") }
                 items(now, key = { it.id }) { ProductListRow(it, category.icon) { onOpenProduct(it) } }

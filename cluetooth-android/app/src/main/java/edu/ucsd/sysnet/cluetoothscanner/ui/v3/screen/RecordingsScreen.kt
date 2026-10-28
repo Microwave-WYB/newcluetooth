@@ -103,40 +103,15 @@ fun RecordingRow(rec: RecordingSummaryState, onClick: () -> Unit, modifier: Modi
 }
 
 @Composable
-fun RecordingsScreen(
+fun RecordingsPage(
     state: RecordingsUiState,
-    callbacks: RecorderCallbacks,
     modifier: Modifier = Modifier,
-    controlBarOpen: Boolean = false,
-    saved: SavedRecording? = null,
-    onTab: (AppTab) -> Unit = {},
     onOpenRecording: (RecordingSummaryState) -> Unit = {},
 ) {
     val total = state.days.sumOf { it.recordings.size } + if (state.current != null) 1 else 0
-    AppShell(
-        tab = AppTab.Recordings,
-        onTab = onTab,
-        recorder = state.recorder,
-        callbacks = callbacks,
-        placement = RecordPlacement.Mini,
-        modifier = modifier,
-        overlay = {
-            if (controlBarOpen) SheetLayer { RecordControlBar(state.recorder, callbacks) }
-            if (saved != null) {
-                Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp + 12.dp)) {
-                    RecordSavedSnackbar(saved.durationSeconds, saved.sightings)
-                }
-            }
-        },
-        topBar = { recordSlot ->
-            V3TopBar(
-                title = "录制",
-                status = { RecorderStatus(state.recorder, "共 $total 次") },
-                actions = { recordSlot() },
-            )
-        },
-    ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    Column(modifier.fillMaxSize()) {
+        V3TopBar(title = "录制", status = { RecorderStatus(state.recorder, "共 $total 次") })
+        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
             if (state.current != null) {
                 item(key = "current") {
                     RecordingRow(state.current, { onOpenRecording(state.current) }, live = true, liveClock = state.recorder.elapsedSeconds)
@@ -146,7 +121,16 @@ fun RecordingsScreen(
                 item(key = "day-${day.label}") { DayLabel(day.label) }
                 items(day.recordings, key = { it.id }) { RecordingRow(it, { onOpenRecording(it) }) }
             }
+            if (state.current == null && state.days.isEmpty()) {
+                item(key = "empty") {
+                    Text(
+                        "还没有录制。点右下角的红色按钮开始。",
+                        Modifier.padding(20.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
-

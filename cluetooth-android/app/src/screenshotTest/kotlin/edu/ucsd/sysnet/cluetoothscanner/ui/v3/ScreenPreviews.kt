@@ -28,13 +28,29 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.ScrollToTopButton
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DetailTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.FakeData
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryListScreen
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryListPage
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapPage
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyPage
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.PlaceholderMapFor
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.RecordingsPage
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanDeviceSheet
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanPage
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.NearbyUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingsUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanUiState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailFull
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapScreen
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyScreen
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.RecordingsScreen
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SavedRecording
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanScreen
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalStaticRender
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.V3Theme
 
@@ -59,113 +75,166 @@ private val cb = RecorderCallbacks()
 
 // ---- Scan ----------------------------------------------------------------------------------
 
-@PreviewTest @PhonePreview @Composable fun ScanList() = Frame { ScanScreen(FakeData.scan, cb) }
+@Composable
+private fun ScanPreview(
+    state: ScanUiState,
+    listState: LazyListState = rememberLazyListState(),
+    refreshing: Boolean = false,
+    detail: DeviceDetailUiState? = null,
+    controlBar: Boolean = false,
+    saved: SavedRecording? = null,
+) {
+    val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
+    AppShell(
+        recorder = state.recorder,
+        callbacks = cb,
+        placement = if (detail != null || controlBar) RecordPlacement.Mini else RecordPlacement.Full,
+        tab = AppTab.Scan,
+        showScrollToTop = showTop,
+        controlBarOpen = controlBar,
+        overlay = { if (detail != null) ScanDeviceSheet(detail, DeviceDetailActions(), {}) },
+        snackbar = { if (saved != null) SavedSnackbarHost(saved) },
+    ) {
+        ScanPage(state.rows, state.recorder, listState, refreshing = refreshing)
+    }
+}
+
+@Composable
+private fun BoxScope.SavedSnackbarHost(saved: SavedRecording, hasNav: Boolean = true) {
+    Box(Modifier.align(Alignment.BottomCenter).padding(bottom = (if (hasNav) 64.dp else 0.dp) + 12.dp)) {
+        RecordSavedSnackbar(saved.durationSeconds, saved.sightings)
+    }
+}
+
+@PreviewTest @PhonePreview @Composable fun ScanList() = Frame { ScanPreview(FakeData.scan) }
 
 @PreviewTest @PhonePreview @Composable
-fun ScanRecording() = Frame { ScanScreen(FakeData.scan.copy(recorder = FakeData.recording), cb) }
+fun ScanRecording() = Frame { ScanPreview(FakeData.scan.copy(recorder = FakeData.recording)) }
 
 @PreviewTest @PhonePreview @Composable
-fun ScanPaused() = Frame { ScanScreen(FakeData.scan.copy(recorder = FakeData.paused), cb) }
+fun ScanPaused() = Frame { ScanPreview(FakeData.scan.copy(recorder = FakeData.paused)) }
 
 @PreviewTest @PhonePreview @Composable
-fun ScanPullToRefresh() = Frame { ScanScreen(FakeData.scan, cb, refreshing = true) }
+fun ScanPullToRefresh() = Frame { ScanPreview(FakeData.scan, refreshing = true) }
 
 @PreviewTest @PhonePreview @Composable
 fun ScanScrolledDown() = Frame {
-    ScanScreen(FakeData.scan, cb, listState = rememberLazyListState(initialFirstVisibleItemIndex = 6))
+    ScanPreview(FakeData.scan, listState = rememberLazyListState(initialFirstVisibleItemIndex = 6))
 }
 
 @PreviewTest @PhonePreview @Composable
 fun ScanScrolledDownRecording() = Frame {
-    ScanScreen(
-        FakeData.scan.copy(recorder = FakeData.recording), cb,
+    ScanPreview(
+        FakeData.scan.copy(recorder = FakeData.recording),
         listState = rememberLazyListState(initialFirstVisibleItemIndex = 6),
     )
 }
 
 @PreviewTest @PhonePreview @Composable
-fun ScanDeviceHalfSheet() = Frame { ScanScreen(FakeData.scan, cb, detail = FakeData.detailHalf) }
+fun ScanDeviceHalfSheet() = Frame { ScanPreview(FakeData.scan, detail = FakeData.detailHalf) }
 
 @PreviewTest @PhonePreview @Composable
 fun ScanDeviceHalfSheetNotConnectable() = Frame {
-    ScanScreen(FakeData.scan.copy(recorder = FakeData.recording), cb, detail = FakeData.detailNotConnectable)
+    ScanPreview(FakeData.scan.copy(recorder = FakeData.recording), detail = FakeData.detailNotConnectable)
 }
 
 @PreviewTest @PhonePreview @Composable
 fun ScanRecordControlBar() = Frame {
-    ScanScreen(FakeData.scan.copy(recorder = FakeData.recording), cb, controlBarOpen = true)
+    ScanPreview(FakeData.scan.copy(recorder = FakeData.recording), controlBar = true)
 }
 
 @PreviewTest @PhonePreview @Composable
-fun ScanSavedSnackbar() = Frame { ScanScreen(FakeData.scan, cb, saved = SavedRecording(23 * 60, 1_400)) }
+fun ScanSavedSnackbar() = Frame { ScanPreview(FakeData.scan, saved = SavedRecording(23 * 60, 1_400)) }
 
 // ---- Device detail, expanded ---------------------------------------------------------------
 
-@PreviewTest @PhonePreview @Composable
-fun DeviceFullBroadcast() = Frame {
-    DeviceDetailFull(FakeData.detailHalf, DetailTab.Advertising, "v1", {}, {}, {}, {})
-}
+@Composable
+private fun FullPreview(detail: DeviceDetailUiState, tab: DetailTab, expandedVariant: String? = null) =
+    DeviceDetailFull(detail, tab, expandedVariant, {}, {}, {}, {}, {})
 
 @PreviewTest @PhonePreview @Composable
-fun DeviceFullGattInProgress() = Frame {
-    DeviceDetailFull(FakeData.detailGattProgress, DetailTab.Gatt, null, {}, {}, {}, {})
-}
+fun DeviceFullBroadcast() = Frame { FullPreview(FakeData.detailHalf, DetailTab.Advertising, "v1") }
 
 @PreviewTest @PhonePreview @Composable
-fun DeviceFullGattDone() = Frame {
-    DeviceDetailFull(FakeData.detailGattDone, DetailTab.Gatt, null, {}, {}, {}, {})
-}
+fun DeviceFullGattInProgress() = Frame { FullPreview(FakeData.detailGattProgress, DetailTab.Gatt) }
 
 @PreviewTest @PhonePreview @Composable
-fun DeviceFullWiki() = Frame {
-    DeviceDetailFull(FakeData.detailHalf, DetailTab.Wiki, null, {}, {}, {}, {})
-}
+fun DeviceFullGattDone() = Frame { FullPreview(FakeData.detailGattDone, DetailTab.Gatt) }
 
 @PreviewTest @PhonePreview @Composable
-fun DeviceFullNotConnectable() = Frame {
-    DeviceDetailFull(FakeData.detailNotConnectable, DetailTab.Gatt, null, {}, {}, {}, {})
-}
+fun DeviceFullWiki() = Frame { FullPreview(FakeData.detailHalf, DetailTab.Wiki) }
+
+@PreviewTest @PhonePreview @Composable
+fun DeviceFullNotConnectable() = Frame { FullPreview(FakeData.detailNotConnectable, DetailTab.Gatt) }
 
 // ---- Nearby --------------------------------------------------------------------------------
 
-@PreviewTest @PhonePreview @Composable fun NearbyHome() = Frame { NearbyScreen(FakeData.nearby, cb) }
+@Composable
+private fun NearbyPreview(state: NearbyUiState, controlBar: Boolean = false) = AppShell(
+    recorder = state.recorder,
+    callbacks = cb,
+    placement = RecordPlacement.Mini,
+    tab = AppTab.Nearby,
+    controlBarOpen = controlBar,
+) { NearbyPage(state) }
+
+@PreviewTest @PhonePreview @Composable fun NearbyHome() = Frame { NearbyPreview(FakeData.nearby) }
 
 @PreviewTest @PhonePreview @Composable
-fun NearbyRecording() = Frame { NearbyScreen(FakeData.nearbyRecording, cb) }
+fun NearbyRecording() = Frame { NearbyPreview(FakeData.nearbyRecording) }
 
 @PreviewTest @PhonePreview @Composable
-fun NearbyPaused() = Frame { NearbyScreen(FakeData.nearbyPaused, cb) }
+fun NearbyPaused() = Frame { NearbyPreview(FakeData.nearbyPaused) }
 
 @PreviewTest @PhonePreview @Composable
-fun NearbyControlBar() = Frame { NearbyScreen(FakeData.nearbyRecording, cb, controlBarOpen = true) }
+fun NearbyControlBar() = Frame { NearbyPreview(FakeData.nearbyRecording, controlBar = true) }
 
 @PreviewTest @PhonePreview @Composable
-fun NearbyCategoryList() = Frame { CategoryListScreen(FakeData.nearbyAudio, FakeData.idle, cb) }
+fun NearbyCategoryList() = Frame {
+    AppShell(recorder = FakeData.idle, callbacks = cb, placement = RecordPlacement.Mini, tab = AppTab.Nearby) {
+        CategoryListPage(FakeData.nearbyAudio)
+    }
+}
 
 // ---- Recordings ----------------------------------------------------------------------------
 
-@PreviewTest @PhonePreview @Composable
-fun RecordingsList() = Frame { RecordingsScreen(FakeData.recordings, cb) }
+@Composable
+private fun RecordingsPreview(state: RecordingsUiState, saved: SavedRecording? = null) = AppShell(
+    recorder = state.recorder,
+    callbacks = cb,
+    placement = RecordPlacement.Mini,
+    tab = AppTab.Recordings,
+    snackbar = { if (saved != null) SavedSnackbarHost(saved) },
+) { RecordingsPage(state) }
 
 @PreviewTest @PhonePreview @Composable
-fun RecordingsListIdle() = Frame { RecordingsScreen(FakeData.recordingsIdle, cb) }
+fun RecordingsList() = Frame { RecordingsPreview(FakeData.recordings) }
 
 @PreviewTest @PhonePreview @Composable
-fun RecordingsSavedSnackbar() = Frame {
-    RecordingsScreen(FakeData.recordingsIdle, cb, saved = SavedRecording(23 * 60, 1_400))
-}
+fun RecordingsListIdle() = Frame { RecordingsPreview(FakeData.recordingsIdle) }
 
 @PreviewTest @PhonePreview @Composable
-fun RecordingMapRoute() = Frame { MapScreen(FakeData.recordingMap, cb) }
+fun RecordingsSavedSnackbar() = Frame { RecordingsPreview(FakeData.recordingsIdle, SavedRecording(23 * 60, 1_400)) }
+
+@Composable
+private fun MapPreview(state: MapUiState) = AppShell(
+    recorder = state.recorder,
+    callbacks = cb,
+    placement = RecordPlacement.Mini,
+    floatingMini = true,
+) { MapPage(state, MapActions()) { covered -> PlaceholderMapFor(state, covered) } }
 
 @PreviewTest @PhonePreview @Composable
-fun RecordingMapDeviceSelected() = Frame { MapScreen(FakeData.recordingMapSelected, cb) }
+fun RecordingMapRoute() = Frame { MapPreview(FakeData.recordingMap) }
 
 @PreviewTest @PhonePreview @Composable
-fun RecordingMapPannedHeatmap() = Frame { MapScreen(FakeData.recordingMapPanned, cb) }
+fun RecordingMapDeviceSelected() = Frame { MapPreview(FakeData.recordingMapSelected) }
 
 @PreviewTest @PhonePreview @Composable
-fun ProductMap() = Frame { MapScreen(FakeData.productMap, cb) }
+fun RecordingMapPannedHeatmap() = Frame { MapPreview(FakeData.recordingMapPanned) }
+
+@PreviewTest @PhonePreview @Composable
+fun ProductMap() = Frame { MapPreview(FakeData.productMap) }
 
 // ---- Record control, every state -----------------------------------------------------------
 
