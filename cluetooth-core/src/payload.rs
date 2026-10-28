@@ -17,9 +17,9 @@ pub const DEVICE_MODEL_METADATA_KEY: &str = "cluetooth.device_model";
 pub const ANDROID_RELEASE_METADATA_KEY: &str = "cluetooth.android_release";
 pub const ANDROID_SDK_METADATA_KEY: &str = "cluetooth.android_sdk";
 pub const APP_VERSION_METADATA_KEY: &str = "cluetooth.app_version";
-pub const CAP_EXT_ADV_METADATA_KEY: &str = "cluetooth.cap_ext_adv";
-pub const CAP_CODED_PHY_METADATA_KEY: &str = "cluetooth.cap_coded_phy";
-pub const CAP_MAX_ADV_LEN_METADATA_KEY: &str = "cluetooth.cap_max_adv_len";
+pub const CAP_EXT_ADV_METADATA_KEY: &str = "cluetooth.cap.ext_adv";
+pub const CAP_CODED_PHY_METADATA_KEY: &str = "cluetooth.cap.coded_phy";
+pub const CAP_MAX_ADV_LEN_METADATA_KEY: &str = "cluetooth.cap.max_adv_len";
 pub const SCAN_PHY_METADATA_KEY: &str = "cluetooth.scan.phy";
 pub const SCAN_LEGACY_ONLY_METADATA_KEY: &str = "cluetooth.scan.legacy_only";
 /// Longest advertisement a producer may record (extended advertising maximum).

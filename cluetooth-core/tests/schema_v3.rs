@@ -191,15 +191,38 @@ fn footer_carries_device_and_scanner_environment_once() {
         assert_eq!(matches.len(), 1, "{key}");
         matches[0].value.clone().unwrap()
     };
+    // The exact key set of docs/payload-schema-v3.md (no scan_session_id was given).
+    let mut keys: Vec<&str> = footer
+        .iter()
+        .map(|entry| entry.key.as_str())
+        .filter(|key| key.starts_with("cluetooth."))
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "cluetooth.android_release",
+            "cluetooth.android_sdk",
+            "cluetooth.app_version",
+            "cluetooth.cap.coded_phy",
+            "cluetooth.cap.ext_adv",
+            "cluetooth.cap.max_adv_len",
+            "cluetooth.device_model",
+            "cluetooth.payload_id",
+            "cluetooth.payload_schema",
+            "cluetooth.scan.legacy_only",
+            "cluetooth.scan.phy",
+        ]
+    );
     assert_eq!(value("cluetooth.payload_schema"), "v3");
     assert_eq!(value("cluetooth.payload_id"), PAYLOAD_ID);
     assert_eq!(value("cluetooth.device_model"), "Pixel 8");
     assert_eq!(value("cluetooth.android_release"), "15");
     assert_eq!(value("cluetooth.android_sdk"), "35");
     assert_eq!(value("cluetooth.app_version"), "0.1.0-debug");
-    assert_eq!(value("cluetooth.cap_ext_adv"), "true");
-    assert_eq!(value("cluetooth.cap_coded_phy"), "false");
-    assert_eq!(value("cluetooth.cap_max_adv_len"), "1650");
+    assert_eq!(value("cluetooth.cap.ext_adv"), "true");
+    assert_eq!(value("cluetooth.cap.coded_phy"), "false");
+    assert_eq!(value("cluetooth.cap.max_adv_len"), "1650");
     assert_eq!(value("cluetooth.scan.phy"), "all_supported");
     assert_eq!(value("cluetooth.scan.legacy_only"), "false");
 }
@@ -328,9 +351,9 @@ fn inspection_rejects_v3_files_missing_or_corrupting_footer_environment() {
                 ("cluetooth.android_release", "15"),
                 ("cluetooth.android_sdk", "35"),
                 ("cluetooth.app_version", "1"),
-                ("cluetooth.cap_ext_adv", "yes"),
-                ("cluetooth.cap_coded_phy", "true"),
-                ("cluetooth.cap_max_adv_len", "1650"),
+                ("cluetooth.cap.ext_adv", "yes"),
+                ("cluetooth.cap.coded_phy", "true"),
+                ("cluetooth.cap.max_adv_len", "1650"),
                 ("cluetooth.scan.phy", "1m"),
                 ("cluetooth.scan.legacy_only", "false"),
             ],
