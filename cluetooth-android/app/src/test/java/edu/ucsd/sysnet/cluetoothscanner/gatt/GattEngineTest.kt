@@ -300,9 +300,12 @@ class GattEngineTest {
         assertEquals(GattError(GattStage.READ, GattStatus.TIMED_OUT, "TIMEOUT"), result.error)
         assertEquals(DisconnectInitiator.TIMEOUT, result.disconnect?.initiator)
         val values = result.services[0].characteristics.map { it.value.status }
-        // Ten reads fit; the eleventh answered after the budget ran out and is still recorded.
-        assertEquals(11, values.count { it == "ok" })
+        // Ten reads fit. The eleventh runs into the end of the budget: it is recorded as a
+        // timeout, no grace period is added past the budget, and nothing is read after it.
+        assertEquals(10, values.count { it == "ok" })
+        assertEquals(1, values.count { it == "timeout" })
         assertEquals(9, values.count { it == "not_read" })
+        assertEquals(30_000L, result.timings.readMs)
         assertEquals(0, factory.links.single().refusedWhileOutstanding)
         assertEquals(1, factory.links.single().closes)
     }
@@ -741,5 +744,54 @@ class GattEngineTest {
         assertEquals(GattOutcome.COMPLETE, result.outcome)
         assertEquals(800L, result.timings.connectMs)
         assertTrue(result.endedAtMs >= result.startedAtMs)
+    }
+
+    @Test
+    fun `the stall grace period is bounded by what is left of the read budget`() = runTest {
+        val silent = object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean = true
+        }
+        // 4 s budget: a 3 s read timeout leaves 1 s, so the 5 s grace period is cut to 1 s and
+        // the end is the budget's TIMEOUT, not a stalled queue.
+        val bounded = GattEngine(
+            linkFactory = FakeFactory(attempts = arrayOf(silent)),
+            timeouts = GattTimeouts(readTotalMs = 4_000),
+            nowMs = { testScheduler.currentTime },
+        ).run(request)
+        assertEquals(GattOutcome.PARTIAL, bounded.outcome)
+        assertEquals(GattError(GattStage.READ, GattStatus.TIMED_OUT, "TIMEOUT"), bounded.error)
+        assertEquals(4_000L, bounded.timings.readMs)
+
+        // With a roomy budget the full grace applies and the queue counts as stalled.
+        val roomy = GattEngine(
+            linkFactory = FakeFactory(attempts = arrayOf(silent)),
+            timeouts = GattTimeouts(readTotalMs = 30_000),
+            nowMs = { testScheduler.currentTime },
+        ).run(request)
+        assertEquals(GattStatus.READ_QUEUE_STALLED, roomy.error?.status)
+        assertEquals(8_000L, roomy.timings.readMs)
+    }
+
+    @Test
+    fun `a remote disconnect during the pause between refused reads is not lost`() = runTest {
+        val refused = AttributeRef(0, 1)
+        val factory = FakeFactory(scope = this, attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                if (ref == refused) {
+                    // Arrives inside the second 200 ms pause between refused attempts.
+                    link.after(300) { link.emit(GattEvent.Disconnected(GattStatus.CONN_TERMINATE_PEER_USER)) }
+                    return false
+                }
+                link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS))
+                return true
+            }
+        }))
+        val result = engine(factory).run(request)
+
+        assertEquals(GattOutcome.PARTIAL, result.outcome)
+        assertEquals(GattError(GattStage.READ, 19, "GATT_CONN_TERMINATE_PEER_USER"), result.error)
+        assertEquals(GattDisconnect(DisconnectInitiator.REMOTE, 19), result.disconnect)
+        assertEquals(GattReadValue.NOT_READ_VALUE, result.value(0, 1))
+        assertEquals(1, factory.links.single().closes)
     }
 }

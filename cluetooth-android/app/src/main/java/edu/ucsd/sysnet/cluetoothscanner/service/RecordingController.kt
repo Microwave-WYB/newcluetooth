@@ -14,12 +14,28 @@ enum class RecordingMode { IDLE, RECORDING, PAUSED }
 /**
  * What the UI shows of a recording: [elapsedMs] counts only the time spent recording (not
  * paused), [rowCount] the observations written since the recording started.
+ *
+ * [finalizing] is true while a stopped recording is being sealed (the mode is already `IDLE`);
+ * the foreground service and its wake lock stay until it ends. [scannerDeferred] is true while a
+ * recording waits for the scanner to come back (Bluetooth off); nothing is being collected then.
+ * [error] carries a problem the user should see, such as the foreground service not starting.
  */
 data class RecordingState(
     val mode: RecordingMode = RecordingMode.IDLE,
     val elapsedMs: Long = 0,
     val rowCount: Long = 0,
+    val finalizing: Boolean = false,
+    val scannerDeferred: Boolean = false,
+    val error: String? = null,
 )
+
+/** The foreground service and its wake lock are needed from the start until finalization ends. */
+internal val RecordingState.serviceNeeded: Boolean
+    get() = mode != RecordingMode.IDLE || finalizing
+
+/** Hold the CPU only while rows are (or can be) collected, and while the payload is sealed. */
+internal val RecordingState.wakeLockNeeded: Boolean
+    get() = (mode == RecordingMode.RECORDING && !scannerDeferred) || finalizing
 
 /** Keeps the process in the foreground while a recording is active. */
 internal interface RecordingHost {
@@ -60,7 +76,8 @@ class RecordingController internal constructor(
     private var activeSinceMs: Long? = null
     private var accumulatedMs = 0L
     private var baselineRows = 0L
-    private var lastMode = RecordingMode.IDLE
+    private var lastTransition = ScanTransitionState.STOPPED
+    private var error: String? = null
 
     /** The last recording's total, kept after it ends until the next one starts. */
     private var finalRows = 0L
@@ -96,46 +113,77 @@ class RecordingController internal constructor(
         scope.launch { coordinator.stop() }
     }
 
+    /** The foreground service could not start or stopped abnormally; shown through [state]. */
+    fun reportServiceFailure(message: String) {
+        error = message
+        publish()
+    }
+
+    private fun isActive(transition: ScanTransitionState) = when (transition) {
+        ScanTransitionState.STARTING,
+        ScanTransitionState.SCANNING,
+        ScanTransitionState.DEFERRED,
+        ScanTransitionState.PAUSED,
+        ScanTransitionState.FINALIZING,
+        -> true
+        ScanTransitionState.STOPPED,
+        ScanTransitionState.FINALIZATION_FAILED,
+        -> false
+    }
+
     private fun onTransition(transition: ScanTransitionState) {
         val mode = modeOf(transition)
+        val previousMode = modeOf(lastTransition)
         val now = elapsedRealtimeMs()
+        val wasActive = isActive(lastTransition)
+        val nowActive = isActive(transition)
         when {
-            lastMode == RecordingMode.IDLE && mode != RecordingMode.IDLE -> {
+            !wasActive && nowActive -> {
                 accumulatedMs = 0
                 baselineRows = observationCount.value
                 activeSinceMs = if (mode == RecordingMode.RECORDING) now else null
-                lastMode = mode
+                error = null
+                lastTransition = transition
                 // Publish first: the service reads the state as soon as it starts.
                 publish()
                 host.onActive()
                 return
             }
-            mode == RecordingMode.IDLE && lastMode != RecordingMode.IDLE -> {
-                activeSinceMs?.let { accumulatedMs += now - it }
-                activeSinceMs = null
-                finalRows = (observationCount.value - baselineRows).coerceAtLeast(0)
-                lastMode = mode
+            wasActive && (transition == ScanTransitionState.FINALIZING || !nowActive) -> {
+                // Freeze the clock and the row count when the recording ends, not when the seal
+                // completes.
+                if (previousMode != RecordingMode.IDLE || activeSinceMs != null) {
+                    activeSinceMs?.let { accumulatedMs += now - it }
+                    activeSinceMs = null
+                    finalRows = (observationCount.value - baselineRows).coerceAtLeast(0)
+                }
+                lastTransition = transition
                 publish()
-                host.onIdle()
+                // The service and the wake lock go only when finalization is over.
+                if (!nowActive) host.onIdle()
                 return
             }
-            lastMode == RecordingMode.RECORDING && mode == RecordingMode.PAUSED -> {
+            previousMode == RecordingMode.RECORDING && mode == RecordingMode.PAUSED -> {
                 activeSinceMs?.let { accumulatedMs += now - it }
                 activeSinceMs = null
             }
-            lastMode == RecordingMode.PAUSED && mode == RecordingMode.RECORDING -> activeSinceMs = now
+            previousMode == RecordingMode.PAUSED && mode == RecordingMode.RECORDING -> activeSinceMs = now
         }
-        lastMode = mode
+        lastTransition = transition
         publish()
     }
 
     private fun publish() {
         val now = elapsedRealtimeMs()
+        val mode = modeOf(lastTransition)
         val elapsed = accumulatedMs + (activeSinceMs?.let { now - it } ?: 0L)
         _state.value = RecordingState(
-            mode = lastMode,
+            mode = mode,
             elapsedMs = elapsed,
-            rowCount = if (lastMode == RecordingMode.IDLE) finalRows else (observationCount.value - baselineRows).coerceAtLeast(0),
+            rowCount = if (mode == RecordingMode.IDLE) finalRows else (observationCount.value - baselineRows).coerceAtLeast(0),
+            finalizing = lastTransition == ScanTransitionState.FINALIZING,
+            scannerDeferred = lastTransition == ScanTransitionState.DEFERRED,
+            error = error,
         )
     }
 
@@ -154,10 +202,12 @@ class RecordingController internal constructor(
 
 /** Text for the foreground notification; pure so it can be tested. */
 internal object RecordingNotificationText {
-    fun title(state: RecordingState) = when (state.mode) {
-        RecordingMode.RECORDING -> "Recording"
-        RecordingMode.PAUSED -> "Recording paused"
-        RecordingMode.IDLE -> "Recording stopped"
+    fun title(state: RecordingState) = when {
+        state.finalizing -> "Saving recording"
+        state.mode == RecordingMode.RECORDING && state.scannerDeferred -> "Recording waiting for Bluetooth"
+        state.mode == RecordingMode.RECORDING -> "Recording"
+        state.mode == RecordingMode.PAUSED -> "Recording paused"
+        else -> "Recording stopped"
     }
 
     fun text(state: RecordingState): String {

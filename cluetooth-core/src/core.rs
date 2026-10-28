@@ -23,7 +23,7 @@ use crate::owned_path::{OwnedSyncStep, ensure_owned_directory, prove_owned_publi
 use crate::payload::{
     PayloadFile, PayloadResult, PendingUpload, PreparedUpload, ScanEnvironment, SchemaV3Row,
     inspect_schema_v2_parquet_file, inspect_schema_v2_parquet_impl, rows_to_frame,
-    validate_environment, write_parquet_owned,
+    validate_environment, validate_rows, write_parquet_owned,
 };
 use crate::payload_identity::{
     PayloadIdentity, ScanSchema, generate_uuid_v7, parse_canonical_uuid_v7, system_timestamp_ms,
@@ -394,20 +394,25 @@ impl CluetoothCore {
         validate_environment(&environment)?;
         let mut inner = self.lock_inner();
         let mut update = CoreUpdate::state_only(inner.state.clone());
-        if inner.environment.as_ref() != Some(&environment) {
-            if inner.active.environment.as_ref() != Some(&environment) {
-                match self.seal_locked(&mut inner) {
-                    Ok(Some(_)) => update.effects.push(CoreEffect::ScheduleUpload),
-                    Ok(None) => {}
-                    Err(error) => {
-                        inner.active.seal_failed = true;
-                        return Err(error);
-                    }
+        if inner.environment.as_ref() == Some(&environment) {
+            return Ok(update);
+        }
+        // The settings are in force from now on, even if sealing the payload that was
+        // collected under the old ones fails: the next accepted row first seals that payload
+        // (see record_observations), so no file mixes footers.
+        inner.environment = Some(environment.clone());
+        if !inner.active.rows.is_empty() && inner.active.environment.as_ref() != Some(&environment)
+        {
+            match self.seal_locked(&mut inner) {
+                Ok(Some(_)) => update.effects.push(CoreEffect::ScheduleUpload),
+                Ok(None) => {}
+                Err(error) => {
+                    inner.active.seal_failed = true;
+                    return Err(error);
                 }
             }
-            inner.environment = Some(environment);
-            update.state = inner.state.clone();
         }
+        update.state = inner.state.clone();
         Ok(update)
     }
 
@@ -427,8 +432,12 @@ impl CluetoothCore {
                 "configure_scan must describe the scanner before observations are recorded",
             ));
         }
+        // A payload is sealed before a row of another session or of other scanner settings is
+        // appended: its footer must describe every row it holds.
         let recovered_before_append = if inner.active.seal_failed
-            || (!inner.active.rows.is_empty() && inner.active.session_id != inner.active_session_id)
+            || (!inner.active.rows.is_empty()
+                && (inner.active.session_id != inner.active_session_id
+                    || inner.active.environment != inner.environment))
         {
             match self.seal_locked(&mut inner) {
                 Ok(sealed) => sealed.is_some(),
@@ -440,7 +449,9 @@ impl CluetoothCore {
         } else {
             false
         };
-        if inner.active.started_at_ms.is_none() {
+        // A payload without rows has no history to keep: it takes the session, start time and
+        // scanner settings in force now (also when an earlier batch was dropped whole).
+        if inner.active.rows.is_empty() {
             let active_session_id = inner.active_session_id.clone();
             inner.active.started_at_ms = Some(now_ms);
             inner.active.session_id = active_session_id;
@@ -464,21 +475,12 @@ impl CluetoothCore {
         }
 
         for mut input in observations {
+            let local_name = sanitize_local_name(input.local_name.take());
+            input.local_name.clone_from(&local_name);
             let location = inner
                 .locations
                 .most_recent_preceding(input.elapsed_realtime_nanos)
                 .cloned();
-            let local_name = sanitize_local_name(input.local_name.take());
-            input.local_name.clone_from(&local_name);
-            inner.state.total_observations += 1;
-            if location.is_some() {
-                inner.state.observations_with_location += 1;
-            }
-            inner.state.latest_observation_at_ms = Some(input.scanned_at_ms);
-            if let Some(name) = &local_name {
-                inner.state.latest_local_name = Some(name.clone());
-            }
-
             let row = SchemaV3Row {
                 addr: input.addr,
                 rssi: input.rssi.map(i32::from),
@@ -499,6 +501,20 @@ impl CluetoothCore {
                 data_status: input.data_status,
                 addr_type: input.addr_type,
             };
+            if let Err(error) = validate_rows(std::slice::from_ref(&row)) {
+                inner.state.rejected_observation_count += 1;
+                inner.state.last_rejection =
+                    Some(truncate_utf8_bytes(&error.to_string(), 256).to_owned());
+                continue;
+            }
+            inner.state.total_observations += 1;
+            if location.is_some() {
+                inner.state.observations_with_location += 1;
+            }
+            inner.state.latest_observation_at_ms = Some(input.scanned_at_ms);
+            if let Some(name) = &row.local_name {
+                inner.state.latest_local_name = Some(name.clone());
+            }
             inner.active.estimated_bytes = inner
                 .active
                 .estimated_bytes
@@ -1060,16 +1076,10 @@ fn truncate_utf8_bytes(message: &str, maximum_bytes: usize) -> &str {
     &message[..end]
 }
 
+/// Batch-level bounds only. Each row is validated on its own as it is accepted: a bad row
+/// (over-long raw, malformed address, out-of-range value) is dropped and counted, because
+/// staging it would make every later checkpoint and seal fail.
 fn validate_input_batch(observations: &[ScanObservationInput]) -> Result<(), CoreError> {
-    if let Some(invalid) = observations
-        .iter()
-        .find(|observation| !crate::payload::is_canonical_mac(&observation.addr))
-    {
-        return Err(CoreError::invalid(format!(
-            "scan address {} must be canonical uppercase XX:XX:XX:XX:XX:XX",
-            invalid.addr,
-        )));
-    }
     if observations.len() > MAX_INPUT_BATCH_ROWS {
         return Err(CoreError::input_batch_too_large(format!(
             "{} rows exceeds the documented {MAX_INPUT_BATCH_ROWS}-row maximum",
@@ -3644,5 +3654,167 @@ mod tests {
                 .replace("2025-03-25T00:00:09.500Z", "2025-12-31T23:59:59.999Z");
             assert!(crate::validate_gatt_json(text).is_ok(), "{real}");
         }
+    }
+
+    fn times() -> Vec<u64> {
+        (0..40).map(|offset| 1_742_860_800_000 + offset).collect()
+    }
+
+    fn footer_of(path: &str) -> crate::PayloadInspection {
+        crate::inspect_schema_v2_parquet(path.to_owned()).unwrap()
+    }
+
+    #[test]
+    fn bad_rows_are_dropped_and_counted_at_the_input_boundary_without_wedging_the_payload() {
+        let (_directory, core) = open(100, times());
+        let mut too_long = observation(2);
+        too_long.raw = vec![0xaa; 1651];
+        let mut bad_address = observation(3);
+        bad_address.addr = "aa:bb:cc:dd:ee:ff".to_owned();
+        let mut bad_phy = observation(4);
+        bad_phy.primary_phy = Some(2);
+        let mut longest = observation(5);
+        longest.raw = vec![0xbb; 1650];
+
+        let update = core
+            .record_observations(vec![
+                observation(1),
+                too_long,
+                bad_address,
+                bad_phy,
+                longest,
+            ])
+            .unwrap();
+
+        assert_eq!(update.state.total_observations, 2);
+        assert_eq!(update.state.rejected_observation_count, 3);
+        assert!(update.state.last_rejection.is_some());
+        assert_eq!(update.state.active_payload_rows, 2);
+        // Every later checkpoint and seal still works.
+        core.checkpoint_active_payload().unwrap();
+        let sealed = core.flush_payload().unwrap().sealed.unwrap();
+        assert_eq!(sealed.row_count, 2);
+        let frame = ParquetReader::new(File::open(&sealed.local_path).unwrap())
+            .finish()
+            .unwrap();
+        assert_eq!(
+            frame
+                .column("raw")
+                .unwrap()
+                .binary()
+                .unwrap()
+                .get(1)
+                .unwrap()
+                .len(),
+            1650
+        );
+        // A batch of nothing but bad rows is not an error either.
+        let mut only_bad = observation(6);
+        only_bad.raw = vec![0; 5_000];
+        let update = core.record_observations(vec![only_bad]).unwrap();
+        assert_eq!(update.state.rejected_observation_count, 4);
+        assert_eq!(core.state().active_payload_rows, 0);
+        core.flush_payload().unwrap();
+    }
+
+    #[test]
+    fn a_v2_wal_with_a_long_raw_recovers_under_v2_rules_instead_of_failing_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = crate::payload_identity::PayloadIdentity::from_uuid(
+            crate::payload_identity::generate_uuid_v7(1_742_860_800_000, [0x11; 10]).unwrap(),
+        )
+        .unwrap();
+        let mut long = crate::SchemaV3Row::from(v2_row());
+        long.raw = vec![0x42; 5_000]; // a 0.1.0 app never capped raw
+        let rows = vec![crate::SchemaV3Row::from(v2_row()), long];
+        crate::staging::stage_legacy_v2_for_test(
+            directory.path(),
+            &identity,
+            None,
+            1_742_860_800_002,
+            &rows,
+        );
+
+        let core = reopen(&directory, 1_742_860_900_000);
+        let pending = core.pending_uploads();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].row_count, 2);
+        assert!(pending[0].object_path.starts_with("scans/v2/"));
+        let frame = ParquetReader::new(File::open(&pending[0].local_path).unwrap())
+            .finish()
+            .unwrap();
+        assert_eq!(
+            frame
+                .column("raw")
+                .unwrap()
+                .binary()
+                .unwrap()
+                .get(1)
+                .unwrap()
+                .len(),
+            5_000
+        );
+        assert!(!directory.path().join("active-payload").exists());
+        // New rows are still held to the v3 rules.
+        let mut too_long = observation(1);
+        too_long.raw = vec![0; 1651];
+        let update = core.record_observations(vec![too_long]).unwrap();
+        assert_eq!(update.state.rejected_observation_count, 1);
+    }
+
+    #[test]
+    fn a_failed_seal_on_a_settings_change_never_mixes_footers() {
+        let (directory, core) = open(100, times());
+        core.record_observations(vec![observation(1)]).unwrap();
+        // Sealing fails while a file sits where the pending directory belongs.
+        fs::write(directory.path().join("pending"), b"in the way").unwrap();
+
+        let mut one_megabit = test_environment();
+        one_megabit.scan_phy = "1m".to_owned();
+        assert!(core.configure_scan(one_megabit.clone()).is_err());
+        // The new settings are in force, but no row may join the old payload.
+        assert!(core.record_observations(vec![observation(2)]).is_err());
+        assert_eq!(core.state().active_payload_rows, 1);
+
+        fs::remove_file(directory.path().join("pending")).unwrap();
+        core.record_observations(vec![observation(3)]).unwrap();
+        core.flush_payload().unwrap();
+
+        let footers: Vec<_> = core
+            .pending_uploads()
+            .iter()
+            .map(|pending| {
+                let inspection = footer_of(&pending.local_path);
+                (
+                    inspection.environment.unwrap().scan_phy,
+                    inspection.row_count,
+                )
+            })
+            .collect();
+        assert_eq!(footers.len(), 2);
+        assert!(footers.contains(&("all_supported".to_owned(), 1)));
+        assert!(footers.contains(&("1m".to_owned(), 1)));
+    }
+
+    #[test]
+    fn a_payload_that_never_got_a_row_takes_the_settings_in_force_when_its_first_row_arrives() {
+        let (_directory, core) = open(100, times());
+        let mut dropped = observation(1);
+        dropped.raw = vec![0; 2_000];
+        core.record_observations(vec![dropped]).unwrap(); // started, but empty
+        assert_eq!(core.state().active_payload_rows, 0);
+
+        let mut one_megabit = test_environment();
+        one_megabit.scan_phy = "1m".to_owned();
+        core.configure_scan(one_megabit.clone()).unwrap();
+        core.record_observations(vec![observation(2)]).unwrap();
+        core.flush_payload().unwrap();
+
+        let pending = core.pending_uploads();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            footer_of(&pending[0].local_path).environment,
+            Some(one_megabit)
+        );
     }
 }

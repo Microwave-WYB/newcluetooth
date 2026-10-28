@@ -130,6 +130,37 @@ class CluetoothRepositoryTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
+    fun aCoreThatLostTheScannerSettingsIsToldAgainAndTheBatchIsRetriedNotTerminal() = runTest {
+        val fake = FakeCoreGateway(failRecordAttempts = 1, failNeedsConfiguration = true)
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repository = CluetoothRepository(
+            gatewayFactory = { fake },
+            parentScope = this,
+            nativeDispatcher = dispatcher,
+            scanBatchWindowMs = 0,
+            scanPublicationIntervalMs = 0,
+        )
+        val settings = CoreScanEnvironment("Pixel 8", "15", 35, "0.1.0", true, true, 1650, "all_supported", false)
+        runCurrent()
+        repository.configureScan(settings)
+        runCurrent()
+        fake.calls.clear()
+        fake.configuredEnvironments.clear()
+
+        repository.recordObservation(observation(1))
+        advanceTimeBy(2_000)
+        runCurrent()
+
+        // The same batch is recorded after the settings were declared again; the actor lives on.
+        assertEquals(listOf(settings), fake.configuredEnvironments)
+        assertEquals(listOf(1), fake.recordedBatchSizes)
+        assertFalse(repository.uiState.value.actorTerminated)
+        assertTrue(repository.uiState.value.coreReady)
+        repository.closeAndJoin()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
     fun periodicPersistenceCheckpointsWithoutForcingAFlush() = runTest {
         val fake = FakeCoreGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
@@ -733,6 +764,7 @@ class CluetoothRepositoryTest {
 private class FakeCoreGateway(
     private val failOnClear: Boolean = false,
     private var failRecordAttempts: Int = 0,
+    private val failNeedsConfiguration: Boolean = false,
     private var failCheckpointAttempts: Int = 0,
     private val failOnFlush: Boolean = false,
     private val uploadFile: File? = null,
@@ -813,7 +845,7 @@ private class FakeCoreGateway(
     override fun recordObservations(observations: List<CoreScanInput>): GatewayRecordResult {
         if (failRecordAttempts > 0) {
             failRecordAttempts--
-            return GatewayRecordResult.RetryablePreCommitFailure("storage unavailable")
+            return GatewayRecordResult.RetryablePreCommitFailure("storage unavailable", failNeedsConfiguration)
         }
         calls += "scan"
         recordedBatchSizes += observations.size

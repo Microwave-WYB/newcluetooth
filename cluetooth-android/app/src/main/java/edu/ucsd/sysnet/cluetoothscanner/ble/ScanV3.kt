@@ -55,6 +55,16 @@ data class ScanV3Fields(
     }
 }
 
+/** The longest advertisement the core accepts in a row (extended advertising maximum). */
+const val MAX_ROW_RAW_BYTES = 1650
+
+/**
+ * Whether an advertisement may become a row. A longer one is kept out of the durable path (the
+ * core would refuse it as well): it would otherwise be counted as a rejection, and must never
+ * reach a payload where it could block every later checkpoint and seal.
+ */
+fun rawFitsRow(raw: ByteArray) = raw.size <= MAX_ROW_RAW_BYTES
+
 /** Builds the file-footer facts the Rust core stores in every v3 payload. */
 internal fun buildScanEnvironment(
     deviceModel: String,

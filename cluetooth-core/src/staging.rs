@@ -10,7 +10,7 @@ use crate::config::{
 };
 use crate::payload::{
     ScanEnvironment, SchemaV3Row, inspect_schema_v2_parquet_impl, validate_environment,
-    validate_rows,
+    validate_rows, validate_rows_for_schema,
 };
 use crate::payload_identity::{PayloadIdentity, ScanSchema, parse_canonical_uuid_v7};
 use crate::{CoreError, core::estimate_row_bytes};
@@ -238,7 +238,7 @@ pub(crate) fn recover(root: &Path) -> Result<Option<RecoveredStage>, CoreError> 
             "active payload WAL exceeds the bounded emergency row ceiling",
         ));
     }
-    validate_rows(&rows)?;
+    validate_rows_for_schema(manifest.identity.schema, &rows)?;
     if (rows.len() as u64) < manifest.staged_row_count {
         return Err(CoreError::invalid(
             "active payload manifest claims more rows than its durable WAL",

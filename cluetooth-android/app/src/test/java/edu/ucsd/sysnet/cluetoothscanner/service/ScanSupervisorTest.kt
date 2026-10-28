@@ -1,5 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.service
 
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,14 +37,15 @@ class ScanSupervisorTest {
 
     private class FakeLocation : LocationPort {
         var running = false
-        override fun start() { running = true }
+        var starts = 0
+        override fun start() { running = true; starts++ }
         override fun stop() { running = false }
     }
 
-    private fun setup(outcome: ScannerStartOutcome = ScannerStartOutcome.STARTED): Triple<ScanSupervisor, FakeScanner, FakeLocation> {
+    private fun TestScope.setup(outcome: ScannerStartOutcome = ScannerStartOutcome.STARTED): Triple<ScanSupervisor, FakeScanner, FakeLocation> {
         val scanner = FakeScanner(outcome)
         val location = FakeLocation()
-        return Triple(ScanSupervisor(scanner, location), scanner, location)
+        return Triple(ScanSupervisor(scanner, location, backgroundScope), scanner, location)
     }
 
     @Test
@@ -174,5 +177,47 @@ class ScanSupervisorTest {
         supervisor.setForeground(true)
         assertTrue(scanner.scanning)
         assertEquals(listOf("start", "stop", "start"), scanner.events)
+    }
+
+    @Test
+    fun `location is wanted exactly while the app is in the foreground or rows are written`() = runTest {
+        val (supervisor, _, location) = setup()
+        assertFalse(supervisor.wantsLocation)
+        supervisor.setForeground(true)
+        assertTrue(supervisor.wantsLocation)
+        supervisor.beginRowWriting()
+        supervisor.setForeground(false)
+        assertTrue("a recording keeps location", supervisor.wantsLocation && location.running)
+        supervisor.endRowWriting()
+        assertFalse(supervisor.wantsLocation)
+        assertFalse(location.running)
+    }
+
+    @Test
+    fun `a location retry never starts updates when nothing wants them`() = runTest {
+        val (supervisor, _, location) = setup()
+        supervisor.startLocationIfWanted()
+        assertFalse(location.running)
+        assertEquals(0, location.starts)
+
+        supervisor.setForeground(true)
+        location.stop()
+        supervisor.startLocationIfWanted()
+        assertTrue(location.running)
+
+        supervisor.setForeground(false)
+        supervisor.startLocationIfWanted()
+        assertFalse(location.running)
+    }
+
+    @Test
+    fun `foreground changes run in the owning scope and apply in order`() = runTest {
+        val (supervisor, scanner, location) = setup()
+        supervisor.foregroundChanged(true)
+        supervisor.foregroundChanged(false)
+        runCurrent()
+        assertFalse(scanner.scanning)
+        assertFalse(location.running)
+        assertEquals(listOf("start", "stop"), scanner.events)
     }
 }

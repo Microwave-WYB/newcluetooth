@@ -92,6 +92,7 @@ class CluetoothApplication : Application() {
                 override fun start() = locationService.startLocationUpdates()
                 override fun stop() = locationService.stopLocationUpdates()
             },
+            scope = applicationScope,
         )
         scanSupervisor = supervisor
         val coordinator = ScanTransitionCoordinator(

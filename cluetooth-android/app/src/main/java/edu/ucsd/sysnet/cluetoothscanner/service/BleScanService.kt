@@ -24,7 +24,9 @@ import androidx.core.content.PermissionChecker
 import edu.ucsd.sysnet.cluetoothscanner.BuildConfig
 import edu.ucsd.sysnet.cluetoothscanner.ble.AdvertisementTrigger
 import edu.ucsd.sysnet.cluetoothscanner.ble.AdvertisementTriggerCache
+import edu.ucsd.sysnet.cluetoothscanner.ble.MAX_ROW_RAW_BYTES
 import edu.ucsd.sysnet.cluetoothscanner.ble.ScanV3Fields
+import edu.ucsd.sysnet.cluetoothscanner.ble.rawFitsRow
 import edu.ucsd.sysnet.cluetoothscanner.ble.buildScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.requiredBluetoothPermissions
 import edu.ucsd.sysnet.cluetoothscanner.utils.AppSettings
@@ -70,6 +72,10 @@ class BleScanService(
      */
     @Volatile
     private var rowWriting = false
+
+    /** Advertisements kept out of the durable path because they exceed the row limit. */
+    @Volatile
+    private var oversizedRowsDropped = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
     private val callbackFence = CallbackFence(mainHandler::post)
     private var scanRestartRunnable: Runnable? = null
@@ -414,7 +420,15 @@ class BleScanService(
                 ),
             )
             // Durable rows exist only for a recording; live scanning stops here.
-            val admission = if (!rowWriting) ObservationAdmission.ACCEPTED else repository.recordObservation(
+            val admission = if (!rowWriting) {
+                ObservationAdmission.ACCEPTED
+            } else if (!rawFitsRow(advertisementData)) {
+                oversizedRowsDropped++
+                if (oversizedRowsDropped == 1L || oversizedRowsDropped % 100 == 0L) {
+                    Log.w(TAG, "Dropped $oversizedRowsDropped advertisements longer than $MAX_ROW_RAW_BYTES bytes")
+                }
+                ObservationAdmission.ACCEPTED
+            } else repository.recordObservation(
                 CoreScanInput(
                     addr = mac,
                     rssi = rssi.takeUnless { it == 127 },

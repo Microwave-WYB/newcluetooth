@@ -1,5 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.service
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -33,10 +35,33 @@ internal interface LocationPort {
 class ScanSupervisor internal constructor(
     private val scanner: ScannerPort,
     private val location: LocationPort,
+    /** Process-lifetime scope for [foregroundChanged]; it must outlive any ViewModel. */
+    private val scope: CoroutineScope,
 ) {
     private val mutex = Mutex()
+
+    @Volatile
     private var foreground = false
+
+    @Volatile
     private var rowWriting = false
+
+    /** Location is wanted exactly while the app is in the foreground or a recording writes rows. */
+    val wantsLocation: Boolean
+        get() = foreground || rowWriting
+
+    /**
+     * The Activity moved to or from the foreground. Runs in the application scope, so it is not
+     * cancelled with a ViewModel and a stop can never be lost half way.
+     */
+    fun foregroundChanged(on: Boolean) {
+        scope.launch { setForeground(on) }
+    }
+
+    /** (Re)starts location updates if (and only if) something wants them; used by retry loops. */
+    suspend fun startLocationIfWanted() = mutex.withLock {
+        if (wantsLocation) location.start()
+    }
 
     /** The app is in the foreground (true) or not (false). Starts or stops live scanning. */
     suspend fun setForeground(on: Boolean) = mutex.withLock {
@@ -79,8 +104,8 @@ class ScanSupervisor internal constructor(
 
     private suspend fun reconcile() {
         if (foreground || rowWriting) {
+            location.start()
             if (!scanner.isScanning()) {
-                location.start()
                 // A deferred or rejected live start is retried when the platform recovers.
                 scanner.start()
             }

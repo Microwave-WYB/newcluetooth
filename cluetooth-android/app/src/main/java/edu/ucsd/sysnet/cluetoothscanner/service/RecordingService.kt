@@ -48,13 +48,16 @@ class RecordingService : Service() {
             ACTION_STOP -> controller.stop()
         }
         // startForeground must follow every startForegroundService within a few seconds.
-        enterForeground(controller.state.value)
+        if (!enterForeground(controller.state.value)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (!observing) {
             observing = true
             scope.launch {
                 controller.state.collect { state ->
                     applyWakeLock(state)
-                    if (state.mode == RecordingMode.IDLE) {
+                    if (!state.serviceNeeded) {
                         ServiceCompat.stopForeground(this@RecordingService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                         stopSelf()
                     } else {
@@ -72,16 +75,24 @@ class RecordingService : Service() {
         super.onDestroy()
     }
 
-    private fun enterForeground(state: RecordingState) {
+    /** False when Android refused (the service then stops itself and the error is surfaced). */
+    private fun enterForeground(state: RecordingState): Boolean {
         createChannel()
         val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
             (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0)
-        try {
+        return try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(state), types)
+            true
         } catch (error: Exception) {
-            // Not allowed to become a foreground service (for example started from the
-            // background); recording itself carries on in the process.
+            // Not allowed to become a foreground service (for example started while the app is
+            // not visible). The recording itself carries on in the process, without the
+            // foreground guarantees; the UI is told through RecordingState.error.
             Log.w(TAG, "Could not start as a foreground service", error)
+            controller.reportServiceFailure(
+                "The recording service could not start (${error.message ?: error::class.java.simpleName}); " +
+                    "recording continues only while the app stays open",
+            )
+            false
         }
     }
 
@@ -97,13 +108,13 @@ class RecordingService : Service() {
     private var lastMode: RecordingMode? = null
 
     private fun applyWakeLock(state: RecordingState) {
-        if (state.mode == RecordingMode.RECORDING) {
+        if (state.wakeLockNeeded) {
             if (wakeLock?.isHeld != true) {
                 val lock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
                     .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "cluetooth:recording")
                 lock.setReferenceCounted(false)
-                // A bound so a bug can never hold the CPU awake forever; recordings are rotated
-                // into payloads long before this, and the lock is re-taken if it lapses.
+                // A bound so a bug can never hold the CPU awake forever. It is released while the
+                // scanner is deferred (Bluetooth off) and taken again when scanning resumes.
                 lock.acquire(WAKE_LOCK_MAX_MS)
                 wakeLock = lock
             }
@@ -175,6 +186,10 @@ internal class AndroidRecordingHost(private val context: Context) : RecordingHos
             ContextCompat.startForegroundService(context, Intent(context, RecordingService::class.java))
         } catch (error: Exception) {
             Log.w("RecordingService", "Foreground service not started; recording continues in the process", error)
+            (context.applicationContext as? CluetoothApplication)?.recordingController?.reportServiceFailure(
+                "The recording service could not start (${error.message ?: error::class.java.simpleName}); " +
+                    "recording continues only while the app stays open",
+            )
         }
     }
 
