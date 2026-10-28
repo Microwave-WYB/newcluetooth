@@ -214,9 +214,9 @@ fun MapContent(
 private fun DeviceListSheet(state: MapUiState, actions: MapActions) {
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
-            LocalTexts.current.plural(if (state.mode == MapMode.Product) R.plurals.macs else R.plurals.devices, state.rows.size, state.rows.size),
+            state.listHint ?: LocalTexts.current.plural(if (state.mode == MapMode.Product) R.plurals.macs else R.plurals.devices, state.rows.size, state.rows.size),
             Modifier.weight(1f),
-            style = MaterialTheme.typography.titleMedium,
+            style = if (state.listHint != null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
         )
         TextButton(onClick = actions.onSortClick) {
             Icon(Icons.AutoMirrored.Filled.Sort, null)

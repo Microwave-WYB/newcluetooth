@@ -218,9 +218,9 @@ class RecordingControllerTest {
     fun `notification text shows mode, clock and row count`() {
         assertEquals("Recording", RecordingNotificationText.title(RecordingState(RecordingMode.RECORDING), TestTexts))
         assertEquals("Recording paused", RecordingNotificationText.title(RecordingState(RecordingMode.PAUSED), TestTexts))
-        assertEquals("0:05 · 0 rows", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 5_000, 0), TestTexts))
-        assertEquals("12:34 · 1,234 rows", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 754_000, 1_234), TestTexts))
-        assertEquals("1:02:03 · 20 rows", RecordingNotificationText.text(RecordingState(RecordingMode.PAUSED, 3_723_000, 20), TestTexts))
+        assertEquals("0:05 · 0 sightings", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 5_000, 0), TestTexts))
+        assertEquals("12:34 · 1,234 sightings", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 754_000, 1_234), TestTexts))
+        assertEquals("1:02:03 · 20 sightings", RecordingNotificationText.text(RecordingState(RecordingMode.PAUSED, 3_723_000, 20), TestTexts))
     }
 
     // --- finalization, deferral and errors ----------------------------------------------------

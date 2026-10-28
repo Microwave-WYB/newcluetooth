@@ -76,11 +76,15 @@ fun RecordingRow(
         },
         supportingContent = {
             Column {
-                Text(stringResource(R.string.recording_summary, formatDistance(rec.distanceMeters), texts.plural(R.plurals.devices, rec.deviceCount, rec.deviceCount)))
+                // No 0 m distance; a recording that has saved no minute yet says when devices appear.
+                val devices = if (live && rec.deviceCount == 0) stringResource(R.string.recording_devices_pending)
+                else texts.plural(R.plurals.devices, rec.deviceCount, rec.deviceCount)
+                Text(if (rec.distanceMeters > 0) stringResource(R.string.recording_summary, formatDistance(rec.distanceMeters), devices) else devices)
                 if (rec.note != null) Text(rec.note, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         },
-        trailingContent = { UploadLabel(rec.upload) },
+        // Nothing is uploading while the recording runs; its status shows once it has stopped.
+        trailingContent = if (live) null else { { UploadLabel(rec.upload) } },
         modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
     )
 }

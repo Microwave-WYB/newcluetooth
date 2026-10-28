@@ -110,7 +110,7 @@ fun RssiReading(rssi: Int, modifier: Modifier = Modifier) {
 
 /** Name and reading on one line (the name ellipsizes only when it really is too long), the MAC under it. */
 @Composable
-fun DeviceHeader(name: String?, mac: String, rssi: Int, modifier: Modifier = Modifier) {
+fun DeviceHeader(name: String?, mac: String, rssi: Int, modifier: Modifier = Modifier, product: String? = null) {
     Column(modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -123,6 +123,8 @@ fun DeviceHeader(name: String?, mac: String, rssi: Int, modifier: Modifier = Mod
             )
             RssiReading(rssi, Modifier.padding(start = 12.dp))
         }
+        // A recognised device says what it is under its name.
+        if (product != null) Text(product, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(mac, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
     }
 }
@@ -173,7 +175,7 @@ fun DeviceDetailContent(
     }
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         Column(Modifier.padding(horizontal = 24.dp)) {
-            DeviceHeader(device.name, device.mac, device.rssi)
+            DeviceHeader(device.name, device.mac, device.rssi, product = detail.productName)
             if (showLiveChart) RssiChart(detail.chartSamples, device.rssi, detail.chartHeardSeconds, Modifier.padding(top = 16.dp))
             detail.positionEstimate?.let { PositionEstimateRow(it) }
             // One row of stock buttons with their default padding and colors: Discover GATT is the filled primary
@@ -234,7 +236,7 @@ fun DeviceDetailContent(
 /** What a collapsed map sheet shows of a device: its header. */
 @Composable
 fun DeviceDetailPeek(detail: DeviceDetailUiState, modifier: Modifier = Modifier) {
-    DeviceHeader(detail.device.name, detail.device.mac, detail.device.rssi, modifier.padding(horizontal = 24.dp))
+    DeviceHeader(detail.device.name, detail.device.mac, detail.device.rssi, modifier.padding(horizontal = 24.dp), product = detail.productName)
 }
 
 // ---- Advertising ----------------------------------------------------------------------------

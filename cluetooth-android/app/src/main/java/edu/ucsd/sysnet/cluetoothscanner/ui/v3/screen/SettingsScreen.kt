@@ -141,7 +141,7 @@ fun RecordingMenu(
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.menu_more)) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (status != null) {
+            if (status != null && !inProgress) {
                 DropdownMenuItem(text = { Text(stringResource(R.string.menu_upload_status, stringResource(status.label))) }, onClick = {}, enabled = false)
             }
             DropdownMenuItem(

@@ -4,7 +4,7 @@
     <string name="recording_interrupted_text">The last recording was interrupted unexpectedly; %1$d rows were saved.</string>
 
     <!-- Shared -->
-    <string name="unnamed">Unnamed</string>
+    <string name="unnamed">No name</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_save">Save</string>
     <string name="action_retry">Retry</string>
@@ -20,8 +20,8 @@
         <item quantity="other">%1$s devices</item>
     </plurals>
     <plurals name="rows">
-        <item quantity="one">%1$s row</item>
-        <item quantity="other">%1$s rows</item>
+        <item quantity="one">%1$s sighting</item>
+        <item quantity="other">%1$s sightings</item>
     </plurals>
     <plurals name="pending_recordings">
         <item quantity="one">%1$s recording waiting</item>
@@ -70,6 +70,12 @@
     <!-- Tabs and pages -->
     <string name="tab_scan">Scan</string>
     <string name="tab_discover">Discover</string>
+    <string name="chart_band_close">Close</string>
+    <string name="chart_band_nearby">Nearby</string>
+    <string name="chart_band_far">Far</string>
+    <string name="recording_devices_pending">Devices appear here as minutes are saved (about every minute)</string>
+    <string name="map_route_start">Start</string>
+    <string name="map_route_end">End</string>
     <string name="action_next">Next</string>
     <string name="action_done">Done</string>
     <string name="action_skip">Skip</string>
@@ -259,7 +265,6 @@
     <string name="upload_unknown">Unknown</string>
     <string name="upload_empty">No data</string>
     <string name="recording_summary">%1$s · %2$s</string>
-    <string name="recording_subtitle">%1$s · %2$s · %3$s</string>
     <string name="map_recording_title">%1$s · %2$s</string>
     <string name="recording_no_location">This recording has no location data</string>
     <string name="sightings_no_location">No position yet. It shows here once your phone hears it with a location fix.</string>

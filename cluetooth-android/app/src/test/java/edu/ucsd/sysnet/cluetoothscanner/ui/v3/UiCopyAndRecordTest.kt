@@ -60,8 +60,8 @@ class UiCopyTest {
     fun countsUseOneAndManyForms() {
         assertEquals("1 device", devicesText(1, TestTexts))
         assertEquals("48 devices", devicesText(48, TestTexts))
-        assertEquals("1 row", rowsText(1, TestTexts))
-        assertEquals("1.4k rows", rowsText(1_400, TestTexts))
+        assertEquals("1 sighting", rowsText(1, TestTexts))
+        assertEquals("1.4k sightings", rowsText(1_400, TestTexts))
         assertEquals("45 s", formatDuration(45, TestTexts))
         assertEquals("23 min", formatDuration(23 * 60, TestTexts))
     }

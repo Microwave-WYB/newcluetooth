@@ -24,7 +24,7 @@ fun formatDuration(seconds: Int, texts: Texts): String =
 fun formatDistance(meters: Int): String =
     if (meters < 1000) "$meters m" else String.format(Locale.US, "%.1f km", meters / 1000f)
 
-/** "1 row", "1.2k rows". */
+/** "1 sighting", "1.2k sightings". */
 fun rowsText(n: Int, texts: Texts): String = texts.plural(R.plurals.rows, n, formatCount(n))
 
 /** "1 device", "48 devices". */

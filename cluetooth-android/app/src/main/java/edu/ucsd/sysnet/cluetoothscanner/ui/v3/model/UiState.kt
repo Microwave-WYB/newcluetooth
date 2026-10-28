@@ -121,6 +121,8 @@ sealed interface GattUiState {
 
 data class DeviceDetailUiState(
     val device: DeviceRowState,
+    /** The wiki product this device was recognised as, shown under its name. */
+    val productName: String? = null,
     val variants: List<AdVariantState>,
     /** RSSI over the last minute in 1 s buckets, oldest first; null marks a bucket with no samples. */
     val chartSamples: List<Int?>,
@@ -238,7 +240,7 @@ data class MapListRowState(
     val detail: String,
     val rssi: Int?,
     val lastSeenMs: Long = 0,
-    /** No name is known; shown in the muted "Unnamed" style and sorted last by name. */
+    /** No name is known; shown in the muted "No name" style and sorted last by name. */
     val unnamed: Boolean = false,
     /** Where the strongest sample was heard; used to filter the list to the visible map area. */
     val at: LatLon? = null,
@@ -266,6 +268,8 @@ data class MapUiState(
     val heat: List<LatLon>,
     /** Why the map is empty (no fixes, nothing seen), shown over it; null otherwise. */
     val emptyNote: String? = null,
+    /** Shown instead of the device count, e.g. while a recording has saved no minute yet. */
+    val listHint: String? = null,
 )
 
 // ---- Settings ------------------------------------------------------------------------------

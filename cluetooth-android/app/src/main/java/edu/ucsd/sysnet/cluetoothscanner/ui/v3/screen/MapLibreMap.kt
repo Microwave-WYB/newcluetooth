@@ -15,14 +15,16 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.app.GeoBounds
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.LatLon
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.Signal
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.SightingPoint
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.Signal
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.signalOf
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -35,6 +37,7 @@ import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
@@ -195,11 +198,12 @@ fun MapLibreMap(
         onDispose { mapView.removeOnDidFailLoadingMapListener(listener) }
     }
 
-    LaunchedEffect(map, styleVersion, overlay) {
+    val endLabels = stringResource(R.string.map_route_start) to stringResource(R.string.map_route_end)
+    LaunchedEffect(map, styleVersion, overlay, endLabels) {
         val m = map ?: return@LaunchedEffect
         val style = m.style ?: return@LaunchedEffect
         if (!style.isFullyLoaded) return@LaunchedEffect
-        pushData(style, overlay)
+        pushData(style, overlay, endLabels)
     }
 
     LaunchedEffect(map, overlay.fitKey, styleVersion) {
@@ -264,6 +268,19 @@ private fun addLayers(style: Style) {
             PropertyFactory.circleStrokeColor(Color.WHITE), PropertyFactory.circleStrokeWidth(2.5f),
         ),
     )
+    // "Start" and "End" above the route's two end dots.
+    style.addLayer(
+        SymbolLayer("v3-ends-label", SRC_ENDS).withProperties(
+            PropertyFactory.textField(Expression.get("label")),
+            PropertyFactory.textSize(12f),
+            PropertyFactory.textAnchor("bottom"),
+            PropertyFactory.textOffset(arrayOf(0f, -0.9f)),
+            PropertyFactory.textColor(Color.rgb(40, 40, 40)),
+            PropertyFactory.textHaloColor(Color.WHITE),
+            PropertyFactory.textHaloWidth(1.5f),
+            PropertyFactory.textAllowOverlap(true),
+        ),
+    )
     style.addLayer(
         CircleLayer("v3-points-layer", SRC_POINTS).withProperties(
             PropertyFactory.circleRadius(
@@ -291,7 +308,7 @@ private fun addLayers(style: Style) {
     )
 }
 
-private fun pushData(style: Style, o: MapOverlay) {
+private fun pushData(style: Style, o: MapOverlay, endLabels: Pair<String, String>) {
     fun source(id: String) = style.getSourceAs<GeoJsonSource>(id)
     source(SRC_HEAT)?.setGeoJson(FeatureCollection.fromFeatures(o.heat.map { Feature.fromGeometry(it.toPoint()) }))
     val route = if (o.route.size >= 2) {
@@ -300,8 +317,8 @@ private fun pushData(style: Style, o: MapOverlay) {
     source(SRC_ROUTE)?.setGeoJson(route)
     val ends = if (o.route.size >= 2) {
         listOf(
-            Feature.fromGeometry(o.route.first().toPoint()).also { it.addStringProperty("color", hex(GREEN)) },
-            Feature.fromGeometry(o.route.last().toPoint()).also { it.addStringProperty("color", hex(RED)) },
+            Feature.fromGeometry(o.route.first().toPoint()).also { it.addStringProperty("color", hex(GREEN)); it.addStringProperty("label", endLabels.first) },
+            Feature.fromGeometry(o.route.last().toPoint()).also { it.addStringProperty("color", hex(RED)); it.addStringProperty("label", endLabels.second) },
         )
     } else emptyList()
     source(SRC_ENDS)?.setGeoJson(FeatureCollection.fromFeatures(ends))

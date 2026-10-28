@@ -161,6 +161,7 @@ object FakeData {
         chartHeardSeconds = heardSeconds,
         gatt = gatt,
         wikiPageId = wikiPageId,
+        productName = if (wikiPageId != null) "Sony WH-1000XM noise-cancelling headphones" else null,
         gattDisabledReason = gattDisabledReason,
     )
 
@@ -291,10 +292,10 @@ object FakeData {
     private val mapRows = listOf(
         MapListRowState("m1", "WH-1000XM5", "88:C9:E8:20:4B:D7", "412 minutes", -49),
         MapListRowState("m2", "Mi Smart Band 8", "C8:0F:10:3A:91:5E", "380 minutes", -52),
-        MapListRowState("m3", "Unnamed", "5B:21:7C:E0:19:A4", "96 minutes", -58, unnamed = true),
+        MapListRowState("m3", "No name", "5B:21:7C:E0:19:A4", "96 minutes", -58, unnamed = true),
         MapListRowState("m4", "Tile", "D4:6E:0E:7F:33:C2", "211 minutes", -63),
         MapListRowState("m5", "JBL Flip 6", "F8:5C:7D:09:AA:16", "54 minutes", -68),
-        MapListRowState("m6", "Unnamed", "4F:90:B3:5D:62:0E", "33 minutes", -74, unnamed = true),
+        MapListRowState("m6", "No name", "4F:90:B3:5D:62:0E", "33 minutes", -74, unnamed = true),
         MapListRowState("m7", "Govee_H6159_8C2A", "E3:11:08:8C:2A:7F", "120 minutes", -79),
         MapListRowState("m8", "[TV] Samsung 7 Series", "B4:3A:28:6E:C1:05", "18 minutes", -86),
     )

@@ -525,6 +525,7 @@ class V3ViewModel(
             chartHeardSeconds = series.heardSeconds,
             gatt = engine,
             wikiPageId = page?.id,
+            productName = page?.title,
             gattDisabledReason = reason,
         )
     }
@@ -705,11 +706,14 @@ class V3ViewModel(
             MapUiState(
                 mode = MapMode.Recording,
                 title = texts.string(R.string.map_recording_title, texts.monthDay(start.toLocalDate()), texts.timeOfDay(start)),
-                subtitle = (if (r.active) "${texts.string(R.string.history_in_progress)} · " else "") + texts.string(
-                    R.string.recording_subtitle,
-                    formatDuration((r.durationMs / 1000).toInt(), texts), formatDistance(r.distanceMeters.toInt()),
-                    texts.plural(R.plurals.devices, r.deviceCount, r.deviceCount),
-                ),
+                // A 0 m distance and, while recording, a 0 device count say nothing; they are left out.
+                subtitle = listOfNotNull(
+                    if (r.active) texts.string(R.string.history_in_progress) else null,
+                    formatDuration((r.durationMs / 1000).toInt(), texts),
+                    r.distanceMeters.toInt().takeIf { it > 0 }?.let(::formatDistance),
+                    if (r.active && r.deviceCount == 0) null else texts.plural(R.plurals.devices, r.deviceCount, r.deviceCount),
+                ).joinToString(" · "),
+                listHint = if (r.active && rows.isEmpty()) texts.string(R.string.recording_devices_pending) else null,
                 route = routePts,
                 rows = rows,
                 sort = local.sort, query = local.query, searching = local.searching,
