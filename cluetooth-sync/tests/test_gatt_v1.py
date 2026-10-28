@@ -648,3 +648,45 @@ def test_unknown_keys_are_kept_in_the_stored_json(database_url: str) -> None:
 )
 def test_uuid_notation_matches_ad_structures(value: str, expected: str) -> None:
     assert normalize_uuid(value, "uuid") == expected
+
+
+def test_nul_characters_are_stripped_before_the_jsonb_cast(database_url: str) -> None:
+    uri = _uri("da")
+    document = _discovery(uri)
+    document["device"]["model"] = "Pixel\u0000 8"
+    document["error"] = {"stage": "read", "status": 5, "name": "GATT\u0000_ERROR"}
+    document["target"]["name"] = "sen\u0000sor"
+    document["services"][0]["characteristics"][0]["note"] = [
+        "a\u0000b",
+        {"k": "\u0000"},
+    ]
+    payload = json.dumps(document)
+    assert "\\u0000" in payload
+
+    ciphertext = SealedBox(PRIVATE_KEY.public_key).encrypt(payload.encode())
+    assert (
+        _ingest_blob(database_url, bytes(PRIVATE_KEY), BlobBytes(uri, ciphertext)) == 1
+    )
+
+    [row] = _query(
+        database_url,
+        "select d.device_model, d.error_name, d.raw -> 'target' ->> 'name' as name, "
+        "d.raw::text like '%\\u0000%' as has_nul, "
+        "d.raw -> 'services' -> 0 -> 'characteristics' -> 0 -> 'note' ->> 0 as note "
+        "from gatt_discoveries d join blobs b on b.id = d.blob_id where b.uri = $1",
+        uri,
+    )
+    assert row == {
+        "device_model": "Pixel 8",
+        "error_name": "GATT_ERROR",
+        "name": "sensor",
+        "has_nul": False,
+        "note": "ab",
+    }
+
+
+def test_a_nul_in_an_object_key_is_rejected() -> None:
+    uri = _uri("db")
+    payload = json.dumps(_discovery(uri)).replace('"outcome"', '"out\\u0000come"')
+    with pytest.raises(ValueError, match="keys must not contain NUL"):
+        parse_gatt_v1_bytes(payload.encode(), route_payload_uri(uri))

@@ -390,6 +390,19 @@ def test_v3_footer_metadata_must_be_unambiguous() -> None:
         read_payload_v3_meta([*base, ("cluetooth.app_version", None)], route)
 
 
+def test_v3_footer_values_lose_nul_characters() -> None:
+    route = route_payload_uri(V3_URI)
+    meta = read_payload_v3_meta(
+        [
+            ("cluetooth.payload_schema", "v3"),
+            ("cluetooth.payload_id", route.payload_id),
+            ("cluetooth.device_model", "Pixel\x00 8"),
+        ],
+        route,
+    )
+    assert meta["device_model"] == "Pixel 8"
+
+
 def test_v3_reader_refuses_other_routes() -> None:
     v2_route = route_payload_uri(V3_URI.replace("scans/v3", "scans/v2"))
     with pytest.raises(ValueError, match="payload-v3 reader requires"):

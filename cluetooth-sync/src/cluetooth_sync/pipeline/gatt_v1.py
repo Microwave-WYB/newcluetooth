@@ -125,6 +125,10 @@ def parse_gatt_v1_bytes(payload: bytes, route: PayloadRoute) -> GattDiscovery:
         object_pairs_hook=_no_duplicate_keys,
         parse_constant=_reject_constant,
     )
+    document, stripped = _strip_nuls(document)
+    if stripped:
+        # PostgreSQL text and jsonb cannot hold NUL; the archive keeps the original.
+        text = json.dumps(document, ensure_ascii=False)
     root = _object(document, "gatt/v1 object")
     if _required(root, "schema", "schema") != SCHEMA:
         raise ValueError(f"gatt/v1 schema must be {SCHEMA!r}")
@@ -378,6 +382,25 @@ def _location(value: Any) -> tuple[float | None, float | None, float | None]:
     if accuracy is not None and accuracy < 0.0:
         raise ValueError("location.accuracy must be nonnegative")
     return lat, lon, accuracy
+
+
+def _strip_nuls(value: Any) -> tuple[Any, bool]:
+    """Remove NUL characters from every string value (as the scan path does for
+    names); a NUL in an object key is rejected."""
+    if isinstance(value, str):
+        return value.replace("\x00", ""), "\x00" in value
+    if isinstance(value, list):
+        items = [_strip_nuls(item) for item in value]
+        return [item for item, _ in items], any(changed for _, changed in items)
+    if isinstance(value, dict):
+        if any("\x00" in key for key in value):
+            raise ValueError("JSON object keys must not contain NUL")
+        entries = {key: _strip_nuls(item) for key, item in value.items()}
+        return (
+            {key: item for key, (item, _) in entries.items()},
+            any(changed for _, changed in entries.values()),
+        )
+    return value, False
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

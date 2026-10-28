@@ -68,7 +68,8 @@ def read_payload_v3_meta(
         short_key = key.removeprefix(FOOTER_KEY_PREFIX)
         # Every cluetooth.* key must occur once with a value, not only the required ones.
         _required_metadata_value(occurrences, key)
-        meta[short_key] = value or ""
+        # PostgreSQL jsonb cannot hold NUL.
+        meta[short_key] = (value or "").replace("\x00", "")
     return meta
 
 
