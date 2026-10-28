@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.LocalWindowHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.android.tools.screenshot.PreviewTest
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.BottomRecordControl
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordControlSheetContent
@@ -38,32 +38,39 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecorderCallbacks
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.ScrollToTopButton
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverMode
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DetailTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverMode
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.FakeData
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanUiState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductTopBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsActions
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.BluetoothOffBanner
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.LocalWindowHeight
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapTopBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MissingPermissionsScreen
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.OnboardingActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.OnboardingScreen
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.OnboardingStep
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.PermissionNeed
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.PlaceholderMapFor
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.sheetContentMaxHeight
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalStaticRender
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.V3Theme
@@ -120,6 +127,7 @@ private fun ScanPreview(
     detail: DeviceDetailUiState? = null,
     tab: DetailTab = DetailTab.Advertising,
     controlSheet: Boolean = false,
+    bluetoothOff: Boolean = false,
 ) {
     val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
     Box(Modifier.fillMaxSize()) {
@@ -128,7 +136,12 @@ private fun ScanPreview(
             callbacks = cb,
             placement = recordPlacement(state.recorder.phase, roomForExpanded = detail == null && !controlSheet),
             tab = AppTab.Scan,
-            topBar = { ScanTopBar(state.rows.size, location, null, searching = false, onSearchToggle = {}, onSettings = {}) },
+            topBar = {
+                Column {
+                    ScanTopBar(state.rows.size, location, null, searching = false, onSearchToggle = {}, onSettings = {})
+                    if (bluetoothOff) BluetoothOffBanner({})
+                }
+            },
             showScrollToTop = showTop,
         ) { padding -> ScanContent(state.rows, listState, padding) }
         if (detail != null) SheetMock { DeviceDetailContent(detail, DeviceDetailActions(), it, tabState = remember { mutableStateOf(tab) }) }
@@ -137,6 +150,25 @@ private fun ScanPreview(
 }
 
 @PreviewTest @PhonePreview @Composable fun ScanList() = Frame { ScanPreview(FakeData.scan) }
+
+@PreviewTest @PhonePreview @Composable fun ScanBluetoothOff() = Frame { ScanPreview(FakeData.scan, bluetoothOff = true) }
+
+private val needs = listOf(
+    PermissionNeed(R.string.permission_nearby, R.string.permission_nearby_why, granted = true),
+    PermissionNeed(R.string.permission_location, R.string.permission_location_why, granted = false),
+    PermissionNeed(R.string.permission_notifications, R.string.permission_notifications_why, granted = false, required = false),
+)
+
+@PreviewTest @PhonePreview @Composable
+fun OnboardingPermissions() = Frame { OnboardingScreen(needs, permanentlyDenied = false, bluetoothOn = true, initialUserId = "", actions = OnboardingActions()) }
+
+@PreviewTest @PhonePreview @Composable
+fun OnboardingUserId() = Frame {
+    OnboardingScreen(needs, permanentlyDenied = false, bluetoothOn = true, initialUserId = "wyb", actions = OnboardingActions(), startStep = OnboardingStep.UserId)
+}
+
+@PreviewTest @PhonePreview @Composable
+fun MissingPermission() = Frame { MissingPermissionsScreen(needs.filter { !it.granted && it.required }, permanentlyDenied = true, onRequest = {}, onOpenSettings = {}) }
 
 @PreviewTest @PhonePreview @Composable
 fun ScanNoLocation() = Frame { ScanPreview(FakeData.scan, location = ScanLocation.Unavailable) }

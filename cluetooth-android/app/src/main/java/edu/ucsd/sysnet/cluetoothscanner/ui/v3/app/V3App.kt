@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,6 +46,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.filterScanRows
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.BluetoothOffBanner
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverTopBar
@@ -72,7 +74,12 @@ import kotlinx.coroutines.launch
  * current route's top app bar and content in it, the device sheet, the error snackbar and the note dialog.
  */
 @Composable
-fun V3App(vm: V3ViewModel) {
+fun V3App(
+    vm: V3ViewModel,
+    /** Bluetooth was turned off after onboarding: a banner with the fix sits under every page's app bar. */
+    bluetoothOff: Boolean = false,
+    onEnableBluetooth: () -> Unit = {},
+) {
     V3Theme {
         val stack by vm.stack.collectAsStateWithLifecycle()
         val route = stack.last()
@@ -170,35 +177,38 @@ fun V3App(vm: V3ViewModel) {
             tab = tab,
             onTab = vm::selectTab,
             topBar = {
-                when (route) {
-                    is Route.Tab -> when (route.tab) {
-                        AppTab.Scan -> ScanTopBar(
-                            deviceCount = scan.rows.size,
-                            location = scan.location,
-                            notice = notice,
-                            searching = searching,
-                            onSearchToggle = { searching = !searching; if (!searching) query = "" },
-                            onSettings = { vm.open(Route.Settings) },
-                        )
-                        AppTab.Discover -> DiscoverTopBar(discover, discoverMode, notice)
-                        AppTab.History -> HistoryTopBar(rec, notice)
-                    }
-                    is Route.Product -> ProductTopBar(product?.title.orEmpty(), onBack = { vm.back() })
-                    is Route.RecordingMap -> mapState?.let { state ->
-                        val summary = vm.recordingSummary(route.id)
-                        MapTopBar(state, mapActions) {
-                            RecordingMenu(
-                                status = summary?.upload,
-                                inProgress = rec.current?.id == route.id,
-                                onRetryUpload = vm::uploadNow,
-                                onExportJsonl = { vm.exportRecording(route.id, GatewayExportFormat.JSONL) },
-                                onExportParquet = { vm.exportRecording(route.id, GatewayExportFormat.PARQUET) },
-                                onDelete = { vm.deleteRecordingData(route.id) },
+                Column {
+                    when (route) {
+                        is Route.Tab -> when (route.tab) {
+                            AppTab.Scan -> ScanTopBar(
+                                deviceCount = scan.rows.size,
+                                location = scan.location,
+                                notice = notice,
+                                searching = searching,
+                                onSearchToggle = { searching = !searching; if (!searching) query = "" },
+                                onSettings = { vm.open(Route.Settings) },
                             )
+                            AppTab.Discover -> DiscoverTopBar(discover, discoverMode, notice)
+                            AppTab.History -> HistoryTopBar(rec, notice)
                         }
+                        is Route.Product -> ProductTopBar(product?.title.orEmpty(), onBack = { vm.back() })
+                        is Route.RecordingMap -> mapState?.let { state ->
+                            val summary = vm.recordingSummary(route.id)
+                            MapTopBar(state, mapActions) {
+                                RecordingMenu(
+                                    status = summary?.upload,
+                                    inProgress = rec.current?.id == route.id,
+                                    onRetryUpload = vm::uploadNow,
+                                    onExportJsonl = { vm.exportRecording(route.id, GatewayExportFormat.JSONL) },
+                                    onExportParquet = { vm.exportRecording(route.id, GatewayExportFormat.PARQUET) },
+                                    onDelete = { vm.deleteRecordingData(route.id) },
+                                )
+                            }
+                        }
+                        is Route.ProductMap, is Route.DeviceMap -> mapState?.let { MapTopBar(it, mapActions) }
+                        Route.Settings -> SettingsTopBar { vm.back() }
                     }
-                    is Route.ProductMap, is Route.DeviceMap -> mapState?.let { MapTopBar(it, mapActions) }
-                    Route.Settings -> SettingsTopBar { vm.back() }
+                    if (bluetoothOff) BluetoothOffBanner(onEnableBluetooth)
                 }
             },
             showScrollToTop = onScan && showTop,

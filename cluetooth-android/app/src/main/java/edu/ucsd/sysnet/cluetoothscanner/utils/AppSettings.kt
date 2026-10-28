@@ -8,6 +8,7 @@ object AppSettings {
     private const val KEY_WIFI_ONLY_UPLOAD = "wifi_only_upload"
     private const val KEY_CODED_PHY = "scan_coded_phy"
     private const val KEY_AUTO_RECORD = "auto_record"
+    private const val KEY_ONBOARDED = "onboarded"
 
     fun isWifiOnlyUpload(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -41,6 +42,14 @@ object AppSettings {
 
     fun setAutoRecord(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTO_RECORD, enabled).apply()
+    }
+
+    /** First-launch onboarding finished (permissions, Bluetooth, user ID, auto-record). */
+    fun isOnboarded(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(KEY_ONBOARDED, false)
+
+    fun setOnboarded(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_ONBOARDED, true).apply()
     }
 
     fun lastUploadAtMs(context: Context): Long? {
