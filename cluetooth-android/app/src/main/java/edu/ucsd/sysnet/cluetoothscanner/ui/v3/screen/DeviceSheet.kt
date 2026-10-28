@@ -51,6 +51,8 @@ fun ColumnScope.DeviceSheetBody(
     actions: DeviceDetailActions,
     expanded: Boolean,
     onCollapse: () -> Unit,
+    /** Ask the sheet to go to its top level (from the half content's links and buttons). */
+    onExpand: () -> Unit,
     onHalfMeasured: (Int) -> Unit,
     tabState: androidx.compose.runtime.MutableState<DetailTab> = remember(detail.device.id) { mutableStateOf(DetailTab.Advertising) },
     expandedVariant: androidx.compose.runtime.MutableState<String?> = remember(detail.device.id) { mutableStateOf(null) },
@@ -74,9 +76,13 @@ fun ColumnScope.DeviceSheetBody(
         DeviceDetailHalf(
             detail = detail,
             onWindowChange = actions.onWindowChange,
-            onDiscoverGatt = actions.onDiscoverGatt,
+            onDiscoverGatt = {
+                actions.onDiscoverGatt()
+                tabState.value = DetailTab.Gatt
+                onExpand()
+            },
             onShowOnMap = actions.onShowOnMap,
-            onExpand = { tabState.value = DetailTab.Advertising; onCollapse() },
+            onExpand = { tabState.value = DetailTab.Advertising; onExpand() },
             modifier = Modifier
                 .navigationBarsPadding()
                 .wrapContentHeight(align = Alignment.Top, unbounded = true)
@@ -130,7 +136,8 @@ fun BoxScope.ScanDeviceSheet(
             detail = detail,
             actions = actions,
             expanded = expanded,
-            onCollapse = { level = if (expanded) 0 else 1 },
+            onCollapse = { level = 0 },
+            onExpand = { level = 1 },
             onHalfMeasured = { halfPx = it },
         )
     }

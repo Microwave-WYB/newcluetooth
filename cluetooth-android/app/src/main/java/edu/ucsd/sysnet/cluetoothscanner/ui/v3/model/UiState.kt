@@ -188,6 +188,9 @@ data class MapListRowState(
     val mac: String?,
     val detail: String,
     val rssi: Int?,
+    val lastSeenMs: Long = 0,
+    /** Where the strongest sample was heard; used to filter the list to the visible map area. */
+    val at: LatLon? = null,
 )
 
 data class MapUiState(

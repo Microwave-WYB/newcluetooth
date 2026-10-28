@@ -169,11 +169,18 @@ fun ScanPage(
     onRowClick: (DeviceRowState) -> Unit = {},
     onSearch: () -> Unit = {},
     onSettings: (() -> Unit)? = null,
+    /** A scanner problem (Bluetooth off, no permission), shown under the status line. */
+    notice: String? = null,
 ) {
     Column(modifier.fillMaxSize()) {
         V3TopBar(
             title = "扫描",
-            status = { RecorderStatus(recorder, "未录制 · ${rows.size} 台") },
+            status = {
+                RecorderStatus(recorder, "未录制 · ${rows.size} 台")
+                if (notice != null) {
+                    Text(notice, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
+                }
+            },
             actions = {
                 SearchButton(onSearch)
                 if (onSettings != null) TopBarIconButton(Icons.Filled.Settings, "设置", onSettings)

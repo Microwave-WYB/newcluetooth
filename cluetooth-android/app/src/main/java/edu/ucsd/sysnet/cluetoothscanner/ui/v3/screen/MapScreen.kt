@@ -99,6 +99,7 @@ fun MapPage(
     var halfPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     val handlePx = with(density) { 22.dp.toPx() }
+    val backRowPx = with(density) { 48.dp.toPx() }
 
     BackHandler {
         when {
@@ -153,7 +154,7 @@ fun MapPage(
             levels = { container ->
                 val peek = with(density) { PEEK_DP.dp.toPx() }
                 if (selecting) {
-                    val natural = if (halfPx > 0) halfPx + handlePx else container * 0.5f
+                    val natural = if (halfPx > 0) halfPx + handlePx + backRowPx else container * 0.5f
                     listOf(peek, natural.coerceAtMost(container * HALF_SHEET_MAX_SHARE), container)
                 } else {
                     listOf(peek, container * 0.5f, container * 0.92f)
@@ -172,7 +173,8 @@ fun MapPage(
                         onShowOnMap = { level = 0; actions.detail.onShowOnMap() },
                     ),
                     expanded = expanded,
-                    onCollapse = { level = if (expanded) 1 else 2 },
+                    onCollapse = { level = 1 },
+                    onExpand = { level = 2 },
                     onHalfMeasured = { halfPx = it },
                     backRow = { Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         BackButton(actions.onBackToList)

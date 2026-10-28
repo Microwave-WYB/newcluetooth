@@ -309,6 +309,7 @@ dependencies {
     implementation(libs.play.services.location)
     implementation(libs.play.services.maps)
     implementation(libs.maps.compose)
+    implementation(libs.maplibre.android)
 
     // Serialization
     implementation(libs.kotlinx.serialization.json)
