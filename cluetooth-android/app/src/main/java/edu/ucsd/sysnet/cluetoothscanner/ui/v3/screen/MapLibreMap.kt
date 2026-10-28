@@ -1,6 +1,8 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen
 
 import android.graphics.Color
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -52,7 +54,7 @@ private const val STYLE_LIGHT = "https://tiles.openfreemap.org/styles/liberty"
 private const val STYLE_DARK = "https://tiles.openfreemap.org/styles/dark"
 
 private const val MIN_SPAN_DEGREES = 0.0014
-private const val STYLE_TIMEOUT_MS = 8_000L
+private const val STYLE_TIMEOUT_MS = 20_000L
 
 /** A background-only style: the offline fallback, still able to carry our layers. */
 private fun blankStyle(dark: Boolean): String {
@@ -170,6 +172,21 @@ fun MapLibreMap(
             kotlinx.coroutines.delay(STYLE_TIMEOUT_MS)
             if (styleVersion == loadedVersion) useFallback = true
         }
+    }
+    // While on the fallback, try the online style again when the network comes back. (The callback also
+    // fires once at registration with the current state; that one is ignored.) A new map page always
+    // starts online, so the next open retries too.
+    DisposableEffect(useFallback) {
+        if (!useFallback) return@DisposableEffect onDispose { }
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        var registered = false
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (registered) useFallback = false else registered = true
+            }
+        }
+        runCatching { connectivity?.registerDefaultNetworkCallback(callback) }
+        onDispose { runCatching { connectivity?.unregisterNetworkCallback(callback) } }
     }
     DisposableEffect(mapView) {
         // A failed tile after the style is up is not a reason to drop the base map.

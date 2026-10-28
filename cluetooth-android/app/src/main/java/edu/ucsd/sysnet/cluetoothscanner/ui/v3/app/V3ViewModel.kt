@@ -18,6 +18,7 @@ import edu.ucsd.sysnet.cluetoothscanner.service.LiveScan
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingMode
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingOutcome
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecorderCallbacks
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDistance
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDuration
@@ -236,6 +237,9 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     // ---- recording lifecycle state (read by onTransition) ----
     private var previousTransition = ScanTransitionState.STOPPED
     private var recordingReached = false
+
+    /** This ViewModel saw the start begin; a stop it only joined midway (a new ViewModel during sealing) is not a failed start. */
+    private var startSeen = false
     private var pendingSaved: SavedRecording? = null
 
     private val gattResults = MutableStateFlow<Map<String, GattUiState.Done>>(emptyMap())
@@ -309,6 +313,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         previousTransition = state
         when (state) {
             ScanTransitionState.SCANNING, ScanTransitionState.DEFERRED, ScanTransitionState.PAUSED -> if (!recordingReached) {
+                startSeen = false
                 recordingReached = true
                 pendingSaved = null
                 _problem.value = null
@@ -320,10 +325,13 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 recordingReached = false
                 pendingSaved = null
                 _problem.value = null
-                when {
-                    summary != null -> showSaved(summary)
-                    previous == ScanTransitionState.STARTING -> toasts.trySend("无法开始录制：本地存储还没有准备好")
-                    previous == ScanTransitionState.FINALIZING -> toasts.trySend("扫描无法启动，请检查蓝牙和权限")
+                val startFailed = startSeen
+                startSeen = false
+                when (RecordingOutcome.atStop(previous, startFailed, summary != null)) {
+                    RecordingOutcome.Kind.Saved -> showSaved(summary!!)
+                    RecordingOutcome.Kind.StartFailed -> toasts.trySend("无法开始录制：本地存储还没有准备好")
+                    RecordingOutcome.Kind.ScannerRejected -> toasts.trySend("扫描无法启动，请检查蓝牙和权限")
+                    RecordingOutcome.Kind.None -> Unit
                 }
             }
             ScanTransitionState.FINALIZATION_FAILED -> {
@@ -332,7 +340,8 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 recordingReached = false
                 _problem.value = "这次录制没有保存成功，数据还在手机上。"
             }
-            ScanTransitionState.STARTING, ScanTransitionState.FINALIZING -> Unit
+            ScanTransitionState.STARTING -> startSeen = true
+            ScanTransitionState.FINALIZING -> Unit
         }
     }
 

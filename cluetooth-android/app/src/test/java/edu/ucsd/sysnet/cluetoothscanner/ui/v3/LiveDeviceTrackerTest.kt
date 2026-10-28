@@ -119,6 +119,31 @@ class LiveDeviceTrackerTest {
     }
 
     @Test
+    fun theRssiRingGrowsPastItsInitialSizeAndKeepsTheLast900Seconds() {
+        val t = LiveDeviceTracker()
+        // More seconds than the ring holds: the oldest are overwritten, the chart still sees the newest.
+        for (i in 0 until 1_000) t.onSample(sample(rssi = -40 - (i % 50), t = 1_000_000L + i * 1_000L))
+        val now = 1_000_000L + 999 * 1_000L
+        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FifteenMinutes, now)
+        assertEquals(LiveDeviceTracker.CHART_POINTS, series.size)
+        assertTrue(series.all { it != null })
+        assertEquals(-40 - (999 % 50), series.last())
+    }
+
+    @Test
+    fun variantsAreListedInTheOrderTheyFirstAppearedWhateverWasHeardLast() {
+        val t = LiveDeviceTracker()
+        val a = byteArrayOf(2, 1, 1)
+        val b = byteArrayOf(2, 1, 2)
+        t.onSample(sample(raw = a, t = 1_000_000))
+        t.onSample(sample(raw = b, t = 1_001_000))
+        val first = t.variants("AA:BB:CC:DD:EE:01").map { it.id }
+        t.onSample(sample(raw = a, t = 1_002_000)) // a is heard again; the table must not reorder
+        t.onSample(sample(raw = b, t = 1_003_000))
+        assertEquals(first, t.variants("AA:BB:CC:DD:EE:01").map { it.id })
+    }
+
+    @Test
     fun variantsAreBoundedPerDevice() {
         val t = LiveDeviceTracker()
         repeat(LiveDeviceTracker.MAX_VARIANTS + 10) { i -> t.onSample(sample(raw = byteArrayOf(2, 1, i.toByte()), t = 1_000_000L + i)) }
