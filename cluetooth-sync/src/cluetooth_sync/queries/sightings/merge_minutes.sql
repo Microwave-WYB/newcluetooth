@@ -4,7 +4,9 @@
 -- are written in sorted order to avoid deadlocks.
 -- The key is (minute, addr, payload, uploader, session) plus the v3 PDU fields
 -- addr_type, is_legacy, primary_phy, secondary_phy, adv_sid and data_status
--- (all null for legacy and v2 sightings); nulls compare equal.
+-- (all null for legacy and v2 sightings); nulls compare equal. The joins keep plain
+-- equality on minute, addr and payload_id (hashable) and use IS NOT DISTINCT FROM only
+-- on the nullable key columns: one row-wise comparison forces nested loops.
 with fixes as (
   select
     date_trunc('minute', b.scanned_at, 'UTC') as minute,
@@ -90,17 +92,29 @@ select
   k.adv_tx_power, k.periodic_interval
 from per_key k
 join blob_maps b
-  on (b.minute, b.addr, b.payload_id, b.uploader_id, b.session_id,
-      b.addr_type, b.is_legacy, b.primary_phy, b.secondary_phy, b.adv_sid, b.data_status)
-     is not distinct from
-     (k.minute, k.addr, k.payload_id, k.uploader_id, k.session_id,
-      k.addr_type, k.is_legacy, k.primary_phy, k.secondary_phy, k.adv_sid, k.data_status)
+  on b.minute = k.minute
+ and b.addr = k.addr
+ and b.payload_id = k.payload_id
+ and b.uploader_id is not distinct from k.uploader_id
+ and b.session_id is not distinct from k.session_id
+ and b.addr_type is not distinct from k.addr_type
+ and b.is_legacy is not distinct from k.is_legacy
+ and b.primary_phy is not distinct from k.primary_phy
+ and b.secondary_phy is not distinct from k.secondary_phy
+ and b.adv_sid is not distinct from k.adv_sid
+ and b.data_status is not distinct from k.data_status
 left join best x
-  on (x.minute, x.addr, x.payload_id, x.uploader_id, x.session_id,
-      x.addr_type, x.is_legacy, x.primary_phy, x.secondary_phy, x.adv_sid, x.data_status)
-     is not distinct from
-     (k.minute, k.addr, k.payload_id, k.uploader_id, k.session_id,
-      k.addr_type, k.is_legacy, k.primary_phy, k.secondary_phy, k.adv_sid, k.data_status)
+  on x.minute = k.minute
+ and x.addr = k.addr
+ and x.payload_id = k.payload_id
+ and x.uploader_id is not distinct from k.uploader_id
+ and x.session_id is not distinct from k.session_id
+ and x.addr_type is not distinct from k.addr_type
+ and x.is_legacy is not distinct from k.is_legacy
+ and x.primary_phy is not distinct from k.primary_phy
+ and x.secondary_phy is not distinct from k.secondary_phy
+ and x.adv_sid is not distinct from k.adv_sid
+ and x.data_status is not distinct from k.data_status
 order by k.minute, k.addr, k.payload_id, k.uploader_id, k.session_id,
   k.addr_type, k.is_legacy, k.primary_phy, k.secondary_phy, k.adv_sid, k.data_status
 on conflict on constraint sighting_minutes_key do update set
