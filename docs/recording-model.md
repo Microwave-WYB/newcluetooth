@@ -79,12 +79,49 @@ and marks the session interrupted.
 
 ## Screen off
 
-Android pauses unfiltered BLE scans when the screen turns off. The scanner sends one empty
-`ScanFilter`, which only helps up to API 14 (AOSP 15 treats an all-empty filter as unfiltered).
-The reliable path is a recording: the foreground service keeps the process and the scanner
-alive. A scan that is merely started with the screen off delivered nothing on a Galaxy Note10,
-so the once-a-minute scan restart waits while the screen is off (bounded at 20 minutes) and a
-screen-on receiver applies it, and a changed Coded PHY setting, immediately.
+**Plainly: on Android 15 and newer, and on Android 13/14 phones with a newer Bluetooth
+mainline module, a recording started or running with the screen off collects nothing.** Android
+stops delivering *unfiltered* BLE scans while the screen is off. Since AOSP 15 a filter list whose
+filters are all empty counts as unfiltered, and the foreground service (with its wake lock) is not an
+exemption: the process stays alive, but the platform simply sends no scan results. The empty
+`ScanFilter` the scanner passes therefore helps only on API 14 and below (and only on builds
+that still treat it as a filter).
+
+What was verified: a Galaxy Note10 on Android 12. There a recording kept collecting at the full
+rate with the screen off (about 650 rows per 30 s for 143 s), and a plain scan without the
+service degraded to about 10% and then nothing. The Android 15 behaviour is from the platform
+source, not from a device test.
+
+A broad non-empty filter set does not exist: a filter must name a field (company ID, service
+UUID, name, address, ...), and an advertisement that lacks that field is dropped, so any set
+that is cheap enough to install would silently lose devices. None is used, because a recording
+that quietly misses devices is worse than one that visibly collects nothing. Until that is
+solved (for example by a companion approach or per-device filters), on Android 15+ record with
+the screen on; the live list and recording work normally with the screen on.
+
+Related: a scan that is merely *started* with the screen off delivered nothing on the Note10
+even on Android 12, so the once-a-minute scan restart waits while the screen is off (bounded at
+20 minutes) and a screen-on receiver applies it, and a changed Coded PHY setting, immediately.
+
+## Stop, deferral and failures
+
+- **Stop** keeps the foreground service and the wake lock until the core has finished the
+  session: `RecordingState.finalizing` is true (and `mode` is already `IDLE`) while the open payload
+  is sealed. A finalization that fails is terminal; the service is released and the mode stays idle.
+- **Bluetooth off** while recording: `mode` stays `RECORDING` with `scannerDeferred = true`,
+  nothing is collected, the wake lock is released, and it is taken again when scanning resumes.
+- **The foreground service cannot start** (Android refuses it, for example when the app was not
+  visible): the service stops itself and `RecordingState.error` carries the reason. The recording
+  carries on inside the process without the foreground guarantees.
+- **The process dies mid-recording:** on the next launch the core has finalized the open payload
+  and marked the session interrupted, and the app posts one notification per such session
+  ("Recording interrupted: N rows saved", in Chinese "上次录制意外中断，已保存 N 条").
+- **Rows the core refuses** (an advertisement over 1650 bytes, a malformed address, an
+  out-of-range value) are dropped at its input boundary and counted
+  (`rejected_observation_count`, `last_rejection`); the scan service also keeps over-long
+  advertisements out of the durable path. A bad row can never block a checkpoint or seal.
+- **`RecordingState`** gained `finalizing`, `scannerDeferred` and `error` as additive fields with
+  defaults; the four control functions and `liveScans` are unchanged.
 
 ## Bonding
 

@@ -248,15 +248,22 @@ class GattEngine(
             // BluetoothGatt refuses a new request while one is outstanding, so a refusal is
             // retried briefly (a callback may be in flight); a standing refusal is a stack
             // problem, not a property of this attribute, and ends the discovery.
-            when (requestRead(link, ref)) {
-                ReadRequest.ACCEPTED -> Unit
-                ReadRequest.CANCELLED -> {
+            when (val requested = requestRead(attempt, link, ref)) {
+                ReadRequest.Accepted -> Unit
+                ReadRequest.Cancelled -> {
                     finishRead(run, assemble(), readStart)
                     run.outcome = GattOutcome.CANCELLED
                     disconnect(run, link, attempt, DisconnectInitiator.LOCAL)
                     return
                 }
-                ReadRequest.REFUSED -> {
+                is ReadRequest.Disconnected -> {
+                    run.error = GattError(GattStage.READ, requested.status, GattStatus.name(requested.status))
+                    run.disconnect = GattDisconnect(DisconnectInitiator.REMOTE, requested.status)
+                    finishRead(run, assemble(), readStart)
+                    run.outcome = GattOutcome.PARTIAL
+                    return
+                }
+                ReadRequest.Refused -> {
                     run.error = GattError(GattStage.READ, GattStatus.FAILURE, "READ_REFUSED")
                     finishRead(run, assemble(), readStart)
                     run.outcome = GattOutcome.PARTIAL
@@ -273,11 +280,22 @@ class GattEngine(
                 // longer than the per-read timeout). Record the timeout, but give the late
                 // callback a grace period; if none comes the read queue is stalled.
                 store(ref, GattReadValue(null, GattReadValue.TIMEOUT))
-                waited = await<GattEvent.AttributeRead>(attempt, timeouts.readStallGraceMs) {
-                    (it as? GattEvent.AttributeRead)?.takeIf { read -> read.ref == ref }
+                // The grace period never outlasts the read budget: whichever ends first decides
+                // whether this is a stalled queue or the stage simply running out of time.
+                val budgetLeft = (deadline - elapsedMs()).coerceAtLeast(0)
+                val grace = minOf(timeouts.readStallGraceMs, budgetLeft)
+                if (grace > 0) {
+                    waited = await<GattEvent.AttributeRead>(attempt, grace) {
+                        (it as? GattEvent.AttributeRead)?.takeIf { read -> read.ref == ref }
+                    }
                 }
                 if (waited == Wait.TimedOut) {
-                    run.error = GattError(GattStage.READ, GattStatus.READ_QUEUE_STALLED, "READ_QUEUE_STALLED")
+                    val budgetEnded = grace < timeouts.readStallGraceMs
+                    run.error = if (budgetEnded) {
+                        GattError(GattStage.READ, GattStatus.TIMED_OUT, GattStatus.name(GattStatus.TIMED_OUT))
+                    } else {
+                        GattError(GattStage.READ, GattStatus.READ_QUEUE_STALLED, "READ_QUEUE_STALLED")
+                    }
                     finishRead(run, assemble(), readStart)
                     run.outcome = GattOutcome.PARTIAL
                     disconnect(run, link, attempt, DisconnectInitiator.TIMEOUT)
@@ -319,19 +337,29 @@ class GattEngine(
         disconnect(run, link, attempt, DisconnectInitiator.LOCAL)
     }
 
-    private enum class ReadRequest { ACCEPTED, REFUSED, CANCELLED }
+    private sealed interface ReadRequest {
+        data object Accepted : ReadRequest
+        data object Refused : ReadRequest
+        data object Cancelled : ReadRequest
+        data class Disconnected(val status: Int) : ReadRequest
+    }
 
-    /** Refusals are retried a few times; a cancel during the pause ends the wait at once. */
-    private suspend fun requestRead(link: GattLink, ref: AttributeRef): ReadRequest {
+    /**
+     * Refusals are retried a few times. The pause keeps listening on this attempt, so a
+     * disconnect that arrives meanwhile is seen (and a cancel ends the wait at once).
+     */
+    private suspend fun requestRead(attempt: Int, link: GattLink, ref: AttributeRef): ReadRequest {
         repeat(timeouts.readRefusedTries) { index ->
-            if (link.read(ref)) return ReadRequest.ACCEPTED
+            if (link.read(ref)) return ReadRequest.Accepted
             if (index < timeouts.readRefusedTries - 1) {
-                if (await<Unit>(RETRY_WAIT, timeouts.readRefusedBackoffMs) { null } is Wait.Cancelled) {
-                    return ReadRequest.CANCELLED
+                when (val paused = await<Unit>(attempt, timeouts.readRefusedBackoffMs) { null }) {
+                    is Wait.Cancelled -> return ReadRequest.Cancelled
+                    is Wait.Disconnected -> return ReadRequest.Disconnected(paused.status)
+                    else -> Unit
                 }
             }
         }
-        return ReadRequest.REFUSED
+        return ReadRequest.Refused
     }
 
     /** Timings are never negative, even if the wall clock stepped back. */

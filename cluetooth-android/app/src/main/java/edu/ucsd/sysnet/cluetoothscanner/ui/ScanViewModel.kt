@@ -103,42 +103,40 @@ class ScanViewModel(
     }
 
     internal fun startWhenReady(readiness: ScanReadiness) {
-        if (readiness.permissionsGranted) startLocationUpdates()
+        // Live scanning and location follow the foreground (see ScanSupervisor), which also
+        // starts location updates; they are not started from here.
+        supervisor.foregroundChanged(readiness.permissionsGranted)
+        if (readiness.permissionsGranted) retryLocationWhileUnavailable()
         viewModelScope.launch {
-            // Live scanning follows the foreground; it writes nothing (see ScanSupervisor).
-            supervisor.setForeground(readiness.permissionsGranted)
             reconcileScanReadiness(readiness, recording.wantsRecording, scanTransitionCoordinator)
         }
     }
 
     /** The Activity left the foreground: live scanning stops unless a recording is active. */
     internal fun onActivityStopped() {
-        viewModelScope.launch { supervisor.setForeground(false) }
+        supervisor.foregroundChanged(false)
     }
 
     internal fun onPermissionsPermanentlyRejected() {
         recording.stop()
     }
 
-    private fun startLocationUpdates() {
-        locationService.startLocationUpdates()
-
-        // If location services are disabled, periodically retry with only one retry loop.
-        if (!locationService.isLocationEnabled() && locationRetryJob?.isActive != true) {
-            locationRetryJob = viewModelScope.launch {
-                while (
-                    !locationService.isLocationEnabled() &&
-                    !locationService.isLocationAvailable()
-                ) {
-                    delay(5000)
-                    locationService.startLocationUpdates()
-                }
+    /** If location services are off, retry (through the supervisor) with a single loop. */
+    private fun retryLocationWhileUnavailable() {
+        if (locationService.isLocationEnabled() || locationRetryJob?.isActive == true) return
+        locationRetryJob = viewModelScope.launch {
+            while (
+                !locationService.isLocationEnabled() &&
+                !locationService.isLocationAvailable()
+            ) {
+                delay(5000)
+                supervisor.startLocationIfWanted()
             }
         }
     }
 
     fun retryLocationUpdates() {
-        locationService.forceRestartLocationUpdates()
+        if (supervisor.wantsLocation) locationService.forceRestartLocationUpdates()
     }
 
     fun refreshCoreState() {

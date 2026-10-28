@@ -99,6 +99,8 @@ data class AppUiState(
     val latestObservationAtMs: Long? = null,
     val latestLocalName: String? = null,
     val actorTerminated: Boolean = false,
+    /** Observations the core refused at its input boundary since it opened. */
+    val rejectedObservationCount: ULong = 0u,
     val errorMessage: String? = null,
     val sessions: List<GatewayScanSession> = emptyList(),
 )
@@ -122,6 +124,7 @@ fun GatewayCoreState.toAppUiState(
     hasLocation = hasLocation,
     latestObservationAtMs = latestObservationAtMs,
     latestLocalName = latestLocalName,
+    rejectedObservationCount = rejectedObservationCount,
     errorMessage = errorMessage,
 )
 
@@ -163,6 +166,9 @@ class CluetoothRepository(
     private var terminalStatePublished = false
     private val queuedObservations = AtomicInteger(0)
     private val closing = AtomicBoolean(false)
+
+    // The settings last declared to the core, so they can be declared again if the core loses them.
+    private var lastEnvironment: CoreScanEnvironment? = null
     private val backpressurePaused = AtomicBoolean(false)
     // This repository is the process-wide core owner. All v2 reconciliation and
     // transfer sessions share this mutex, including periodic and one-time workers.
@@ -348,7 +354,9 @@ class CluetoothRepository(
         val mutex = if (kind == UploadKind.GATT) gattUploadMutex else uploadCoordinatorMutex
         return mutex.withLock {
             check(!closing.get()) { "Core repository is closing" }
-            val summary = PayloadUploadCoordinator(gateway.await(), uploader, resume, kind).uploadPending()
+            val coordinator = PayloadUploadCoordinator(gateway.await(), uploader, resume, kind)
+            // GATT objects are saved at any time; pick up ones saved while this run was going.
+            val summary = if (kind == UploadKind.GATT) coordinator.uploadUntilQuiet() else coordinator.uploadPending()
             callCore(publishScanState = false) { it.refresh() }
             summary
         }
@@ -442,6 +450,7 @@ class CluetoothRepository(
                         it.clearLocation()
                     }
                     is CoreCommand.ConfigureScan -> try {
+                        lastEnvironment = command.environment
                         callCore(publishScanState = false) { it.configureScan(command.environment) }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -565,6 +574,14 @@ class CluetoothRepository(
             }
 
             if (recordResult is GatewayRecordResult.RetryablePreCommitFailure) {
+                if (recordResult.needsScanConfiguration) {
+                    // Recoverable: declare the last known settings again, then retry the batch.
+                    val settings = lastEnvironment
+                    if (settings != null) {
+                        runCatching { openedGateway.configureScan(settings) }
+                            .onFailure { LOGGER.log(Level.WARNING, "Re-declaring scan settings failed", it) }
+                    }
+                }
                 publishIngressState(degraded = true, error = recordResult.message)
                 pauseIngress()
                 precommitDegraded = true

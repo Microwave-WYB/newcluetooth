@@ -530,7 +530,7 @@ pub(crate) fn rows_to_frame(
     schema: ScanSchema,
     rows: Vec<SchemaV3Row>,
 ) -> Result<DataFrame, CoreError> {
-    validate_rows(&rows)?;
+    validate_rows_for_schema(schema, &rows)?;
     if schema == ScanSchema::V2 && rows.iter().any(has_v3_values) {
         return Err(CoreError::invalid(
             "schema v2 rows cannot carry schema v3 values",
@@ -676,14 +676,25 @@ pub(crate) fn validate_frame_schema(
     Ok(())
 }
 
+/// The strict producer rules for rows written as schema v3.
 pub(crate) fn validate_rows(rows: &[SchemaV3Row]) -> Result<(), CoreError> {
+    validate_rows_for_schema(ScanSchema::V3, rows)
+}
+
+/// Rows of an older generation follow that generation's rules: schema v2 never capped `raw`
+/// (a 0.1.0 app could stage a long advertisement), and recovery must not refuse to open
+/// because of it.
+pub(crate) fn validate_rows_for_schema(
+    schema: ScanSchema,
+    rows: &[SchemaV3Row],
+) -> Result<(), CoreError> {
     for (index, row) in rows.iter().enumerate() {
         if !is_canonical_mac(&row.addr) {
             return Err(CoreError::invalid(format!(
                 "row {index} addr must be canonical uppercase XX:XX:XX:XX:XX:XX"
             )));
         }
-        if row.raw.len() > MAX_RAW_BYTES {
+        if schema == ScanSchema::V3 && row.raw.len() > MAX_RAW_BYTES {
             return Err(CoreError::invalid(format!(
                 "row {index} raw exceeds the {MAX_RAW_BYTES}-byte advertisement ceiling"
             )));

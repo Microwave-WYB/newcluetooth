@@ -12,6 +12,8 @@ from .storage import parse_gcs_uri
 class PayloadRouteKind(Enum):
     LEGACY_JSONL_ZSTD = "legacy-jsonl-zstd"
     PAYLOAD_V2_PARQUET = "payload-v2-parquet"
+    PAYLOAD_V3_PARQUET = "payload-v3-parquet"
+    GATT_V1_JSON = "gatt-v1-json"
 
 
 class PayloadRoutingError(ValueError):
@@ -34,11 +36,33 @@ class PayloadRoute:
     utc_date: str | None = None
 
 
-_V2_PATTERN = re.compile(
-    r"^scans/v2/"
+_DATED_UUID = (
     r"(?P<year>[0-9]{4})/(?P<month>[0-9]{2})/(?P<day>[0-9]{2})/"
     r"(?P<payload_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
-    r"\.parquet\.encrypted$"
+)
+_V2_PATTERN = re.compile(rf"^scans/v2/{_DATED_UUID}\.parquet\.encrypted$")
+_V3_PATTERN = re.compile(rf"^scans/v3/{_DATED_UUID}\.parquet\.encrypted$")
+_GATT_V1_PATTERN = re.compile(rf"^gatt/v1/{_DATED_UUID}\.json\.encrypted$")
+# Canonical dated-UUID objects: (pattern, path root, expected path, route kind).
+_DATED_ROUTES = (
+    (
+        _V2_PATTERN,
+        "scans/v2/",
+        "scans/v2/YYYY/MM/DD/<canonical-uuidv7>.parquet.encrypted",
+        PayloadRouteKind.PAYLOAD_V2_PARQUET,
+    ),
+    (
+        _V3_PATTERN,
+        "scans/v3/",
+        "scans/v3/YYYY/MM/DD/<canonical-uuidv7>.parquet.encrypted",
+        PayloadRouteKind.PAYLOAD_V3_PARQUET,
+    ),
+    (
+        _GATT_V1_PATTERN,
+        "gatt/v1/",
+        "gatt/v1/YYYY/MM/DD/<canonical-uuidv7>.json.encrypted",
+        PayloadRouteKind.GATT_V1_JSON,
+    ),
 )
 _LEGACY_PATTERN = re.compile(
     r"^scans/[^/]+_"
@@ -64,14 +88,14 @@ def route_payload_uri(uri: str) -> PayloadRoute:
     if any(component in {"", ".", ".."} for component in components):
         raise UnsupportedPayloadPathError(f"unsafe scan object path {object_name!r}")
 
-    match = _V2_PATTERN.fullmatch(object_name)
-    if match is not None:
-        return _v2_route(uri, match)
-    if object_name.startswith("scans/v2/"):
-        raise UnsupportedPayloadPathError(
-            "v2 payload path must match "
-            "scans/v2/YYYY/MM/DD/<canonical-uuidv7>.parquet.encrypted"
-        )
+    for pattern, root, expected, kind in _DATED_ROUTES:
+        match = pattern.fullmatch(object_name)
+        if match is not None:
+            return _dated_route(kind, uri, match)
+        if object_name.startswith(root):
+            raise UnsupportedPayloadPathError(
+                f"payload path under {root} must match {expected}"
+            )
     if len(components) > 1 and (
         components[1].startswith("schema=")
         or re.fullmatch(r"v[0-9A-Za-z_.-]+", components[1]) is not None
@@ -79,6 +103,9 @@ def route_payload_uri(uri: str) -> PayloadRoute:
         raise UnsupportedPayloadSchemaError(
             f"unsupported payload schema path in {uri!r}"
         )
+
+    if components[:1] == ("gatt",):
+        raise UnsupportedPayloadPathError(f"unsupported GATT object path {uri!r}")
 
     if _LEGACY_PATTERN.fullmatch(object_name):
         if not is_legacy_scan_blob(uri):
@@ -99,7 +126,9 @@ def route_payload_uri(uri: str) -> PayloadRoute:
     raise UnsupportedPayloadPathError(f"unsupported scan payload path {uri!r}")
 
 
-def _v2_route(uri: str, match: re.Match[str]) -> PayloadRoute:
+def _dated_route(
+    kind: PayloadRouteKind, uri: str, match: re.Match[str]
+) -> PayloadRoute:
     payload_id = match.group("payload_id")
     try:
         parsed_uuid = UUID(payload_id)
@@ -132,7 +161,7 @@ def _v2_route(uri: str, match: re.Match[str]) -> PayloadRoute:
         )
 
     return PayloadRoute(
-        kind=PayloadRouteKind.PAYLOAD_V2_PARQUET,
+        kind=kind,
         uri=uri,
         payload_id=payload_id,
         utc_date=path_date.isoformat(),

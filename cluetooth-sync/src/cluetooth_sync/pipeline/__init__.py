@@ -2,6 +2,8 @@ from .backfill import BackfillResult, VerifyResult, run_backfill
 from .decrypt import decrypt_blob_bytes
 from .discover import discover_pending_blobs
 from .download import read_blob_bytes
+from .gatt_ingest import ingest_gatt_discovery
+from .gatt_v1 import GattDiscovery, parse_gatt_v1_bytes
 from .health import SyncStatus, check_heartbeat, write_heartbeat
 from .ingest import (
     ingest_scan_jsonl_bytes,
@@ -18,6 +20,7 @@ from .payload_route import (
     route_payload_uri,
 )
 from .payload_v2 import prepare_payload_v2_parquet_bytes
+from .payload_v3 import prepare_payload_v3_parquet_bytes
 from .replay import RebuildResult, blobs_in_range, rebuild_minutes, replay_sightings
 from .storage import (
     GcsStorageClient,
@@ -32,6 +35,7 @@ __all__ = [
     "BackfillResult",
     "BlobComparison",
     "CycleStats",
+    "GattDiscovery",
     "GcsStorageClient",
     "MirroredStorageClient",
     "PayloadRoute",
@@ -48,11 +52,14 @@ __all__ = [
     "check_heartbeat",
     "decrypt_blob_bytes",
     "discover_pending_blobs",
+    "ingest_gatt_discovery",
     "ingest_scan_jsonl_bytes",
     "insert_prepared_scans",
     "parse_blob",
+    "parse_gatt_v1_bytes",
     "parse_gcs_uri",
     "prepare_payload_v2_parquet_bytes",
+    "prepare_payload_v3_parquet_bytes",
     "prepare_scan_jsonl_bytes",
     "read_blob_bytes",
     "rebuild_minutes",

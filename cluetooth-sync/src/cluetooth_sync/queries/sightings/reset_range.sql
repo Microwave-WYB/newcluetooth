@@ -20,7 +20,9 @@ set
   min_lon = null,
   max_lon = null,
   tx_power = null,
-  is_connectable = null
+  is_connectable = null,
+  adv_tx_power = null,
+  periodic_interval = null
 where m.minute >= $1::timestamptz
   and m.minute < $2::timestamptz
   and (

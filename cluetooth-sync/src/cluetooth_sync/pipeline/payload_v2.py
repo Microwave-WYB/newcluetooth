@@ -115,7 +115,7 @@ def prepare_payload_v2_parquet_bytes(
     )
 
 
-def _validate_payload_values(scans: pl.DataFrame) -> None:
+def _validate_payload_values(scans: pl.DataFrame, label: str = "payload-v2") -> None:
     canonical_mac = r"^[0-9A-F]{2}(?::[0-9A-F]{2}){5}$"
     checks: list[tuple[str, pl.Expr]] = [
         (
@@ -159,5 +159,5 @@ def _validate_payload_values(scans: pl.DataFrame) -> None:
         invalid_count = scans.select(expression.fill_null(False).sum()).item()
         if invalid_count:
             raise ValueError(
-                f"payload-v2 value validation failed: {message}; found {invalid_count} row(s)"
+                f"{label} value validation failed: {message}; found {invalid_count} row(s)"
             )

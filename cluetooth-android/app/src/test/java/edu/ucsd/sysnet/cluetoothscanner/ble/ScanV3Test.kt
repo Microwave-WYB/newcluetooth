@@ -101,6 +101,15 @@ class ScanV3Test {
     }
 
     @Test
+    fun `an advertisement over the row limit is kept out of the durable path`() {
+        assertEquals(1650, MAX_ROW_RAW_BYTES)
+        assertEquals(true, rawFitsRow(ByteArray(0)))
+        assertEquals(true, rawFitsRow(ByteArray(1650)))
+        assertEquals(false, rawFitsRow(ByteArray(1651)))
+        assertEquals(false, rawFitsRow(ByteArray(5_000)))
+    }
+
+    @Test
     fun `trigger cache keeps the latest advertisement per address and is bounded`() {
         val cache = AdvertisementTriggerCache(capacity = 2)
         fun trigger(addr: String, rssi: Int) =

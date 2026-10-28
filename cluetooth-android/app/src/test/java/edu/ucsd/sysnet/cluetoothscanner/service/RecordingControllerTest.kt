@@ -15,7 +15,7 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RecordingControllerTest {
-    private class Harness(scope: TestScope, startOutcome: ScannerStartOutcome = ScannerStartOutcome.STARTED) {
+    private class Harness(scope: TestScope, var startOutcome: ScannerStartOutcome = ScannerStartOutcome.STARTED) {
         val events = mutableListOf<String>()
         val rows = MutableStateFlow(100L) // rows of earlier sessions are not this recording's
         var sessionNumber = 0
@@ -220,5 +220,130 @@ class RecordingControllerTest {
         assertEquals("0:05 · 0 rows", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 5_000, 0)))
         assertEquals("12:34 · 1,234 rows", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 754_000, 1_234)))
         assertEquals("1:02:03 · 20 rows", RecordingNotificationText.text(RecordingState(RecordingMode.PAUSED, 3_723_000, 20)))
+    }
+
+    // --- finalization, deferral and errors ----------------------------------------------------
+
+    private class SlowFinish(scope: TestScope) {
+        val events = mutableListOf<String>()
+        val finish = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        val rows = MutableStateFlow(0L)
+        lateinit var controller: RecordingController
+        val coordinator = ScanTransitionCoordinator(
+            startSession = { true },
+            startScanner = { ScannerStartOutcome.STARTED },
+            stopScannerAndFence = { events += "scanner-stop" },
+            finishSession = { events += "finish-begin"; finish.await().also { events += "finish-end" } },
+        )
+        val host = object : RecordingHost {
+            override fun onActive() { events += "host-active" }
+            override fun onIdle() { events += "host-idle" }
+        }
+
+        init {
+            controller = RecordingController(coordinator, rows, host, scope.backgroundScope, { scope.testScheduler.currentTime })
+        }
+    }
+
+    @Test
+    fun `the service and wake lock stay until finalization has finished`() = runTest {
+        val h = SlowFinish(this)
+        h.controller.start()
+        runCurrent()
+        h.rows.value = 42
+        h.controller.stop()
+        runCurrent()
+
+        // Sealing is under way: mode is already idle for the UI, the service is still needed.
+        val sealing = h.controller.state.value
+        assertEquals(RecordingMode.IDLE, sealing.mode)
+        assertTrue(sealing.finalizing)
+        assertTrue(sealing.serviceNeeded)
+        assertTrue(sealing.wakeLockNeeded)
+        assertFalse("host must not be released yet", h.events.contains("host-idle"))
+        assertEquals(42L, sealing.rowCount)
+
+        h.finish.complete(true)
+        runCurrent()
+        val done = h.controller.state.value
+        assertFalse(done.finalizing)
+        assertFalse(done.serviceNeeded)
+        assertFalse(done.wakeLockNeeded)
+        assertEquals(listOf("host-active", "scanner-stop", "finish-begin", "finish-end", "host-idle"), h.events)
+    }
+
+    @Test
+    fun `a failed finalization is terminal and releases the service`() = runTest {
+        val h = SlowFinish(this)
+        h.controller.start()
+        runCurrent()
+        h.controller.stop()
+        runCurrent()
+        assertTrue(h.controller.state.value.serviceNeeded)
+
+        h.finish.complete(false) // the core could not finish the session
+        runCurrent()
+
+        val state = h.controller.state.value
+        assertEquals(ScanTransitionState.FINALIZATION_FAILED, h.coordinator.state.value)
+        assertFalse(state.finalizing)
+        assertFalse(state.serviceNeeded)
+        assertEquals("host-idle", h.events.last())
+    }
+
+    @Test
+    fun `no wake lock while the recording waits for the scanner and again once it runs`() = runTest {
+        val h = Harness(this, ScannerStartOutcome.DEFERRED_INTENT_RETAINED)
+        h.controller.start()
+        runCurrent()
+        val waiting = h.controller.state.value
+        assertEquals(RecordingMode.RECORDING, waiting.mode)
+        assertTrue(waiting.scannerDeferred)
+        assertTrue(waiting.serviceNeeded)
+        assertFalse(waiting.wakeLockNeeded)
+        assertEquals("Recording waiting for Bluetooth", RecordingNotificationText.title(waiting))
+
+        // Bluetooth is back: the coordinator resumes the deferred scan.
+        h.startOutcome = ScannerStartOutcome.STARTED
+        h.coordinator.resumeDeferred()
+        runCurrent()
+        val running = h.controller.state.value
+        assertFalse(running.scannerDeferred)
+        assertTrue(running.wakeLockNeeded)
+    }
+
+    @Test
+    fun `pausing releases the wake lock but keeps the service`() = runTest {
+        val h = Harness(this)
+        h.controller.start()
+        runCurrent()
+        assertTrue(h.controller.state.value.wakeLockNeeded)
+        h.controller.pause()
+        runCurrent()
+        assertTrue(h.controller.state.value.serviceNeeded)
+        assertFalse(h.controller.state.value.wakeLockNeeded)
+    }
+
+    @Test
+    fun `a service failure is surfaced and cleared by the next recording`() = runTest {
+        val h = Harness(this)
+        h.controller.start()
+        runCurrent()
+        h.controller.reportServiceFailure("could not start the service")
+        assertEquals("could not start the service", h.controller.state.value.error)
+        // The recording itself is unaffected.
+        assertEquals(RecordingMode.RECORDING, h.controller.state.value.mode)
+
+        h.controller.stop()
+        runCurrent()
+        assertEquals("could not start the service", h.controller.state.value.error)
+        h.controller.start()
+        runCurrent()
+        assertEquals(null, h.controller.state.value.error)
+    }
+
+    @Test
+    fun `the notification says saving while finalizing`() {
+        assertEquals("Saving recording", RecordingNotificationText.title(RecordingState(RecordingMode.IDLE, finalizing = true)))
     }
 }

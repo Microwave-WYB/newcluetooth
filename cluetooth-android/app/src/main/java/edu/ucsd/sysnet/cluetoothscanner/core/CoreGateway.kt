@@ -111,6 +111,9 @@ data class GatewayCoreState(
     val hasLocation: Boolean,
     val latestObservationAtMs: Long?,
     val latestLocalName: String?,
+    /** Observations the core refused at its input boundary (dropped, never staged). */
+    val rejectedObservationCount: ULong = 0u,
+    val lastRejection: String? = null,
 )
 
 data class GatewayPreparedUpload(
@@ -208,7 +211,14 @@ data class GatewayCoreUpdate(
 
 sealed interface GatewayRecordResult {
     data class Committed(val update: GatewayCoreUpdate) : GatewayRecordResult
-    data class RetryablePreCommitFailure(val message: String) : GatewayRecordResult
+    /**
+     * [needsScanConfiguration]: the core has no scanner settings (its `configure_scan` was lost
+     * or failed); the repository re-sends the last known ones before retrying.
+     */
+    data class RetryablePreCommitFailure(
+        val message: String,
+        val needsScanConfiguration: Boolean = false,
+    ) : GatewayRecordResult
 }
 
 class NativeCoreGateway private constructor(
@@ -321,6 +331,11 @@ class NativeCoreGateway private constructor(
                 is CoreException.Clock,
                 -> GatewayRecordResult.RetryablePreCommitFailure(
                     error.message ?: "Native storage unavailable before commit",
+                )
+                // Raised before anything is appended: recoverable by configuring the scan again.
+                is CoreException.InvalidConfig -> GatewayRecordResult.RetryablePreCommitFailure(
+                    error.message ?: "Scanner settings are not configured",
+                    needsScanConfiguration = true,
                 )
                 else -> throw error
             }
@@ -452,6 +467,8 @@ private fun edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreState.toGatewayS
         hasLocation = hasLocation,
         latestObservationAtMs = latestObservationAtMs,
         latestLocalName = latestLocalName,
+        rejectedObservationCount = rejectedObservationCount,
+        lastRejection = lastRejection,
     )
 
 private fun edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreUpdate.toGatewayUpdate() =

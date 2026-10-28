@@ -13,6 +13,10 @@ pub struct CoreState {
     pub has_location: bool,
     pub latest_observation_at_ms: Option<i64>,
     pub latest_local_name: Option<String>,
+    /// Observations refused at the input boundary (over-long raw, bad address, out-of-range
+    /// values) since the core opened; they are dropped, never staged.
+    pub rejected_observation_count: u64,
+    pub last_rejection: Option<String>,
 }
 
 impl CoreState {
@@ -31,6 +35,8 @@ impl CoreState {
             has_location: false,
             latest_observation_at_ms: None,
             latest_local_name: None,
+            rejected_observation_count: 0,
+            last_rejection: None,
         }
     }
 }

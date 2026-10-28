@@ -129,14 +129,25 @@ internal class PayloadUploadCoordinator(
 ) {
     constructor(core: CoreGateway, uploader: ObjectFileUploader) : this(core, uploader, null)
 
-    suspend fun uploadPending(): PayloadUploadSummary {
+    /** The payload ids the last [uploadPending] call tried (successfully or not). */
+    var lastAttempted: Set<String> = emptySet()
+        private set
+
+    /**
+     * Uploads what is pending of this coordinator's kind, except [skip]. Each kind has its own
+     * session store and cache directory (see [UploadResume]), so the orphan cleanup below only
+     * ever touches this kind's resumable sessions.
+     */
+    suspend fun uploadPending(skip: Set<String> = emptySet()): PayloadUploadSummary {
         var succeeded = 0
         var failed = 0
         var denied = 0
-        val allPending = core.pendingUploads()
-        // Sessions of the other kind are not orphans: only a finished upload discards them.
-        discardOrphanedSessions(allPending.map { it.payloadId }.toSet())
-        for (pending in allPending.filter { isGattObject(it.objectPath) == (kind == UploadKind.GATT) }) {
+        val ofThisKind = core.pendingUploads().filter { isGattObject(it.objectPath) == (kind == UploadKind.GATT) }
+        discardOrphanedSessions(ofThisKind.map { it.payloadId }.toSet())
+        val attempted = mutableSetOf<String>()
+        lastAttempted = attempted
+        for (pending in ofThisKind.filter { it.payloadId !in skip }) {
+            attempted += pending.payloadId
             try {
                 transfer(pending.payloadId, pending.objectPath)
                 core.markUploadSucceeded(pending.payloadId)
@@ -155,6 +166,26 @@ internal class PayloadUploadCoordinator(
             }
         }
         return PayloadUploadSummary(succeeded = succeeded, failed = failed, denied = denied)
+    }
+
+    /**
+     * Uploads, then looks again until a round finds nothing new: an object saved while a run was
+     * in progress is picked up by the same run instead of waiting for the next work request
+     * (a unique work request that is already running ignores a new one).
+     */
+    suspend fun uploadUntilQuiet(): PayloadUploadSummary {
+        val tried = mutableSetOf<String>()
+        var succeeded = 0
+        var failed = 0
+        var denied = 0
+        do {
+            val round = uploadPending(skip = tried)
+            tried += lastAttempted
+            succeeded += round.succeeded
+            failed += round.failed
+            denied += round.denied
+        } while (lastAttempted.isNotEmpty())
+        return PayloadUploadSummary(succeeded, failed, denied)
     }
 
     private suspend fun transfer(payloadId: String, objectPath: String) {

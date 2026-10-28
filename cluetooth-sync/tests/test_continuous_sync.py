@@ -164,11 +164,27 @@ def test_survey_is_list_only(database_url: str) -> None:
         [done],
     )
 
-    summary = survey_blobs(_ListingStorage(uris), database_url, "test-bucket", prefix)
+    summary = survey_blobs(_ListingStorage(uris), database_url, "test-bucket", [prefix])
 
     assert summary.select("month", "objects", "succeeded", "new").to_dicts() == [
         {"month": "2026-08", "objects": 1, "succeeded": 1, "new": 0},
         {"month": "2026-10", "objects": 1, "succeeded": 0, "new": 1},
+    ]
+
+
+def test_survey_names_v3_and_gatt_kinds_across_prefixes(database_url: str) -> None:
+    uris = [
+        "gs://survey-bucket/scans/v2/2026/10/26/a.parquet.encrypted",
+        "gs://survey-bucket/scans/v3/2026/10/27/b.parquet.encrypted",
+        "gs://survey-bucket/gatt/v1/2026/10/27/c.json.encrypted",
+    ]
+    summary = survey_blobs(
+        _ListingStorage(uris), database_url, "survey-bucket", ["scans/", "gatt/"]
+    )
+    assert summary.select("kind", "month", "objects", "new").sort("kind").rows() == [
+        ("gatt/v1", "2026-10", 1, 1),
+        ("v2", "2026-10", 1, 1),
+        ("v3", "2026-10", 1, 1),
     ]
 
 
@@ -246,3 +262,14 @@ def test_health_command_exit_codes(tmp_path: Path) -> None:
         cli.app, ["health", "--heartbeat-path", str(tmp_path / "nope.json")]
     )
     assert missing.exit_code == 1
+
+
+def test_survey_lists_overlapping_prefixes_once(database_url: str) -> None:
+    uris = ["gs://overlap-bucket/scans/v3/2026/10/27/a.parquet.encrypted"]
+    summary = survey_blobs(
+        _ListingStorage(uris),
+        database_url,
+        "overlap-bucket",
+        ["scans/", "scans/v3/", "scans/"],
+    )
+    assert summary.select("kind", "objects").rows() == [("v3", 1)]
