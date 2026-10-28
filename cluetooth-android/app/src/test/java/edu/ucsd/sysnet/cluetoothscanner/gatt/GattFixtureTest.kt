@@ -124,4 +124,58 @@ class GattFixtureTest {
             }),
         )
     }
+
+    @Test
+    fun `engine output with error status reads on characteristics and descriptors`() = runTest {
+        check(
+            16,
+            run(16, object : FakeLink.Behavior {
+                override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                    val status = when (ref) {
+                        AttributeRef(0, 0) -> GattStatus.ERROR // error:133
+                        AttributeRef(0, 0, 0) -> 14 // error:14
+                        AttributeRef(1, 0, 0) -> GattStatus.READ_NOT_PERMITTED
+                        else -> GattStatus.SUCCESS
+                    }
+                    link.emit(GattEvent.AttributeRead(ref, if (status == 0) valueFor(ref) else null, status))
+                    return true
+                }
+            }),
+        )
+    }
+
+    @Test
+    fun `engine output for a stalled read queue (read timeout and error status -3)`() = runTest {
+        check(
+            17,
+            run(17, object : FakeLink.Behavior {
+                override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                    if (ref == AttributeRef(0, 0)) {
+                        link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS))
+                    }
+                    return true // every later read stays silent
+                }
+            }),
+        )
+    }
+
+    @Test
+    fun `the placeholder a killed process leaves behind (error status -2)`() = runTest {
+        val manager = GattDiscoveryManager(
+            scope = this,
+            store = object : GattStore {
+                override suspend fun newDiscoveryId() = error("not used")
+                override suspend fun save(json: String) = Unit
+            },
+            pending = object : PendingDiscoveryStore {
+                override fun put(id: String, json: String) = Unit
+                override fun entries() = emptyList<PendingDiscovery>()
+                override fun remove(id: String) = Unit
+            },
+            device = GattDeviceInfo("0.1.0-debug", "Pixel 8", "15 (API 35)"),
+            nowMs = { midnight + 4_000 },
+        )
+        val json = manager.interruptedJson(request(18), midnight, GattStage.READ)
+        check(18, Json.parseToJsonElement(json))
+    }
 }

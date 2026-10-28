@@ -3582,4 +3582,67 @@ mod tests {
         assert_eq!(core.state().invalid_pending_payload_count, 2);
         assert!(wrong_date.exists() && corrupt.exists());
     }
+
+    #[test]
+    fn duplicate_json_keys_and_impossible_dates_are_refused_like_the_server_does() {
+        let id = "0195ca99-5000-7131-b131-313131313131";
+        let valid = gatt_json(id);
+        assert!(crate::validate_gatt_json(valid.clone()).is_ok());
+
+        // Duplicate keys at the top level, nested in an object and inside an array element.
+        let top = valid.replacen(
+            "\"schema\":\"gatt/v1\"",
+            "\"schema\":\"gatt/v1\",\"schema\":\"gatt/v1\"",
+            1,
+        );
+        assert_ne!(top, valid);
+        let nested = valid.replacen(
+            "\"addr_type\":\"random\"",
+            "\"addr_type\":\"random\",\"addr_type\":\"public\"",
+            1,
+        );
+        assert_ne!(nested, valid);
+        let in_array = valid.replacen(
+            "\"uuid\":\"180A\"",
+            "\"uuid\":\"180A\",\"uuid\":\"180B\"",
+            1,
+        );
+        assert_ne!(in_array, valid);
+        for (name, text) in [("top", top), ("nested", nested), ("array", in_array)] {
+            let error = crate::validate_gatt_json(text).unwrap_err().to_string();
+            assert!(error.contains("duplicate"), "{name}: {error}");
+        }
+
+        // Dates that fit the 24-character shape but do not exist.
+        let at = |stamp: &str| valid.replace("2025-03-25T00:00:01.000Z", stamp);
+        for impossible in [
+            "2025-02-30T00:00:01.000Z",
+            "2025-04-31T00:00:01.000Z",
+            "2025-02-29T00:00:01.000Z",
+            "2100-02-29T00:00:01.000Z",
+            "2025-13-01T00:00:01.000Z",
+            "2025-00-10T00:00:01.000Z",
+            "2025-03-00T00:00:01.000Z",
+            "2025-03-25T24:00:01.000Z",
+            "2025-03-25T00:60:01.000Z",
+            "2025-03-25T00:00:60.000Z",
+            "0000-03-25T00:00:01.000Z",
+        ] {
+            assert!(
+                crate::validate_gatt_json(at(impossible)).is_err(),
+                "{impossible}"
+            );
+        }
+        for real in [
+            "2024-02-29T00:00:01.000Z",
+            "2000-02-29T00:00:01.000Z",
+            "2025-12-31T23:59:59.999Z",
+        ] {
+            // ended_at 2025-03-25T00:00:09.500Z must not precede started_at, so keep order valid.
+            let text = valid
+                .replace("2025-03-25T00:00:01.000Z", real)
+                .replace("2025-03-25T00:00:09.500Z", "2025-12-31T23:59:59.999Z");
+            assert!(crate::validate_gatt_json(text).is_ok(), "{real}");
+        }
+    }
 }
