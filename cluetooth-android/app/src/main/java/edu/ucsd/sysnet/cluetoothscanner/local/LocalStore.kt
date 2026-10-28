@@ -525,6 +525,7 @@ class LocalStore(private val db: SqlDatabase) {
             RecordedDevice(
                 addr, r.long(1), r.long(2), r.longOrNull(3)?.toInt(), r.long(4).toInt(), pages[addr].orEmpty(), located[addr],
                 unnamedApple = AdTraits.unnamedApple(null, payloads[addr].orEmpty().mapNotNull { traits[it] }),
+                name = payloads[addr].orEmpty().sortedDescending().firstNotNullOfOrNull { traits[it]?.name },
             )
         }
     }
@@ -578,7 +579,7 @@ class LocalStore(private val db: SqlDatabase) {
         val traits = traitsOf(rows.map { it.payloadId })
         return rows.map { r ->
             val t = traits[r.payloadId]
-            r.sighting.copy(pageIds = pages[r.payloadId].orEmpty(), apple = t?.apple == true, named = t?.named == true)
+            r.sighting.copy(pageIds = pages[r.payloadId].orEmpty(), apple = t?.apple == true, named = t?.named == true, name = t?.name)
         }
     }
 

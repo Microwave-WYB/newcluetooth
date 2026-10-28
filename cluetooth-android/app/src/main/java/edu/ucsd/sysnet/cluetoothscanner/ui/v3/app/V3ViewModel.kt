@@ -521,8 +521,9 @@ class V3ViewModel(
         }
         val pageIds = if (raw != null) pagesFor(addr, raw) else history.firstOrNull()?.pageIds.orEmpty()
         val page = pageIds.firstNotNullOfOrNull { catalog?.page(it) }
+        // Not scanned now: the name it advertised in recordings (newest first), never the product's title.
         val row = live ?: DeviceRowState(
-            id = addr, name = page?.title, mac = addr, advKind = AdvKind.Legacy,
+            id = addr, name = DisplayFilter.deviceName(null, history.map { it.name }), mac = addr, advKind = AdvKind.Legacy,
             connectable = false, rssi = history.firstNotNullOfOrNull { it.bestRssi } ?: -100, history = emptyList(), stale = true,
         )
         // Not heard now (a device opened from a map): an empty minute; the maps do not show the chart anyway.
@@ -749,12 +750,9 @@ class V3ViewModel(
 
     private val unnamedText get() = texts.string(R.string.unnamed)
 
-    private fun titleFor(addr: String, pageIds: List<String>): String {
-        val live = synchronized(lock) { tracker.name(addr) }
-        if (live != null) return live
-        val catalog = localData.catalog.value
-        return pageIds.firstNotNullOfOrNull { catalog?.page(it)?.title } ?: unnamedText
-    }
+    /** A device row's title: its own advertised name, live or from recordings, else "No name" (see DisplayFilter.deviceName). */
+    private fun titleFor(addr: String, recordedNames: List<String?>): String =
+        DisplayFilter.deviceName(synchronized(lock) { tracker.name(addr) }, recordedNames) ?: unnamedText
 
     private fun recordingMap(id: String): Flow<MapUiState?> {
         val data = combine(localData.recording(id), localData.route(id), localData.devicesInRecording(id), localData.catalog) { r, route, devices, catalog ->
@@ -777,7 +775,7 @@ class V3ViewModel(
             val hiddenAddrs = if (hide) allDevices.filter { it.unnamedApple }.mapTo(HashSet()) { it.addr } else emptySet()
             val routePts = route.map { LatLon(it.lat, it.lon) }
             val rows = devices.map { dev: RecordedDevice ->
-                val title = titleFor(dev.addr, dev.pageIds)
+                val title = titleFor(dev.addr, listOf(dev.name))
                 MapListRowState(
                     id = dev.addr,
                     title = title,
@@ -874,12 +872,8 @@ class V3ViewModel(
                 val list = recordedByAddr[addr].orEmpty()
                 val hit = liveByAddr[addr]
                 val last = maxOf(list.maxOfOrNull { it.minuteMs } ?: 0L, hit?.lastSeenMs ?: 0L)
-                // Each device by its own advertised name (Govee_H6056_4828), else the product's title.
-                val title = if (productTitle != null) {
-                    synchronized(lock) { tracker.name(addr) } ?: catalog?.page(productTitle)?.title ?: productTitle
-                } else {
-                    titleFor(addr, list.firstOrNull()?.pageIds.orEmpty())
-                }
+                // Each device by its own advertised name (Govee_H6056_4828), live or recorded, else "No name".
+                val title = titleFor(addr, list.map { it.name })
                 val recorded = if (list.isEmpty()) null else texts.string(
                     R.string.map_row_detail,
                     list.map { it.recordingId }.distinct().size.let { texts.plural(R.plurals.recordings_count, it, it) }, md(last),
@@ -887,7 +881,7 @@ class V3ViewModel(
                 MapListRowState(
                     id = addr,
                     title = title,
-                    unnamed = productTitle == null && title == unnamedText,
+                    unnamed = title == unnamedText,
                     mac = addr,
                     // What is heard now wins; otherwise what recordings saved.
                     detail = hit?.let(::heard) ?: recorded.orEmpty(),

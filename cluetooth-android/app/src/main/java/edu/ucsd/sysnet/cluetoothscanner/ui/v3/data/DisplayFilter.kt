@@ -17,4 +17,11 @@ object DisplayFilter {
     /** Addresses whose minute rows read as an unnamed Apple device (Apple's id in one, a name in none). */
     fun unnamedAppleAddrs(sightings: List<Sighting>): Set<String> =
         sightings.groupBy { it.addr }.filterValues { list -> AdTraits.unnamedApple(null, list.map { AdTraits(it.apple, it.named) }) }.keys
+
+    /**
+     * A device row's name: what it advertises now, else what it advertised in recordings; null when it never
+     * advertised one (the row then says "No name"). Never the product's or wiki page's title.
+     */
+    fun deviceName(liveName: String?, recordedNames: List<String?>): String? =
+        liveName?.takeIf { it.isNotBlank() } ?: recordedNames.firstNotNullOfOrNull { it?.takeIf(String::isNotBlank) }
 }
