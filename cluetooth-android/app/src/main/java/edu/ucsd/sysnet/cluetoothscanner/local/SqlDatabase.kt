@@ -3,6 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.local
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteDatabaseCorruptException
 import android.database.sqlite.SQLiteOpenHelper
 import android.database.sqlite.SQLiteStatement
 
@@ -15,7 +16,7 @@ import android.database.sqlite.SQLiteStatement
  * affinity), never as `MAX(col, ?)`-style value comparisons. The test implementation
  * binds query arguments as text too, so such a mistake fails there as well. Write
  * statements ([execute], [insert]) bind typed values. SQL stays within SQLite 3.9
- * (API 24): no UPSERT, window functions or RETURNING.
+ * (API 24): no UPSERT, window functions or returning clauses.
  */
 interface SqlDatabase : AutoCloseable {
     /** Runs a statement; returns the number of rows changed. Args: Long, Int, Double, String, ByteArray, null. */
@@ -100,7 +101,20 @@ class AndroidSqlDatabase private constructor(private val db: SQLiteDatabase) : S
     companion object {
         const val FILE_NAME = "local-data.db"
 
-        fun open(context: Context, name: String = FILE_NAME): AndroidSqlDatabase {
+        /**
+         * Opens the database. Only a file SQLite reports as corrupt is deleted and recreated, once;
+         * any other failure (full disk, storage not available yet, a newer schema) propagates so the
+         * caller can report it and retry later without touching the data.
+         */
+        fun open(context: Context, name: String = FILE_NAME): AndroidSqlDatabase = try {
+            openHelper(context, name)
+        } catch (error: SQLiteDatabaseCorruptException) {
+            java.util.logging.Logger.getLogger("LocalData").log(java.util.logging.Level.WARNING, "Recreating corrupt $name", error)
+            context.deleteDatabase(name)
+            openHelper(context, name)
+        }
+
+        private fun openHelper(context: Context, name: String): AndroidSqlDatabase {
             val helper = object : SQLiteOpenHelper(context.applicationContext, name, null, LocalSchema.VERSION) {
                 override fun onConfigure(db: SQLiteDatabase) {
                     db.enableWriteAheadLogging()
@@ -111,8 +125,10 @@ class AndroidSqlDatabase private constructor(private val db: SQLiteDatabase) : S
                 }
 
                 override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                    LocalSchema.upgrade(oldVersion).forEach(db::execSQL)
+                    LocalSchema.upgrade(oldVersion, newVersion).forEach(db::execSQL)
                 }
+
+                // No onDowngrade: the default throws, and the file stays untouched for the newer build.
             }
             return AndroidSqlDatabase(helper.writableDatabase)
         }

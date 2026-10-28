@@ -19,6 +19,12 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
+/// Version of the evaluation semantics. **Bump it whenever the same rule can give a different result for the
+/// same advertisement** (parsing, a condition's meaning, the regex grammar): the app re-matches its stored
+/// payloads when it changes, next to the bundle's `rules_version`. `tests/matcher.rs` pins the value so a
+/// change cannot go unnoticed.
+pub const MATCHER_ENGINE_VERSION: u32 = 1;
+
 pub use adv::{Structure, structures};
 pub use compiled::{AddrContext, Compiled, compile, regex_ok};
 pub use rule::{AddrType, Node};
@@ -66,6 +72,7 @@ pub struct RuleMatcher {
     version: String,
     rules: Vec<(String, Compiled)>,
     errors: Vec<String>,
+    uses_address: bool,
 }
 
 impl RuleMatcher {
@@ -106,10 +113,12 @@ impl RuleMatcher {
                 Err(e) => errors.push(format!("{}: {e}", page.id)),
             }
         }
+        let uses_address = rules.iter().any(|(_, rule)| rule.uses_address());
         Ok(Arc::new(Self {
             version,
             rules,
             errors,
+            uses_address,
         }))
     }
 
@@ -121,6 +130,17 @@ impl RuleMatcher {
     /// Number of compiled rules.
     pub fn rule_count(&self) -> u32 {
         self.rules.len() as u32
+    }
+
+    /// [`MATCHER_ENGINE_VERSION`] of the library that compiled these rules.
+    pub fn engine_version(&self) -> u32 {
+        MATCHER_ENGINE_VERSION
+    }
+
+    /// Whether any compiled rule looks at the address. When none does, the result
+    /// for an advertisement depends on its bytes alone and can be cached by payload.
+    pub fn uses_address_rules(&self) -> bool {
+        self.uses_address
     }
 
     /// `page-id: reason` for every rule that was skipped.

@@ -8,11 +8,14 @@ import java.sql.ResultSet
  * An in-memory SQLite behind [SqlDatabase]. Query arguments are bound as text, like
  * Android's rawQuery, so SQL that only works with typed binds fails here too.
  */
-class JdbcSqlDatabase(private val connection: Connection = DriverManager.getConnection("jdbc:sqlite::memory:")) : SqlDatabase {
+class JdbcSqlDatabase(
+    private val connection: Connection = DriverManager.getConnection("jdbc:sqlite::memory:"),
+    createSchema: Boolean = true,
+) : SqlDatabase {
     private var depth = 0
 
     init {
-        LocalSchema.CREATE.forEach { sql -> connection.createStatement().use { it.execute(sql) } }
+        if (createSchema) LocalSchema.CREATE.forEach { sql -> connection.createStatement().use { it.execute(sql) } }
     }
 
     @Synchronized
@@ -75,17 +78,46 @@ class UncloseableDatabase(private val inner: SqlDatabase) : SqlDatabase by inner
     override fun close() = Unit
 }
 
+/** Counts the queries whose SQL contains one of the given fragments. */
+class CountingDatabase(private val inner: SqlDatabase) : SqlDatabase by inner {
+    val counts = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
+
+    fun count(fragment: String): Int = counts.entries.filter { fragment in it.key }.sumOf { it.value.get() }
+
+    override fun <T> query(sql: String, args: List<Any?>, map: (SqlRow) -> T): List<T> {
+        counts.getOrPut(sql) { java.util.concurrent.atomic.AtomicInteger() }.incrementAndGet()
+        return inner.query(sql, args, map)
+    }
+
+    override fun close() = Unit
+}
+
 /** A matcher whose rules are "the advertisement contains this ASCII text". */
 class FakeMatcher(
     override val bundleVersion: String,
     private val rules: Map<String, String>,
     private val addressRules: Map<String, String> = emptyMap(),
+    override val engineVersion: Int = 1,
 ) : AdvertisementMatcher {
     var failAfter: Int? = null
-    private var calls = 0
+    private var attempts = 0
+
+    /** Fails this many calls, then works (a transient fault). */
+    var failFirst: Int = 0
+    private var failed = 0
+
+    /** How many times [match] ran. */
+    val calls = java.util.concurrent.atomic.AtomicInteger()
+
+    override val usesAddressRules: Boolean = addressRules.isNotEmpty()
 
     override fun match(raw: ByteArray, addr: String?, addrType: AddressType?): List<String> {
-        failAfter?.let { if (++calls > it) error("matcher failed") }
+        calls.incrementAndGet()
+        if (failed < failFirst) {
+            failed++
+            error("matcher failed")
+        }
+        failAfter?.let { if (++attempts > it) error("matcher failed") }
         val text = String(raw, Charsets.ISO_8859_1)
         return rules.filterValues { text.contains(it) }.keys.toList() +
             addressRules.filterValues { addr != null && addr.startsWith(it) }.keys
@@ -94,12 +126,16 @@ class FakeMatcher(
 
 fun adv(name: String) = byteArrayOf(2, 1, 6, (name.length + 1).toByte(), 9) + name.toByteArray()
 
-fun bundleJson(version: String, vararg pages: Triple<String, String, List<String>>): String {
+fun bundleJson(version: String, vararg pages: Triple<String, String, List<String>>): String =
+    bundleJson(version, version, pages.toList())
+
+/** [rulesVersion] changes only when the rules do; [version] with anything. */
+fun bundleJson(version: String, rulesVersion: String, pages: List<Triple<String, String, List<String>>>): String {
     val pagesJson = pages.joinToString(",") { (id, title, categories) ->
         val cats = categories.joinToString(",") { "\"$it\"" }
         """{"id":"$id","title":"$title","kind":"device","one_line":"$title product","categories":[$cats],"entity":null,"has_rule":true,"rule":{"name":{"prefix":"x"}}}"""
     }
-    return """{"schema":1,"version":"$version","categories":[
+    return """{"schema":1,"version":"$version","rules_version":"$rulesVersion","categories":[
         {"id":"audio","label":"Audio","label_zh":"音频"},{"id":"lighting","label":"Lighting","label_zh":"照明"}],
         "pages":[$pagesJson]}"""
 }
@@ -110,3 +146,9 @@ val PAGES = arrayOf(
     Triple("device--multi", "Multi", listOf("audio", "lighting")),
     Triple("platform--proto", "Proto", emptyList()),
 )
+
+/** What the app does for a recorded advertisement: the live stream delivers it, the core admits it as a row. */
+fun LocalDataHub.hear(addr: String, rssi: Int?, raw: ByteArray, timeMs: Long) {
+    onAdvertisement(addr, rssi, raw, timeMs)
+    onRecordedAdvertisement(addr, rssi, raw, timeMs)
+}

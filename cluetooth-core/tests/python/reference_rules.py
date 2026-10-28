@@ -4,8 +4,11 @@ Generated verbatim from the knowledge base's rule language on branch kb/lab
 (commit 31a5c98): `cluetooth-agents/kb/src/kb/rules.py` with the SQL compiler
 and the psycopg import removed, and the three constants and `canonical_uuid`
 of `wiki_match/adv.py` inlined. Do not edit the copied part; the driver at the
-bottom reads {"cases": [{"rule", "hex", "addr", "addr_type"}]} on stdin and
-prints one boolean per case.
+bottom reads {"cases": [{"rule", "hex", "addr", "addr_type"}]} or
+{"regexes": [pattern, ...]} on stdin and prints one boolean per entry.
+
+One deliberate difference from kb/lab: `regex_ok` is tightened (see there); the
+same change belongs in kb/lab's rules.py and its SQL path.
 """
 from __future__ import annotations
 
@@ -95,18 +98,39 @@ def shape_text(structs: list[Structure]) -> str:
 
 # A restricted regex both Postgres (ARE) and Python read the same way: literals,
 # escaped punctuation, \d, classes with ranges, ., groups, |, and quantifiers.
+_ESC = r"\\[.\-+*?()\[\]{}|^$/\\ _:#d]"
 _REGEX_TOKEN = re.compile(
-    r"\\[.\-+*?()\[\]{}|^$/\\ _:#d]|\[\^?(?:\\.|[^\]\\])+\]|\{\d+(?:,\d*)?\}|[*+?|()]|\.|[^\\\[\]{}()*+?|.^$]"
+    _ESC
+    + r"|\[\^?(?:"
+    + _ESC
+    + r"|[^\\\[\]])+\]|\{\d+(?:,\d*)?\}|[*+?|()]|\.|[^\\\[\]{}()*+?|.^$]"
 )
+_CLASS_FORBIDDEN = ("&&", "~~", "--", "||")
 
 
 def regex_ok(pattern: str) -> bool:
+    # DIVERGES from kb/lab on purpose (to be ported there): classes hold only literals, ranges,
+    # escaped punctuation and \d, never nest, never use &&, ~~, --, || (set operators in Rust);
+    # a quantifier cannot follow a quantifier except as the lazy "?" (Python: possessive, Rust: error).
     pos = 0
+    state = 0  # 0 after an atom or at the start, 1 after a quantifier, 2 after its lazy "?"
     while pos < len(pattern):
         m = _REGEX_TOKEN.match(pattern, pos)
-        if not m:
+        if not m or m.end() == pos:
             return False
+        token = m.group()
         pos = m.end()
+        if token.startswith("[") and any(f in token for f in _CLASS_FORBIDDEN):
+            return False
+        quantifier = token in ("*", "+", "?") or token.startswith("{")
+        if not quantifier:
+            state = 0
+        elif state == 0:
+            state = 1
+        elif state == 1 and token == "?":
+            state = 2
+        else:
+            return False
     try:
         re.compile(pattern)
     except re.error:
@@ -289,8 +313,14 @@ if __name__ == "__main__":
     import json
     import sys
 
-    cases = json.load(sys.stdin)["cases"]
-    json.dump(
-        [matches(c["rule"], bytes.fromhex(c["hex"]), c.get("addr"), c.get("addr_type")) for c in cases],
-        sys.stdout,
-    )
+    request = json.load(sys.stdin)
+    if "regexes" in request:
+        json.dump([regex_ok(p) for p in request["regexes"]], sys.stdout)
+    else:
+        json.dump(
+            [
+                matches(c["rule"], bytes.fromhex(c["hex"]), c.get("addr"), c.get("addr_type"))
+                for c in request["cases"]
+            ],
+            sys.stdout,
+        )

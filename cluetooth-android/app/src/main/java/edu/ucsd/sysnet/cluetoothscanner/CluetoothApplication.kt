@@ -4,14 +4,14 @@ import android.app.Application
 import android.os.SystemClock
 import edu.ucsd.sysnet.cluetoothscanner.ble.AdvertisementTriggerCache
 import edu.ucsd.sysnet.cluetoothscanner.core.NativeCoreGateway
-import edu.ucsd.sysnet.cluetoothscanner.gatt.GattDiscoveryManager
-import edu.ucsd.sysnet.cluetoothscanner.gatt.FilePendingDiscoveryStore
-import edu.ucsd.sysnet.cluetoothscanner.gatt.RepositoryGattStore
-import edu.ucsd.sysnet.cluetoothscanner.gatt.gattDeviceInfo
 import edu.ucsd.sysnet.cluetoothscanner.local.AndroidSqlDatabase
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalData
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataHub
 import edu.ucsd.sysnet.cluetoothscanner.local.NativeAdvertisementMatcher
+import edu.ucsd.sysnet.cluetoothscanner.gatt.GattDiscoveryManager
+import edu.ucsd.sysnet.cluetoothscanner.gatt.FilePendingDiscoveryStore
+import edu.ucsd.sysnet.cluetoothscanner.gatt.RepositoryGattStore
+import edu.ucsd.sysnet.cluetoothscanner.gatt.gattDeviceInfo
 import edu.ucsd.sysnet.cluetoothscanner.repository.CluetoothRepository
 import edu.ucsd.sysnet.cluetoothscanner.service.AndroidRecordingHost
 import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
@@ -40,6 +40,11 @@ class CluetoothApplication : Application() {
     lateinit var repository: CluetoothRepository
         private set
 
+    private lateinit var localDataHub: LocalDataHub
+
+    /** The phone's local stores: seen products, recordings, sighting history. See [LocalData]. */
+    val localData: LocalData get() = localDataHub
+
     /** Latest advertisement per address; the scanner writes it, GATT discovery reads it. */
     val triggerCache = AdvertisementTriggerCache()
 
@@ -60,10 +65,6 @@ class CluetoothApplication : Application() {
     /** Process-wide, so there is one GATT connection at a time whatever the UI does. */
     lateinit var gattManager: GattDiscoveryManager
         private set
-    private lateinit var localDataHub: LocalDataHub
-
-    /** The phone's local stores: seen products, recordings, sighting history. See [LocalData]. */
-    val localData: LocalData get() = localDataHub
 
     override fun onCreate() {
         super.onCreate()
@@ -95,6 +96,13 @@ class CluetoothApplication : Application() {
         applicationScope.launch { gattManager.recoverStale() }
         locationService = LocationService(this, repository)
         bleScanService = BleScanService(this, locationService, repository, triggerCache)
+        // Live scanning runs without a core session, so the payload store and the in-range view are fed
+        // from the live stream (every advertisement while the scanner runs, recording or not).
+        applicationScope.launch {
+            bleScanService.liveScans.collect { scan ->
+                localDataHub.onAdvertisement(scan.addr, scan.rssi, scan.raw, scan.scannedAtMs)
+            }
+        }
         // Live scanning (foreground) and recording (session + rows) are separate; the supervisor
         // decides when the scanner runs and when rows are written.
         val supervisor = ScanSupervisor(

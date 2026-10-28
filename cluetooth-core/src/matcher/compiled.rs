@@ -339,14 +339,18 @@ fn parse_shape_item(item: &str) -> Result<ShapeItem, String> {
     Ok(ShapeItem { ad_type, min, max })
 }
 
-/// A restricted regex both Postgres (ARE) and Python read the same way:
-/// literals, escaped punctuation, `\d`, classes with ranges, `.`, groups, `|`,
-/// and quantifiers. Same token grammar as `kb.rules.regex_ok`.
+/// A restricted regex both Postgres (ARE) and Python read the same way: literals,
+/// escaped punctuation, `\d`, `.`, groups, `|`, quantifiers (optionally lazy), and
+/// character classes made only of literals, ranges, escaped punctuation and `\d`.
+/// Classes cannot nest or use `&&`, `~~`, `--`, `||` (set operators in Rust,
+/// future syntax in Python); a quantifier cannot follow a quantifier except as the
+/// lazy `?` (Python reads `a*+` as possessive, Rust rejects it). Same token
+/// grammar and checks as `regex_ok` in `tests/python/reference_rules.py`.
 pub fn regex_ok(pattern: &str) -> bool {
     static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(concat!(
             r"\\[.\-+*?()\[\]{}|^$/\\ _:#d]",
-            r"|\[\^?(?:\\.|[^\]\\])+\]",
+            r"|\[\^?(?:\\[.\-+*?()\[\]{}|^$/\\ _:#d]|[^\\\[\]])+\]",
             r"|\{\d+(?:,\d*)?\}",
             r"|[*+?|()]",
             r"|\.",
@@ -355,16 +359,41 @@ pub fn regex_ok(pattern: &str) -> bool {
         .expect("static pattern")
     });
     let mut pos = 0;
+    // 0: after an atom (or start); 1: after a quantifier; 2: after a quantifier's lazy `?`
+    let mut state = 0;
     while pos < pattern.len() {
-        match TOKEN.find_at(pattern, pos) {
-            Some(m) if m.start() == pos && m.end() > pos => pos = m.end(),
+        let token = match TOKEN.find_at(pattern, pos) {
+            Some(m) if m.start() == pos && m.end() > pos => m.as_str(),
             _ => return false,
+        };
+        pos += token.len();
+        if token.starts_with('[') && ["&&", "~~", "--", "||"].iter().any(|f| token.contains(f)) {
+            return false;
         }
+        let quantifier = matches!(token, "*" | "+" | "?") || token.starts_with('{');
+        state = match (quantifier, state) {
+            (false, _) => 0,
+            (true, 0) => 1,
+            (true, 1) if token == "?" => 2,
+            (true, _) => return false,
+        };
     }
     !pattern.contains("(?") && Regex::new(pattern).is_ok()
 }
 
 impl Compiled {
+    /// Whether any condition of the tree looks at the address.
+    pub fn uses_address(&self) -> bool {
+        match self {
+            Compiled::All(children) | Compiled::Any(children) => {
+                children.iter().any(Compiled::uses_address)
+            }
+            Compiled::Not(child) => child.uses_address(),
+            Compiled::Addr { .. } => true,
+            _ => false,
+        }
+    }
+
     pub fn eval(&self, structs: &[Structure], ctx: &AddrContext<'_>) -> bool {
         match self {
             Compiled::All(children) => children.iter().all(|c| c.eval(structs, ctx)),

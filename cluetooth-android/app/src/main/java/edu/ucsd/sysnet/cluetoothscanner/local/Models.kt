@@ -41,6 +41,11 @@ data class WikiCatalog(
     val schema: Int,
     /** Changes whenever anything in the bundle changes; a new value triggers a re-match. */
     val version: String,
+    /**
+     * Changes only when a rule changes (not for a retitled page or a relabelled
+     * category); stored matches are re-done on this. Older bundles lack it: [version] then.
+     */
+    @SerialName("rules_version") val rulesVersion: String? = null,
     val categories: List<WikiCategory>,
     val pages: List<WikiPage>,
 ) {
@@ -61,6 +66,27 @@ data class WikiCatalog(
             }
             return catalog
         }
+    }
+}
+
+/** How far the local data layer got; see [LocalData.status]. */
+data class LocalDataStatus(val state: State, val message: String? = null) {
+    enum class State {
+        /** Opening the database and loading the wiki bundle. Queries answer once this ends. */
+        STARTING,
+
+        /** Everything works. */
+        READY,
+
+        /** The database works but the bundle or the native matcher did not load: nothing is identified. */
+        IDENTIFICATION_UNAVAILABLE,
+
+        /** The database could not be opened: every query is empty and nothing is recorded. */
+        UNAVAILABLE,
+    }
+
+    companion object {
+        val READY_STATUS = LocalDataStatus(State.READY)
     }
 }
 
@@ -161,6 +187,7 @@ data class NewlyIdentified(val payloadHash: String, val pageIds: List<String>, v
  */
 data class RematchReport(
     val id: Long,
+    /** The matching key before and after: the bundle's rules version plus the matcher engine (`<rules>+m<engine>`). */
     val fromVersion: String?,
     val toVersion: String,
     val ranAtMs: Long,

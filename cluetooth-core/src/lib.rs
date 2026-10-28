@@ -23,8 +23,8 @@ pub use export::{DeleteSessionResult, ExportFormat, LegacySessionRows, PreparedE
 pub use gatt::GattDiscoveryFile;
 pub use location::LocationFix;
 pub use matcher::{
-    AddrContext, AddrType, AdvAddressType, Compiled, MatcherError, Node, RuleMatcher, Structure,
-    compile, evaluate_rule, regex_ok, structures,
+    AddrContext, AddrType, AdvAddressType, Compiled, MATCHER_ENGINE_VERSION, MatcherError, Node,
+    RuleMatcher, Structure, compile, evaluate_rule, regex_ok, structures,
 };
 pub use payload::{
     PayloadFile, PayloadInspection, PayloadResult, PendingUpload, PreparedUpload, ScanEnvironment,

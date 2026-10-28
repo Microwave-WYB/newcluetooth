@@ -12,8 +12,12 @@ import { parse } from "yaml";
 export const BUNDLE_SCHEMA = 1;
 export const KINDS = ["device", "platform", "identifier"];
 
+const stripBom = (text) => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+const readText = (path) => stripBom(readFileSync(path, "utf8"));
+
 export function parseFrontMatter(source, where = "index.md") {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(source);
+  // a BOM, CRLF line ends and a closing --- without a newline after it are all accepted
+  const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(stripBom(source));
   if (!m) throw new Error(`${where}: no front matter`);
   const data = parse(m[1]);
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
@@ -28,7 +32,7 @@ export function readVocabulary(wikiDir, explicitPath) {
     : [join(wikiDir, "categories.json"), join(wikiDir, "categories.draft.json")];
   const path = candidates.find((p) => existsSync(p));
   if (!path) throw new Error(`no category vocabulary found (tried ${candidates.join(", ")})`);
-  const doc = JSON.parse(readFileSync(path, "utf8"));
+  const doc = JSON.parse(readText(path));
   const categories = doc?.facets?.categories;
   if (!Array.isArray(categories)) throw new Error(`${path}: facets.categories is missing`);
   return categories.filter((c) => (c.status ?? "active") === "active").map((c) => ({ id: c.id, label: c.label }));
@@ -41,13 +45,17 @@ function stringField(fm, key, where) {
 }
 
 /**
- * @param {{wikiDir: string, vocabularyPath?: string, legacy: {kinds: object, categories: object}, labelsZh: object, version?: string}} options
+ * @param {{wikiDir: string, vocabularyPath?: string, legacy: {kinds: object, categories: object}, labelsZh: object, warn?: (message: string) => void}} options
  */
-export function buildBundle({ wikiDir, vocabularyPath, legacy, labelsZh, version }) {
+export function buildBundle({ wikiDir, vocabularyPath, legacy, labelsZh, warn = (message) => console.warn(`warning: ${message}`) }) {
   const vocabulary = readVocabulary(wikiDir, vocabularyPath);
   const known = new Map(vocabulary.map((c) => [c.id, c]));
-  for (const id of Object.keys(legacy.categories ?? {}).flatMap((p) => legacy.categories[p])) {
-    if (!known.has(id)) throw new Error(`legacy-mapping.json: unknown category ${id}`);
+  // The legacy mapping is a stand-in that goes stale as the wiki moves on: say so, never abort on it.
+  const legacyCategories = {};
+  for (const [page, ids] of Object.entries(legacy.categories ?? {})) {
+    const valid = ids.filter((id) => known.has(id));
+    for (const id of ids) if (!known.has(id)) warn(`legacy-mapping.json: ${page}: category "${id}" is not in the vocabulary; ignored`);
+    legacyCategories[page] = valid;
   }
   for (const c of vocabulary) {
     if (typeof labelsZh[c.id] !== "string" || labelsZh[c.id] === "") {
@@ -64,7 +72,7 @@ export function buildBundle({ wikiDir, vocabularyPath, legacy, labelsZh, version
   for (const dir of dirs) {
     const file = join(content, dir, "index.md");
     if (!existsSync(file)) throw new Error(`${dir}: missing index.md`);
-    const fm = parseFrontMatter(readFileSync(file, "utf8"), `${dir}/index.md`);
+    const fm = parseFrontMatter(readText(file), `${dir}/index.md`);
     const where = `${dir}/index.md`;
     const rawKind = stringField(fm, "kind", where);
     if (!dir.startsWith(`${rawKind}--`)) throw new Error(`${where}: directory does not start with kind "${rawKind}--"`);
@@ -78,12 +86,12 @@ export function buildBundle({ wikiDir, vocabularyPath, legacy, labelsZh, version
       }
       categories = fm.categories;
     } else {
-      categories = legacy.categories?.[dir] ?? [];
+      categories = legacyCategories[dir] ?? [];
     }
     for (const id of categories) if (!known.has(id)) throw new Error(`${where}: unknown category "${id}"`);
 
     const rulePath = join(content, dir, "rule.json");
-    const rule = existsSync(rulePath) ? JSON.parse(readFileSync(rulePath, "utf8")) : undefined;
+    const rule = existsSync(rulePath) ? JSON.parse(readText(rulePath)) : undefined;
     const page = {
       id: dir,
       title: stringField(fm, "title", where),
@@ -99,13 +107,19 @@ export function buildBundle({ wikiDir, vocabularyPath, legacy, labelsZh, version
     if (u > updated) updated = u;
   }
 
+  for (const page of Object.keys(legacyCategories)) {
+    if (!dirs.includes(page)) warn(`legacy-mapping.json: no page ${page} in this wiki; entry ignored`);
+  }
+
   const categories = vocabulary.map((c) => ({ id: c.id, label: c.label, label_zh: labelsZh[c.id] }));
-  // The version changes whenever anything the app reads changes, so a new
-  // asset always triggers a re-match; the date is only for people.
-  const digest = createHash("sha256").update(JSON.stringify({ categories, pages })).digest("hex").slice(0, 8);
+  // version: changes whenever anything the app reads changes (the date is only for people).
+  // rules_version: changes only when a rule does; the app re-matches its stored advertisements
+  // on that, not on a retitled page or a relabelled category.
+  const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   return {
     schema: BUNDLE_SCHEMA,
-    version: version ?? `${updated || "undated"}+${digest}`,
+    version: `${updated || "undated"}+${digest({ categories, pages }).slice(0, 8)}`,
+    rules_version: digest(pages.map((p) => [p.id, p.rule ?? null])).slice(0, 16),
     categories,
     pages,
   };

@@ -227,7 +227,6 @@ class CluetoothRepository(
 
     fun recordObservation(observation: CoreScanInput): ObservationAdmission {
         if (closing.get()) return ObservationAdmission.REJECTED_DEGRADED
-        localData.onAdvertisement(observation.addr, observation.rssi, observation.raw, observation.scannedAtMs)
         val retained = queuedObservations.incrementAndGet()
         if (commands.trySend(CoreCommand.RecordObservation(observation)).isFailure) {
             queuedObservations.decrementAndGet()
@@ -235,6 +234,9 @@ class CluetoothRepository(
             pauseIngress()
             return ObservationAdmission.REJECTED_DEGRADED
         }
+        // Only rows the core admitted enter the minute history, so both views agree. Payloads and the
+        // in-range view come from the live stream instead (see CluetoothApplication).
+        localData.onRecordedAdvertisement(observation.addr, observation.rssi, observation.raw, observation.scannedAtMs)
         if (retained >= ingressHighWatermark) {
             pauseIngress()
             return ObservationAdmission.PAUSE_REQUIRED
@@ -366,6 +368,21 @@ class CluetoothRepository(
         submit(CoreCommand.Refresh)
     }
 
+    // A recording is a core scan session; the local stores keep history and route only for it.
+    private var recordingId: String? = null
+
+    private fun beginRecording(sessionId: String) {
+        if (recordingId == sessionId) return
+        recordingId = sessionId
+        localData.onRecordingStarted(sessionId, System.currentTimeMillis())
+    }
+
+    private fun endRecording() {
+        val id = recordingId ?: return
+        recordingId = null
+        localData.onRecordingFinished(id, System.currentTimeMillis())
+    }
+
     /** The UUIDv7 that names one GATT discovery and its object path. */
     suspend fun newGattDiscoveryId(): String = withContext(nativeDispatcher) {
         gateway.await().newGattDiscoveryId()
@@ -394,21 +411,6 @@ class CluetoothRepository(
     fun activeSessionId(): String? = _uiState.value.sessions
         .lastOrNull { it.status == edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionStatus.ACTIVE }
         ?.sessionId
-
-    // A recording is a core scan session; the local stores keep history and route only for it.
-    private var recordingId: String? = null
-
-    private fun beginRecording(sessionId: String) {
-        if (recordingId == sessionId) return
-        recordingId = sessionId
-        localData.onRecordingStarted(sessionId, System.currentTimeMillis())
-    }
-
-    private fun endRecording() {
-        val id = recordingId ?: return
-        recordingId = null
-        localData.onRecordingFinished(id, System.currentTimeMillis())
-    }
 
     private fun submit(command: CoreCommand) {
         if (commands.trySend(command).isFailure) {
