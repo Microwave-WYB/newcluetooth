@@ -16,6 +16,7 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -63,6 +64,7 @@ class BleScanService(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val callbackFence = CallbackFence(mainHandler::post)
     private var scanRestartRunnable: Runnable? = null
+    private var scanStartedAtElapsedMs = 0L
     private var deferredRecoveryRunnable: Runnable? = null
     private val _scanStatus = MutableStateFlow(ScanStatus())
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
@@ -208,6 +210,7 @@ class BleScanService(
         return try {
             scanner.startScan(scanFilters(), settings, activeRequest.callback)
             isScanning = true
+            scanStartedAtElapsedMs = SystemClock.elapsedRealtime()
             _scanStatus.value = ScanStatus(ScanOperatingState.SCANNING)
             Log.i(TAG, "BLE scan started (generation ${activeRequest.generation})")
             schedulePeriodicScanRestart()
@@ -415,6 +418,16 @@ class BleScanService(
                 markNotScanning("Bluetooth permission was revoked before scan restart")
                 return@Runnable
             }
+            // A scan started while the screen is off is not delivered on some phones (verified
+            // on a Galaxy Note10), while one already running keeps going. Do not restart it
+            // until the screen is on again, but never let one scan run past the platform's
+            // long-scan downgrade window.
+            val screenOff = !(context.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
+            val runningMs = SystemClock.elapsedRealtime() - scanStartedAtElapsedMs
+            if (screenOff && runningMs < SCREEN_OFF_MAX_SCAN_RUN_MS) {
+                schedulePeriodicScanRestart()
+                return@Runnable
+            }
             val scanner = bluetoothLeScanner
             if (scanner == null) {
                 deferScanning(
@@ -443,6 +456,7 @@ class BleScanService(
                     repository.configureScan(scanEnvironment(adapter, codedPhyEnabled))
                 }
                 scanner.startScan(scanFilters(), settings, nextRequest.callback)
+                scanStartedAtElapsedMs = SystemClock.elapsedRealtime()
                 Log.i(TAG, "BLE scan restarted (generation ${nextRequest.generation})")
                 schedulePeriodicScanRestart()
             } catch (error: SecurityException) {
@@ -534,6 +548,7 @@ class BleScanService(
     companion object {
         private const val TAG = "BleScanService"
         private const val DEFERRED_RECOVERY_RETRY_MS = 1_000L
+        private const val SCREEN_OFF_MAX_SCAN_RUN_MS = 20 * 60 * 1_000L
     }
 
     // Android pauses *unfiltered* scans while the screen is off (8.1+). One empty filter

@@ -44,6 +44,11 @@ fun GattDebugPanel(
             is GattUiState.Finished -> {
                 val result = state.result
                 val characteristics = result.services.sumOf { it.characteristics.size }
+                // Buttons first: the sheet is short and the status lines may push them off-screen.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onStart() }) { Text("Connect again") }
+                    OutlinedButton(onClick = onDismissResult) { Text("Done") }
+                }
                 Text(
                     "${result.outcome.wire} at ${result.stageReached.wire}: " +
                         "${result.services.size} services, $characteristics characteristics",
@@ -56,10 +61,6 @@ fun GattDebugPanel(
                     if (state.saved) "Saved for upload" else "Not saved: ${state.saveError}; retried at next start",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { onStart() }) { Text("Connect again") }
-                    OutlinedButton(onClick = onDismissResult) { Text("Done") }
-                }
             }
         }
         startMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
