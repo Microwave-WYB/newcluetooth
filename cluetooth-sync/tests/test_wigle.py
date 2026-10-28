@@ -396,8 +396,6 @@ def _name(name: str) -> bytes:
 def _ingest_v3(database_url: str, suffix: str, rows: list[dict[str, Any]]) -> None:
     """Ingest one synthetic scans/v3 file (the rows override the defaults)."""
 
-
-
     defaults: dict[str, Any] = {
         "rssi": -60,
         "local_name": None,
