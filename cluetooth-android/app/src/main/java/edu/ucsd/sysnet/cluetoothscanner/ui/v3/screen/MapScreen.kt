@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.lazy.LazyColumn
@@ -52,7 +53,9 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -134,7 +137,11 @@ fun MapContent(
 
     // The list's sheet height is remembered while the list shows; a device opens peeking, and going back to the
     // list gives it the height it had.
-    LaunchedEffect(sheetState.currentValue, selecting) { if (!selecting) sheetMemory.listExpanded = sheetState.currentValue == SheetValue.Expanded }
+    // Only a change of the sheet itself while the list shows counts, not the switch between list and device.
+    val showingList by rememberUpdatedState(!selecting)
+    LaunchedEffect(sheetState) {
+        snapshotFlow { sheetState.currentValue }.collect { if (showingList) sheetMemory.listExpanded = it == SheetValue.Expanded }
+    }
     var shownSelection by remember { mutableStateOf(state.selected?.device?.id) }
     LaunchedEffect(state.selected?.device?.id) {
         val id = state.selected?.device?.id
@@ -183,7 +190,7 @@ fun MapContent(
             Box(Modifier.fillMaxSize()) {
                 // A lambda, so a sheet drag does not recompose the map; it is read when drawing or fitting.
                 map { if (layoutPx > 0f) (visibleSheetPx() / layoutPx).coerceIn(0f, 1f) else 0.3f }
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
                     // The density layer's switch (it was in the app bar), top-left: the recording pill is top-right.
                     SmallFloatingActionButton(onClick = actions.onLayerToggle) {
                         Icon(if (state.heatmap) Icons.Filled.Layers else Icons.Filled.LayersClear, stringResource(R.string.map_density))

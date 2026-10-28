@@ -58,6 +58,26 @@ class ListStateRestorationTest {
     }
 
     @Test
+    fun anExpandedListSheetComesBackExpanded() {
+        val list = FakeData.recordingMap
+        val memory = MapSheetMemory()
+        var selected by mutableStateOf(false)
+        rule.setContent {
+            V3Theme {
+                val state = if (selected) list.copy(selected = FakeData.detailHalf) else list
+                MapContent(state, MapActions(), PaddingValues(), initiallyExpanded = false, sheetMemory = memory) { Box(Modifier.fillMaxSize()) }
+            }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { memory.listExpanded = true } // as if the user had dragged the list up
+        rule.runOnIdle { selected = true }
+        rule.waitForIdle()
+        rule.runOnIdle { selected = false }
+        rule.waitForIdle()
+        assertEquals(true, memory.listExpanded)
+    }
+
+    @Test
     fun historyKeepsItsPlaceAcrossARecordingPage() {
         val days = FakeData.recordings.days
         val many = days.map { d -> d.copy(recordings = List(15) { i -> d.recordings.first().copy(id = "${d.label}-$i") }) }
