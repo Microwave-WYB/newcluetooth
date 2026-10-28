@@ -36,7 +36,7 @@
     car: '<path d="M3 17v-4l2-6h14l2 6v4z"/><path d="M3 13h18"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/>',
     medical: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
     external: '<path d="M7 17 17 7M9 7h8v8"/>',
-    devices: '<path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
+    devices: '<path d="M4 7.5l9 9-4.5 4.5V3l4.5 4.5-9 9"/><path d="M16.5 9.5a3.5 3.5 0 0 1 0 5M19.5 7a7 7 0 0 1 0 10"/>', // Bluetooth rune with scan waves
     panelClose: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M16 15l-3-3 3-3"/>',
     pause: '<rect class="solid" x="6" y="5" width="4" height="14" rx="1"/><rect class="solid" x="14" y="5" width="4" height="14" rx="1"/>',
     play: '<path class="solid" d="M8 5.5v13a1 1 0 0 0 1.5.9l10.4-6.5a1 1 0 0 0 0-1.8L9.5 4.6A1 1 0 0 0 8 5.5z"/>',
@@ -402,7 +402,7 @@
     el.className = `route-mark ${kind}`;
     el.textContent = kind === "start" ? "Start" : "End";
     // Start sits above its point and End below, so the two never cover each other on a loop
-    return new maplibregl.Marker({ element: el, anchor: kind === "start" ? "bottom" : "top", offset: [0, kind === "start" ? -4 : 4] }).setLngLat(at).addTo(map);
+    return new maplibregl.Marker({ element: el, anchor: kind === "start" ? "bottom" : "top", offset: [0, kind === "start" ? -10 : 10] }).setLngLat(at).addTo(map);
   }
   const lineGeo = (route) => ({ type: "FeatureCollection", features: route.length > 1 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: route } }] : [] });
   const routeLayer = () => ({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },
@@ -886,7 +886,7 @@
         ${cell("density on", UI.floatButton({ name: "density", label: "Density", action: "", cls: "on" }))}
         ${cell("density off", UI.floatButton({ name: "density", label: "Density", action: "" }))}
       </div>
-      ${sect("MorphButton", ".morph · --t-morph, --ease; Devices (top-right) → close devices page (top-left)")}
+      ${sect("MorphButton", ".morph · --t-morph, --ease; Devices (Bluetooth scan icon, top-right) → close devices page (top-left)")}
       <div class="g-row">
         ${cell("closed", UI.morphButton(false), "position: relative; width: 240px; height: 68px; container-type: inline-size")}
         ${cell("open", UI.morphButton(true), "position: relative; width: 240px; height: 68px; container-type: inline-size")}

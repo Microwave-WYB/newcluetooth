@@ -37,8 +37,8 @@
   --map-end: #111112;
   --map-route-opacity: 0.35;
   --map-routes-opacity: 0.18;  /* All sessions: every route, fainter */
-  --map-density-opacity: 0.10;
-  --map-density-radius: 26;   /* px, unitless for the map style */
+  --map-density-opacity: 0.035; /* a subtle wash: overlapping circles add up */
+  --map-density-radius: 16;   /* px, unitless for the map style */
 
   /* ---- Selection ----
    * Scan filter chips: solid dark selected chip (light in dark mode, since --t1 flips). Set

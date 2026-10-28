@@ -338,13 +338,15 @@ button.item:active { background: var(--fill2); }
 .devices-page { transition-duration: var(--t-morph); }
 
 /* ---------- MapMarker: device point and cluster ---------- */
+/* device markers stay below the Start/End labels (z-index 5), so a label is never covered */
+.maplibregl-marker.mk { z-index: 1; }
 .mk { width: var(--marker); height: var(--marker); border-radius: 50%; display: grid; place-items: center; background: var(--fill1); color: var(--t1); box-shadow: var(--shadow-float); cursor: pointer; transition: opacity var(--t-std), transform var(--t-fast); }
 .mk .icon { width: var(--marker-icon); height: var(--marker-icon); }
 .mk.muted { color: var(--map-muted); }
 .mk.faded { opacity: var(--dim); }
 .mk.sel { background: var(--t1); color: var(--bg); transform: scale(1.15); }
 .mk.cluster { width: auto; min-width: var(--marker); padding: 0 10px 0 8px; border-radius: var(--r-pill); display: flex; gap: 4px; font-size: var(--sub-size); font-weight: var(--weight-semi); font-variant-numeric: tabular-nums; }
-.route-mark { z-index: 2; padding: 0 8px; white-space: nowrap; height: 22px; border-radius: var(--r-pill); font-size: 12px; line-height: 22px; font-weight: var(--weight-semi); color: var(--on-blue); box-shadow: var(--shadow-float); }
+.route-mark { z-index: 5; padding: 0 8px; white-space: nowrap; height: 22px; border-radius: var(--r-pill); font-size: 12px; line-height: 22px; font-weight: var(--weight-semi); color: var(--on-blue); box-shadow: var(--shadow-float); }
 .route-mark.start { background: var(--map-start); }
 .route-mark.end { background: var(--map-end); color: var(--bg); }
 .maplibregl-ctrl-attrib { font-size: 10px; }
