@@ -31,7 +31,7 @@ mise run check                        # sequential heavyweight host stages
 mise run //cluetooth-core:check        # fmt, strict clippy, Rust tests
 mise run //cluetooth-android:check     # genuine Kotlin/UniFFI compilation, JVM tests, strict lint
 mise run //cluetooth-sync:check        # Python lint/types + all fixture/DB/interoperability tests
-mise run native-check                 # separate four-ABI API-24 native build
+mise run native-check                 # separate API-24 native build (arm64-v8a; CLUETOOTH_ABIS to add more)
 mise run //cluetooth-android:build     # separate product debug APK build; no install/launch
 ```
 

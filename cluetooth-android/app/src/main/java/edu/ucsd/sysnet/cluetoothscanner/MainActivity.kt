@@ -254,9 +254,8 @@ class MainActivity : ComponentActivity() {
 
         if (showUserIdDialog) {
             UserIdDialog(
-                onConfirm = { userId, autoUploadEnabled ->
+                onConfirm = { userId ->
                     DeviceIdManager.setUserId(context, userId)
-                    uploadService.setAutoUploadEnabled(autoUploadEnabled)
                     showUserIdDialog = false
                 }
             )
@@ -423,10 +422,9 @@ class MainActivity : ComponentActivity() {
         }
 
     @Composable
-    fun UserIdDialog(onConfirm: (String, Boolean) -> Unit) {
+    fun UserIdDialog(onConfirm: (String) -> Unit) {
         var text by remember { mutableStateOf("") }
         var isError by remember { mutableStateOf(false) }
-        var autoUploadEnabled by remember { mutableStateOf(true) }
 
         AlertDialog(
             onDismissRequest = {},
@@ -451,34 +449,11 @@ class MainActivity : ComponentActivity() {
                         } else null,
                         singleLine = true
                     )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Auto upload",
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Text(
-                                text = if (autoUploadEnabled) "Enabled" else "Disabled",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = autoUploadEnabled,
-                            onCheckedChange = { autoUploadEnabled = it }
-                        )
-                    }
                 }
             },
             confirmButton = {
                 TextButton(
-                    onClick = { onConfirm(text, autoUploadEnabled) },
+                    onClick = { onConfirm(text) },
                     enabled = text.isNotEmpty() && DeviceIdManager.isValidUserId(text)
                 ) {
                     Text("Confirm")

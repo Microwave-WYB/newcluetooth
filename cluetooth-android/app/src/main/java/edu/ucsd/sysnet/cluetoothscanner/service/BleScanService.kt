@@ -189,10 +189,7 @@ class BleScanService(
             return ScannerStartOutcome.STARTED
         }
 
-        val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
-            .build()
+        val settings = buildScanSettings()
 
         val activeRequest = scanRequestState.begin(::scanCallbackForGeneration)
         return try {
@@ -404,10 +401,7 @@ class BleScanService(
             val nextRequest = scanRequestState.begin(::scanCallbackForGeneration)
             try {
                 scanner.stopScan(previousCallback)
-                val settings = ScanSettings.Builder()
-                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                    .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
-                    .build()
+                val settings = buildScanSettings()
                 scanner.startScan(null, settings, nextRequest.callback)
                 Log.i(TAG, "BLE scan restarted (generation ${nextRequest.generation})")
                 schedulePeriodicScanRestart()
@@ -500,5 +494,16 @@ class BleScanService(
     companion object {
         private const val TAG = "BleScanService"
         private const val DEFERRED_RECOVERY_RETRY_MS = 1_000L
+    }
+
+    // Receive extended advertisements as well as legacy ones where supported (API 26+).
+    private fun buildScanSettings(): ScanSettings {
+        val builder = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setLegacy(false)
+        }
+        return builder.build()
     }
 }

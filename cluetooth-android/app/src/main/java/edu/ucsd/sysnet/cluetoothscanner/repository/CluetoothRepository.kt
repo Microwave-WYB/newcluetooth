@@ -16,6 +16,7 @@ import edu.ucsd.sysnet.cluetoothscanner.core.EXPECTED_CORE_API_VERSION
 import edu.ucsd.sysnet.cluetoothscanner.service.ObjectFileUploader
 import edu.ucsd.sysnet.cluetoothscanner.service.PayloadUploadCoordinator
 import edu.ucsd.sysnet.cluetoothscanner.service.PayloadUploadSummary
+import edu.ucsd.sysnet.cluetoothscanner.service.UploadResume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -320,9 +321,10 @@ class CluetoothRepository(
 
     internal suspend fun uploadPendingV2(
         uploader: ObjectFileUploader,
+        resume: UploadResume? = null,
     ): PayloadUploadSummary = uploadCoordinatorMutex.withLock {
         check(!closing.get()) { "Core repository is closing" }
-        val summary = PayloadUploadCoordinator(gateway.await(), uploader).uploadPending()
+        val summary = PayloadUploadCoordinator(gateway.await(), uploader, resume).uploadPending()
         callCore(publishScanState = false) { it.refresh() }
         summary
     }

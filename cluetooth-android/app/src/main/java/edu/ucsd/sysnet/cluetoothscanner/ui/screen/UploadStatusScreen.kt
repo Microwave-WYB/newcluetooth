@@ -73,7 +73,7 @@ fun UploadStatusScreen(
     var deleteTarget by remember { mutableStateOf<ScanSessionListItem?>(null) }
     var exportTarget by remember { mutableStateOf<ScanSessionListItem?>(null) }
     var chooseFullExport by remember { mutableStateOf(false) }
-    var autoUploadEnabled by remember { mutableStateOf(uploadService.isAutoUploadEnabled()) }
+    var wifiOnly by remember { mutableStateOf(uploadService.isWifiOnlyUpload()) }
 
     LaunchedEffect(uploadStatus) {
         if (uploadStatus == WorkInfo.State.SUCCEEDED || uploadStatus == WorkInfo.State.FAILED) {
@@ -87,7 +87,7 @@ fun UploadStatusScreen(
             item = detail,
             onBack = { selectedId = null },
             onExport = { exportTarget = detail },
-            onRetryUpload = { uploadService.forceUpload() },
+            onRetryUpload = scanViewModel::uploadNow,
         )
         return
     }
@@ -128,12 +128,18 @@ fun UploadStatusScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Auto upload", style = MaterialTheme.typography.titleMedium)
-                    Text(if (autoUploadEnabled) "Enabled" else "Disabled", style = MaterialTheme.typography.bodySmall)
+                    Text("Upload over Wi-Fi only", style = MaterialTheme.typography.titleMedium)
+                    val lastUpload = remember(uploadStatus, coreState) { uploadService.lastUploadAtMs() }
+                    Text(
+                        "Uploads run automatically · last upload: " + (lastUpload?.let {
+                            java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it))
+                        } ?: "never"),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
-                Switch(checked = autoUploadEnabled, onCheckedChange = {
-                    autoUploadEnabled = it
-                    uploadService.setAutoUploadEnabled(it)
+                Switch(checked = wifiOnly, onCheckedChange = {
+                    wifiOnly = it
+                    uploadService.setWifiOnlyUpload(it)
                 })
             }
             Row(
@@ -141,8 +147,8 @@ fun UploadStatusScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedButton(
-                    onClick = uploadService::forceUpload,
-                    enabled = pending > 0,
+                    onClick = scanViewModel::uploadNow,
+                    enabled = pending > 0 || coreState.activePayloadRows > 0u,
                     modifier = Modifier.weight(1f),
                 ) {
                     Icon(Icons.Default.FileUpload, contentDescription = null)
@@ -160,9 +166,9 @@ fun UploadStatusScreen(
                     Text("Export", maxLines = 1)
                 }
             }
-            if (coreState.lastUploadError != null) {
+            coreState.lastUploadError?.let { uploadError ->
                 Text(
-                    "Some scans could not be uploaded. Try again.",
+                    "Some scans could not be uploaded. Try again.\n$uploadError",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,

@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.google.firebase.storage.FirebaseStorage
 import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
+import edu.ucsd.sysnet.cluetoothscanner.utils.AppSettings
 import edu.ucsd.sysnet.cluetoothscanner.utils.EncryptionUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +49,9 @@ class UploadWorker(
             }
 
             Log.i(TAG, "Upload completed: $successCount success, $failCount failed")
+            if (successCount > 0) {
+                AppSettings.setLastUploadAtMs(context, System.currentTimeMillis())
+            }
 
             if (failCount > 0) {
                 Result.retry()
@@ -66,7 +70,13 @@ class UploadWorker(
     private suspend fun uploadV2Payloads(): PayloadUploadSummary {
         val application = context.applicationContext as? CluetoothApplication
             ?: error("CluetoothApplication is required for the process-owned core")
-        return application.repository.uploadPendingV2(FirebaseObjectFileUploader())
+        return application.repository.uploadPendingV2(
+            FirebaseObjectFileUploader(),
+            UploadResume(
+                PrefsUploadSessionStore(context),
+                File(context.filesDir, "upload-cache"),
+            ),
+        )
     }
 
     private fun findFilesToUpload(): List<File> {

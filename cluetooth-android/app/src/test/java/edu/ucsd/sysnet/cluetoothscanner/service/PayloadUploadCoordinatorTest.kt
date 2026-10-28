@@ -13,9 +13,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import kotlin.io.path.createTempDirectory
 
 class PayloadUploadCoordinatorTest {
     @Test
@@ -53,6 +55,21 @@ class PayloadUploadCoordinatorTest {
     }
 
     @Test
+    fun deniedRetryOfAlreadyStoredObjectIsAcknowledgedAsSuccess() = runTest {
+        val file = File.createTempFile("ciphertext", ".encrypted")
+        val core = UploadFakeCore(file)
+        val uploader = object : ObjectFileUploader {
+            override suspend fun putFile(objectPath: String, localFile: File) = error("denied")
+            override suspend fun exists(objectPath: String) = true
+        }
+
+        val summary = PayloadUploadCoordinator(core, uploader).uploadPending()
+
+        assertEquals(PayloadUploadSummary(1, 0), summary)
+        assertEquals(listOf("prepare", "success"), core.outcomes)
+    }
+
+    @Test
     fun transferFailureKeepsRetryIdentityAndReportsFailureToRust() = runTest {
         val file = File.createTempFile("ciphertext", ".encrypted")
         val core = UploadFakeCore(file)
@@ -66,7 +83,94 @@ class PayloadUploadCoordinatorTest {
         assertEquals(listOf("prepare", "failed:offline", "prepare", "failed:offline"), core.outcomes)
         assertEquals(core.objectPath, core.pendingUploads().single().objectPath)
     }
+
+    @Test
+    fun interruptedUploadResumesSameSessionAndBytesWithoutPreparingAgain() = runTest {
+        val file = File.createTempFile("ciphertext", ".encrypted").apply { writeText("first-bytes") }
+        val core = UploadFakeCore(file)
+        val store = MemorySessionStore()
+        val cache = createTempDirectory().toFile()
+        val seen = mutableListOf<Pair<String?, String>>()
+        var interrupt = true
+        val uploader = object : ObjectFileUploader {
+            override suspend fun putFile(objectPath: String, localFile: File) = error("unused")
+            override suspend fun exists(objectPath: String) = false
+            override suspend fun putFileResumable(
+                objectPath: String,
+                localFile: File,
+                sessionUri: String?,
+                onSession: (String) -> Unit,
+            ) {
+                seen += sessionUri to localFile.readText()
+                if (sessionUri == null) onSession("https://session/1")
+                if (interrupt) error("connection lost")
+            }
+        }
+        val coordinator = PayloadUploadCoordinator(core, uploader, UploadResume(store, cache))
+
+        assertEquals(PayloadUploadSummary(0, 1), coordinator.uploadPending())
+        file.writeText("regenerated-bytes") // a new Rust prepare would re-randomise the ciphertext
+        interrupt = false
+        assertEquals(PayloadUploadSummary(1, 0), coordinator.uploadPending())
+
+        assertEquals(listOf<Pair<String?, String>>(null to "first-bytes", "https://session/1" to "first-bytes"), seen)
+        assertEquals(listOf("prepare", "failed:connection lost", "success"), core.outcomes)
+        assertTrue(store.payloadIds().isEmpty())
+        assertTrue(cache.listFiles()!!.isEmpty())
+    }
+
+    @Test
+    fun expiredSessionRestartsFreshFromNewlyPreparedCiphertext() = runTest {
+        val file = File.createTempFile("ciphertext", ".encrypted").apply { writeText("fresh") }
+        val core = UploadFakeCore(file)
+        val store = MemorySessionStore()
+        val cache = createTempDirectory().toFile()
+        val stale = File(cache, "${core.payloadId}.encrypted").apply { writeText("stale") }
+        store.put(core.payloadId, UploadSession("https://session/old", stale.path))
+        val uploads = mutableListOf<Pair<String?, String>>()
+        val uploader = object : ObjectFileUploader {
+            override suspend fun putFile(objectPath: String, localFile: File) = error("unused")
+            override suspend fun putFileResumable(
+                objectPath: String,
+                localFile: File,
+                sessionUri: String?,
+                onSession: (String) -> Unit,
+            ) {
+                uploads += sessionUri to localFile.readText()
+                if (sessionUri != null) throw UploadSessionExpiredException()
+            }
+        }
+
+        val summary = PayloadUploadCoordinator(core, uploader, UploadResume(store, cache)).uploadPending()
+
+        assertEquals(PayloadUploadSummary(1, 0), summary)
+        assertEquals(listOf<Pair<String?, String>>("https://session/old" to "stale", null to "fresh"), uploads)
+        assertEquals(listOf("prepare", "success"), core.outcomes)
+    }
+
+    @Test
+    fun sessionsAndCachedBytesOfPayloadsNoLongerPendingAreDiscarded() = runTest {
+        val core = UploadFakeCore(File.createTempFile("ciphertext", ".encrypted"))
+        val store = MemorySessionStore()
+        val cache = createTempDirectory().toFile()
+        val orphan = File(cache, "gone.encrypted").apply { writeText("x") }
+        store.put("gone", UploadSession("https://session/x", orphan.path))
+
+        PayloadUploadCoordinator(core, { _, _ -> }, UploadResume(store, cache)).uploadPending()
+
+        assertFalse(orphan.exists())
+        assertTrue("gone" !in store.payloadIds())
+    }
 }
+
+private class MemorySessionStore : UploadSessionStore {
+    private val sessions = mutableMapOf<String, UploadSession>()
+    override fun get(payloadId: String) = sessions[payloadId]
+    override fun put(payloadId: String, session: UploadSession) { sessions[payloadId] = session }
+    override fun remove(payloadId: String) { sessions.remove(payloadId) }
+    override fun payloadIds(): Set<String> = sessions.keys.toSet()
+}
+
 
 private class UploadFakeCore(private val ciphertext: File) : CoreGateway {
     val payloadId = "0195c920-7c00-7abc-8def-0123456789ab"
