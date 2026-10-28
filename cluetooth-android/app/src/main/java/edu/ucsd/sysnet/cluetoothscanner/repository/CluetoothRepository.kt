@@ -2,6 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.repository
 
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreGateway
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreLocationInput
+import edu.ucsd.sysnet.cluetoothscanner.core.CoreScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.core.CoreScanInput
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayCoreEffect
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayCoreState
@@ -17,6 +18,7 @@ import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataSink
 import edu.ucsd.sysnet.cluetoothscanner.service.ObjectFileUploader
 import edu.ucsd.sysnet.cluetoothscanner.service.PayloadUploadCoordinator
 import edu.ucsd.sysnet.cluetoothscanner.service.PayloadUploadSummary
+import edu.ucsd.sysnet.cluetoothscanner.service.UploadKind
 import edu.ucsd.sysnet.cluetoothscanner.service.UploadResume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -34,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -59,6 +62,7 @@ enum class ObservationAdmission {
 private sealed interface CoreCommand {
     data class UpdateLocation(val fix: CoreLocationInput) : CoreCommand
     data object ClearLocation : CoreCommand
+    data class ConfigureScan(val environment: CoreScanEnvironment) : CoreCommand
     data class RecordObservation(val observation: CoreScanInput) : CoreCommand
     data object StartSession : CoreCommand
     data class StartSessionAcknowledged(
@@ -95,6 +99,8 @@ data class AppUiState(
     val latestObservationAtMs: Long? = null,
     val latestLocalName: String? = null,
     val actorTerminated: Boolean = false,
+    /** Observations the core refused at its input boundary since it opened. */
+    val rejectedObservationCount: ULong = 0u,
     val errorMessage: String? = null,
     val sessions: List<GatewayScanSession> = emptyList(),
 )
@@ -118,6 +124,7 @@ fun GatewayCoreState.toAppUiState(
     hasLocation = hasLocation,
     latestObservationAtMs = latestObservationAtMs,
     latestLocalName = latestLocalName,
+    rejectedObservationCount = rejectedObservationCount,
     errorMessage = errorMessage,
 )
 
@@ -159,10 +166,14 @@ class CluetoothRepository(
     private var terminalStatePublished = false
     private val queuedObservations = AtomicInteger(0)
     private val closing = AtomicBoolean(false)
+
+    // The settings last declared to the core, so they can be declared again if the core loses them.
+    private var lastEnvironment: CoreScanEnvironment? = null
     private val backpressurePaused = AtomicBoolean(false)
     // This repository is the process-wide core owner. All v2 reconciliation and
     // transfer sessions share this mutex, including periodic and one-time workers.
     private val uploadCoordinatorMutex = Mutex()
+    private val gattUploadMutex = Mutex()
     @Volatile
     private var backpressureListener: ((Boolean) -> Unit)? = null
 
@@ -206,6 +217,14 @@ class CluetoothRepository(
         submit(CoreCommand.ClearLocation)
     }
 
+    /**
+     * Declares the footer facts for the scan about to start. Queued ahead of its
+     * observations; the core seals the payload in progress if the facts changed.
+     */
+    fun configureScan(environment: CoreScanEnvironment) {
+        submit(CoreCommand.ConfigureScan(environment))
+    }
+
     fun recordObservation(observation: CoreScanInput): ObservationAdmission {
         if (closing.get()) return ObservationAdmission.REJECTED_DEGRADED
         val retained = queuedObservations.incrementAndGet()
@@ -215,8 +234,9 @@ class CluetoothRepository(
             pauseIngress()
             return ObservationAdmission.REJECTED_DEGRADED
         }
-        // Only what the core admitted is counted locally, so both views agree.
-        localData.onAdvertisement(observation.addr, observation.rssi, observation.raw, observation.scannedAtMs)
+        // Only rows the core admitted enter the minute history, so both views agree. Payloads and the
+        // in-range view come from the live stream instead (see CluetoothApplication).
+        localData.onRecordedAdvertisement(observation.addr, observation.rssi, observation.raw, observation.scannedAtMs)
         if (retained >= ingressHighWatermark) {
             pauseIngress()
             return ObservationAdmission.PAUSE_REQUIRED
@@ -329,11 +349,19 @@ class CluetoothRepository(
     internal suspend fun uploadPendingV2(
         uploader: ObjectFileUploader,
         resume: UploadResume? = null,
-    ): PayloadUploadSummary = uploadCoordinatorMutex.withLock {
-        check(!closing.get()) { "Core repository is closing" }
-        val summary = PayloadUploadCoordinator(gateway.await(), uploader, resume).uploadPending()
-        callCore(publishScanState = false) { it.refresh() }
-        summary
+        kind: UploadKind = UploadKind.SCANS,
+    ): PayloadUploadSummary {
+        // GATT objects have their own lock so a slow or denied GATT upload never holds up
+        // scan uploads, exports or session changes, and vice versa.
+        val mutex = if (kind == UploadKind.GATT) gattUploadMutex else uploadCoordinatorMutex
+        return mutex.withLock {
+            check(!closing.get()) { "Core repository is closing" }
+            val coordinator = PayloadUploadCoordinator(gateway.await(), uploader, resume, kind)
+            // GATT objects are saved at any time; pick up ones saved while this run was going.
+            val summary = if (kind == UploadKind.GATT) coordinator.uploadUntilQuiet() else coordinator.uploadPending()
+            callCore(publishScanState = false) { it.refresh() }
+            summary
+        }
     }
 
     fun refresh() {
@@ -354,6 +382,35 @@ class CluetoothRepository(
         recordingId = null
         localData.onRecordingFinished(id, System.currentTimeMillis())
     }
+
+    /** The UUIDv7 that names one GATT discovery and its object path. */
+    suspend fun newGattDiscoveryId(): String = withContext(nativeDispatcher) {
+        gateway.await().newGattDiscoveryId()
+    }
+
+    /**
+     * Hands one finished `gatt/v1` JSON object to the core, which validates and stores it and
+     * schedules the shared uploader. Throws when the core rejects the object.
+     */
+    suspend fun saveGattDiscovery(json: String) = withContext(nativeDispatcher) {
+        // Not under the upload mutexes: saving is a quick, internally serialized core call and
+        // must never wait for a whole upload run.
+        check(!closing.get()) { "Core repository is closing" }
+        val openedGateway = gateway.await()
+        val update = openedGateway.saveGattDiscovery(json)
+        publishCoreUpdate(
+            openedGateway,
+            openedGateway.apiVersion(),
+            update,
+            publishScanState = false,
+            refreshSessions = false,
+        )
+    }
+
+    /** The scan session running now, for tagging a GATT discovery; null when none. */
+    fun activeSessionId(): String? = _uiState.value.sessions
+        .lastOrNull { it.status == edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionStatus.ACTIVE }
+        ?.sessionId
 
     private fun submit(command: CoreCommand) {
         if (commands.trySend(command).isFailure) {
@@ -393,6 +450,16 @@ class CluetoothRepository(
                     }
                     CoreCommand.ClearLocation -> callCore(publishScanState = false) {
                         it.clearLocation()
+                    }
+                    is CoreCommand.ConfigureScan -> try {
+                        lastEnvironment = command.environment
+                        callCore(publishScanState = false) { it.configureScan(command.environment) }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        // Without the footer facts observations are refused; pause the scan
+                        // and let its recovery path configure again.
+                        publishFlushFailure(error)
                     }
                     CoreCommand.CheckpointActivePayload ->
                         tryCheckpointCoreWithoutTerminatingActor()
@@ -509,6 +576,14 @@ class CluetoothRepository(
             }
 
             if (recordResult is GatewayRecordResult.RetryablePreCommitFailure) {
+                if (recordResult.needsScanConfiguration) {
+                    // Recoverable: declare the last known settings again, then retry the batch.
+                    val settings = lastEnvironment
+                    if (settings != null) {
+                        runCatching { openedGateway.configureScan(settings) }
+                            .onFailure { LOGGER.log(Level.WARNING, "Re-declaring scan settings failed", it) }
+                    }
+                }
                 publishIngressState(degraded = true, error = recordResult.message)
                 pauseIngress()
                 precommitDegraded = true

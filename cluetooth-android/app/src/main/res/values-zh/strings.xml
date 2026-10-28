@@ -1,0 +1,4 @@
+<resources>
+    <string name="recording_interrupted_title">录制中断</string>
+    <string name="recording_interrupted_text">上次录制意外中断，已保存 %1$d 条</string>
+</resources>

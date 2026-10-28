@@ -64,9 +64,9 @@ class LocalDataHubTest {
     fun scanningWithoutARecordingKeepsPayloadsButNoHistory() = runBlocking {
         val hub = hub()
         val t = now.get()
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
-        hub.onAdvertisement("AA:00:00:00:00:01", -50, adv("buds-1"), t + 1_000)
-        hub.onAdvertisement("AA:00:00:00:00:02", -70, adv("unknown"), t + 2_000)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.hear("AA:00:00:00:00:01", -50, adv("buds-1"), t + 1_000)
+        hub.hear("AA:00:00:00:00:02", -70, adv("unknown"), t + 2_000)
         hub.flushNow()
 
         assertEquals(2, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
@@ -90,10 +90,10 @@ class LocalDataHubTest {
     fun productsInRangeCountDevicesAndAgeOut() = runBlocking {
         val hub = hub()
         val t = now.get()
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
-        hub.onAdvertisement("AA:00:00:00:00:02", -45, adv("buds-2"), t + 100)
-        hub.onAdvertisement("AA:00:00:00:00:03", -80, adv("multi-1"), t + 200)
-        hub.onAdvertisement("AA:00:00:00:00:04", -90, adv("stranger"), t + 300)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.hear("AA:00:00:00:00:02", -45, adv("buds-2"), t + 100)
+        hub.hear("AA:00:00:00:00:03", -80, adv("multi-1"), t + 200)
+        hub.hear("AA:00:00:00:00:04", -90, adv("stranger"), t + 300)
         hub.flushNow()
 
         now.set(t + 1_000)
@@ -116,7 +116,7 @@ class LocalDataHubTest {
     fun addressRulesSpeakInTheLiveViewOnly() = runBlocking {
         val hub = hub(addressRules = mapOf("device--bulb" to "AA:00:00"))
         val t = now.get()
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("anything"), t)
+        hub.hear("AA:00:00:00:00:01", -60, adv("anything"), t)
         hub.flushNow()
         now.set(t + 10)
         assertEquals(listOf("device--bulb"), hub.productsInRange().firstValue().products.map { it.page.id })
@@ -130,11 +130,11 @@ class LocalDataHubTest {
         val t = now.get() - now.get() % 60_000
         hub.onRecordingStarted("rec-1", t)
         hub.onLocation(fix(t))
-        hub.onAdvertisement("AA:00:00:00:00:01", -70, adv("buds-1"), t + 1_000)
-        hub.onAdvertisement("AA:00:00:00:00:01", -55, adv("buds-1"), t + 2_000)
+        hub.hear("AA:00:00:00:00:01", -70, adv("buds-1"), t + 1_000)
+        hub.hear("AA:00:00:00:00:01", -55, adv("buds-1"), t + 2_000)
         hub.onLocation(fix(t + 3_000, lat = 32.001)) // 111 m north
-        hub.onAdvertisement("AA:00:00:00:00:01", -65, adv("buds-1"), t + 4_000)
-        hub.onAdvertisement("AA:00:00:00:00:02", -80, adv("bulb-1"), t + 70_000) // next minute, stale fix
+        hub.hear("AA:00:00:00:00:01", -65, adv("buds-1"), t + 4_000)
+        hub.hear("AA:00:00:00:00:02", -80, adv("bulb-1"), t + 70_000) // next minute, stale fix
         hub.flushNow()
         hub.onRecordingFinished("rec-1", t + 120_000)
         hub.flushNow()
@@ -186,10 +186,10 @@ class LocalDataHubTest {
     fun anActiveRecordingIsActiveAndAdvertisementsBeforeItAreNotHistory() = runBlocking {
         val hub = hub()
         val t = now.get()
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t - 5_000)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t - 5_000)
         hub.onRecordingStarted("rec-1", t)
         hub.onRecordingStarted("rec-1", t + 1) // the core returns the same id again: ignored
-        hub.onAdvertisement("AA:00:00:00:00:02", -60, adv("buds-1"), t + 1_000)
+        hub.hear("AA:00:00:00:00:02", -60, adv("buds-1"), t + 1_000)
         hub.flushNow()
         now.set(t + 10_000)
         val recording = hub.recordings().firstValue().single()
@@ -202,8 +202,8 @@ class LocalDataHubTest {
     @Test
     fun aNewRulesVersionRematchesInTheBackgroundAndReportsNewlyIdentifiedPayloads() = runBlocking {
         val first = hub(version = "v1", matchRules = mapOf("device--buds" to "buds"))
-        first.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
-        first.onAdvertisement("AA:00:00:00:00:02", -60, adv("bulb-1"), now.get())
+        first.hear("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
+        first.hear("AA:00:00:00:00:02", -60, adv("bulb-1"), now.get())
         first.flushNow()
         assertNull(first.pendingRematchReport().firstValue())
         first.close()
@@ -227,7 +227,7 @@ class LocalDataHubTest {
     @Test
     fun relabellingTheBundleWithoutTouchingRulesDoesNotRematch() = runBlocking {
         val first = hub(version = "v1", bundle = { bundleJson("v1", "r1", PAGES.toList()) })
-        first.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
+        first.hear("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
         first.flushNow()
         first.close()
         val second = hub(version = "v2", bundle = { bundleJson("v2", "r1", PAGES.toList()) })
@@ -244,7 +244,7 @@ class LocalDataHubTest {
         store.flush(FlushBatch(payloads, emptyMap(), null, emptyList(), 0.0), HashMap(), "old") { _, _ -> emptyList() }
         val hub = hub(version = "new")
         // ingest is served while the re-match is still going (it runs a batch per turn of the queue)
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-live"), now.get())
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-live"), now.get())
         hub.flushNow()
         val report = withTimeout(30_000) { hub.pendingRematchReport().first { it != null } }
         assertEquals(3_000, report!!.payloadsChecked) // the live payload was matched on arrival
@@ -260,7 +260,7 @@ class LocalDataHubTest {
         val hub = hub(bundle = { throw java.io.FileNotFoundException("no asset") })
         val t = now.get()
         hub.onRecordingStarted("rec-1", t)
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t)
         hub.flushNow()
         assertNull(hub.catalog.value)
         assertEquals(1, hub.sightingsOfDevice("AA:00:00:00:00:01").firstValue().size)
@@ -275,7 +275,7 @@ class LocalDataHubTest {
         val hub = hub(createMatcher = { throw UnsatisfiedLinkError("libcluetooth_core.so") })
         val t = now.get()
         hub.onRecordingStarted("rec-1", t)
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t)
         hub.flushNow()
         assertEquals(LocalDataStatus.State.IDENTIFICATION_UNAVAILABLE, hub.status.value.state)
         assertNull(hub.catalog.value)
@@ -306,7 +306,7 @@ class LocalDataHubTest {
         assertNull(broken.pendingRematchReport().firstValue())
         assertEquals(0, broken.productsInRange().firstValue().totalDeviceCount)
         // the scan callback keeps working and nothing piles up
-        repeat(20_000) { broken.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), now.get()) }
+        repeat(20_000) { broken.hear("AA:00:00:00:00:01", -60, adv("buds-1"), now.get()) }
         broken.onRecordingStarted("rec", now.get())
         broken.flushNow()
         broken.acknowledgeRematch(1)
@@ -324,12 +324,12 @@ class LocalDataHubTest {
     fun theMatcherRunsOncePerDistinctPayloadUnlessRulesLookAtTheAddress() = runBlocking {
         val hub = hub()
         val t = now.get()
-        repeat(10) { i -> repeat(5) { hub.onAdvertisement("AA:00:00:00:00:0$i", -60, adv("buds-1"), t + it) } }
+        repeat(10) { i -> repeat(5) { hub.hear("AA:00:00:00:00:0$i", -60, adv("buds-1"), t + it) } }
         hub.flushNow()
         assertEquals(1, matcherOf!!.calls.get())
 
         val withAddr = hub(addressRules = mapOf("device--bulb" to "AA:00"))
-        repeat(10) { i -> withAddr.onAdvertisement("AA:00:00:00:00:0$i", -60, adv("buds-1"), t) }
+        repeat(10) { i -> withAddr.hear("AA:00:00:00:00:0$i", -60, adv("buds-1"), t) }
         withAddr.flushNow()
         assertTrue(matcherOf!!.calls.get() >= 10)
     }
@@ -338,9 +338,9 @@ class LocalDataHubTest {
     fun aDeviceAlternatingAdvertisementTypesKeepsBothProducts() = runBlocking {
         val hub = hub()
         val t = now.get()
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("bulb-1"), t + 1_000)
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t + 2_000)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.hear("AA:00:00:00:00:01", -60, adv("bulb-1"), t + 1_000)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t + 2_000)
         hub.flushNow()
         now.set(t + 3_000)
         val snapshot = hub.productsInRange().firstValue()
@@ -361,7 +361,7 @@ class LocalDataHubTest {
             byteArrayOf(5, 9) + "buds".toByteArray()
         assertTrue(raw.size > 600)
         hub.onRecordingStarted("rec-1", t)
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, raw, t)
+        hub.hear("AA:00:00:00:00:01", -60, raw, t)
         hub.flushNow()
         val stored = db.query("SELECT raw, hash FROM seen_payload") { it.blob(0) to it.string(1) }.single()
         assertTrue(raw.contentEquals(stored.first))
@@ -386,7 +386,7 @@ class LocalDataHubTest {
         assertEquals(1, counting.count("FROM seen_product"))
 
         // a new payload is the same group: it runs again
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t)
         hub.flushNow()
         withTimeout(10_000) { while (counting.count("FROM seen_product") < 2) delay(5) }
         job.cancel()
@@ -398,7 +398,7 @@ class LocalDataHubTest {
         val hub = hub(database = counting, heavyIntervalMs = 10_000, shareLingerMs = 60_000)
         val t = now.get()
         hub.onRecordingStarted("rec-1", t)
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t)
         hub.flushNow()
 
         val results = List(3) { mutableListOf<List<Sighting>>() }
@@ -408,7 +408,7 @@ class LocalDataHubTest {
 
         // more sightings arrive: the heavy query waits out its interval instead of re-running at once
         repeat(5) { i ->
-            hub.onAdvertisement("AA:00:00:00:00:01", -50 - i, adv("buds-1"), t + 1_000L * (i + 1))
+            hub.hear("AA:00:00:00:00:01", -50 - i, adv("buds-1"), t + 1_000L * (i + 1))
             hub.flushNow()
         }
         delay(100)
@@ -445,7 +445,7 @@ class LocalDataHubTest {
         )
         val t = now.get()
         hub.onRecordingStarted("rec-1", t) // before the database exists
-        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t)
         val seen = java.util.concurrent.CopyOnWriteArrayList<List<Recording>>()
         val job = launch { hub.recordings().collect { seen += it } }
         hub.start()
@@ -479,7 +479,7 @@ class LocalDataHubTest {
     @Test
     fun aNewMatcherEngineRematchesEvenWhenTheRulesAreTheSame() = runBlocking {
         val first = hub(version = "v1", bundle = { bundleJson("v1", "r1", PAGES.toList()) })
-        first.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
+        first.hear("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
         first.flushNow()
         first.close()
         assertEquals(0, db.query("SELECT COUNT(*) FROM rematch_run") { it.long(0) }.single().toInt())
@@ -495,7 +495,7 @@ class LocalDataHubTest {
         val hub = hub(heavyIntervalMs = 300)
         val t = now.get() - now.get() % 60_000
         hub.onRecordingStarted("rec-1", t)
-        hub.onAdvertisement("AA:00:00:00:00:01", -70, adv("buds-1"), t + 1_000)
+        hub.hear("AA:00:00:00:00:01", -70, adv("buds-1"), t + 1_000)
         hub.flushNow()
         val seen = java.util.concurrent.CopyOnWriteArrayList<List<Sighting>>()
         val job = launch { hub.sightingsOfDevice("AA:00:00:00:00:01").collect { seen += it } }
@@ -503,10 +503,51 @@ class LocalDataHubTest {
         assertEquals(-70, seen.first().single().bestRssi)
 
         // a stronger sample arrives while the query is waiting out its interval
-        hub.onAdvertisement("AA:00:00:00:00:01", -50, adv("buds-1"), t + 2_000)
+        hub.hear("AA:00:00:00:00:01", -50, adv("buds-1"), t + 2_000)
         hub.flushNow()
         withTimeout(10_000) { while (seen.last().single().bestRssi != -50) delay(5) }
         assertEquals(2, seen.last().single().sampleCount)
         job.cancel()
+    }
+
+    // Live scanning versus recording (PR #28) ----------------------------------------------------------
+
+    @Test
+    fun liveScanningFeedsPayloadsAndTheInRangeViewButNeverSightings() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t)
+        // what BleScanService.liveScans delivers for every advertisement, recorded or not
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t + 1_000)
+        hub.flushNow()
+        now.set(t + 2_000)
+        assertEquals(listOf("device--buds"), hub.productsInRange().firstValue().products.map { it.page.id })
+        assertEquals(1, hub.previouslySeenProducts().firstValue().single().products.single().payloadCount)
+        // no row reached the core, so no minute history either
+        assertTrue(hub.sightingsOfDevice("AA:00:00:00:00:01").firstValue().isEmpty())
+        assertTrue(hub.devicesInRecording("rec-1").firstValue().isEmpty())
+    }
+
+    @Test
+    fun aCoreAdmittedRowWritesTheMinuteHistoryOnlyWhileARecordingIsActive() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        hub.onRecordedAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t) // no session yet: ignored
+        hub.flushNow()
+        assertEquals(0, db.query("SELECT COUNT(*) FROM sighting_minute") { it.long(0) }.single().toInt())
+        assertEquals(0, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+
+        hub.onRecordingStarted("rec-1", t)
+        // the live event for this row was dropped by the live stream's bounded buffer: the row still lands
+        hub.onRecordedAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t + 1_000)
+        hub.flushNow()
+        val s = hub.sightingsOfDevice("AA:00:00:00:00:01").firstValue().single()
+        assertEquals(listOf("device--buds"), s.pageIds)
+        assertEquals(1, s.sampleCount)
+
+        hub.onRecordingFinished("rec-1", t + 5_000)
+        hub.onRecordedAdvertisement("AA:00:00:00:00:01", -50, adv("buds-1"), t + 6_000) // after the session: ignored
+        hub.flushNow()
+        assertEquals(1, db.query("SELECT SUM(sample_count) FROM sighting_minute") { it.long(0) }.single().toInt())
     }
 }

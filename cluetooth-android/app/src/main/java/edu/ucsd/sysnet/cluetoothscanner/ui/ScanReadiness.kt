@@ -40,5 +40,6 @@ internal suspend fun reconcileScanReadiness(
         coordinator.stop()
         return
     }
-    if (userWantsScanning) coordinator.start()
+    // A paused recording stays paused when the Activity (re)appears.
+    if (userWantsScanning && coordinator.state.value != ScanTransitionState.PAUSED) coordinator.start()
 }

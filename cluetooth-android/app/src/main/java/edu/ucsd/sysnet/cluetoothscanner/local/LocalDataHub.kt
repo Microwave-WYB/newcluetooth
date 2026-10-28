@@ -96,6 +96,7 @@ class LocalDataHub(
 
     private sealed interface Event {
         class Advertisement(val addr: String, val rssi: Int?, val raw: ByteArray, val timeMs: Long) : Event
+        class Recorded(val addr: String, val rssi: Int?, val raw: ByteArray, val timeMs: Long) : Event
         class Location(val fix: CoreLocationInput) : Event
         data object LocationCleared : Event
         class RecordingStarted(val id: String, val atMs: Long) : Event
@@ -238,6 +239,17 @@ class LocalDataHub(
         }
     }
 
+    override fun onRecordedAdvertisement(addr: String, rssi: Int?, raw: ByteArray, timeMs: Long) {
+        if (queuedAdvertisements.incrementAndGet() > MAX_QUEUED_ADVERTISEMENTS) {
+            queuedAdvertisements.decrementAndGet()
+            droppedAdvertisements.incrementAndGet()
+            return
+        }
+        if (events.trySend(Event.Recorded(addr, rssi, raw, timeMs)).isFailure) {
+            queuedAdvertisements.decrementAndGet()
+        }
+    }
+
     override fun onLocation(fix: CoreLocationInput) {
         events.trySend(Event.Location(fix))
     }
@@ -279,6 +291,10 @@ class LocalDataHub(
             is Event.Advertisement -> {
                 queuedAdvertisements.decrementAndGet()
                 onHeard(event)
+            }
+            is Event.Recorded -> {
+                queuedAdvertisements.decrementAndGet()
+                onRecorded(event)
             }
             is Event.Location -> onFix(event.fix)
             Event.LocationCleared -> lastFix = null
@@ -364,7 +380,15 @@ class LocalDataHub(
             recent.entries.minByOrNull { it.value.atMs }?.let { recent.remove(it.key) }
         }
         inRange[e.addr] = DeviceNow(e.timeMs, e.rssi, recent)
+    }
+
+    /** A row the core admitted for the active recording: the minute history, and only while one is active. */
+    private fun onRecorded(e: Event.Recorded) {
         if (recordingId == null) return
+        val hash = sha256Hex(e.raw)
+        matcher?.let { payloadPages(it, hash, e.raw) }
+        // Normally the live event delivered the payload already; if it was dropped, still make sure the row exists.
+        pendingPayloads.getOrPut(hash) { PayloadDelta(e.raw, e.timeMs, e.timeMs, 0) }
         val fix = lastFix?.takeIf { e.timeMs - it.observedAtMs <= FRESH_FIX_MS }
         val location = fix?.let { GeoPoint(it.lat, it.lon, it.accuracyMeters) }
         pendingMinutes.getOrPut(MinuteKey(e.addr, e.timeMs / MINUTE_MS, hash)) {

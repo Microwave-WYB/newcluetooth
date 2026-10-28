@@ -146,3 +146,9 @@ val PAGES = arrayOf(
     Triple("device--multi", "Multi", listOf("audio", "lighting")),
     Triple("platform--proto", "Proto", emptyList()),
 )
+
+/** What the app does for a recorded advertisement: the live stream delivers it, the core admits it as a row. */
+fun LocalDataHub.hear(addr: String, rssi: Int?, raw: ByteArray, timeMs: Long) {
+    onAdvertisement(addr, rssi, raw, timeMs)
+    onRecordedAdvertisement(addr, rssi, raw, timeMs)
+}

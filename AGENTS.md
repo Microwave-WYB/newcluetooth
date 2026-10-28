@@ -17,12 +17,14 @@ The design goal is:
   - Uses mise-managed `dbmate`.
   - Local test database config lives under `db/test/`.
 - `cluetooth-core/`
-  - Owns platform-neutral observation batching and schema-v2 pending Parquet state.
+  - Owns platform-neutral observation batching, pending Parquet state (new
+    payloads are schema v3, v2 stays readable) and local `gatt/v1` object storage.
   - Owns the on-device wiki rule matcher (`src/matcher/`, `RuleMatcher` over UniFFI).
   - Uses Rust, Polars, UUIDv7, Zstd Parquet, and UniFFI.
 - `cluetooth-android/`
   - Owns BLE/location/UI/Firebase/WorkManager platform integration. Phase 4
-    forwards new observations to Rust, uploads Rust-prepared v2 ciphertext, and
+    forwards new observations to Rust, uploads Rust-prepared ciphertext (scan v2
+    and v3, `gatt/v1`), runs the manual GATT engine (debug trigger only), and
     retains strict pre-0.0.5 legacy pending-file upload.
   - Also keeps the phone-local stores (`local/`: seen products, recordings,
     sighting history, route) and the build-time wiki bundle exporter
@@ -33,6 +35,11 @@ The design goal is:
     Ruff, basedpyright, pytest, and testcontainers.
 - `cluetooth-agents/`
   - Placeholder for agent/research-oriented code.
+
+Payload contracts: `docs/payload-schema-v2.md` (identity, batching, upload
+state), `docs/payload-schema-v3.md` (scan v3 columns/footer and `gatt/v1`).
+`docs/recording-model.md`: live scanning (foreground, no session, no rows) versus
+recording (foreground service, core session, rows, upload).
 
 ## Database Model
 
@@ -62,22 +69,33 @@ one aggregate row per sighting minute:
     partition catches producer clocks far off).
   - Every column is exact under merge: `blob_counts`/`blob_ids` provenance,
     `sightings`, first/last seen, RSSI min/max/sum/count/mean, spatial extent,
-    `tx_power`, `is_connectable`, reserved v3 fields, and the minute's best
-    sample (`location`, `best_rssi`, `best_accuracy`, `best_score`,
-    `best_seen`).
+    `tx_power`, `is_connectable`, `adv_tx_power`, `periodic_interval`, and the
+    minute's best sample (`location`, `best_rssi`, `best_accuracy`,
+    `best_score`, `best_seen`).
+  - The producer v3 PDU fields `addr_type`, `is_legacy`, `primary_phy`,
+    `secondary_phy`, `adv_sid` and `data_status` are part of the key (null for
+    legacy and v2); see `docs/schema.md` ("Ingesting scan v3 and gatt/v1") and
+    the producer contract `docs/payload-schema-v3.md`.
   - The best sample's score coefficients are **provisional**.
 - `adv_shapes`
   - A plain **view** over `sighting_minutes` plus `payload_fields`. Filter or
     join a small candidate set; do not scan it whole.
 - `uploaders`, `blobs`
   - Producer tokens and the processing ledger (`blobs` also has `id`,
-    `uploader_id`, `session_id`, `attempts`, `next_attempt_at`).
+    `uploader_id`, `session_id`, `attempts`, `next_attempt_at`, and `meta`
+    with the v3 Parquet footer or the GATT device fields).
+- `gatt_discoveries`, `gatt_attributes`
+  - One row per `gatt/v1` discovery (trigger advertisement linked to
+    `payloads`, outcome, stage, error, timings, `profile_hash`, full JSON in
+    `raw`) and one row per service/characteristic/descriptor. They replaced the
+    legacy tables of the same names, which were never written.
 - `adv_enrichments`
   - Passive enrichment per `(addr, payload_id, kind, id, revision)`; built-in
     AD structure parsing lives in `ad_structures` instead.
 - `wigle_upload_batch_minutes`
-  - WiGLE membership by minute row, so one CSV row is one minute and nothing is
-    uploaded twice.
+  - WiGLE membership by minute row. The export is one CSV row per address per
+    minute (best located row, latest non-empty name); a batch claims every row
+    of the address-minute, so nothing is uploaded twice.
 - `backfill_progress`
   - Resumability ledger for `cluetooth backfill`.
 
@@ -147,10 +165,17 @@ ids plus the remainder. Nothing protocol-specific is decoded at ingest.
 - `replay.py`
   - `cluetooth replay` (raw sightings of archived objects) and
     `cluetooth rebuild` (regenerate a minute range from the archive).
-- `payload_route.py` / `payload_v2.py`
-  - Strictly route legacy `0.0.1`-`0.0.4` JSONL and nested schema-v2 Parquet URIs.
-  - Validate v2 UUID/date/footer/exact schema/required values and convert binary raw
-    bytes to the existing lowercase-hex staging representation.
+- `payload_route.py` / `payload_v2.py` / `payload_v3.py`
+  - Strictly route legacy `0.0.1`-`0.0.4` JSONL, nested schema-v2 and schema-v3
+    Parquet URIs and `gatt/v1` JSON URIs.
+  - Validate v2/v3 UUID/date/footer/exact schema/required values and convert binary raw
+    bytes to the existing lowercase-hex staging representation. v3 also returns
+    the `cluetooth.*` footer entries for `blobs.meta`.
+- `gatt_v1.py` / `gatt_ingest.py`
+  - Validate one `gatt/v1` JSON object (including `profile_hash`) and write it,
+    its attributes and the trigger payload in one transaction. Note that
+    Polars' ADBC `write_database` commits the session's transaction, so stage
+    every frame before the writes that must stay atomic.
 - `ingest.py`
   - Parses JSONL with a hand-written Polars schema.
   - Handles current scan payloads and legacy `0.0.1` through `0.0.4`
@@ -178,6 +203,7 @@ Current orchestration model:
 - encrypted blob bytes are the in-memory handoff between download and ingest
 - legacy routing accepts only flat `scans/` objects from producers 0.0.1-0.0.4;
   every schema-bearing or unsafe/nested legacy path is rejected
+- the CLI discovers `scans/` and `gatt/` by default (`--prefix` is repeatable)
 - local mirroring resolves destinations beneath the resolved mirror root and
   rejects traversal and existing symlink escapes
 - optional mirroring in `storage.py` can cache encrypted blobs on disk

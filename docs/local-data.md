@@ -177,8 +177,14 @@ surfaces in `status` and the hub retries (5 s, doubling to 5 min), queueing even
   switches to real data once it opens) and `status` says `UNAVAILABLE`; if the bundle or the native matcher (including an
   `UnsatisfiedLinkError`) cannot load, recording continues, nothing is identified
   and `status` says `IDENTIFICATION_UNAVAILABLE`. Skipped rules are logged.
-* The stores are fed from `CluetoothRepository` (observations, location,
-  session start/finish), so the existing scan service is untouched.
+* **Feeds (PR #28's model).** Live scanning runs without a core session and emits on
+  `BleScanService.liveScans` for every advertisement; `CluetoothApplication` forwards that
+  stream to `onAdvertisement`, which feeds the payload store and the in-range view, recording
+  or not. A recording is a core session: `CluetoothRepository` reports session start/finish and
+  location, and `recordObservation` reports each row the core admitted through
+  `onRecordedAdvertisement`; only those, and only while a session is active, become minute
+  history and route. Rows the core did not admit (oversized, backpressure) never enter the
+  history even though the live stream saw them.
 * Debug variant only for now; nothing here changes `versionName` or uploads.
 
 ### Queries and invalidation
