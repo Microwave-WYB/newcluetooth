@@ -345,3 +345,51 @@ tables.
   to later stages.
 - Preserve exact raw payload bytes whenever possible; derive additional meaning
   into separate enrichment or analysis outputs.
+
+## Android UI Principles
+
+These rules come from the owner. Every change to `cluetooth-android/app/.../ui/` must follow them. If a request seems to conflict with them, ask the owner.
+
+**Scope**
+- Implement exactly what was asked. Do not redesign, restyle, reorder or "clean up" screens that nobody asked about. Raise extra ideas as proposals and wait for an explicit yes.
+- Never remove a feature or a screen as a side effect.
+
+**Components and style**
+- Use stock Material 3 components with their default parameters: `Scaffold`, `TopAppBar`, `NavigationBar`, `ModalBottomSheet`, `ListItem`, `Button`, `FilledTonalButton`, `SegmentedButton` and `FloatingActionButton`.
+- Do not pass style parameters such as `contentPadding`, `border`, `colors`, `shape`, custom elevation or `fontSize`. There are no hex colors and no monospace font.
+- To make two actions look alike, use the same component for both. Do not override one to imitate the other.
+- The only agreed overrides are:
+  - the RSSI band colors (green, amber, red);
+  - the red idle record FAB with a white dot;
+  - `loweredElevation` on the record and scroll-to-top FABs;
+  - the 1 dp shadow on the record control and pill;
+  - the chart and sparkline `Canvas`;
+  - the blinking dot.
+- The UI is English only. Use plain text labels, no check or cross symbols.
+
+**Lists**
+- A list the user can tap must never re-order by itself. Sort once, when the list appears or the user changes the sort. After that, rows keep their positions: values update in place and new rows are appended. Only an explicit action re-sorts (pull-to-refresh or changing the sort).
+- Scan sorts once by RSSI 3 s after the first device. Stale rows dim in place.
+
+**Vocabulary**
+- Use "scan", never "heard": "Scanned now", "8 scanned now", "Last scanned 2 h ago".
+- A device row shows the device's own advertised name, live or stored from recordings. If it has none, show "No name". Never fall back to the product or wiki title.
+- Do not show the address type. Show RSSI as "−56 dBm", small and inline.
+
+**Recording**
+- Recording starts only from the FAB on Scan. While recording, the top-right pill (blinking dot plus time) appears on every other page. It is an overlay, so no title-bar slot is reserved, and tapping it opens the control bar (pause/resume and stop).
+- On Scan, the expanded control sits at the bottom right: blinking dot, time, pause and stop.
+- No snackbar after a successful stop. Errors only.
+- History hides recordings that have no data.
+
+**Device sheet**
+- The sheet wraps its content and never covers the top app bar.
+- The chart covers the last 1 minute only, with no window selector. The end marker is the current reading, with the same value and color as the number. There are no band text labels, only the −65 and −80 ticks.
+- Discover GATT is a filled `Button`. View on map and Wiki are `FilledTonalButton`s.
+
+**Filters**
+- "Hide unnamed Apple devices" is on by default. It hides every 0x004C device without a local name and affects the UI only, never recording or data.
+
+**Verification**
+- Before handing over a build, run it on the emulator AVD `cluetooth-test`, and on the test phone `R58M81J3YJV` when it's connected. Check every screen you touched, including watching each list for 60 s. Check `logcat -b crash`.
+- Name APKs `cluetooth-0.1.0-debug-<sha8>.apk`. Never overwrite an existing APK.
