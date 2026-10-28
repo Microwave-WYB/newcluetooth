@@ -12,7 +12,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.coordinatesText
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,7 +58,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,6 +74,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SheetLayer
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.Sparkline
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.StatusLine
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.devicesText
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.filterScanRows
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
 import androidx.compose.ui.res.stringResource
 import androidx.annotation.StringRes
@@ -78,6 +94,47 @@ import kotlinx.coroutines.launch
 
 /** What the stop snackbar reports. */
 data class SavedRecording(val durationSeconds: Int, val sightings: Int)
+
+/**
+ * "26 devices · 32.88012, -117.23421 ±8 m": the device count and where the phone is. The
+ * coordinates are monospace and a long press copies them.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ScanSubtitle(devices: String, location: ScanLocation) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val copied = stringResource(R.string.scan_location_copied)
+    val mono = SpanStyle(fontFamily = MonoFamily)
+    val text = buildAnnotatedString {
+        append(devices)
+        append(" · ")
+        when (location) {
+            ScanLocation.Unavailable -> append(stringResource(R.string.scan_location_unavailable))
+            is ScanLocation.Stale -> append(stringResource(R.string.scan_location_stale, location.minutes))
+            is ScanLocation.Fix -> {
+                withStyle(mono) { append(coordinatesText(location.lat, location.lon)) }
+                if (location.accuracyMeters != null) {
+                    append(" ")
+                    append(stringResource(R.string.scan_location_accuracy, location.accuracyMeters))
+                }
+            }
+        }
+    }
+    val copy: (() -> Unit)? = (location as? ScanLocation.Fix)?.let { fix ->
+        {
+            clipboard.setText(AnnotatedString(coordinatesText(fix.lat, fix.lon)))
+            Toast.makeText(context, copied, Toast.LENGTH_SHORT).show()
+        }
+    }
+    Text(
+        text,
+        modifier = if (copy != null) Modifier.combinedClickable(onClick = {}, onLongClick = copy) else Modifier,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+    )
+}
 
 /** A one-line problem under a page header (Bluetooth off, no location fix, ...); nothing when null. */
 @Composable
@@ -128,6 +185,26 @@ private fun StaticRefreshIndicator(modifier: Modifier) {
     }
 }
 
+/** Remembers whether the current drag began with the list scrolled to the top. */
+private class PullStartTracker(private val listState: LazyListState) : NestedScrollConnection {
+    var startedAtTop = true
+        private set
+    private var dragging = false
+
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        if (source == NestedScrollSource.UserInput && !dragging) {
+            dragging = true
+            startedAtTop = !listState.canScrollBackward
+        }
+        return Offset.Zero
+    }
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+        dragging = false
+        return Velocity.Zero
+    }
+}
+
 /** The list keeps its order; only the numbers update. Pull-to-refresh re-sorts. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -141,9 +218,12 @@ fun ScanList(
 ) {
     val static = LocalStaticRender.current
     val pullState = rememberPullToRefreshState()
+    // Only a drag that starts with the list already at the top may refresh (and so re-sort). Dragging
+    // down from the middle of the list and running into the top must not shuffle the rows.
+    val gesture = remember(listState) { PullStartTracker(listState) }
     PullToRefreshBox(
         isRefreshing = refreshing,
-        onRefresh = onRefresh,
+        onRefresh = { if (gesture.startedAtTop) onRefresh() },
         modifier = modifier,
         // Previews render one frame, before the default indicator has animated in.
         indicator = if (static && refreshing) {
@@ -154,7 +234,7 @@ fun ScanList(
         state = pullState,
     ) {
         LazyColumn(
-            Modifier.fillMaxSize().padding(top = if (static && refreshing) 64.dp else 0.dp),
+            Modifier.fillMaxSize().nestedScroll(gesture).padding(top = if (static && refreshing) 64.dp else 0.dp),
             state = listState,
             contentPadding = PaddingValues(bottom = 112.dp),
         ) {
@@ -173,18 +253,18 @@ fun ScanPage(
     onRefresh: () -> Unit = {},
     onRowClick: (DeviceRowState) -> Unit = {},
     onSettings: (() -> Unit)? = null,
+    location: ScanLocation = ScanLocation.Unavailable,
     /** A scanner problem (Bluetooth off, no permission), shown under the status line. */
     notice: Int? = null,
 ) {
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
-    val q = query.trim().lowercase()
-    val shown = if (!searching || q.isEmpty()) rows else rows.filter { (it.name.orEmpty() + " " + it.mac).lowercase().contains(q) }
+    val shown = filterScanRows(rows, searching, query)
     Column(modifier.fillMaxSize()) {
         V3TopBar(
             title = stringResource(R.string.tab_scan),
             status = {
-                StatusLine(devicesText(rows.size, LocalTexts.current))
+                ScanSubtitle(devicesText(rows.size, LocalTexts.current), location)
                 HeaderNotice(notice)
             },
             actions = {

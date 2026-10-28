@@ -90,6 +90,13 @@
     <string name="today_day">Today · %1$s</string>
     <string name="yesterday_day">Yesterday · %1$s</string>
 
+    <!-- Scan subtitle: location -->
+    <string name="scan_subtitle">%1$s · %2$s</string>
+    <string name="scan_location_unavailable">Location unavailable</string>
+    <string name="scan_location_stale">Location stale (%1$d min)</string>
+    <string name="scan_location_accuracy">±%1$d m</string>
+    <string name="scan_location_copied">Coordinates copied</string>
+
     <!-- Scan rows and detail -->
     <string name="connectable">Connectable</string>
     <string name="not_connectable">Not connectable</string>

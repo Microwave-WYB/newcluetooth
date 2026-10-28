@@ -30,7 +30,10 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ScanOrder
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveScanList
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LocationFix
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.scanLocationOf
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.estimatePosition
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.toRecorderUi
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AddressType
@@ -59,10 +62,13 @@ import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -88,6 +94,9 @@ data class MapLocal(
     val areaOnly: Boolean = false,
     val viewport: GeoBounds? = null,
 )
+
+/** Why the Scan list was sorted; the page scrolls back to the top for it. */
+enum class ListSort { Initial, Refresh }
 
 /** What the stop snackbar reports, and which recording it is about. */
 data class SavedInfo(val summary: SavedRecording, val recordingId: String?)
@@ -225,19 +234,26 @@ class V3ViewModel(
 
     // ---- live scan ------------------------------------------------------------------------
 
-    private val lock = Any()
-    private val tracker = LiveDeviceTracker()
-    private val order = ScanOrder()
+    private val scanList = LiveScanList()
+    private val lock = scanList.lock
+    private val tracker = scanList.tracker
     private val _scanRows = MutableStateFlow<List<DeviceRowState>>(emptyList())
     private val _tick = MutableStateFlow(System.currentTimeMillis())
     private val _refreshing = MutableStateFlow(false)
 
-    /** Bumped whenever the list was re-sorted, so the page can scroll back to the top. */
-    private val _sortVersion = MutableStateFlow(0)
-    val sortVersion: StateFlow<Int> = _sortVersion
+    /**
+     * One event per sort (the first one, then each pull to refresh), so the page can scroll back to
+     * the top. An event, not state: re-entering the composition must not replay it.
+     */
+    private val _sorts = MutableSharedFlow<ListSort>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val sorts: SharedFlow<ListSort> = _sorts
     val refreshing: StateFlow<Boolean> = _refreshing
 
-    val scanState: StateFlow<ScanUiState> = combine(_scanRows, recorder) { rows, rec -> ScanUiState(rows, rec) }
+    private val scanLocation: Flow<ScanLocation> = combine(app.locationService.currentLocation, _tick) { fix, now ->
+        scanLocationOf(fix?.let { LocationFix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy else null, it.time) }, now)
+    }.distinctUntilChanged()
+
+    val scanState: StateFlow<ScanUiState> = combine(_scanRows, recorder, scanLocation) { rows, rec, location -> ScanUiState(rows, rec, location) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ScanUiState(emptyList(), RecorderUiState()))
 
     // ---- recording lifecycle state (read by onTransition) ----
@@ -279,10 +295,7 @@ class V3ViewModel(
             uiActive.collectLatest { active ->
                 if (active) {
                     app.bleScanService.liveScans.collect { scan ->
-                        val now = System.currentTimeMillis()
-                        synchronized(lock) {
-                            if (tracker.onSample(scan.toSample())) order.onDevice(scan.addr, now)
-                        }
+                        scanList.onSample(scan.toSample(), System.currentTimeMillis())
                     }
                 }
             }
@@ -351,16 +364,10 @@ class V3ViewModel(
         }
     }
 
-    private fun publish() {
-        val now = System.currentTimeMillis()
-        var sorted = false
-        val rows = synchronized(lock) {
-            order.remove(tracker.prune(now))
-            sorted = order.tick(now, tracker::rssi) { tracker.isStale(it, now) }
-            order.addrs.mapNotNull { tracker.row(it, now) }
-        }
-        if (sorted) _sortVersion.update { it + 1 }
-        _scanRows.value = rows
+    private fun publish(snapshot: LiveScanList.Snapshot? = null, now: Long = System.currentTimeMillis()) {
+        val snap = snapshot ?: scanList.publish(now)
+        if (snap.sorted) _sorts.tryEmit(ListSort.Initial)
+        _scanRows.value = snap.rows
         _tick.value = now
     }
 
@@ -368,9 +375,9 @@ class V3ViewModel(
     fun refreshScan() {
         viewModelScope.launch {
             _refreshing.value = true
-            withContextDefault { synchronized(lock) { val now = System.currentTimeMillis(); order.resort(tracker::rssi) { tracker.isStale(it, now) } } }
-            publish()
-            _sortVersion.update { it + 1 }
+            val now = System.currentTimeMillis()
+            publish(withContextDefault { scanList.refresh(now) }, now)
+            _sorts.tryEmit(ListSort.Refresh)
             delay(500)
             _refreshing.value = false
         }

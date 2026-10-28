@@ -59,7 +59,18 @@ data class DeviceRowState(
 data class ScanUiState(
     val rows: List<DeviceRowState>,
     val recorder: RecorderUiState,
+    val location: ScanLocation = ScanLocation.Unavailable,
 )
+
+/** What the Scan subtitle says about the phone's own position. */
+sealed interface ScanLocation {
+    data object Unavailable : ScanLocation
+
+    data class Fix(val lat: Double, val lon: Double, val accuracyMeters: Int?) : ScanLocation
+
+    /** The last fix is older than a minute. */
+    data class Stale(val minutes: Int) : ScanLocation
+}
 
 // ---- Device detail -------------------------------------------------------------------------
 

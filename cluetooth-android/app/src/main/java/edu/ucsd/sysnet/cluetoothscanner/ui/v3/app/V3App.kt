@@ -110,9 +110,10 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             else -> null
         }
 
-        val sortVersion by vm.sortVersion.collectAsStateWithLifecycle()
-        // A re-sort moves the rows under a keyed list; start again from the top.
-        LaunchedEffect(sortVersion) { if (sortVersion > 0) listState.scrollToItem(0) }
+        // A sort moves the rows under a keyed list, and the list follows the item that was first on screen
+        // to its new place; start again from the top. (Not conditional on where the list is by then: it has
+        // already followed the item when this runs.)
+        LaunchedEffect(vm) { vm.sorts.collect { listState.scrollToItem(0) } }
 
         // Back: the control bar (closed in AppShell, composed last), the sheet, the selection, then pages;
         // on the Nearby and History tabs it goes to the Scan tab before leaving the app.
@@ -133,6 +134,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             tab = tab,
             onTab = vm::selectTab,
             showScrollToTop = showTop,
+            snackbarShown = problem != null || saved != null,
             onScrollToTop = { scope.launch { listState.animateScrollToItem(0) } },
             controlBarOpen = controlBarOpen,
             onDismissControlBar = { vm.setControlBar(false) },
@@ -162,6 +164,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                 is Route.Tab -> when (route.tab) {
                     AppTab.Scan -> ScanPage(
                         rows = scan.rows,
+                        location = scan.location,
                         listState = listState,
                         refreshing = vm.refreshing.collectAsStateWithLifecycle().value,
                         onRefresh = vm::refreshScan,

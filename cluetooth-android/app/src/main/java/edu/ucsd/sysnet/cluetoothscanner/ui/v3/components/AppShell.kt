@@ -48,6 +48,9 @@ val LocalRecordPillInset = compositionLocalOf { 0.dp }
 /** Pill width for a time with or without an hour part, plus a gap. */
 private fun pillInset(elapsedSeconds: Int): Dp = if (elapsedSeconds >= 3600) 108.dp else 92.dp
 
+/** The page's snackbar is 52 dp tall and sits 12 dp above the navigation; the button clears it by 8 dp more. */
+private val SnackbarClearance = 52.dp + 12.dp - 16.dp + 8.dp
+
 /**
  * A page with its own bottom sheet (the map pages) reports the sheet's height here, so the
  * bottom-right record button rides above it instead of covering its rows.
@@ -86,6 +89,8 @@ fun AppShell(
     onTab: (AppTab) -> Unit = {},
     showScrollToTop: Boolean = false,
     onScrollToTop: () -> Unit = {},
+    /** A snackbar is up at the bottom; the bottom-right button moves above it instead of sitting under it. */
+    snackbarShown: Boolean = false,
     controlBarOpen: Boolean = false,
     onDismissControlBar: () -> Unit = {},
     overlay: @Composable BoxScope.() -> Unit = {},
@@ -96,6 +101,9 @@ fun AppShell(
     val pillShown = placement == RecordPlacement.Pill
     val target = if (pillShown) pillInset(recorder.elapsedSeconds) else 0.dp
     val inset = if (LocalStaticRender.current) target else animateDpAsState(target, label = "pill-inset").value
+    // Snackbar height plus the gap the page puts around it, so the button clears it.
+    val snackbarTarget = if (snackbarShown) SnackbarClearance else 0.dp
+    val snackbarLift = if (LocalStaticRender.current) snackbarTarget else animateDpAsState(snackbarTarget, label = "snackbar-lift").value
 
     SharedTransitionLayout(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val scope = this
@@ -113,7 +121,7 @@ fun AppShell(
                 }
                 // Bottom-right record control, with the scroll-to-top button stacked directly above it.
                 val navBottom = WindowInsets.navigationBars
-                val tabHeight = if (tab != null) 64.dp else 0.dp
+                val tabHeight = (if (tab != null) 64.dp else 0.dp) + snackbarLift
                 Column(
                     Modifier.align(Alignment.BottomEnd).navigationBarsPadding()
                         .padding(end = 16.dp, bottom = tabHeight + 16.dp)

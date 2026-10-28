@@ -92,6 +92,7 @@ private fun ScanPreview(
         placement = recordPlacement(state.recorder.phase, roomForExpanded = detail == null && !controlBar),
         tab = AppTab.Scan,
         showScrollToTop = showTop,
+        snackbarShown = saved != null,
         controlBarOpen = controlBar,
         overlay = { if (detail != null) ScanDeviceSheet(detail, DeviceDetailActions(), {}) },
         snackbar = { if (saved != null) SavedSnackbarHost(saved) },
@@ -205,6 +206,7 @@ private fun RecordingsPreview(state: RecordingsUiState, saved: SavedRecording? =
     callbacks = cb,
     placement = recordPlacement(state.recorder.phase, roomForExpanded = false),
     tab = AppTab.History,
+    snackbarShown = saved != null,
     snackbar = { if (saved != null) SavedSnackbarHost(saved) },
 ) { RecordingsPage(state) }
 
