@@ -7,7 +7,7 @@ import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
 import edu.ucsd.sysnet.cluetoothscanner.local.AdvertisementMatcher
-import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataSink
+import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
 import edu.ucsd.sysnet.cluetoothscanner.local.NativeAdvertisementMatcher
 import edu.ucsd.sysnet.cluetoothscanner.local.RecordedDevice
 import edu.ucsd.sysnet.cluetoothscanner.local.Sighting
@@ -89,7 +89,6 @@ data class SavedInfo(val summary: SavedRecording, val recordingId: String?)
 @OptIn(ExperimentalCoroutinesApi::class)
 class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     private val localData = app.localData
-    private val sink = app.localData as? LocalDataSink
     private val recording = app.recordingController
     private val gatt = app.gattManager
     private val notes = RecordingNotes(app)
@@ -182,15 +181,20 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     val scanState: StateFlow<ScanUiState> = combine(_scanRows, recorder) { rows, rec -> ScanUiState(rows, rec) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, ScanUiState(emptyList(), RecorderUiState()))
 
-    /** Why scanning is not running, in words; null when it is fine. */
-    val scanNotice: StateFlow<String?> = combine(app.bleScanService.scanStatus, recording.state) { status, rec ->
+    /** A scanner or local-data problem in words, shown unobtrusively under the status line; null when all is well. */
+    val scanNotice: StateFlow<String?> = combine(app.bleScanService.scanStatus, recording.state, localData.status) { status, rec, data ->
         if (rec.scannerDeferred) return@combine "录制在等待蓝牙恢复"
-        when (status.state) {
+        val scanner = when (status.state) {
             ScanOperatingState.BLUETOOTH_OFF -> "蓝牙已关闭，打开后继续扫描"
             ScanOperatingState.SCANNER_UNAVAILABLE -> "蓝牙扫描暂时不可用，正在重试"
             ScanOperatingState.PAUSED_BACKPRESSURE -> "正在保存，稍后自动恢复扫描"
             ScanOperatingState.FAILED -> "无法开始扫描，请检查蓝牙权限"
             ScanOperatingState.SCANNING, ScanOperatingState.STOPPED -> null
+        }
+        scanner ?: when (data.state) {
+            LocalDataStatus.State.UNAVAILABLE -> "本地数据库不可用，暂时不记录历史"
+            LocalDataStatus.State.IDENTIFICATION_UNAVAILABLE -> "产品识别不可用"
+            LocalDataStatus.State.STARTING, LocalDataStatus.State.READY -> null
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -206,10 +210,6 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 val now = System.currentTimeMillis()
                 synchronized(lock) {
                     if (tracker.onSample(scan.toSample())) order.onDevice(scan.addr, now)
-                }
-                // While rows are written the repository feeds the stores itself.
-                if (recorder.value.phase != RecorderPhase.Recording) {
-                    sink?.onAdvertisement(scan.addr, scan.rssi, scan.raw, scan.scannedAtMs)
                 }
             }
         }

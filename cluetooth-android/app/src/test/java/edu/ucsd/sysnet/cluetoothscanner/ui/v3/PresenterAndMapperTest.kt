@@ -139,9 +139,10 @@ class EstimateTest {
 
 class MapperTest {
     private val catalog = WikiCatalog(
-        1, "v",
-        listOf(WikiCategory("audio-device", "Audio", "音频设备"), WikiCategory("wearable", "Wearable", "可穿戴设备")),
-        listOf(
+        schema = 1,
+        version = "v",
+        categories = listOf(WikiCategory("audio-device", "Audio", "音频设备"), WikiCategory("wearable", "Wearable", "可穿戴设备")),
+        pages = listOf(
             WikiPage("model--a", "Headset A", PageKind.DEVICE, "A headset. More text.", listOf("audio-device"), null, true),
             WikiPage("model--b", "Band B", PageKind.DEVICE, "A band", listOf("wearable"), null, true),
             WikiPage("cohort--c", "Cohort C", PageKind.IDENTIFIER, "Something", emptyList(), null, true),
