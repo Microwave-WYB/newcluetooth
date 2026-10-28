@@ -1,5 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.data
 
+import edu.ucsd.sysnet.cluetoothscanner.ble.AdTraits
 import edu.ucsd.sysnet.cluetoothscanner.ble.BleParser
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdField
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdStructureRow
@@ -103,6 +104,9 @@ class LiveDeviceTracker {
         var legacy = true
         var addrType: Int? = null
         var spot: LiveSpot? = null
+        /** For the "hide unnamed Apple devices" display filter: Apple's company id or a name in any advertisement. */
+        var apple = false
+        var named = false
         val ring = RssiRing()
 
         /** Access order: the variant least recently heard is the one evicted when full. */
@@ -138,6 +142,9 @@ class LiveDeviceTracker {
             if (d.variants.size >= MAX_VARIANTS) d.variants.remove(d.variants.keys.first())
             Variant(key, s.raw, legacy, s.primaryPhy, s.secondaryPhy, s.advSid, connectable, s.timeMs).also {
                 (s.localName ?: advertisedName(s.raw))?.let { name -> d.name = name }
+                val traits = AdTraits.of(s.raw)
+                d.apple = d.apple || traits.apple
+                d.named = d.named || traits.named
             }
         }
         v.lastMs = s.timeMs
@@ -147,6 +154,9 @@ class LiveDeviceTracker {
     fun rssi(addr: String): Int? = devices[addr]?.rssi
 
     fun lastSeenMs(addr: String): Long? = devices[addr]?.lastSeenMs
+
+    /** Hidden by the "hide unnamed Apple devices" display filter (see [AdTraits.unnamedApple]). */
+    fun isUnnamedApple(addr: String): Boolean = devices[addr]?.let { it.apple && !it.named && it.name.isNullOrBlank() } ?: false
 
     /** Where the phone was when it heard [addr] the strongest, if it had a fix. */
     fun spot(addr: String): LiveSpot? = devices[addr]?.spot

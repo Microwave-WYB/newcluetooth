@@ -9,6 +9,7 @@ object AppSettings {
     private const val KEY_CODED_PHY = "scan_coded_phy"
     private const val KEY_AUTO_RECORD = "auto_record"
     private const val KEY_ONBOARDED = "onboarded"
+    private const val KEY_HIDE_UNNAMED_APPLE = "hide_unnamed_apple"
 
     fun isWifiOnlyUpload(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -42,6 +43,14 @@ object AppSettings {
 
     fun setAutoRecord(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTO_RECORD, enabled).apply()
+    }
+
+    /** Display filter (on by default): screens leave out unnamed Apple devices; nothing else reads it. */
+    fun isHideUnnamedApple(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(KEY_HIDE_UNNAMED_APPLE, true)
+
+    fun setHideUnnamedApple(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_HIDE_UNNAMED_APPLE, enabled).apply()
     }
 
     /** First-launch onboarding finished (permissions, Bluetooth, user ID, auto-record). */

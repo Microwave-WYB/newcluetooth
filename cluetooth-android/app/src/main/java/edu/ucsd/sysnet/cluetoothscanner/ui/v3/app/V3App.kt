@@ -265,6 +265,7 @@ fun V3App(
                         onAutoRecord = vm::setAutoRecord,
                         onWifiOnly = vm::setWifiOnly,
                         onCodedPhy = vm::setCodedPhy,
+                        onHideUnnamedApple = vm::setHideUnnamedApple,
                         onUploadNow = vm::uploadNow,
                     ),
                     padding,

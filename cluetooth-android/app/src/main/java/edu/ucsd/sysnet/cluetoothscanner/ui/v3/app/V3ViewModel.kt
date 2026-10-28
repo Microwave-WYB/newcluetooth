@@ -14,6 +14,7 @@ import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
 import edu.ucsd.sysnet.cluetoothscanner.local.GeoBounds as LocalBounds
+import edu.ucsd.sysnet.cluetoothscanner.local.InRangeSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataHub
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
 import edu.ucsd.sysnet.cluetoothscanner.local.RecordedDevice
@@ -27,6 +28,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecorderCallbacks
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDistance
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDuration
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.DiscoverMapper
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.DisplayFilter
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
@@ -200,6 +202,7 @@ class V3ViewModel(
             autoRecord = AppSettings.isAutoRecord(app),
             wifiOnly = uploadService.isWifiOnlyUpload(),
             codedPhy = AppSettings.isCodedPhyEnabled(app),
+            hideUnnamedApple = AppSettings.isHideUnnamedApple(app),
             pendingUploads = pending,
             canUploadNow = pending > 0 || s.activePayloadRows > 0u,
             version = BuildConfig.VERSION_NAME,
@@ -219,6 +222,12 @@ class V3ViewModel(
     fun setWifiOnly(on: Boolean) { uploadService.setWifiOnlyUpload(on); settingsRevision.update { it + 1 } }
 
     fun setCodedPhy(on: Boolean) { AppSettings.setCodedPhyEnabled(app, on); settingsRevision.update { it + 1 } }
+
+    /** Display filter only (see DisplayFilter); the screens follow it as soon as it changes. */
+    private val hideApple: StateFlow<Boolean> = settingsRevision.map { AppSettings.isHideUnnamedApple(app) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings.isHideUnnamedApple(app))
+
+    fun setHideUnnamedApple(on: Boolean) { AppSettings.setHideUnnamedApple(app, on); settingsRevision.update { it + 1 } }
 
     /** Seal what is buffered, then upload everything pending now (also the History menu's retry). */
     fun uploadNow() {
@@ -446,7 +455,9 @@ class V3ViewModel(
     private fun publish(snapshot: LiveScanList.Snapshot? = null, now: Long = System.currentTimeMillis(), resorted: Boolean = false) {
         val snap = snapshot ?: scanList.publish(now)
         val version = _scanRows.value.second + if (snap.sorted || resorted) 1 else 0
-        _scanRows.value = snap.rows to version
+        // The display filter leaves rows out of what is shown (and counted); the list and its order are untouched.
+        val rows = if (hideApple.value) synchronized(lock) { snap.rows.filterNot { tracker.isUnnamedApple(it.id) } } else snap.rows
+        _scanRows.value = rows to version
         _tick.value = now
     }
 
@@ -591,11 +602,41 @@ class V3ViewModel(
     private val minute: Flow<Long> = _tick.map { it / 60_000 }.distinctUntilChanged()
 
     val discover: StateFlow<DiscoverUiState> =
-        combine(recorder, localData.productsInRange(), localData.previouslySeenProducts(), minute) { rec, inRange, seen, _ ->
-            DiscoverMapper.map(rec, inRange, seen, texts, System.currentTimeMillis())
+        combine(
+            combine(recorder, localData.productsInRange(), localData.previouslySeenProducts(), minute) { rec, inRange, seen, _ -> Triple(rec, inRange, seen) },
+            hideApple,
+            localData.pagesOnlyFromUnnamedApple(),
+        ) { (rec, inRange, seen), hide, applePages ->
+            if (!hide) return@combine DiscoverMapper.map(rec, inRange, seen, texts, System.currentTimeMillis())
+            // In range: counted again over the devices still shown. Seen before: a product only ever heard
+            // from unnamed Apple devices is left out.
+            val visible = visibleInRange(inRange)
+            val live = visible.products.mapTo(HashSet()) { it.page.id }
+            val seenShown = seen.map { g -> g.copy(products = g.products.filter { it.page.id !in applePages || it.page.id in live }) }
+            DiscoverMapper.map(rec, visible, seenShown, texts, System.currentTimeMillis())
         }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DiscoverUiState(RecorderUiState(), emptyList(), emptyList()))
+
+    /** The in-range products recounted over the live devices the display filter keeps (strongest RSSI too). */
+    private fun visibleInRange(snapshot: InRangeSnapshot): InRangeSnapshot {
+        class Acc(var devices: Int = 0, var rssi: Int? = null)
+        val shown = synchronized(lock) {
+            tracker.advertisements().filterKeys { addr ->
+                !tracker.isUnnamedApple(addr) && snapshot.atMs - (tracker.lastSeenMs(addr) ?: 0) <= snapshot.windowMs
+            }.mapValues { (addr, raws) -> raws to tracker.rssi(addr) }
+        }
+        val byPage = HashMap<String, Acc>()
+        for ((addr, v) in shown) {
+            val (raws, rssi) = v
+            for (page in raws.flatMap { pagesFor(addr, it) }.toSet()) {
+                val acc = byPage.getOrPut(page) { Acc() }
+                acc.devices++
+                if (rssi != null && (acc.rssi == null || rssi > acc.rssi!!)) acc.rssi = rssi
+            }
+        }
+        return snapshot.copy(products = snapshot.products.mapNotNull { p -> byPage[p.page.id]?.let { p.copy(deviceCount = it.devices, strongestRssi = it.rssi) } })
+    }
 
     /** The wiki's word on a product, for its page; null until the catalog is loaded. */
     fun productHeader(pageId: String): ProductHeaderState? = localData.catalog.value?.page(pageId)?.let(DiscoverMapper::header)
@@ -613,7 +654,8 @@ class V3ViewModel(
         localData.recordings(),
         app.repository.uiState.map { s -> if (s.coreReady) s.sessions.associate { it.sessionId to it.uploadState } else emptyMap() }.distinctUntilChanged(),
         allNotes,
-    ) { rec, list, uploads, noteMap -> RecordingMapper.state(rec, list, uploads, noteMap, texts) }
+        combine(hideApple, localData.unnamedAppleDevicesPerRecording()) { hide, counts -> if (hide) counts else emptyMap() },
+    ) { rec, list, uploads, noteMap, hidden -> RecordingMapper.state(rec, list, uploads, noteMap, texts, hiddenDevices = hidden) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecordingsUiState(RecorderUiState(), null, emptyList()))
 
@@ -683,8 +725,11 @@ class V3ViewModel(
         }
         val extras = combine(selectedDetail, heatFlow, areaFlow) { det, heatRows, area -> Triple(det, heatRows, area) }
         return combine(data, selectedHistory, _selected, _mapLocal, extras) { d, history, selected, local, (det, heatRows, areaAddrs) ->
-            val (r, route, devices) = d.first
+            val (r, route, allDevices) = d.first
             if (r == null) return@combine null
+            val hide = hideApple.value
+            val devices = DisplayFilter.devices(allDevices, hide)
+            val hiddenAddrs = if (hide) allDevices.filter { it.unnamedApple }.mapTo(HashSet()) { it.addr } else emptySet()
             val routePts = route.map { LatLon(it.lat, it.lon) }
             val rows = devices.map { dev: RecordedDevice ->
                 val title = titleFor(dev.addr, dev.pageIds)
@@ -699,9 +744,10 @@ class V3ViewModel(
                     at = dev.bestLocation?.let { LatLon(it.lat, it.lon) },
                 )
             }.arranged(local, areaAddrs)
-            val points = history.filter { it.recordingId == id }.mapNotNull { s -> s.location?.let { SightingPoint(LatLon(it.lat, it.lon), s.bestRssi ?: -90) } }
+            val points = history.filter { it.recordingId == id && it.addr !in hiddenAddrs }.mapNotNull { s -> s.location?.let { SightingPoint(LatLon(it.lat, it.lon), s.bestRssi ?: -90) } }
             val estimate = if (selected != null) estimatePosition(points) else null
-            val heat = thinForHeat(heatRows.mapNotNull { s -> s.location?.let { LatLon(it.lat, it.lon) } })
+            val heat = thinForHeat(heatRows.filter { it.addr !in hiddenAddrs }.mapNotNull { s -> s.location?.let { LatLon(it.lat, it.lon) } })
+            val deviceCount = r.deviceCount - hiddenAddrs.size
             val start = LocalDateTime.ofInstant(Instant.ofEpochMilli(r.startedAtMs), ZoneId.systemDefault())
             MapUiState(
                 mode = MapMode.Recording,
@@ -711,7 +757,7 @@ class V3ViewModel(
                     if (r.active) texts.string(R.string.history_in_progress) else null,
                     formatDuration((r.durationMs / 1000).toInt(), texts),
                     r.distanceMeters.toInt().takeIf { it > 0 }?.let(::formatDistance),
-                    if (r.active && r.deviceCount == 0) null else texts.plural(R.plurals.devices, r.deviceCount, r.deviceCount),
+                    if (r.active && deviceCount == 0) null else texts.plural(R.plurals.devices, deviceCount, deviceCount),
                 ).joinToString(" · "),
                 listHint = if (r.active && rows.isEmpty()) texts.string(R.string.recording_devices_pending) else null,
                 route = routePts,
@@ -758,7 +804,16 @@ class V3ViewModel(
         productTitle: String? = null,
         deviceAddr: String? = null,
     ): Flow<MapUiState?> =
-        combine(combine(sightings, live) { a, b -> a to b }, localData.catalog, _selected, _mapLocal, selectedDetail) { (all, liveHits), catalog, selected, local, det ->
+        combine(combine(sightings, live) { a, b -> a to b }, localData.catalog, _selected, _mapLocal, selectedDetail) { (allRows, allHits), catalog, selected, local, det ->
+            // Display filter: a device heard now is judged on everything it advertised, a recorded one on its rows.
+            val hiddenAddrs: Set<String> = if (hideApple.value) {
+                synchronized(lock) { allHits.filter { tracker.isUnnamedApple(it.addr) }.mapTo(HashSet()) { it.addr } } +
+                    DisplayFilter.unnamedAppleAddrs(allRows).filter { addr -> allHits.none { it.addr == addr } }
+            } else {
+                emptySet()
+            }
+            val all = allRows.filter { it.addr !in hiddenAddrs }
+            val liveHits = allHits.filter { it.addr !in hiddenAddrs }
             val located = all.filter { it.location != null }
             fun point(s: Sighting) = SightingPoint(LatLon(s.location!!.lat, s.location.lon), s.bestRssi ?: -90)
             fun livePoint(h: LiveHit) = h.spot?.let { SightingPoint(LatLon(it.lat, it.lon), it.rssi) }

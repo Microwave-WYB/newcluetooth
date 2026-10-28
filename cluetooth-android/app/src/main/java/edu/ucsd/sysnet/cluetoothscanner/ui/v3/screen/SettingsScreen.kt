@@ -41,6 +41,7 @@ data class SettingsActions(
     val onAutoRecord: (Boolean) -> Unit = {},
     val onWifiOnly: (Boolean) -> Unit = {},
     val onCodedPhy: (Boolean) -> Unit = {},
+    val onHideUnnamedApple: (Boolean) -> Unit = {},
     val onUploadNow: () -> Unit = {},
 )
 
@@ -64,6 +65,13 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, padding: P
         item { SwitchItem(stringResource(R.string.settings_auto_record), stringResource(R.string.settings_auto_record_detail), state.autoRecord, actions.onAutoRecord) }
         item { SwitchItem(stringResource(R.string.settings_wifi_only), null, state.wifiOnly, actions.onWifiOnly) }
         item { SwitchItem(stringResource(R.string.settings_coded_phy), stringResource(R.string.settings_coded_phy_detail), state.codedPhy, actions.onCodedPhy) }
+        item { SectionLabel(stringResource(R.string.settings_filters)) }
+        item {
+            SwitchItem(
+                stringResource(R.string.settings_hide_unnamed_apple), stringResource(R.string.settings_hide_unnamed_apple_detail),
+                state.hideUnnamedApple, actions.onHideUnnamedApple,
+            )
+        }
         item {
             ListItem(
                 headlineContent = { Text(stringResource(R.string.settings_pending)) },

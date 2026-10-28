@@ -676,6 +676,12 @@ class LocalDataHub(
             store.sightingsOfDevice(addr, limit)
         }
 
+    override fun pagesOnlyFromUnnamedApple(): Flow<Set<String>> =
+        query("unnamed-apple-pages", listOf(Group.PAYLOADS, Group.REMATCH), heavyQueryIntervalMs, emptySet()) { store.pagesOnlyFromUnnamedApple() }
+
+    override fun unnamedAppleDevicesPerRecording(): Flow<Map<String, Int>> =
+        query("unnamed-apple-recordings", listOf(Group.SIGHTINGS), heavyQueryIntervalMs, emptyMap()) { store.unnamedAppleDevicesPerRecording() }
+
     override fun sightingsOfProduct(pageId: String, limit: Int): Flow<List<Sighting>> =
         query("product:$pageId:$limit", listOf(Group.SIGHTINGS, Group.REMATCH), heavyQueryIntervalMs, emptyList()) {
             store.sightingsOfProduct(pageId, limit)

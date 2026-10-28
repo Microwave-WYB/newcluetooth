@@ -99,12 +99,12 @@ object DiscoverMapper {
 }
 
 object RecordingMapper {
-    fun summary(r: Recording, upload: GatewaySessionUploadState?, note: String?) = RecordingSummaryState(
+    fun summary(r: Recording, upload: GatewaySessionUploadState?, note: String?, hiddenDevices: Int = 0) = RecordingSummaryState(
         id = r.id,
         startedAt = Instant.ofEpochMilli(r.startedAtMs).atZone(ZoneId.systemDefault()).toLocalDateTime(),
         durationSeconds = (r.durationMs / 1000).toInt(),
         distanceMeters = r.distanceMeters.toInt(),
-        deviceCount = r.deviceCount,
+        deviceCount = (r.deviceCount - hiddenDevices).coerceAtLeast(0),
         // Never claim an upload that the core has not reported: no state is "unknown", not "uploaded".
         upload = when {
             r.active -> UploadStatus.Uploading
@@ -124,8 +124,10 @@ object RecordingMapper {
         notes: Map<String, String>,
         texts: Texts,
         today: LocalDate = LocalDate.now(),
+        /** Per recording, the devices the display filter leaves out of its count. */
+        hiddenDevices: Map<String, Int> = emptyMap(),
     ): RecordingsUiState {
-        val all = recordings.map { summary(it, uploads[it.id], notes[it.id]) to it.active }
+        val all = recordings.map { summary(it, uploads[it.id], notes[it.id], hiddenDevices[it.id] ?: 0) to it.active }
         val current = all.firstOrNull { it.second }?.first
         // Finished recordings that produced no data ("No data") are hidden here; nothing is deleted.
         val days = all.filter { !it.second && it.first.upload != UploadStatus.Empty }.map { it.first }

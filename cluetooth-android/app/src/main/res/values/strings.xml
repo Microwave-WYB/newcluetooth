@@ -111,6 +111,9 @@
     <string name="settings_wifi_only">Upload over Wi-Fi only</string>
     <string name="settings_coded_phy">Scan LE Coded PHY</string>
     <string name="settings_coded_phy_detail">Also hear long-range devices; applies within a minute</string>
+    <string name="settings_filters">Filters</string>
+    <string name="settings_hide_unnamed_apple">Hide unnamed Apple devices</string>
+    <string name="settings_hide_unnamed_apple_detail">Only what you see; scanning and recording keep everything</string>
     <string name="settings_pending">Pending uploads</string>
     <string name="settings_upload_now">Upload now</string>
     <string name="settings_upload_started">Uploading</string>

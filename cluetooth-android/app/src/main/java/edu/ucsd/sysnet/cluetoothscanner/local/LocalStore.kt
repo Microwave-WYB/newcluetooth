@@ -1,5 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.local
 
+import edu.ucsd.sysnet.cluetoothscanner.ble.AdTraits
 import java.security.MessageDigest
 
 private const val MINUTE_MS = 60_000L
@@ -7,6 +8,7 @@ const val RETENTION_MS = 30L * 24 * 60 * 60 * 1000
 private const val META_RULES_VERSION = "rules_version"
 private const val REMATCH_BATCH = 500
 private const val PRUNE_BATCH = 2_000
+private const val TRAITS_CACHE_SIZE = 8_192
 private const val KEY_BACKFILL_BATCH = 500
 private const val MAX_SEEN_UNKNOWN_GROUPS = 500
 private const val PRUNE_SIGHTING_MINUTES = 6L * 60
@@ -510,13 +512,20 @@ class LocalStore(private val db: SqlDatabase) {
                 "WHERE recording_id = ? AND lat IS NOT NULL GROUP BY addr",
             listOf(recordingId),
         ) { r -> r.string(0) to GeoPoint(r.double(1), r.double(2), r.doubleOrNull(3)) }.toMap()
+        val payloads = db.query(
+            "SELECT DISTINCT addr, payload_id FROM sighting_minute WHERE recording_id = ?", listOf(recordingId),
+        ) { it.string(0) to it.long(1) }.groupBy({ it.first }, { it.second })
+        val traits = traitsOf(payloads.values.flatten())
         return db.query(
             "SELECT addr, MIN(first_ms), MAX(last_ms), MAX(best_rssi), COUNT(DISTINCT minute) FROM sighting_minute " +
                 "WHERE recording_id = ? GROUP BY addr ORDER BY MAX(best_rssi) DESC, addr",
             listOf(recordingId),
         ) { r ->
             val addr = r.string(0)
-            RecordedDevice(addr, r.long(1), r.long(2), r.longOrNull(3)?.toInt(), r.long(4).toInt(), pages[addr].orEmpty(), located[addr])
+            RecordedDevice(
+                addr, r.long(1), r.long(2), r.longOrNull(3)?.toInt(), r.long(4).toInt(), pages[addr].orEmpty(), located[addr],
+                unnamedApple = AdTraits.unnamedApple(null, payloads[addr].orEmpty().mapNotNull { traits[it] }),
+            )
         }
     }
 
@@ -566,10 +575,61 @@ class LocalStore(private val db: SqlDatabase) {
             )
         }
         val pages = pagesOfPayloads(rows.map { it.payloadId })
-        return rows.map { it.sighting.copy(pageIds = pages[it.payloadId].orEmpty()) }
+        val traits = traitsOf(rows.map { it.payloadId })
+        return rows.map { r ->
+            val t = traits[r.payloadId]
+            r.sighting.copy(pageIds = pages[r.payloadId].orEmpty(), apple = t?.apple == true, named = t?.named == true)
+        }
     }
 
     /** payload id -> matched page ids (sorted), for the given payloads. */
+    // ---- Read-only helpers for the "hide unnamed Apple devices" display filter (see AdTraits) ----
+
+    /** Payload traits by id; payload bytes never change, so they are parsed once. */
+    private val traitsCache = object : LinkedHashMap<Long, AdTraits>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, AdTraits>) = size > TRAITS_CACHE_SIZE
+    }
+
+    private fun traitsOf(payloadIds: Collection<Long>): Map<Long, AdTraits> {
+        val out = HashMap<Long, AdTraits>()
+        val missing = ArrayList<Long>()
+        synchronized(traitsCache) {
+            for (id in payloadIds.toSet()) traitsCache[id]?.let { out[id] = it } ?: missing.add(id)
+        }
+        for (chunk in missing.chunked(500)) {
+            // ids are numbers from our own queries: safe to inline
+            db.query("SELECT id, raw FROM seen_payload WHERE id IN (${chunk.joinToString(",")})") { it.long(0) to AdTraits.of(it.blob(1)) }
+                .forEach { (id, t) -> out[id] = t; synchronized(traitsCache) { traitsCache[id] = t } }
+        }
+        return out
+    }
+
+    /**
+     * Pages whose every stored advertisement has Apple's company id and no name. Candidates come from a byte
+     * search for the manufacturer-data header `FF 4C 00`; each is then checked by parsing.
+     */
+    fun pagesOnlyFromUnnamedApple(): Set<String> {
+        val candidates = db.query(
+            "SELECT m.page_id FROM payload_match m JOIN seen_payload p ON p.id = m.payload_id " +
+                "GROUP BY m.page_id HAVING SUM(instr(p.raw, X'FF4C00') > 0) = COUNT(*)",
+        ) { it.string(0) }
+        return candidates.filterTo(HashSet()) { page ->
+            val ids = db.query("SELECT payload_id FROM payload_match WHERE page_id = ?", listOf(page)) { it.long(0) }
+            val traits = traitsOf(ids).values
+            traits.isNotEmpty() && traits.all { it.apple && !it.named }
+        }
+    }
+
+    /** Per recording, how many of its devices are unnamed Apple ones (see [RecordedDevice.unnamedApple]). */
+    fun unnamedAppleDevicesPerRecording(): Map<String, Int> {
+        class Row(val recording: String, val addr: String, val payload: Long)
+        val rows = db.query("SELECT DISTINCT recording_id, addr, payload_id FROM sighting_minute") { Row(it.string(0), it.string(1), it.long(2)) }
+        val traits = traitsOf(rows.map { it.payload })
+        return rows.groupBy { it.recording }.mapValues { (_, list) ->
+            list.groupBy { it.addr }.count { (_, ps) -> AdTraits.unnamedApple(null, ps.mapNotNull { traits[it.payload] }) }
+        }.filterValues { it > 0 }
+    }
+
     private fun pagesOfPayloads(payloadIds: Collection<Long>): Map<Long, List<String>> {
         val out = HashMap<Long, MutableList<String>>()
         for (chunk in payloadIds.toSet().chunked(500)) {

@@ -106,6 +106,14 @@ interface LocalData {
     /** Minute rows whose advertisement matched the page, newest first, at most [limit]. */
     fun sightingsOfProduct(pageId: String, limit: Int = DEFAULT_SIGHTING_LIMIT): Flow<List<Sighting>>
 
+    // Read-only views for the "hide unnamed Apple devices" display filter (see AdTraits) -----
+
+    /** Pages whose every stored advertisement has Apple's company id and no name. */
+    fun pagesOnlyFromUnnamedApple(): Flow<Set<String>> = flowOf(emptySet())
+
+    /** Per recording id, how many of its devices are unnamed Apple ones (absent: none). */
+    fun unnamedAppleDevicesPerRecording(): Flow<Map<String, Int>> = flowOf(emptyMap())
+
     // Bundle updates ----------------------------------------------------------------------
 
     /** The newest re-match that identified something and was not acknowledged; null when none. */

@@ -196,6 +196,8 @@ data class RecordedDevice(
     val pageIds: List<String>,
     /** Where the strongest located sample was heard. */
     val bestLocation: GeoPoint?,
+    /** Read-only, for a display filter: Apple's company id in one of its advertisements and a name in none. */
+    val unnamedApple: Boolean = false,
 )
 
 /** One minute of one device with one advertisement. */
@@ -211,6 +213,9 @@ data class Sighting(
     val location: GeoPoint?,
     val sampleCount: Int,
     val pageIds: List<String>,
+    /** Read-only, for a display filter: the advertisement has Apple's company id / a local name. */
+    val apple: Boolean = false,
+    val named: Boolean = false,
 )
 
 data class RoutePoint(val timeMs: Long, val lat: Double, val lon: Double, val accuracyMeters: Double)

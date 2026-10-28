@@ -279,6 +279,7 @@ data class SettingsUiState(
     val autoRecord: Boolean = false,
     val wifiOnly: Boolean = false,
     val codedPhy: Boolean = true,
+    val hideUnnamedApple: Boolean = true,
     /** Recordings not uploaded yet (pending or failed). */
     val pendingUploads: Int = 0,
     /** Something to upload: a pending recording or rows not sealed yet. */
