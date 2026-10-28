@@ -17,11 +17,13 @@ The design goal is:
   - Uses mise-managed `dbmate`.
   - Local test database config lives under `db/test/`.
 - `cluetooth-core/`
-  - Owns platform-neutral observation batching and schema-v2 pending Parquet state.
+  - Owns platform-neutral observation batching, pending Parquet state (new
+    payloads are schema v3, v2 stays readable) and local `gatt/v1` object storage.
   - Uses Rust, Polars, UUIDv7, Zstd Parquet, and UniFFI.
 - `cluetooth-android/`
   - Owns BLE/location/UI/Firebase/WorkManager platform integration. Phase 4
-    forwards new observations to Rust, uploads Rust-prepared v2 ciphertext, and
+    forwards new observations to Rust, uploads Rust-prepared ciphertext (scan v2
+    and v3, `gatt/v1`), runs the manual GATT engine (debug trigger only), and
     retains strict pre-0.0.5 legacy pending-file upload.
 - `cluetooth-sync/`
   - Owns the sync and ingestion pipeline.
@@ -29,6 +31,11 @@ The design goal is:
     Ruff, basedpyright, pytest, and testcontainers.
 - `cluetooth-agents/`
   - Placeholder for agent/research-oriented code.
+
+Payload contracts: `docs/payload-schema-v2.md` (identity, batching, upload
+state), `docs/payload-schema-v3.md` (scan v3 columns/footer and `gatt/v1`).
+`docs/recording-model.md`: live scanning (foreground, no session, no rows) versus
+recording (foreground service, core session, rows, upload).
 
 ## Database Model
 

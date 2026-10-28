@@ -8,7 +8,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::CoreError;
-use crate::payload::{PayloadFile, SchemaV2Row, rows_to_frame, validate_frame_schema};
+use crate::payload::{
+    PayloadFile, SchemaV2Row, SchemaV3Row, frame_to_v3, rows_to_frame, validate_frame_schema,
+};
+use crate::payload_identity::ScanSchema;
 use crate::session::ScanSession;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -104,7 +107,8 @@ pub(crate) fn write_legacy_session_export(
         .tempfile_in(parent)
         .map_err(CoreError::io)?
         .into_temp_path();
-    let frames = vec![rows_to_frame(session.rows.clone())?];
+    let rows: Vec<SchemaV3Row> = session.rows.iter().cloned().map(Into::into).collect();
+    let frames = vec![frame_to_v3(rows_to_frame(ScanSchema::V2, rows)?)?];
     match format {
         ExportFormat::Jsonl => write_jsonl(&temporary, &frames)?,
         ExportFormat::Parquet => write_combined_parquet(&temporary, &session.session_id, frames)?,
@@ -184,7 +188,8 @@ pub(crate) fn write_full_export(
         let safe_id = safe_session_name(&session.session_id);
         let name = format!("sessions/{safe_id}.{extension}");
         let path = staging.path().join(format!("{safe_id}.{extension}"));
-        let frames = vec![rows_to_frame(session.rows.clone())?];
+        let rows: Vec<SchemaV3Row> = session.rows.iter().cloned().map(Into::into).collect();
+        let frames = vec![frame_to_v3(rows_to_frame(ScanSchema::V2, rows)?)?];
         match format {
             ExportFormat::Jsonl => write_jsonl(&path, &frames)?,
             ExportFormat::Parquet => write_combined_parquet(&path, &session.session_id, frames)?,
@@ -280,8 +285,14 @@ fn read_ordered_frames(payloads: &[PayloadFile]) -> Result<Vec<DataFrame>, CoreE
             let frame = ParquetReader::new(File::open(payload.local_path).map_err(CoreError::io)?)
                 .finish()
                 .map_err(CoreError::parquet)?;
-            validate_frame_schema(&frame)?;
-            Ok(frame)
+            // Payloads of both generations combine into one v3-shaped export.
+            if frame.width() == crate::payload::SCHEMA_V2_COLUMNS.len() {
+                validate_frame_schema(ScanSchema::V2, &frame)?;
+                frame_to_v3(frame)
+            } else {
+                validate_frame_schema(ScanSchema::V3, &frame)?;
+                Ok(frame)
+            }
         })
         .collect()
 }
@@ -344,6 +355,26 @@ fn write_jsonl(path: &Path, frames: &[DataFrame]) -> Result<(), CoreError> {
             .map_err(CoreError::parquet)?
             .f32()
             .map_err(CoreError::parquet)?;
+        let is_legacy = frame
+            .column("is_legacy")
+            .map_err(CoreError::parquet)?
+            .bool()
+            .map_err(CoreError::parquet)?;
+        let int_column = |name: &str| -> Result<_, CoreError> {
+            Ok(frame
+                .column(name)
+                .map_err(CoreError::parquet)?
+                .i32()
+                .map_err(CoreError::parquet)?
+                .clone())
+        };
+        let primary_phy = int_column("primary_phy")?;
+        let secondary_phy = int_column("secondary_phy")?;
+        let adv_sid = int_column("adv_sid")?;
+        let adv_tx_power = int_column("adv_tx_power")?;
+        let periodic_interval = int_column("periodic_interval")?;
+        let data_status = int_column("data_status")?;
+        let addr_type = int_column("addr_type")?;
         for index in 0..frame.height() {
             let value = serde_json::json!({
                 "addr": addr.get(index).expect("validated addr"),
@@ -356,6 +387,14 @@ fn write_jsonl(path: &Path, frames: &[DataFrame]) -> Result<(), CoreError> {
                 "lat": finite_optional(lat.get(index))?,
                 "lon": finite_optional(lon.get(index))?,
                 "accuracy": finite_optional(accuracy.get(index).map(f64::from))?,
+                "is_legacy": is_legacy.get(index),
+                "primary_phy": primary_phy.get(index),
+                "secondary_phy": secondary_phy.get(index),
+                "adv_sid": adv_sid.get(index),
+                "adv_tx_power": adv_tx_power.get(index),
+                "periodic_interval": periodic_interval.get(index),
+                "data_status": data_status.get(index),
+                "addr_type": addr_type.get(index),
             });
             serde_json::to_writer(&mut file, &value).map_err(CoreError::io)?;
             file.write_all(b"\n").map_err(CoreError::io)?;
@@ -388,7 +427,7 @@ fn write_combined_parquet(
     for frame in frames.iter().skip(1) {
         combined.vstack_mut(frame).map_err(CoreError::parquet)?;
     }
-    validate_frame_schema(&combined)?;
+    validate_frame_schema(ScanSchema::V3, &combined)?;
     let metadata = KeyValueMetadata::from_static(vec![
         ("cluetooth.export".to_owned(), "scan_session".to_owned()),
         (

@@ -5,13 +5,38 @@ use uuid::{Uuid, Variant};
 
 use crate::CoreError;
 
-pub const OBJECT_ROOT: &str = "scans/v2";
 pub const PENDING_ROOT: &str = "pending";
 pub const ARCHIVE_ROOT: &str = "archive";
 const UUID_V7_TIMESTAMP_MAX: u64 = (1_u64 << 48) - 1;
 
+/// Scan payload schema generations. New payloads are always `V3`; `V2` files
+/// stay readable and uploadable under their original `scans/v2` identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScanSchema {
+    V2,
+    V3,
+}
+
+impl ScanSchema {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::V2 => "v2",
+            Self::V3 => "v3",
+        }
+    }
+
+    pub(crate) fn from_path_segment(segment: &str) -> Option<Self> {
+        match segment {
+            "v2" => Some(Self::V2),
+            "v3" => Some(Self::V3),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PayloadIdentity {
+    pub schema: ScanSchema,
     pub payload_id: String,
     pub year: i32,
     pub month: u32,
@@ -24,6 +49,7 @@ impl PayloadIdentity {
         let timestamp_ms = uuid_v7_timestamp_ms(uuid);
         let (year, month, day) = utc_date_from_timestamp_ms(timestamp_ms)?;
         Ok(Self {
+            schema: ScanSchema::V3,
             payload_id: uuid.hyphenated().to_string(),
             year,
             month,
@@ -36,10 +62,19 @@ impl PayloadIdentity {
         Self::from_uuid(uuid)
     }
 
+    pub(crate) fn with_schema(mut self, schema: ScanSchema) -> Self {
+        self.schema = schema;
+        self
+    }
+
     pub(crate) fn object_path(&self) -> String {
         format!(
-            "{OBJECT_ROOT}/{:04}/{:02}/{:02}/{}.parquet.encrypted",
-            self.year, self.month, self.day, self.payload_id
+            "scans/{}/{:04}/{:02}/{:02}/{}.parquet.encrypted",
+            self.schema.as_str(),
+            self.year,
+            self.month,
+            self.day,
+            self.payload_id
         )
     }
 
@@ -51,7 +86,7 @@ impl PayloadIdentity {
     pub(crate) fn pending_relative_path(&self) -> PathBuf {
         PathBuf::from(PENDING_ROOT)
             .join("scans")
-            .join("v2")
+            .join(self.schema.as_str())
             .join(format!("{:04}", self.year))
             .join(format!("{:02}", self.month))
             .join(format!("{:02}", self.day))
@@ -63,7 +98,7 @@ impl PayloadIdentity {
             .join("sessions")
             .join(session_id)
             .join("scans")
-            .join("v2")
+            .join(self.schema.as_str())
             .join(format!("{:04}", self.year))
             .join(format!("{:02}", self.month))
             .join(format!("{:02}", self.day))
@@ -133,11 +168,16 @@ pub(crate) fn validate_pending_relative_path(
         .components()
         .map(|component| component.as_os_str().to_string_lossy().into_owned())
         .collect();
-    if parts.len() != 7 || parts[0] != PENDING_ROOT || parts[1] != "scans" || parts[2] != "v2" {
+    let schema = parts
+        .get(2)
+        .and_then(|segment| ScanSchema::from_path_segment(segment));
+    let Some(schema) =
+        schema.filter(|_| parts.len() == 7 && parts[0] == PENDING_ROOT && parts[1] == "scans")
+    else {
         return Err(CoreError::invalid(
-            "pending payload path must match pending/scans/v2/YYYY/MM/DD/<uuid>.parquet",
+            "pending payload path must match pending/scans/{v2,v3}/YYYY/MM/DD/<uuid>.parquet",
         ));
-    }
+    };
 
     let year = parse_date_part(&parts[3], 4, "year")? as i32;
     let month = parse_date_part(&parts[4], 2, "month")?;
@@ -146,7 +186,7 @@ pub(crate) fn validate_pending_relative_path(
     let payload_id = parts[6]
         .strip_suffix(".parquet")
         .ok_or_else(|| CoreError::invalid("pending payload must end with .parquet"))?;
-    let identity = PayloadIdentity::parse(payload_id)?;
+    let identity = PayloadIdentity::parse(payload_id)?.with_schema(schema);
     if (identity.year, identity.month, identity.day) != (year, month, day) {
         return Err(CoreError::invalid(format!(
             "payload UUID date {:04}/{:02}/{:02} does not match path {year:04}/{month:02}/{day:02}",
@@ -172,20 +212,23 @@ pub(crate) fn validate_archive_relative_path(
         .components()
         .map(|component| component.as_os_str().to_string_lossy().into_owned())
         .collect();
-    if parts.len() != 9
-        || parts[0] != ARCHIVE_ROOT
-        || parts[1] != "sessions"
-        || parts[3] != "scans"
-        || parts[4] != "v2"
-    {
+    let schema = parts
+        .get(4)
+        .and_then(|segment| ScanSchema::from_path_segment(segment));
+    let Some(schema) = schema.filter(|_| {
+        parts.len() == 9
+            && parts[0] == ARCHIVE_ROOT
+            && parts[1] == "sessions"
+            && parts[3] == "scans"
+    }) else {
         return Err(CoreError::invalid(
-            "archive payload path must match archive/sessions/<session>/scans/v2/YYYY/MM/DD/<uuid>.parquet",
+            "archive payload path must match archive/sessions/<session>/scans/{v2,v3}/YYYY/MM/DD/<uuid>.parquet",
         ));
-    }
+    };
     parse_canonical_uuid_v7(&parts[2])?;
     let pending = PathBuf::from(PENDING_ROOT)
         .join("scans")
-        .join("v2")
+        .join(schema.as_str())
         .join(&parts[5])
         .join(&parts[6])
         .join(&parts[7])
@@ -272,10 +315,13 @@ mod tests {
             PayloadIdentity::from_uuid(before_midnight)
                 .unwrap()
                 .object_path(),
-            "scans/v2/2025/03/24/0195ca99-4fff-7555-9555-555555555555.parquet.encrypted"
+            "scans/v3/2025/03/24/0195ca99-4fff-7555-9555-555555555555.parquet.encrypted"
         );
         assert_eq!(
-            PayloadIdentity::from_uuid(midnight).unwrap().object_path(),
+            PayloadIdentity::from_uuid(midnight)
+                .unwrap()
+                .with_schema(super::ScanSchema::V2)
+                .object_path(),
             "scans/v2/2025/03/25/0195ca99-5000-7aaa-aaaa-aaaaaaaaaaaa.parquet.encrypted"
         );
     }

@@ -12,6 +12,9 @@ enum class ScanTransitionState {
     STARTING,
     SCANNING,
     DEFERRED,
+
+    /** Recording paused: the scanner is stopped, the session stays open. */
+    PAUSED,
     FINALIZING,
     FINALIZATION_FAILED,
     ;
@@ -20,10 +23,14 @@ enum class ScanTransitionState {
         get() = this == STARTING || this == SCANNING || this == DEFERRED
 }
 
-/** Serializes explicit user stop/start across the durable Rust session boundary. */
+/**
+ * Serializes explicit user stop/start/pause/resume across the durable Rust session boundary.
+ * Pause stops the scanner (after the callback fence, so no row is written afterwards) but keeps
+ * the session; start from a paused state resumes it; stop finishes it.
+ */
 internal class ScanTransitionCoordinator(
     private val startSession: suspend () -> Boolean,
-    private val startScanner: () -> ScannerStartOutcome,
+    private val startScanner: suspend () -> ScannerStartOutcome,
     private val stopScannerAndFence: suspend () -> Unit,
     private val finishSession: suspend () -> Boolean,
     private val onRequestRejected: () -> Unit = {},
@@ -35,7 +42,9 @@ internal class ScanTransitionCoordinator(
     suspend fun start(): Boolean = transitionMutex.withLock {
         when (_state.value) {
             ScanTransitionState.SCANNING -> return@withLock true
-            ScanTransitionState.DEFERRED -> return@withLock applyStartOutcome(startScanner())
+            ScanTransitionState.DEFERRED,
+            ScanTransitionState.PAUSED,
+            -> return@withLock applyStartOutcome(startScanner())
             ScanTransitionState.FINALIZATION_FAILED -> return@withLock false
             ScanTransitionState.STOPPED,
             ScanTransitionState.STARTING,
@@ -60,6 +69,20 @@ internal class ScanTransitionCoordinator(
     suspend fun resumeDeferred(): Boolean = transitionMutex.withLock {
         if (_state.value != ScanTransitionState.DEFERRED) return@withLock false
         applyStartOutcome(startScanner())
+    }
+
+    /** Stops writing rows but keeps the session. False when nothing is being recorded. */
+    suspend fun pause(): Boolean = transitionMutex.withLock {
+        when (_state.value) {
+            ScanTransitionState.PAUSED -> return@withLock true
+            ScanTransitionState.SCANNING,
+            ScanTransitionState.DEFERRED,
+            -> Unit
+            else -> return@withLock false
+        }
+        stopScannerAndFence()
+        _state.value = ScanTransitionState.PAUSED
+        true
     }
 
     suspend fun scannerRejected(): Boolean = transitionMutex.withLock {

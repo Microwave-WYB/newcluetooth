@@ -1,0 +1,35 @@
+{
+  "schema": "gatt/v1",
+  "id": "0195ca99-5000-7001-8000-000000000002",
+  "session_id": null,
+  "app_version": "0.1.0",
+  "device": {"model": "Pixel 8", "android": "15 (API 35)"},
+  "target": {"addr": "AA:BB:CC:DD:EE:FF", "addr_type": "public", "name": null, "trigger_adv": null},
+  "started_at": "2025-03-25T00:00:01.000Z",
+  "ended_at": "2025-03-25T00:00:05.250Z",
+  "location": null,
+  "outcome": "partial",
+  "stage_reached": "read",
+  "error": {"stage": "read", "status": 19, "name": "GATT_CONN_TERMINATE_PEER_USER"},
+  "disconnect": {"initiator": "remote", "status": 19},
+  "mtu": null,
+  "phy": null,
+  "timings_ms": {"connect": 600, "mtu": 3000, "discover": 900, "read": 1200},
+  "services": [
+    {
+      "uuid": "180A", "primary": true, "instance": 12,
+      "characteristics": [
+        {
+          "uuid": "2A29", "instance": 14, "properties": ["read"],
+          "value": {"hex": "4d6963726f", "status": "ok"},
+          "descriptors": []
+        },
+        {
+          "uuid": "2A25", "instance": 16, "properties": ["read"],
+          "value": {"hex": null, "status": "not_read"},
+          "descriptors": []
+        }
+      ]
+    }
+  ]
+}

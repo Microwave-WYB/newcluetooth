@@ -57,6 +57,20 @@ class UploadService(private val context: Context) {
         workManager.enqueueUniqueWork(UploadWorker.WORK_NAME, policy, request)
     }
 
+    /**
+     * GATT objects: their own unique work with a slower exponential backoff (5 minutes up to
+     * WorkManager's 5 hour cap), so an unauthorized `gatt/` prefix is retried patiently and never
+     * interferes with the scan upload work above.
+     */
+    fun autoGattUploadNow() {
+        val request = OneTimeWorkRequestBuilder<GattUploadWorker>()
+            .setConstraints(constraints())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, GATT_BACKOFF_SECONDS, TimeUnit.SECONDS)
+            .addTag(GATT_UPLOAD_TAG)
+            .build()
+        workManager.enqueueUniqueWork(GattUploadWorker.WORK_NAME, ExistingWorkPolicy.KEEP, request)
+    }
+
     /** Unique periodic work uploading anything left pending; WorkManager persists it across reboots. */
     private fun enqueuePeriodic(policy: ExistingPeriodicWorkPolicy) {
         val request = PeriodicWorkRequestBuilder<UploadWorker>(PERIODIC_UPLOAD_INTERVAL_MINUTES, TimeUnit.MINUTES)
@@ -99,5 +113,7 @@ class UploadService(private val context: Context) {
         private const val PERIODIC_UPLOAD_INTERVAL_MINUTES = 60L
         private const val PERIODIC_UPLOAD_WORK_NAME = "periodic_upload_ble_data"
         private const val BACKOFF_SECONDS = 30L
+        private const val GATT_BACKOFF_SECONDS = 300L
+        private const val GATT_UPLOAD_TAG = "upload_gatt_objects"
     }
 }
