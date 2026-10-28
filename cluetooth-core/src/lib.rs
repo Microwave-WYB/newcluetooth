@@ -20,7 +20,8 @@ pub use error::CoreError;
 pub use export::{DeleteSessionResult, ExportFormat, LegacySessionRows, PreparedExport};
 pub use location::LocationFix;
 pub use payload::{
-    PayloadFile, PayloadInspection, PayloadResult, PendingUpload, PreparedUpload, SchemaV2Row,
+    PayloadFile, PayloadInspection, PayloadResult, PendingUpload, PreparedUpload, ScanEnvironment,
+    SchemaV2Row, SchemaV3Row,
 };
 pub use scan::ScanObservationInput;
 pub use session::{
@@ -28,7 +29,7 @@ pub use session::{
 };
 pub use state::{CoreEffect, CoreState, CoreUpdate};
 
-pub const API_VERSION: u32 = 6;
+pub const API_VERSION: u32 = 7;
 
 #[uniffi::export]
 pub fn api_version() -> u32 {
@@ -44,6 +45,17 @@ pub fn write_schema_v2_parquet(
     payload::write_schema_v2_parquet_impl(Path::new(&path), &payload_id, rows)
 }
 
+#[uniffi::export]
+pub fn write_schema_v3_parquet(
+    path: String,
+    payload_id: String,
+    environment: ScanEnvironment,
+    rows: Vec<SchemaV3Row>,
+) -> Result<PayloadInspection, CoreError> {
+    payload::write_schema_v3_parquet_impl(Path::new(&path), &payload_id, &environment, rows)
+}
+
+/// Validates a scan payload of either generation (v2 or v3).
 #[uniffi::export]
 pub fn inspect_schema_v2_parquet(path: String) -> Result<PayloadInspection, CoreError> {
     payload::inspect_schema_v2_parquet_impl(Path::new(&path))

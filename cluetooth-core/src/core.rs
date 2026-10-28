@@ -20,12 +20,12 @@ use crate::export::{
 use crate::location::{LocationFix, RecentLocationFixes};
 use crate::owned_path::{OwnedSyncStep, ensure_owned_directory, prove_owned_publication_durable};
 use crate::payload::{
-    PayloadFile, PayloadResult, PendingUpload, PreparedUpload, SchemaV2Row,
+    PayloadFile, PayloadResult, PendingUpload, PreparedUpload, ScanEnvironment, SchemaV3Row,
     inspect_schema_v2_parquet_file, inspect_schema_v2_parquet_impl, rows_to_frame,
-    write_schema_v2_parquet_owned,
+    validate_environment, write_parquet_owned,
 };
 use crate::payload_identity::{
-    PayloadIdentity, generate_uuid_v7, parse_canonical_uuid_v7, system_timestamp_ms,
+    PayloadIdentity, ScanSchema, generate_uuid_v7, parse_canonical_uuid_v7, system_timestamp_ms,
     validate_archive_relative_path, validate_pending_relative_path,
 };
 use crate::scan::{ScanObservationInput, sanitize_local_name};
@@ -61,7 +61,9 @@ impl PayloadRuntime for SystemPayloadRuntime {
 
 #[derive(Debug, Default)]
 struct ActivePayload {
-    rows: Vec<SchemaV2Row>,
+    rows: Vec<SchemaV3Row>,
+    /// The footer of the payload being collected; fixed for its lifetime.
+    environment: Option<ScanEnvironment>,
     estimated_bytes: u64,
     started_at_ms: Option<u64>,
     identity: Option<PayloadIdentity>,
@@ -72,6 +74,8 @@ struct ActivePayload {
 
 #[derive(Debug)]
 struct CoreInner {
+    /// Scan facts for the next payload; `None` until the platform configures them.
+    environment: Option<ScanEnvironment>,
     locations: RecentLocationFixes,
     active: ActivePayload,
     pending: Vec<PayloadFile>,
@@ -379,6 +383,30 @@ impl CluetoothCore {
         CoreUpdate::state_only(inner.state.clone())
     }
 
+    /// Declares the scanner facts written to the footer of every following v3
+    /// payload. Changing them seals the payload in progress first, so each file's
+    /// footer describes all of its rows. Must precede `record_observations`.
+    pub fn configure_scan(&self, environment: ScanEnvironment) -> Result<CoreUpdate, CoreError> {
+        validate_environment(&environment)?;
+        let mut inner = self.lock_inner();
+        let mut update = CoreUpdate::state_only(inner.state.clone());
+        if inner.environment.as_ref() != Some(&environment) {
+            if inner.active.environment.as_ref() != Some(&environment) {
+                match self.seal_locked(&mut inner) {
+                    Ok(Some(_)) => update.effects.push(CoreEffect::ScheduleUpload),
+                    Ok(None) => {}
+                    Err(error) => {
+                        inner.active.seal_failed = true;
+                        return Err(error);
+                    }
+                }
+            }
+            inner.environment = Some(environment);
+            update.state = inner.state.clone();
+        }
+        Ok(update)
+    }
+
     pub fn record_observations(
         &self,
         observations: Vec<ScanObservationInput>,
@@ -390,6 +418,11 @@ impl CluetoothCore {
 
         let now_ms = self.runtime.now_ms()?;
         let mut inner = self.lock_inner();
+        if inner.environment.is_none() {
+            return Err(CoreError::invalid_config(
+                "configure_scan must describe the scanner before observations are recorded",
+            ));
+        }
         let recovered_before_append = if inner.active.seal_failed
             || (!inner.active.rows.is_empty() && inner.active.session_id != inner.active_session_id)
         {
@@ -407,6 +440,7 @@ impl CluetoothCore {
             let active_session_id = inner.active_session_id.clone();
             inner.active.started_at_ms = Some(now_ms);
             inner.active.session_id = active_session_id;
+            inner.active.environment = inner.environment.clone();
         }
 
         // Persist the only fallible per-session metadata follow-up before the
@@ -441,7 +475,7 @@ impl CluetoothCore {
                 inner.state.latest_local_name = Some(name.clone());
             }
 
-            let row = SchemaV2Row {
+            let row = SchemaV3Row {
                 addr: input.addr,
                 rssi: input.rssi.map(i32::from),
                 scanned_at_ms: input.scanned_at_ms,
@@ -452,6 +486,14 @@ impl CluetoothCore {
                 lat: location.as_ref().map(|fix| fix.lat),
                 lon: location.as_ref().map(|fix| fix.lon),
                 accuracy: location.as_ref().map(|fix| fix.accuracy_meters as f32),
+                is_legacy: input.is_legacy,
+                primary_phy: input.primary_phy,
+                secondary_phy: input.secondary_phy,
+                adv_sid: input.adv_sid,
+                adv_tx_power: input.adv_tx_power,
+                periodic_interval: input.periodic_interval,
+                data_status: input.data_status,
+                addr_type: input.addr_type,
             };
             inner.active.estimated_bytes = inner
                 .active
@@ -619,6 +661,7 @@ impl CluetoothCore {
         let recovered_active = recovered_stage.is_some();
         let active =
             recovered_stage.map_or_else(ActivePayload::default, |recovered| ActivePayload {
+                environment: recovered.environment,
                 estimated_bytes: recovered.manifest.estimated_bytes,
                 started_at_ms: Some(recovered.manifest.started_at_ms),
                 identity: Some(recovered.manifest.identity),
@@ -647,6 +690,7 @@ impl CluetoothCore {
         state.pending_upload_count = pending.len() as u64;
         state.invalid_pending_payload_count = invalid_pending_payload_count;
         let mut inner = CoreInner {
+            environment: None,
             locations: RecentLocationFixes::new(
                 config.recent_location_capacity as usize,
                 config.location_max_age_ms,
@@ -687,6 +731,16 @@ impl CluetoothCore {
         if inner.active.rows.is_empty() {
             return Ok(());
         }
+        // A stage recovered from a pre-v3 app is already fully durable and is
+        // sealed as v2 immediately; it never takes appended rows.
+        if inner
+            .active
+            .identity
+            .as_ref()
+            .is_some_and(|identity| identity.schema == ScanSchema::V2)
+        {
+            return Ok(());
+        }
         if inner.active.identity.is_none() {
             let uuid = generate_uuid_v7(self.runtime.now_ms()?, self.runtime.random_bytes()?)?;
             inner.active.identity = Some(PayloadIdentity::from_uuid(uuid)?);
@@ -695,11 +749,19 @@ impl CluetoothCore {
             .active
             .started_at_ms
             .ok_or_else(|| CoreError::invalid("active payload has rows without a start time"))?;
+        let environment =
+            inner.active.environment.as_ref().ok_or_else(|| {
+                CoreError::invalid("active payload has rows without an environment")
+            })?;
+        let head = crate::staging::StageHead {
+            identity: inner.active.identity.as_ref().expect("identity assigned"),
+            session_id: inner.active.session_id.as_deref(),
+            started_at_ms,
+            environment,
+        };
         inner.active.staged_row_count = crate::staging::stage_rows(
             &self.data_directory,
-            inner.active.identity.as_ref().expect("identity assigned"),
-            inner.active.session_id.as_deref(),
-            started_at_ms,
+            head,
             inner.active.estimated_bytes,
             &inner.active.rows,
             inner.active.staged_row_count,
@@ -731,6 +793,7 @@ impl CluetoothCore {
                 &mut existing,
                 &final_path,
                 identity,
+                inner.active.environment.as_ref(),
                 &inner.active.rows,
             )? && payload.session_id == inner.active.session_id
             {
@@ -751,11 +814,12 @@ impl CluetoothCore {
             )));
         }
 
-        let inspection = write_schema_v2_parquet_owned(
+        let inspection = write_parquet_owned(
             &owned_parent,
             target,
-            &identity.payload_id,
+            identity,
             inner.active.session_id.as_deref(),
+            inner.active.environment.as_ref(),
             inner.active.rows.clone(),
         )?;
         if inspection.payload_id != identity.payload_id {
@@ -806,13 +870,16 @@ fn recover_exact_published_payload(
     file: &mut File,
     path: &Path,
     identity: &PayloadIdentity,
-    active_rows: &[SchemaV2Row],
+    environment: Option<&ScanEnvironment>,
+    active_rows: &[SchemaV3Row],
 ) -> Result<Option<PayloadFile>, CoreError> {
     let inspection = match inspect_schema_v2_parquet_file(file) {
         Ok(inspection) => inspection,
         Err(_) => return Ok(None),
     };
     if inspection.payload_id != identity.payload_id
+        || inspection.schema_version != identity.schema.as_str()
+        || inspection.environment.as_ref() != environment
         || inspection.row_count != active_rows.len() as u64
     {
         return Ok(None);
@@ -821,7 +888,7 @@ fn recover_exact_published_payload(
     let published = ParquetReader::new(file.try_clone().map_err(CoreError::io)?)
         .finish()
         .map_err(CoreError::parquet)?;
-    let expected = rows_to_frame(active_rows.to_vec())?;
+    let expected = rows_to_frame(identity.schema, active_rows.to_vec())?;
     if !published.equals_missing(&expected) {
         return Ok(None);
     }
@@ -928,7 +995,7 @@ fn estimate_input_bytes(observation: &ScanObservationInput) -> u64 {
         .saturating_add(observation.local_name.as_ref().map_or(0, |name| name.len()) as u64)
 }
 
-pub(crate) fn estimate_row_bytes(row: &SchemaV2Row) -> u64 {
+pub(crate) fn estimate_row_bytes(row: &SchemaV3Row) -> u64 {
     ROW_FIXED_ESTIMATE_BYTES
         .saturating_add(row.addr.len() as u64)
         .saturating_add(row.raw.len() as u64)
@@ -994,7 +1061,8 @@ fn remove_file_if_exists(path: &Path) -> Result<(), CoreError> {
 }
 
 fn archive_payload(root: &Path, payload: &PayloadFile) -> Result<(), CoreError> {
-    let identity = PayloadIdentity::parse(&payload.payload_id)?;
+    let identity = PayloadIdentity::parse(&payload.payload_id)?
+        .with_schema(schema_of_object_path(&payload.object_path)?);
     let session_id = payload.session_id.as_deref().unwrap_or(&payload.payload_id);
     let destination = root.join(identity.archive_relative_path(session_id));
     let parent = destination
@@ -1023,6 +1091,14 @@ fn archive_payload(root: &Path, payload: &PayloadFile) -> Result<(), CoreError> 
     }
     remove_file_if_exists(&root.join("upload-cache").join(&payload.object_path))?;
     remove_file_if_exists(&failure_marker_path(root, &payload.payload_id))
+}
+
+fn schema_of_object_path(object_path: &str) -> Result<ScanSchema, CoreError> {
+    object_path
+        .split('/')
+        .nth(1)
+        .and_then(ScanSchema::from_path_segment)
+        .ok_or_else(|| CoreError::invalid(format!("unrecognized scan object path {object_path}")))
 }
 
 fn reconcile_pending_state(root: &Path, inner: &mut CoreInner) -> Result<(), CoreError> {
@@ -1202,7 +1278,9 @@ fn discover_pending(root: &Path) -> Result<(Vec<PayloadFile>, u64), CoreError> {
                 return Ok(());
             }
         };
-        if inspection.payload_id != identity.payload_id {
+        if inspection.payload_id != identity.payload_id
+            || inspection.schema_version != identity.schema.as_str()
+        {
             invalid += 1;
             return Ok(());
         }
@@ -1246,6 +1324,7 @@ fn discover_archive(root: &Path) -> Result<(Vec<PayloadFile>, u64), CoreError> {
             }
         };
         if inspection.payload_id != identity.payload_id
+            || inspection.schema_version != identity.schema.as_str()
             || inspection
                 .scan_session_id
                 .as_deref()
@@ -1307,6 +1386,7 @@ mod tests {
     use crate::location::LocationFix;
     use crate::owned_path::OwnedSyncStep;
     use crate::scan::ScanObservationInput;
+    use crate::state::CoreEffect;
 
     struct DeterministicRuntime {
         times: Mutex<VecDeque<u64>>,
@@ -1372,6 +1452,19 @@ mod tests {
         }
     }
 
+    fn test_environment() -> crate::ScanEnvironment {
+        crate::ScanEnvironment {
+            device_model: "Pixel 8".to_owned(),
+            android_version: "15 (API 35)".to_owned(),
+            app_version: "0.1.0-test".to_owned(),
+            le_extended_advertising_supported: true,
+            le_coded_phy_supported: true,
+            le_max_advertising_data_length: 1650,
+            scan_phy: "all_supported".to_owned(),
+            scan_legacy_only: false,
+        }
+    }
+
     fn config(rows: u32) -> CoreConfig {
         CoreConfig {
             location_max_age_ms: 5_000,
@@ -1394,6 +1487,7 @@ mod tests {
             }),
         )
         .unwrap();
+        core.configure_scan(test_environment()).unwrap();
         (directory, core)
     }
 
@@ -1411,6 +1505,7 @@ mod tests {
             runtime.clone(),
         )
         .unwrap();
+        core.configure_scan(test_environment()).unwrap();
         (directory, core, runtime)
     }
 
@@ -1439,6 +1534,14 @@ mod tests {
             local_name: Some("na\0me".to_owned()),
             tx_power: Some(-8),
             is_connectable: Some(true),
+            is_legacy: Some(false),
+            primary_phy: Some(3),
+            secondary_phy: Some(2),
+            adv_sid: Some(index as i32 % 16),
+            adv_tx_power: Some(-4),
+            periodic_interval: None,
+            data_status: Some(0),
+            addr_type: Some(1),
         }
     }
 
@@ -1470,7 +1573,7 @@ mod tests {
         );
         assert_eq!(
             pending[0].object_path,
-            "scans/v2/2025/03/25/0195ca99-5000-7555-9555-555555555555.parquet.encrypted"
+            "scans/v3/2025/03/25/0195ca99-5000-7555-9555-555555555555.parquet.encrypted"
         );
         let frame = ParquetReader::new(fs::File::open(&pending[0].local_path).unwrap())
             .finish()
@@ -1514,6 +1617,7 @@ mod tests {
             }),
         )
         .unwrap();
+        byte_core.configure_scan(test_environment()).unwrap();
         byte_core.record_observations(vec![observation(1)]).unwrap();
         assert_eq!(byte_core.state().active_payload_rows, 0);
         assert_eq!(byte_core.state().pending_upload_count, 1);
@@ -1529,6 +1633,7 @@ mod tests {
             }),
         )
         .unwrap();
+        time_core.configure_scan(test_environment()).unwrap();
         time_core.record_observations(vec![observation(1)]).unwrap();
         assert_eq!(time_core.state().active_payload_rows, 1);
         time_core.record_observations(vec![observation(2)]).unwrap();
@@ -1544,6 +1649,7 @@ mod tests {
             }),
         )
         .unwrap();
+        checkpoint_core.configure_scan(test_environment()).unwrap();
         checkpoint_core
             .record_observations(vec![observation(3)])
             .unwrap();
@@ -1562,7 +1668,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let collision = directory
             .path()
-            .join("pending/scans/v2/2025/03/25")
+            .join("pending/scans/v3/2025/03/25")
             .join("0195ca99-5000-7555-9555-555555555555.parquet");
         fs::create_dir_all(collision.parent().unwrap()).unwrap();
         fs::write(&collision, b"collision").unwrap();
@@ -1583,6 +1689,7 @@ mod tests {
             }),
         )
         .unwrap();
+        core.configure_scan(test_environment()).unwrap();
 
         let update = core.record_observations(vec![observation(1)]).unwrap();
         assert_eq!(update.state.active_payload_rows, 1);
@@ -1608,7 +1715,7 @@ mod tests {
         let expected_id = "0195ca99-5000-7555-9555-555555555555";
         let collision = directory
             .path()
-            .join("pending/scans/v2/2025/03/25")
+            .join("pending/scans/v3/2025/03/25")
             .join(format!("{expected_id}.parquet"));
         fs::create_dir_all(collision.parent().unwrap()).unwrap();
         fs::write(&collision, b"existing").unwrap();
@@ -1617,10 +1724,11 @@ mod tests {
         assert_eq!(core.state().active_payload_rows, 1);
         assert!(core.pending_uploads().is_empty());
         fs::remove_file(&collision).unwrap();
-        crate::write_schema_v2_parquet(
+        crate::write_schema_v3_parquet(
             collision.to_string_lossy().into_owned(),
             expected_id.to_owned(),
-            vec![crate::SchemaV2Row {
+            test_environment(),
+            vec![crate::SchemaV3Row {
                 addr: "AA:BB:CC:DD:EE:FF".to_owned(),
                 rssi: Some(-50),
                 scanned_at_ms: 1_741_478_400_001,
@@ -1631,6 +1739,14 @@ mod tests {
                 lat: None,
                 lon: None,
                 accuracy: None,
+                is_legacy: Some(false),
+                primary_phy: Some(3),
+                secondary_phy: Some(2),
+                adv_sid: Some(1),
+                adv_tx_power: Some(-4),
+                periodic_interval: None,
+                data_status: Some(0),
+                addr_type: Some(1),
             }],
         )
         .unwrap();
@@ -1658,6 +1774,7 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         assert_eq!(reopened.pending_uploads(), expected);
         assert_eq!(reopened.state().pending_upload_count, 1);
         assert_eq!(reopened.state().active_payload_rows, 0);
@@ -1708,6 +1825,7 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         assert_eq!(reopened.pending_uploads().len(), 1);
         assert_eq!(reopened.pending_uploads()[0].local_path, valid);
         assert_eq!(reopened.state().invalid_pending_payload_count, 2);
@@ -1760,6 +1878,7 @@ mod tests {
             }),
         )
         .unwrap();
+        core.configure_scan(test_environment()).unwrap();
         core.record_observations(vec![observation(1)]).unwrap();
         let pending = core.pending_uploads()[0].clone();
         let plaintext = fs::read(&pending.local_path).unwrap();
@@ -1808,6 +1927,7 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         assert_eq!(reopened.pending_uploads().len(), 1);
         let after_remote_success_crash =
             reopened.prepare_upload(pending.payload_id.clone()).unwrap();
@@ -1844,6 +1964,7 @@ mod tests {
             }),
         )
         .unwrap();
+        core.configure_scan(test_environment()).unwrap();
         core.record_observations(vec![observation(1)]).unwrap();
         let pending = core.pending_uploads()[0].clone();
         let plaintext = fs::read(&pending.local_path).unwrap();
@@ -1863,6 +1984,7 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         let second = reopened.prepare_upload(pending.payload_id).unwrap();
         assert_eq!(second.object_path, first.object_path);
         let second_ciphertext = fs::read(second.ciphertext_path).unwrap();
@@ -2068,6 +2190,7 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         let sessions = reopened.scan_sessions().unwrap();
         assert_eq!(sessions[0].session_id, session_id);
         assert_eq!(sessions[0].status, crate::ScanSessionStatus::Interrupted);
@@ -2099,6 +2222,7 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         assert!(reopened.pending_uploads().is_empty());
         let archived = reopened.scan_sessions().unwrap();
         assert_eq!(
@@ -2245,6 +2369,7 @@ mod tests {
         let core =
             CluetoothCore::open_with_runtime(directory.path().to_owned(), config(100_000), runtime)
                 .unwrap();
+        core.configure_scan(test_environment()).unwrap();
         let session_id = core.start_scan_session().unwrap();
         core.record_observations(vec![observation(1), observation(2)])
             .unwrap();
@@ -2278,6 +2403,7 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         let pending = reopened.pending_uploads();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].payload_id, payload_id);
@@ -2312,9 +2438,12 @@ mod tests {
                     .to_string();
             crate::staging::stage_rows(
                 directory.path(),
-                &old_identity,
-                Some(&old_session),
-                1_742_860_800_002,
+                crate::staging::StageHead {
+                    identity: &old_identity,
+                    session_id: Some(&old_session),
+                    started_at_ms: 1_742_860_800_002,
+                    environment: &test_environment(),
+                },
                 0,
                 &[],
                 0,
@@ -2341,6 +2470,7 @@ mod tests {
                 }),
             )
             .unwrap();
+            reopened.configure_scan(test_environment()).unwrap();
             assert!(!directory.path().join("active-payload").exists());
             let new_session = reopened.start_scan_session().unwrap();
             assert_ne!(new_session, old_session);
@@ -2370,6 +2500,7 @@ mod tests {
                 }),
             )
             .unwrap();
+            core.configure_scan(test_environment()).unwrap();
             core.record_observations(vec![observation(1)]).unwrap();
             core.checkpoint_active_payload().unwrap();
             let staged = crate::staging::recover(directory.path()).unwrap().unwrap();
@@ -2406,6 +2537,7 @@ mod tests {
             }),
         )
         .unwrap();
+        core.configure_scan(test_environment()).unwrap();
         let mut active = ActivePayload {
             rows: vec![observation_row(); 99_999],
             estimated_bytes: 10 * 1024 * 1024 - 1,
@@ -2502,6 +2634,7 @@ mod tests {
             }),
         )
         .unwrap();
+        core.configure_scan(test_environment()).unwrap();
         core.record_observations(vec![observation(1), observation(2)])
             .unwrap();
         core.checkpoint_active_payload().unwrap();
@@ -2519,6 +2652,7 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         assert_eq!(reopened.pending_uploads().len(), 1);
         let frame =
             ParquetReader::new(File::open(&reopened.pending_uploads()[0].local_path).unwrap())
@@ -2539,8 +2673,8 @@ mod tests {
         assert_eq!(reopened.state().active_payload_rows, 0);
     }
 
-    fn observation_row() -> crate::SchemaV2Row {
-        crate::SchemaV2Row {
+    fn observation_row() -> crate::SchemaV3Row {
+        crate::SchemaV3Row {
             addr: "AA:BB:CC:DD:EE:FF".to_owned(),
             rssi: None,
             scanned_at_ms: 0,
@@ -2551,6 +2685,14 @@ mod tests {
             lat: None,
             lon: None,
             accuracy: None,
+            is_legacy: None,
+            primary_phy: None,
+            secondary_phy: None,
+            adv_sid: None,
+            adv_tx_power: None,
+            periodic_interval: None,
+            data_status: None,
+            addr_type: None,
         }
     }
 
@@ -2581,6 +2723,7 @@ mod tests {
             runtime.clone(),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         assert_eq!(
             runtime.take_steps(),
             publication_proof_steps(relative_parent, target)
@@ -2606,7 +2749,7 @@ mod tests {
 
         assert!(core.flush_payload().is_err());
         assert!(directory.path().join("active-payload/rows.wal").exists());
-        assert!(directory.path().join("pending/scans/v2").is_dir());
+        assert!(directory.path().join("pending/scans/v3").is_dir());
         assert!(!directory.path().join(&relative_path).exists());
 
         runtime.take_steps();
@@ -2668,10 +2811,12 @@ mod tests {
             .path()
             .join(staged.manifest.identity.pending_relative_path());
         fs::create_dir_all(final_path.parent().unwrap()).unwrap();
-        crate::payload::write_schema_v2_parquet_for_session_impl(
+        crate::payload::write_parquet_for_session_impl(
             &final_path,
+            staged.manifest.identity.schema,
             &staged.manifest.identity.payload_id,
             staged.manifest.session_id.as_deref(),
+            staged.environment.as_ref(),
             staged.rows,
         )
         .unwrap();
@@ -2687,9 +2832,299 @@ mod tests {
             }),
         )
         .unwrap();
+        reopened.configure_scan(test_environment()).unwrap();
         assert_eq!(reopened.pending_uploads().len(), 1);
         assert_eq!(reopened.pending_uploads()[0].payload_id, payload_id);
         assert_eq!(reopened.pending_uploads()[0].row_count, 2);
         assert!(!directory.path().join("active-payload").exists());
+    }
+
+    fn v2_row() -> crate::SchemaV2Row {
+        crate::SchemaV2Row {
+            addr: "11:22:33:44:55:66".to_owned(),
+            rssi: Some(-70),
+            scanned_at_ms: 1_742_774_400_000,
+            raw: vec![2, 1, 6],
+            local_name: None,
+            tx_power: None,
+            is_connectable: Some(true),
+            lat: None,
+            lon: None,
+            accuracy: None,
+        }
+    }
+
+    const V2_PAYLOAD_ID: &str = "0195ca99-4fff-7555-9555-555555555555";
+
+    fn reopen(directory: &TempDir, time: u64) -> Arc<CluetoothCore> {
+        let core = CluetoothCore::open_with_runtime(
+            directory.path().to_owned(),
+            config(100_000),
+            Arc::new(DeterministicRuntime {
+                times: Mutex::new([time].into()),
+                random: [0x77; 10],
+            }),
+        )
+        .unwrap();
+        core.configure_scan(test_environment()).unwrap();
+        core
+    }
+
+    #[test]
+    fn rotation_writes_v3_values_and_footer_environment() {
+        let (_directory, core) = open(1, vec![1_742_860_799_999, 1_742_860_800_000]);
+        core.record_observations(vec![observation(5)]).unwrap();
+        let pending = core.pending_uploads();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].object_path.starts_with("scans/v3/2025/03/25/"));
+        let inspection = crate::inspect_schema_v2_parquet(pending[0].local_path.clone()).unwrap();
+        assert_eq!(inspection.schema_version, "v3");
+        assert_eq!(inspection.environment, Some(test_environment()));
+        let frame = ParquetReader::new(File::open(&pending[0].local_path).unwrap())
+            .finish()
+            .unwrap();
+        let int = |name: &str| frame.column(name).unwrap().i32().unwrap().get(0);
+        assert_eq!(int("primary_phy"), Some(3));
+        assert_eq!(int("secondary_phy"), Some(2));
+        assert_eq!(int("adv_sid"), Some(5));
+        assert_eq!(int("adv_tx_power"), Some(-4));
+        assert_eq!(int("periodic_interval"), None);
+        assert_eq!(int("data_status"), Some(0));
+        assert_eq!(int("addr_type"), Some(1));
+        assert_eq!(
+            frame.column("is_legacy").unwrap().bool().unwrap().get(0),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn observations_are_refused_before_any_mutation_until_the_scan_is_configured() {
+        let directory = tempfile::tempdir().unwrap();
+        let core = CluetoothCore::open_with_runtime(
+            directory.path().to_owned(),
+            config(100),
+            Arc::new(DeterministicRuntime {
+                times: Mutex::new([1_742_860_800_000].into()),
+                random: [0x55; 10],
+            }),
+        )
+        .unwrap();
+        let error = core.record_observations(vec![observation(1)]).unwrap_err();
+        assert!(matches!(error, CoreError::InvalidConfig { .. }));
+        assert_eq!(core.state().total_observations, 0);
+        assert_eq!(core.state().active_payload_rows, 0);
+
+        let mut invalid = test_environment();
+        invalid.scan_phy = "coded".to_owned();
+        assert!(core.configure_scan(invalid).is_err());
+        core.configure_scan(test_environment()).unwrap();
+        core.record_observations(vec![observation(1)]).unwrap();
+        assert_eq!(core.state().active_payload_rows, 1);
+    }
+
+    #[test]
+    fn changing_the_scan_environment_seals_so_each_footer_describes_all_its_rows() {
+        let (_directory, core) = open(
+            100,
+            (0..30).map(|offset| 1_742_860_800_000 + offset).collect(),
+        );
+        core.record_observations(vec![observation(1)]).unwrap();
+        // The same environment is a no-op.
+        let same = core.configure_scan(test_environment()).unwrap();
+        assert!(same.effects.is_empty());
+        assert_eq!(core.state().active_payload_rows, 1);
+
+        let mut one_megabit = test_environment();
+        one_megabit.scan_phy = "1m".to_owned();
+        let update = core.configure_scan(one_megabit.clone()).unwrap();
+        assert!(update.effects.contains(&CoreEffect::ScheduleUpload));
+        assert_eq!(core.state().active_payload_rows, 0);
+        core.record_observations(vec![observation(2)]).unwrap();
+        core.flush_payload().unwrap();
+
+        let environments: Vec<_> = core
+            .pending_uploads()
+            .iter()
+            .map(|pending| {
+                crate::inspect_schema_v2_parquet(pending.local_path.clone())
+                    .unwrap()
+                    .environment
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(environments.len(), 2);
+        assert!(environments.contains(&test_environment()));
+        assert!(environments.contains(&one_megabit));
+    }
+
+    #[test]
+    fn pending_v2_files_stay_discoverable_and_upload_under_their_v2_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let pending_path = directory.path().join(format!(
+            "pending/scans/v2/2025/03/24/{V2_PAYLOAD_ID}.parquet"
+        ));
+        fs::create_dir_all(pending_path.parent().unwrap()).unwrap();
+        crate::write_schema_v2_parquet(
+            pending_path.to_string_lossy().into_owned(),
+            V2_PAYLOAD_ID.to_owned(),
+            vec![v2_row()],
+        )
+        .unwrap();
+
+        let core = reopen(&directory, 1_742_860_900_000);
+        let object_path = format!("scans/v2/2025/03/24/{V2_PAYLOAD_ID}.parquet.encrypted");
+        let pending = core.pending_uploads();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].object_path, object_path);
+        assert_eq!(core.state().invalid_pending_payload_count, 0);
+
+        let prepared = core.prepare_upload(V2_PAYLOAD_ID.to_owned()).unwrap();
+        assert_eq!(prepared.object_path, object_path);
+        assert!(prepared.ciphertext_path.ends_with(&object_path));
+        core.mark_upload_succeeded(V2_PAYLOAD_ID.to_owned())
+            .unwrap();
+        assert!(core.pending_uploads().is_empty());
+        let archived = directory.path().join(format!(
+            "archive/sessions/{V2_PAYLOAD_ID}/scans/v2/2025/03/24/{V2_PAYLOAD_ID}.parquet"
+        ));
+        assert!(archived.is_file());
+        assert!(!pending_path.exists());
+        // The archive is discovered again after a restart without invalidation.
+        let reopened = reopen(&directory, 1_742_860_900_001);
+        assert_eq!(reopened.state().invalid_pending_payload_count, 0);
+        assert!(reopened.pending_uploads().is_empty());
+    }
+
+    #[test]
+    fn a_footer_schema_that_disagrees_with_the_path_generation_is_quarantined() {
+        let directory = tempfile::tempdir().unwrap();
+        let wrong = directory.path().join(format!(
+            "pending/scans/v3/2025/03/24/{V2_PAYLOAD_ID}.parquet"
+        ));
+        fs::create_dir_all(wrong.parent().unwrap()).unwrap();
+        crate::write_schema_v2_parquet(
+            wrong.to_string_lossy().into_owned(),
+            V2_PAYLOAD_ID.to_owned(),
+            vec![v2_row()],
+        )
+        .unwrap();
+        let core = reopen(&directory, 1_742_860_900_000);
+        assert!(core.pending_uploads().is_empty());
+        assert_eq!(core.state().invalid_pending_payload_count, 1);
+        assert!(wrong.exists());
+    }
+
+    #[test]
+    fn a_pre_v3_active_stage_is_sealed_as_a_v2_payload_on_upgrade() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = crate::payload_identity::PayloadIdentity::from_uuid(
+            crate::payload_identity::generate_uuid_v7(1_742_860_800_000, [0x11; 10]).unwrap(),
+        )
+        .unwrap();
+        let rows: Vec<crate::SchemaV3Row> =
+            [v2_row(), v2_row()].into_iter().map(Into::into).collect();
+        crate::staging::stage_legacy_v2_for_test(
+            directory.path(),
+            &identity,
+            None,
+            1_742_860_800_002,
+            &rows,
+        );
+
+        let core = reopen(&directory, 1_742_860_900_000);
+        let pending = core.pending_uploads();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].object_path,
+            format!(
+                "scans/v2/2025/03/25/{}.parquet.encrypted",
+                identity.payload_id
+            )
+        );
+        assert_eq!(pending[0].row_count, 2);
+        let inspection = crate::inspect_schema_v2_parquet(pending[0].local_path.clone()).unwrap();
+        assert_eq!(inspection.schema_version, "v2");
+        assert_eq!(inspection.environment, None);
+        assert!(!directory.path().join("active-payload").exists());
+        // New observations use a fresh v3 payload.
+        core.record_observations(vec![observation(1)]).unwrap();
+        assert_eq!(core.state().active_payload_rows, 1);
+    }
+
+    #[test]
+    fn a_staged_v3_payload_recovers_with_the_environment_it_was_collected_under() {
+        let (directory, core) = open(100, vec![1_742_860_800_000, 1_742_860_800_001]);
+        core.record_observations(vec![observation(1), observation(2)])
+            .unwrap();
+        core.checkpoint_active_payload().unwrap();
+        drop(core);
+
+        // Reopen without configuring a different environment: the sidecar wins.
+        let reopened = CluetoothCore::open_with_runtime(
+            directory.path().to_owned(),
+            config(100),
+            Arc::new(DeterministicRuntime {
+                times: Mutex::new([1_742_860_900_000].into()),
+                random: [0x77; 10],
+            }),
+        )
+        .unwrap();
+        let pending = reopened.pending_uploads();
+        assert_eq!(pending.len(), 1);
+        let inspection = crate::inspect_schema_v2_parquet(pending[0].local_path.clone()).unwrap();
+        assert_eq!(inspection.schema_version, "v3");
+        assert_eq!(inspection.environment, Some(test_environment()));
+        assert_eq!(inspection.row_count, 2);
+        assert!(!directory.path().join("active-payload").exists());
+    }
+
+    #[test]
+    fn session_exports_combine_v2_and_v3_payloads_into_the_v3_column_set() {
+        let (directory, core) = open(1, (0..30).map(|n| 1_742_860_800_000 + n).collect());
+        let session_id = core.start_scan_session().unwrap();
+        core.record_observations(vec![observation(1)]).unwrap();
+        core.finish_scan_session().unwrap();
+        drop(core);
+
+        let v2_session_file = directory.path().join(format!(
+            "pending/scans/v2/2025/03/24/{V2_PAYLOAD_ID}.parquet"
+        ));
+        fs::create_dir_all(v2_session_file.parent().unwrap()).unwrap();
+        crate::payload::write_parquet_for_session_impl(
+            &v2_session_file,
+            crate::payload_identity::ScanSchema::V2,
+            V2_PAYLOAD_ID,
+            Some(&session_id),
+            None,
+            vec![v2_row().into()],
+        )
+        .unwrap();
+
+        let core = reopen(&directory, 1_742_860_900_000);
+        let parquet = core
+            .prepare_session_export(session_id.clone(), crate::ExportFormat::Parquet)
+            .unwrap();
+        let frame = ParquetReader::new(File::open(&parquet.local_path).unwrap())
+            .finish()
+            .unwrap();
+        assert_eq!(frame.width(), crate::payload::SCHEMA_V3_COLUMNS.len());
+        assert_eq!(frame.height(), 2);
+        // Oldest payload first: the v2 row has no v3 values, the v3 row does.
+        let primary = frame.column("primary_phy").unwrap().i32().unwrap().clone();
+        assert_eq!((primary.get(0), primary.get(1)), (None, Some(3)));
+
+        let jsonl = core
+            .prepare_session_export(session_id, crate::ExportFormat::Jsonl)
+            .unwrap();
+        let lines: Vec<serde_json::Value> = fs::read_to_string(&jsonl.local_path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["primary_phy"], serde_json::Value::Null);
+        assert_eq!(lines[1]["primary_phy"], 3);
+        assert_eq!(lines[1]["data_status"], 0);
+        assert_eq!(lines[1]["is_legacy"], false);
     }
 }

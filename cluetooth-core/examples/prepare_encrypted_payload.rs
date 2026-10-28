@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use cluetooth_core::{CluetoothCore, CoreConfig, ScanObservationInput};
+use cluetooth_core::{CluetoothCore, CoreConfig, ScanEnvironment, ScanObservationInput};
 
 fn decode_key(value: &str) -> Result<Vec<u8>, String> {
     if value.len() != 64 {
@@ -30,6 +30,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..CoreConfig::default()
     };
     let core = CluetoothCore::open(data_directory.to_string_lossy().into_owned(), config)?;
+    core.configure_scan(ScanEnvironment {
+        device_model: "fixture".to_owned(),
+        android_version: "15 (API 35)".to_owned(),
+        app_version: "0.0.0-fixture".to_owned(),
+        le_extended_advertising_supported: true,
+        le_coded_phy_supported: true,
+        le_max_advertising_data_length: 1650,
+        scan_phy: "all_supported".to_owned(),
+        scan_legacy_only: false,
+    })?;
     core.record_observations(vec![ScanObservationInput {
         addr: "AA:BB:CC:DD:EE:FF".to_owned(),
         rssi: Some(-42),
@@ -39,6 +49,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         local_name: Some("fixture".to_owned()),
         tx_power: Some(-8),
         is_connectable: Some(true),
+        is_legacy: Some(false),
+        primary_phy: Some(1),
+        secondary_phy: Some(2),
+        adv_sid: Some(1),
+        adv_tx_power: None,
+        periodic_interval: None,
+        data_status: Some(0),
+        addr_type: None,
     }])?;
     let pending = core
         .pending_uploads()

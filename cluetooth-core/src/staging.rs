@@ -8,17 +8,25 @@ use uuid::Uuid;
 use crate::config::{
     MAX_CONVERTED_BATCH_ESTIMATED_BYTES, MAX_PAYLOAD_MAX_ESTIMATED_BYTES, MAX_PAYLOAD_MAX_ROWS,
 };
-use crate::payload::{SchemaV2Row, inspect_schema_v2_parquet_impl, validate_rows};
-use crate::payload_identity::{PayloadIdentity, parse_canonical_uuid_v7};
+use crate::payload::{
+    ScanEnvironment, SchemaV3Row, inspect_schema_v2_parquet_impl, validate_environment,
+    validate_rows,
+};
+use crate::payload_identity::{PayloadIdentity, ScanSchema, parse_canonical_uuid_v7};
 use crate::{CoreError, core::estimate_row_bytes};
 
 const STAGING_DIRECTORY: &str = "active-payload";
 const MANIFEST_FILE: &str = "manifest.bin";
+const ENVIRONMENT_FILE: &str = "environment.json";
 const WAL_FILE: &str = "rows.wal";
 const MANIFEST_MAGIC: &[u8; 8] = b"CLTHACT2";
 const WAL_MAGIC: &[u8; 4] = b"CTW2";
 const FORMAT_VERSION: u32 = 2;
-const SCHEMA_VERSION: u32 = 2;
+/// The manifest's schema field selects the row encoding. Version 2 is only
+/// ever recovered (a pre-v3 app's staged rows), never written.
+const CURRENT_SCHEMA_VERSION: u32 = 3;
+const LEGACY_SCHEMA_VERSION: u32 = 2;
+const MAX_ENVIRONMENT_FILE_BYTES: u64 = 4096;
 const MANIFEST_BYTES: usize = 77;
 const FRAME_HEADER_BYTES: usize = 24;
 const FRAME_TRAILER_BYTES: usize = 8;
@@ -44,18 +52,37 @@ pub(crate) struct StageManifest {
 #[derive(Debug)]
 pub(crate) struct RecoveredStage {
     pub manifest: StageManifest,
-    pub rows: Vec<SchemaV2Row>,
+    pub rows: Vec<SchemaV3Row>,
+    /// Present exactly when the staged payload is schema v3.
+    pub environment: Option<ScanEnvironment>,
+}
+
+/// What names the active payload on disk: fixed from its first staged row.
+#[derive(Clone, Copy)]
+pub(crate) struct StageHead<'a> {
+    pub identity: &'a PayloadIdentity,
+    pub session_id: Option<&'a str>,
+    pub started_at_ms: u64,
+    pub environment: &'a ScanEnvironment,
 }
 
 pub(crate) fn stage_rows(
     root: &Path,
-    identity: &PayloadIdentity,
-    session_id: Option<&str>,
-    started_at_ms: u64,
+    head: StageHead<'_>,
     estimated_bytes: u64,
-    rows: &[SchemaV2Row],
+    rows: &[SchemaV3Row],
     staged_row_count: usize,
 ) -> Result<usize, CoreError> {
+    let StageHead {
+        identity,
+        session_id,
+        started_at_ms,
+        environment,
+    } = head;
+    if identity.schema != ScanSchema::V3 {
+        return Err(CoreError::invalid("only schema v3 payloads can be staged"));
+    }
+    validate_environment(environment)?;
     if staged_row_count > rows.len() {
         return Err(CoreError::invalid(
             "active staged row count exceeds active rows",
@@ -92,6 +119,7 @@ pub(crate) fn stage_rows(
             if recovered.manifest.identity != *identity
                 || recovered.manifest.session_id.as_deref() != session_id
                 || recovered.manifest.started_at_ms != started_at_ms
+                || recovered.environment.as_ref() != Some(environment)
                 || recovered.rows.len() < staged_row_count
                 || recovered.rows.len() > rows.len()
                 || recovered.rows != rows[..recovered.rows.len()]
@@ -108,6 +136,12 @@ pub(crate) fn stage_rows(
                 "active payload WAL exists without its manifest",
             ));
         }
+        // The environment is durable before the manifest names the payload, so
+        // any recoverable v3 stage has the footer it must be sealed with.
+        write_bytes_atomically(
+            &directory.join(ENVIRONMENT_FILE),
+            &serde_json::to_vec(environment).map_err(CoreError::io)?,
+        )?;
         write_manifest_atomically(
             &manifest_path,
             &StageManifest {
@@ -128,7 +162,7 @@ pub(crate) fn stage_rows(
             .open(&wal_path)
             .map_err(CoreError::io)?;
         for row in &rows[durable_row_count..] {
-            write_frame(&mut wal, row)?;
+            write_frame(&mut wal, row, ScanSchema::V3)?;
         }
         wal.sync_all().map_err(CoreError::io)?;
         sync_directory(&directory)?;
@@ -172,6 +206,7 @@ pub(crate) fn recover(root: &Path) -> Result<Option<RecoveredStage>, CoreError> 
         return Ok(None);
     }
     let manifest = read_manifest(&manifest_path)?;
+    let environment = read_environment_file(&directory.join(ENVIRONMENT_FILE), &manifest)?;
     if !wal_path.exists() {
         if manifest.staged_row_count == 0 {
             cleanup(root)?;
@@ -193,7 +228,7 @@ pub(crate) fn recover(root: &Path) -> Result<Option<RecoveredStage>, CoreError> 
         ));
     }
 
-    let (rows, truncated_tail) = read_wal(&wal_path)?;
+    let (rows, truncated_tail) = read_wal(&wal_path, manifest.identity.schema)?;
     if rows.is_empty() && manifest.staged_row_count == 0 {
         cleanup(root)?;
         return Ok(None);
@@ -238,6 +273,7 @@ pub(crate) fn recover(root: &Path) -> Result<Option<RecoveredStage>, CoreError> 
     Ok(Some(RecoveredStage {
         manifest: repaired,
         rows,
+        environment,
     }))
 }
 
@@ -251,6 +287,7 @@ pub(crate) fn cleanup(root: &Path) -> Result<(), CoreError> {
         sync_directory(&directory)?;
     }
     remove_file_if_exists(&manifest_path)?;
+    remove_file_if_exists(&directory.join(ENVIRONMENT_FILE))?;
     if directory.exists() {
         sync_directory(&directory)?;
         match fs::remove_dir(&directory) {
@@ -309,10 +346,13 @@ fn remove_file_if_exists(path: &Path) -> Result<(), CoreError> {
 }
 
 fn write_manifest_atomically(path: &Path, manifest: &StageManifest) -> Result<(), CoreError> {
+    write_bytes_atomically(path, &encode_manifest(manifest)?)
+}
+
+fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
     let parent = path
         .parent()
-        .ok_or_else(|| CoreError::invalid("active manifest path has no parent"))?;
-    let bytes = encode_manifest(manifest)?;
+        .ok_or_else(|| CoreError::invalid("active staging path has no parent"))?;
     let temporary = tempfile::Builder::new()
         .prefix(".cluetooth-active-")
         .suffix(".tmp")
@@ -325,7 +365,7 @@ fn write_manifest_atomically(path: &Path, manifest: &StageManifest) -> Result<()
             .truncate(true)
             .open(&temporary)
             .map_err(CoreError::io)?;
-        file.write_all(&bytes).map_err(CoreError::io)?;
+        file.write_all(bytes).map_err(CoreError::io)?;
         file.sync_all().map_err(CoreError::io)?;
     }
     temporary
@@ -344,7 +384,13 @@ fn encode_manifest(manifest: &StageManifest) -> Result<Vec<u8>, CoreError> {
     let mut bytes = Vec::with_capacity(77);
     bytes.extend_from_slice(MANIFEST_MAGIC);
     put_u32(&mut bytes, FORMAT_VERSION);
-    put_u32(&mut bytes, SCHEMA_VERSION);
+    put_u32(
+        &mut bytes,
+        match manifest.identity.schema {
+            ScanSchema::V2 => LEGACY_SCHEMA_VERSION,
+            ScanSchema::V3 => CURRENT_SCHEMA_VERSION,
+        },
+    );
     bytes.extend_from_slice(payload_uuid.as_bytes());
     bytes.push(u8::from(session_uuid.is_some()));
     bytes.extend_from_slice(session_uuid.unwrap_or_else(Uuid::nil).as_bytes());
@@ -376,13 +422,19 @@ fn read_manifest(path: &Path) -> Result<StageManifest, CoreError> {
     if cursor.take(8)? != MANIFEST_MAGIC {
         return Err(CoreError::invalid("active payload manifest magic mismatch"));
     }
-    if cursor.u32()? != FORMAT_VERSION || cursor.u32()? != SCHEMA_VERSION {
+    let format_version = cursor.u32()?;
+    let schema = match cursor.u32()? {
+        LEGACY_SCHEMA_VERSION => Some(ScanSchema::V2),
+        CURRENT_SCHEMA_VERSION => Some(ScanSchema::V3),
+        _ => None,
+    };
+    let Some(schema) = schema.filter(|_| format_version == FORMAT_VERSION) else {
         return Err(CoreError::invalid(
             "unsupported active payload format or schema version",
         ));
-    }
+    };
     let payload_uuid = Uuid::from_bytes(cursor.array_16()?);
-    let identity = PayloadIdentity::from_uuid(payload_uuid)?;
+    let identity = PayloadIdentity::from_uuid(payload_uuid)?.with_schema(schema);
     let session_present = cursor.u8()?;
     let session_uuid = Uuid::from_bytes(cursor.array_16()?);
     let session_id = match session_present {
@@ -417,8 +469,8 @@ fn read_manifest(path: &Path) -> Result<StageManifest, CoreError> {
     })
 }
 
-fn write_frame(file: &mut File, row: &SchemaV2Row) -> Result<(), CoreError> {
-    let payload = encode_row(row)?;
+fn write_frame(file: &mut File, row: &SchemaV3Row, schema: ScanSchema) -> Result<(), CoreError> {
+    let payload = encode_row(row, schema)?;
     if payload.is_empty() || payload.len() > MAX_FRAME_BYTES {
         return Err(CoreError::invalid(
             "active WAL row frame exceeds its bounded length",
@@ -444,7 +496,7 @@ fn write_frame(file: &mut File, row: &SchemaV2Row) -> Result<(), CoreError> {
         .map_err(CoreError::io)
 }
 
-fn read_wal(path: &Path) -> Result<(Vec<SchemaV2Row>, bool), CoreError> {
+fn read_wal(path: &Path, schema: ScanSchema) -> Result<(Vec<SchemaV3Row>, bool), CoreError> {
     if fs::metadata(path).map_err(CoreError::io)?.len() > MAX_WAL_BYTES {
         return Err(CoreError::invalid(
             "active payload WAL exceeds its bounded byte ceiling",
@@ -524,7 +576,7 @@ fn read_wal(path: &Path) -> Result<(Vec<SchemaV2Row>, bool), CoreError> {
                 "corrupt complete active WAL frame trailer",
             ));
         }
-        rows.push(decode_row(&payload)?);
+        rows.push(decode_row(&payload, schema)?);
         if (rows.len() as u64) > MAX_RECOVERED_ROWS {
             return Err(CoreError::invalid(
                 "active payload WAL exceeds the bounded emergency row ceiling",
@@ -555,8 +607,9 @@ fn read_until_eof(file: &mut File, output: &mut [u8]) -> Result<usize, CoreError
     Ok(read)
 }
 
-fn encode_row(row: &SchemaV2Row) -> Result<Vec<u8>, CoreError> {
-    let mut bytes = Vec::with_capacity(row.raw.len() + row.addr.len() + 96);
+/// Encodes one WAL row. Only tests encode schema v2 (to stage what a pre-v3 app left behind).
+fn encode_row(row: &SchemaV3Row, schema: ScanSchema) -> Result<Vec<u8>, CoreError> {
+    let mut bytes = Vec::with_capacity(row.raw.len() + row.addr.len() + 136);
     put_string(&mut bytes, &row.addr)?;
     put_option_i32(&mut bytes, row.rssi);
     bytes.extend_from_slice(&row.scanned_at_ms.to_le_bytes());
@@ -571,12 +624,33 @@ fn encode_row(row: &SchemaV2Row) -> Result<Vec<u8>, CoreError> {
     put_option_f64(&mut bytes, row.lat);
     put_option_f64(&mut bytes, row.lon);
     put_option_f32(&mut bytes, row.accuracy);
+    if schema == ScanSchema::V2 {
+        return Ok(bytes);
+    }
+    bytes.push(match row.is_legacy {
+        None => 0,
+        Some(false) => 1,
+        Some(true) => 2,
+    });
+    for value in [
+        row.primary_phy,
+        row.secondary_phy,
+        row.adv_sid,
+        row.adv_tx_power,
+        row.periodic_interval,
+        row.data_status,
+        row.addr_type,
+    ] {
+        put_option_i32(&mut bytes, value);
+    }
     Ok(bytes)
 }
 
-fn decode_row(bytes: &[u8]) -> Result<SchemaV2Row, CoreError> {
+/// Decodes one WAL row. Schema v2 rows (staged by a pre-v3 app) end after
+/// `accuracy` and gain null v3 fields.
+fn decode_row(bytes: &[u8], schema: ScanSchema) -> Result<SchemaV3Row, CoreError> {
     let mut cursor = Cursor::new(bytes);
-    let row = SchemaV2Row {
+    let mut row = SchemaV3Row {
         addr: cursor.string()?,
         rssi: cursor.option_i32()?,
         scanned_at_ms: cursor.i64()?,
@@ -592,11 +666,64 @@ fn decode_row(bytes: &[u8]) -> Result<SchemaV2Row, CoreError> {
         lat: cursor.option_f64()?,
         lon: cursor.option_f64()?,
         accuracy: cursor.option_f32()?,
+        is_legacy: None,
+        primary_phy: None,
+        secondary_phy: None,
+        adv_sid: None,
+        adv_tx_power: None,
+        periodic_interval: None,
+        data_status: None,
+        addr_type: None,
     };
+    if schema == ScanSchema::V3 {
+        row.is_legacy = match cursor.u8()? {
+            0 => None,
+            1 => Some(false),
+            2 => Some(true),
+            _ => return Err(CoreError::invalid("active WAL bool tag is invalid")),
+        };
+        row.primary_phy = cursor.option_i32()?;
+        row.secondary_phy = cursor.option_i32()?;
+        row.adv_sid = cursor.option_i32()?;
+        row.adv_tx_power = cursor.option_i32()?;
+        row.periodic_interval = cursor.option_i32()?;
+        row.data_status = cursor.option_i32()?;
+        row.addr_type = cursor.option_i32()?;
+    }
     if cursor.remaining() != 0 {
         return Err(CoreError::invalid("active WAL row contains trailing bytes"));
     }
     Ok(row)
+}
+
+/// Schema v3 stages carry their footer environment beside the manifest; a v2
+/// stage (recovered from an older app) has none.
+fn read_environment_file(
+    path: &Path,
+    manifest: &StageManifest,
+) -> Result<Option<ScanEnvironment>, CoreError> {
+    reject_symlink_or_non_file(path)?;
+    match (manifest.identity.schema, path.exists()) {
+        (ScanSchema::V2, false) => Ok(None),
+        (ScanSchema::V2, true) => Err(CoreError::invalid(
+            "schema v2 active payload has an environment file",
+        )),
+        (ScanSchema::V3, false) => Err(CoreError::invalid(
+            "schema v3 active payload is missing its environment file",
+        )),
+        (ScanSchema::V3, true) => {
+            if fs::metadata(path).map_err(CoreError::io)?.len() > MAX_ENVIRONMENT_FILE_BYTES {
+                return Err(CoreError::invalid(
+                    "active payload environment exceeds its bounded length",
+                ));
+            }
+            let environment: ScanEnvironment =
+                serde_json::from_slice(&fs::read(path).map_err(CoreError::io)?)
+                    .map_err(|error| CoreError::invalid(error.to_string()))?;
+            validate_environment(&environment)?;
+            Ok(Some(environment))
+        }
+    }
 }
 
 fn put_u32(output: &mut Vec<u8>, value: u32) {
@@ -753,6 +880,40 @@ impl<'a> Cursor<'a> {
     }
 }
 
+/// Writes the active-payload stage a pre-v3 app would have left behind: a
+/// schema-2 manifest and WAL whose rows end after `accuracy`, with no environment.
+#[cfg(test)]
+pub(crate) fn stage_legacy_v2_for_test(
+    root: &Path,
+    identity: &PayloadIdentity,
+    session_id: Option<&str>,
+    started_at_ms: u64,
+    rows: &[SchemaV3Row],
+) {
+    let identity = identity.clone().with_schema(ScanSchema::V2);
+    let directory = ensure_staging_directory(root).unwrap();
+    let mut wal = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join(WAL_FILE))
+        .unwrap();
+    for row in rows {
+        write_frame(&mut wal, row, ScanSchema::V2).unwrap();
+    }
+    wal.sync_all().unwrap();
+    write_manifest_atomically(
+        &directory.join(MANIFEST_FILE),
+        &StageManifest {
+            identity,
+            session_id: session_id.map(ToOwned::to_owned),
+            started_at_ms,
+            estimated_bytes: rows.iter().map(estimate_row_bytes).sum(),
+            staged_row_count: rows.len() as u64,
+        },
+    )
+    .unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::{self, OpenOptions};
@@ -761,8 +922,21 @@ mod tests {
     use super::*;
     use crate::payload_identity::generate_uuid_v7;
 
-    fn row(index: i64) -> SchemaV2Row {
-        SchemaV2Row {
+    fn environment() -> ScanEnvironment {
+        ScanEnvironment {
+            device_model: "Pixel 8".to_owned(),
+            android_version: "15 (API 35)".to_owned(),
+            app_version: "0.1.0-test".to_owned(),
+            le_extended_advertising_supported: true,
+            le_coded_phy_supported: true,
+            le_max_advertising_data_length: 1650,
+            scan_phy: "all_supported".to_owned(),
+            scan_legacy_only: false,
+        }
+    }
+
+    fn row(index: i64) -> SchemaV3Row {
+        SchemaV3Row {
             addr: "AA:BB:CC:DD:EE:FF".to_owned(),
             rssi: Some(-50),
             scanned_at_ms: index,
@@ -773,6 +947,23 @@ mod tests {
             lat: Some(32.0),
             lon: Some(-117.0),
             accuracy: Some(4.0),
+            is_legacy: Some(index % 2 == 0),
+            primary_phy: Some(3),
+            secondary_phy: Some(2),
+            adv_sid: Some(7),
+            adv_tx_power: Some(-12),
+            periodic_interval: None,
+            data_status: Some(0),
+            addr_type: Some(1),
+        }
+    }
+
+    fn head<'a>(identity: &'a PayloadIdentity, environment: &'a ScanEnvironment) -> StageHead<'a> {
+        StageHead {
+            identity,
+            session_id: None,
+            started_at_ms: 1_742_860_799_000,
+            environment,
         }
     }
 
@@ -781,18 +972,9 @@ mod tests {
             .unwrap()
     }
 
-    fn stage(root: &Path, rows: &[SchemaV2Row]) {
+    fn stage(root: &Path, rows: &[SchemaV3Row]) {
         let estimated = rows.iter().map(estimate_row_bytes).sum();
-        stage_rows(
-            root,
-            &identity(),
-            None,
-            1_742_860_799_000,
-            estimated,
-            rows,
-            0,
-        )
-        .unwrap();
+        stage_rows(root, head(&identity(), &environment()), estimated, rows, 0).unwrap();
     }
 
     #[test]
@@ -800,7 +982,7 @@ mod tests {
         let frame_directory = tempfile::tempdir().unwrap();
         let frame_path = frame_directory.path().join("frame");
         let mut frame_file = File::create(&frame_path).unwrap();
-        write_frame(&mut frame_file, &row(2)).unwrap();
+        write_frame(&mut frame_file, &row(2), ScanSchema::V3).unwrap();
         drop(frame_file);
         let frame = fs::read(frame_path).unwrap();
         let payload_length = u32::from_le_bytes(frame[8..12].try_into().unwrap()) as usize;
@@ -890,9 +1072,11 @@ mod tests {
             / crate::config::MAX_INPUT_BATCH_ROWS as u64) as usize;
         let rows: Vec<_> = (0..crate::config::MAX_INPUT_BATCH_ROWS)
             .map(|index| {
+                // Advertisement bytes are capped at 1650, so a maximal batch
+                // is filled with a long platform-provided name instead.
                 let mut value = row(index as i64);
-                value.local_name = None;
-                value.raw = vec![index as u8; raw_per_row];
+                value.raw.clear();
+                value.local_name = Some("n".repeat(raw_per_row));
                 value
             })
             .collect();
@@ -936,16 +1120,14 @@ mod tests {
         stage(directory.path(), &rows[..1]);
         let wal = directory.path().join(STAGING_DIRECTORY).join(WAL_FILE);
         let mut file = OpenOptions::new().append(true).open(&wal).unwrap();
-        write_frame(&mut file, &rows[1]).unwrap();
+        write_frame(&mut file, &rows[1], ScanSchema::V3).unwrap();
         file.sync_all().unwrap();
 
         let estimated = rows.iter().map(estimate_row_bytes).sum::<u64>();
         assert_eq!(
             stage_rows(
                 directory.path(),
-                &identity(),
-                None,
-                1_742_860_799_000,
+                head(&identity(), &environment()),
                 estimated,
                 &rows,
                 1,
