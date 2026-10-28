@@ -194,7 +194,12 @@ class GattUploadWorker(
                 ?: error("CluetoothApplication is required for the process-owned core")
             val summary = application.repository.uploadPendingV2(
                 FirebaseObjectFileUploader(),
-                UploadResume(PrefsUploadSessionStore(context), File(context.filesDir, "upload-cache")),
+                // Own session store and cache directory: the scan run's orphan cleanup can never
+                // delete a GATT object's resumable session, nor the other way round.
+                UploadResume(
+                    PrefsUploadSessionStore(context, "cluetooth_upload_sessions_gatt"),
+                    File(context.filesDir, "upload-cache-gatt"),
+                ),
                 UploadKind.GATT,
             )
             Log.i(TAG, "GATT upload: ${summary.succeeded} stored, ${summary.failed} failed, ${summary.denied} denied")

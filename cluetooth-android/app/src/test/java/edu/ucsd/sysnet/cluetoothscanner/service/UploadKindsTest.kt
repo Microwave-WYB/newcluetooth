@@ -11,6 +11,7 @@ import edu.ucsd.sysnet.cluetoothscanner.core.GatewayPreparedUpload
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,12 +21,17 @@ private class MixedCore : CoreGateway {
     val scanB = "0195ca99-5000-7222-8222-222222222222"
     val gatt = "0195ca99-5000-7333-8333-333333333333"
     private val ciphertext = File.createTempFile("cipher", ".encrypted").apply { writeText("x") }
-    val paths = mapOf(
+    val paths = mutableMapOf(
         scanA to "scans/v3/2025/03/25/$scanA.parquet.encrypted",
         scanB to "scans/v3/2025/03/25/$scanB.parquet.encrypted",
         gatt to "gatt/v1/2025/03/25/$gatt.json.encrypted",
     )
     val pending = paths.keys.toMutableSet()
+
+    fun addPending(id: String, objectPath: String) {
+        paths[id] = objectPath
+        pending += id
+    }
     val events = mutableListOf<String>()
     private val state = GatewayCoreState(0u, 0u, 0u, 0u, 3u, 0u, recentLocationFixCount = 0u, hasLocation = false, latestObservationAtMs = null, latestLocalName = null)
 
@@ -122,23 +128,67 @@ class UploadKindsTest {
         assertEquals("boom", uploadDiagnostic(IllegalStateException("boom")))
     }
 
+    private class MemoryStore : UploadSessionStore {
+        val sessions = mutableMapOf<String, UploadSession>()
+        override fun get(payloadId: String) = sessions[payloadId]
+        override fun put(payloadId: String, session: UploadSession) { sessions[payloadId] = session }
+        override fun remove(payloadId: String) { sessions.remove(payloadId) }
+        override fun payloadIds() = sessions.keys.toSet()
+    }
+
     @Test
-    fun `a resume session of the other kind is not discarded as an orphan`() = runTest {
+    fun `each kind cleans up only its own sessions and caches`() = runTest {
         val core = MixedCore()
-        val store = object : UploadSessionStore {
-            val sessions = mutableMapOf<String, UploadSession>()
-            override fun get(payloadId: String) = sessions[payloadId]
-            override fun put(payloadId: String, session: UploadSession) { sessions[payloadId] = session }
-            override fun remove(payloadId: String) { sessions.remove(payloadId) }
-            override fun payloadIds() = sessions.keys.toSet()
+        val scanStore = MemoryStore()
+        val gattStore = MemoryStore()
+        val scanCache = kotlin.io.path.createTempDirectory().toFile()
+        val gattCache = kotlin.io.path.createTempDirectory().toFile()
+        val staleScan = File(scanCache, "0195ca99-5000-7999-8999-999999999999.encrypted").apply { writeText("x") }
+        val staleGatt = File(gattCache, "0195ca99-5000-7888-8888-888888888888.encrypted").apply { writeText("x") }
+        scanStore.put("0195ca99-5000-7999-8999-999999999999", UploadSession("u", staleScan.path))
+        gattStore.put("0195ca99-5000-7888-8888-888888888888", UploadSession("u", staleGatt.path))
+
+        // The scan run: its stale session goes; the GATT store and cache are not its business.
+        PayloadUploadCoordinator(core, ObjectFileUploader { _, _ -> }, UploadResume(scanStore, scanCache), UploadKind.SCANS).uploadPending()
+        assertTrue(scanStore.sessions.isEmpty())
+        assertFalse(staleScan.exists())
+        assertTrue(gattStore.sessions.isNotEmpty())
+        assertTrue(staleGatt.isFile)
+
+        // The GATT run: its stale session goes.
+        PayloadUploadCoordinator(core, ObjectFileUploader { _, _ -> }, UploadResume(gattStore, gattCache), UploadKind.GATT).uploadPending()
+        assertTrue(gattStore.sessions.isEmpty())
+        assertFalse(staleGatt.exists())
+    }
+
+    @Test
+    fun `a gatt object saved while a run is in progress is picked up by the same run`() = runTest {
+        val core = MixedCore()
+        val late = "0195ca99-5000-7444-8444-444444444444"
+        val sent = mutableListOf<String>()
+        val uploader = ObjectFileUploader { path, _ ->
+            sent += path
+            // A discovery is saved while the first GATT object is uploading.
+            if (path.contains(core.gatt) && late !in core.paths) {
+                core.addPending(late, "gatt/v1/2025/03/25/$late.json.encrypted")
+            }
         }
-        val cache = kotlin.io.path.createTempDirectory().toFile()
-        val gattCache = File(cache, "${core.gatt}.encrypted").apply { writeText("x") }
-        store.put(core.gatt, UploadSession("https://session/gatt", gattCache.path))
 
-        PayloadUploadCoordinator(core, ObjectFileUploader { _, _ -> }, UploadResume(store, cache), UploadKind.SCANS).uploadPending()
+        val summary = PayloadUploadCoordinator(core, uploader, null, UploadKind.GATT).uploadUntilQuiet()
 
-        assertTrue(store.sessions.containsKey(core.gatt))
-        assertTrue(gattCache.isFile)
+        assertEquals(PayloadUploadSummary(2, 0), summary)
+        assertEquals(2, sent.size)
+        assertTrue(sent.all { it.startsWith("gatt/") })
+        assertTrue(core.pending.none { isGattObject(core.paths.getValue(it)) })
+    }
+
+    @Test
+    fun `a failing object is tried once per run, not forever`() = runTest {
+        val core = MixedCore()
+        var tries = 0
+        val uploader = ObjectFileUploader { path, _ -> if (path.startsWith("gatt/")) { tries++; error("offline") } }
+        val summary = PayloadUploadCoordinator(core, uploader, null, UploadKind.GATT).uploadUntilQuiet()
+        assertEquals(PayloadUploadSummary(0, 1), summary)
+        assertEquals(1, tries)
     }
 }

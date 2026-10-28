@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Cluetooth Scanner</string>
+    <string name="recording_interrupted_title">Recording interrupted</string>
+    <string name="recording_interrupted_text">The last recording was interrupted unexpectedly; %1$d rows were saved.</string>
 </resources>

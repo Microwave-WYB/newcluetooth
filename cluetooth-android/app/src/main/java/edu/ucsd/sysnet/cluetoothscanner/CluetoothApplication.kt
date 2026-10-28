@@ -12,6 +12,7 @@ import edu.ucsd.sysnet.cluetoothscanner.repository.CluetoothRepository
 import edu.ucsd.sysnet.cluetoothscanner.service.AndroidRecordingHost
 import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
 import edu.ucsd.sysnet.cluetoothscanner.service.LocationService
+import edu.ucsd.sysnet.cluetoothscanner.service.InterruptedRecordingNotifier
 import edu.ucsd.sysnet.cluetoothscanner.service.LocationPort
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingController
 import edu.ucsd.sysnet.cluetoothscanner.service.ScanSupervisor
@@ -24,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -121,6 +123,12 @@ class CluetoothApplication : Application() {
                     ScanLifecycleEvent.REJECTED -> coordinator.scannerRejected()
                 }
             }
+        }
+        // If the process died during a recording, say so once at the next launch.
+        val interruptedNotifier = InterruptedRecordingNotifier(this)
+        applicationScope.launch {
+            val ready = repository.uiState.first { it.coreReady }
+            interruptedNotifier.check(ready.sessions)
         }
         uploadService.startPeriodicUpload()
         uploadService.autoUploadNow()

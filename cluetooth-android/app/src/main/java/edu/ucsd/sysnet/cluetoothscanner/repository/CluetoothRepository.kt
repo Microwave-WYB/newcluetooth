@@ -348,7 +348,9 @@ class CluetoothRepository(
         val mutex = if (kind == UploadKind.GATT) gattUploadMutex else uploadCoordinatorMutex
         return mutex.withLock {
             check(!closing.get()) { "Core repository is closing" }
-            val summary = PayloadUploadCoordinator(gateway.await(), uploader, resume, kind).uploadPending()
+            val coordinator = PayloadUploadCoordinator(gateway.await(), uploader, resume, kind)
+            // GATT objects are saved at any time; pick up ones saved while this run was going.
+            val summary = if (kind == UploadKind.GATT) coordinator.uploadUntilQuiet() else coordinator.uploadPending()
             callCore(publishScanState = false) { it.refresh() }
             summary
         }

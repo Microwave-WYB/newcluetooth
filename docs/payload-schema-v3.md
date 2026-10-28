@@ -89,6 +89,14 @@ read against these keys: for example a device with
 
 ### Producer behavior
 
+- Rows are validated one by one as the core accepts them. A row that breaks a producer rule
+  (raw over 1650 bytes, a malformed address, a value outside the ranges above) is dropped and
+  counted by the core (`rejected_observation_count`), never written: it would otherwise block
+  every checkpoint and seal. The footer always describes the rows of its file: a change of
+  settings is effective immediately, and the payload collected under the old ones is sealed before
+  the next row is accepted; an empty payload takes the settings in force when its first row
+  arrives.
+
 - The scanner uses `ScanSettings.Builder().setLegacy(false)` and
   `setPhy(PHY_LE_ALL_SUPPORTED)` (or `PHY_LE_1M` when the Coded PHY switch is
   off). Periodic-advertising sync is not used; only the advertised interval is
