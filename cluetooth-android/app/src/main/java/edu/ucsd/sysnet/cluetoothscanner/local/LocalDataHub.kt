@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val LOGGER: Logger = Logger.getLogger("LocalDataHub")
 private const val MINUTE_MS = 60_000L
@@ -104,13 +105,15 @@ class LocalDataHub(
         class Flush(val done: CompletableDeferred<Unit>?) : Event
         data object Prune : Event
         data object Rematch : Event
+        data object StructureKeys : Event
+        class SetNote(val recordingId: String, val note: String, val done: CompletableDeferred<Unit>) : Event
         class Acknowledge(val reportId: Long, val done: CompletableDeferred<Unit>) : Event
     }
 
     /** Table groups a query can depend on; each has a version that writers bump. */
-    private enum class Group { PAYLOADS, RECORDINGS, SIGHTINGS, ROUTE, REMATCH }
+    private enum class Group { PAYLOADS, RECORDINGS, SIGHTINGS, ROUTE, REMATCH, NOTES }
 
-    private class PayloadSeen(val atMs: Long, val pageIds: List<String>)
+    private class PayloadSeen(val atMs: Long, val pageIds: List<String>, val structure: StructureKey)
 
     /** A device in range: its latest sample, and the pages of its recent payloads. */
     private class DeviceNow(val lastSeenMs: Long, val rssi: Int?, val recent: Map<String, PayloadSeen>)
@@ -140,6 +143,9 @@ class LocalDataHub(
     private val payloadCache = object : LinkedHashMap<String, List<String>>(256, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>) = size > PAYLOAD_CACHE_SIZE
     }
+    private val structureCache = object : LinkedHashMap<String, StructureKey>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StructureKey>) = size > PAYLOAD_CACHE_SIZE
+    }
     private val payloadIds = HashMap<String, Long>()
     private var pendingPayloads = LinkedHashMap<String, PayloadDelta>()
     private var pendingMinutes = HashMap<MinuteKey, MinuteDelta>()
@@ -151,6 +157,8 @@ class LocalDataHub(
     private var lastFix: CoreLocationInput? = null
     private var rematchRun: Long? = null
     private var rematchBackoffMs = rematchRetryMs
+    private var structureKeyCursor = 0L
+    private var structureKeyBackoffMs = rematchRetryMs
     private val droppedAdvertisements = AtomicInteger(0)
 
     /**
@@ -181,6 +189,7 @@ class LocalDataHub(
             jobs += launch { while (true) { delay(flushIntervalMs); events.trySend(Event.Flush(null)) } }
             jobs += launch { while (true) { events.trySend(Event.Prune); delay(pruneIntervalMs) } }
             if (matcher != null) events.trySend(Event.Rematch)
+            events.trySend(Event.StructureKeys)
             consume()
         }
     }
@@ -278,6 +287,7 @@ class LocalDataHub(
                 LOGGER.log(Level.WARNING, "Local data write failed", error)
                 (event as? Event.Flush)?.done?.complete(Unit)
                 (event as? Event.Acknowledge)?.done?.complete(Unit)
+                (event as? Event.SetNote)?.done?.completeExceptionally(error) // a note is never dropped silently
             }
         }
     }
@@ -327,6 +337,12 @@ class LocalDataHub(
                 if (more) events.trySend(Event.Prune)
             }
             Event.Rematch -> rematchStep()
+            Event.StructureKeys -> structureKeysStep()
+            is Event.SetNote -> {
+                store.setRecordingNote(event.recordingId, event.note, clock())
+                bump(Group.NOTES)
+                event.done.complete(Unit)
+            }
             is Event.Acknowledge -> {
                 store.acknowledgeRematch(event.reportId)
                 bump(Group.REMATCH)
@@ -357,6 +373,27 @@ class LocalDataHub(
         }
     }
 
+    /** Gives payloads from before schema version 3 their structure key, one batch per turn of the queue. */
+    private fun structureKeysStep() {
+        try {
+            val last = store.backfillStructureKeys(structureKeyCursor) ?: return
+            structureKeyCursor = last
+            structureKeyBackoffMs = rematchRetryMs
+            bump(Group.PAYLOADS)
+            events.trySend(Event.StructureKeys)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            val wait = structureKeyBackoffMs
+            structureKeyBackoffMs = minOf(wait * 2, MAX_REMATCH_RETRY_MS)
+            LOGGER.log(Level.WARNING, "Structure key backfill failed; retrying in ${wait}ms", error)
+            jobs += scope.launch { delay(wait); events.trySend(Event.StructureKeys) }
+        }
+    }
+
+    private fun structureOf(hash: String, raw: ByteArray): StructureKey =
+        structureCache.getOrPut(hash) { StructureKey.of(raw) }
+
     /** Payload-level pages (no address), cached per distinct payload; these are what the store keeps. */
     private fun payloadPages(m: AdvertisementMatcher, hash: String, raw: ByteArray): List<String> =
         payloadCache.getOrPut(hash) { m.match(raw) }
@@ -375,7 +412,7 @@ class LocalDataHub(
         // Keep the union of pages over the device's recent payloads: one that alternates
         // advertisement types must not flicker between products.
         val recent = HashMap<String, PayloadSeen>(inRange[e.addr]?.recent.orEmpty())
-        recent[hash] = PayloadSeen(e.timeMs, pages)
+        recent[hash] = PayloadSeen(e.timeMs, pages, structureOf(hash, e.raw))
         if (recent.size > IN_RANGE_PAYLOADS_PER_DEVICE) {
             recent.entries.minByOrNull { it.value.atMs }?.let { recent.remove(it.key) }
         }
@@ -486,17 +523,46 @@ class LocalDataHub(
             } as Flow<T>
         }
 
-    override fun productsInRange(windowMs: Long): Flow<InRangeSnapshot> =
+    /** Re-computes [compute] once a second (cheap, in memory); [empty] while the database is unavailable. */
+    private fun <T> ticking(empty: (Long) -> T, same: (T, T) -> Boolean, compute: (Long) -> T): Flow<T> =
         availability.filterNotNull().transformLatest { available ->
             if (!available) {
-                emit(InRangeSnapshot(clock(), windowMs, emptyList(), 0, 0))
+                emit(empty(clock()))
                 return@transformLatest
             }
             while (true) {
-                emit(inRangeSnapshot(clock(), windowMs))
+                emit(compute(clock()))
                 delay(IN_RANGE_REFRESH_MS)
             }
-        }.flowOn(ioDispatcher).distinctUntilChanged { a, b -> a.copy(atMs = 0) == b.copy(atMs = 0) }
+        }.flowOn(ioDispatcher).distinctUntilChanged(same)
+
+    override fun productsInRange(windowMs: Long): Flow<InRangeSnapshot> =
+        ticking({ InRangeSnapshot(it, windowMs, emptyList(), 0, 0) }, { a, b -> a.copy(atMs = 0) == b.copy(atMs = 0) }) {
+            inRangeSnapshot(it, windowMs)
+        }
+
+    override fun unknownStructuresInRange(windowMs: Long): Flow<List<UnknownInRange>> =
+        ticking({ emptyList() }, { a, b -> a == b }) { unknownInRange(it, windowMs) }
+
+    /** Unidentified devices of the window, grouped by the structure of their recent unidentified payloads. */
+    internal fun unknownInRange(nowMs: Long, windowMs: Long): List<UnknownInRange> {
+        val catalog = _catalog.value
+        class Acc(var devices: Int = 0, var rssi: Int? = null, var last: Long = 0)
+        val byKey = LinkedHashMap<StructureKey, Acc>()
+        for (d in inRange.values) {
+            if (nowMs - d.lastSeenMs > windowMs) continue
+            val recent = d.recent.values.filter { nowMs - it.atMs <= windowMs }
+            if (recent.any { p -> p.pageIds.any { catalog?.page(it) != null } }) continue // identified
+            for (key in recent.map { it.structure }.toSet()) {
+                val acc = byKey.getOrPut(key) { Acc() }
+                acc.devices++
+                if (d.rssi != null && (acc.rssi == null || d.rssi > acc.rssi!!)) acc.rssi = d.rssi
+                acc.last = maxOf(acc.last, d.lastSeenMs)
+            }
+        }
+        return byKey.map { (key, a) -> UnknownInRange(key, a.devices, a.rssi, a.last) }
+            .sortedWith(compareByDescending<UnknownInRange> { it.strongestRssi ?: Int.MIN_VALUE }.thenByDescending { it.deviceCount }.thenBy { it.structure.key })
+    }
 
     internal fun inRangeSnapshot(nowMs: Long, windowMs: Long): InRangeSnapshot {
         val catalog = _catalog.value
@@ -538,6 +604,9 @@ class LocalDataHub(
             store.seenProducts(catalog).filter { categoryId in it.page.categories }.sortedByDescending { it.lastSeenMs }
         }
 
+    override fun previouslySeenUnknownStructures(): Flow<List<SeenUnknown>> =
+        query("unknown", listOf(Group.PAYLOADS, Group.REMATCH), heavyQueryIntervalMs, emptyList()) { store.seenUnknownStructures() }
+
     override fun recordings(): Flow<List<Recording>> =
         query("recordings", listOf(Group.RECORDINGS), lightQueryIntervalMs, emptyList()) { store.recordings(clock()) }
 
@@ -553,6 +622,27 @@ class LocalDataHub(
 
     override fun route(recordingId: String): Flow<List<RoutePoint>> =
         query("route:$recordingId", listOf(Group.ROUTE), lightQueryIntervalMs, emptyList()) { store.route(recordingId) }
+
+    override fun sightingsInRecording(recordingId: String, bounds: GeoBounds?, limit: Int): Flow<List<Sighting>> =
+        query("recording-sightings:$recordingId:$bounds:$limit", listOf(Group.SIGHTINGS, Group.REMATCH), heavyQueryIntervalMs, emptyList()) {
+            store.sightingsInRecording(recordingId, bounds, limit)
+        }
+
+    override fun observeRecordingNote(recordingId: String): Flow<String> =
+        query("note:$recordingId", listOf(Group.NOTES), lightQueryIntervalMs, "") { store.recordingNote(recordingId) }
+
+    override suspend fun getRecordingNote(recordingId: String): String {
+        if (availability.filterNotNull().first() != true) return ""
+        return withContext(ioDispatcher) { store.recordingNote(recordingId) }
+    }
+
+    override suspend fun setRecordingNote(recordingId: String, note: String) {
+        check(availability.filterNotNull().first() == true) { "Local data is unavailable: the note was not saved" }
+        val done = CompletableDeferred<Unit>()
+        // through the consumer, the only writer; after a RecordingStarted queued earlier
+        check(events.trySend(Event.SetNote(recordingId, note, done)).isSuccess) { "Local data is closed: the note was not saved" }
+        done.await()
+    }
 
     override fun sightingsOfDevice(addr: String, limit: Int): Flow<List<Sighting>> =
         query("device:$addr:$limit", listOf(Group.SIGHTINGS, Group.REMATCH), heavyQueryIntervalMs, emptyList()) {

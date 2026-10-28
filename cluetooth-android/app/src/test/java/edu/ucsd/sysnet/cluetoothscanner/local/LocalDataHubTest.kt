@@ -550,4 +550,234 @@ class LocalDataHubTest {
         hub.flushNow()
         assertEquals(1, db.query("SELECT SUM(sample_count) FROM sighting_minute") { it.long(0) }.single().toInt())
     }
+
+    // Unknown structures, recording notes, recording-wide sightings --------------------------------------------------
+
+    private fun company(id: Int) = byteArrayOf(3, 0xFF.toByte(), (id and 0xFF).toByte(), (id shr 8).toByte())
+
+    @Test
+    fun unknownStructuresInRangeGroupUnidentifiedDevicesByCoarseKey() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t) // identified
+        hub.hear("AA:00:00:00:00:02", -70, company(76), t + 10)
+        hub.hear("AA:00:00:00:00:03", -55, company(76), t + 20)
+        hub.hear("AA:00:00:00:00:04", null, company(6), t + 30)
+        hub.hear("AA:00:00:00:00:05", -80, byteArrayOf(2, 1, 6), t + 40)
+        // a device that also sends an identified payload is identified, whatever else it sends
+        hub.hear("AA:00:00:00:00:06", -40, company(76), t + 50)
+        hub.hear("AA:00:00:00:00:06", -40, adv("bulb-1"), t + 60)
+        hub.flushNow()
+
+        now.set(t + 1_000)
+        val groups = hub.unknownStructuresInRange().firstValue()
+        assertEquals(listOf("company:76", "shape:01/1", "company:6"), groups.map { it.structure.key }) // strongest first, no rssi last
+        assertEquals(2, groups[0].deviceCount)
+        assertEquals(-55, groups[0].strongestRssi)
+        assertEquals(t + 20, groups[0].lastSeenMs)
+        assertNull(groups[2].strongestRssi)
+        assertEquals(4, hub.productsInRange().firstValue().unidentifiedDeviceCount) // devices 2-5; groups: 2 + 1 + 1
+
+        now.set(t + 31_000) // everything aged out of the 30 s window
+        assertTrue(hub.unknownStructuresInRange().firstValue().isEmpty())
+        assertEquals(3, hub.unknownStructuresInRange(windowMs = 60_000).firstValue().size)
+    }
+
+    @Test
+    fun aDeviceAlternatingUnidentifiedStructuresCountsInEach() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        hub.hear("AA:00:00:00:00:01", -60, company(76), t)
+        hub.hear("AA:00:00:00:00:01", -50, byteArrayOf(2, 1, 6), t + 10)
+        now.set(t + 100)
+        val groups = hub.unknownStructuresInRange().firstValue()
+        assertEquals(setOf("company:76", "shape:01/1"), groups.map { it.structure.key }.toSet())
+        assertTrue(groups.all { it.deviceCount == 1 && it.strongestRssi == -50 }) // the device's latest sample
+    }
+
+    @Test
+    fun previouslySeenUnknownStructuresCountStoredPayloadsAndFollowTheBundle() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        hub.hear("AA:00:00:00:00:01", -60, company(76), t)
+        hub.hear("AA:00:00:00:00:02", -60, company(76) + byteArrayOf(2, 0x0A, 1), t + 5_000)
+        hub.hear("AA:00:00:00:00:03", -60, company(6), t + 9_000)
+        hub.hear("AA:00:00:00:00:04", -60, adv("buds-1"), t + 9_500) // identified: not listed
+        hub.flushNow()
+
+        val seen = hub.previouslySeenUnknownStructures().firstValue()
+        assertEquals(listOf("company:6", "company:76"), seen.map { it.structure.key }) // most recently heard first
+        assertEquals(2, seen[1].payloadCount)
+        assertEquals(2L, seen[1].seenCount)
+        assertEquals(t, seen[1].firstSeenMs)
+        assertEquals(t + 5_000, seen[1].lastSeenMs)
+
+        // the group follows its own flow: a new payload shows up without re-collecting
+        val updates = hub.previouslySeenUnknownStructures()
+        hub.hear("AA:00:00:00:00:07", -60, byteArrayOf(2, 1, 6), t + 20_000)
+        hub.flushNow()
+        val withShape = withTimeout(10_000) { updates.first { l -> l.any { it.structure.key == "shape:01/1" } } }
+        assertEquals("shape:01/1", withShape.first().structure.key)
+    }
+
+    @Test
+    fun aBundleUpdateMovesNewlyIdentifiedPayloadsOutOfTheUnknownGroups() = runBlocking {
+        val first = hub()
+        val t = now.get()
+        first.hear("AA:00:00:00:00:01", -60, adv("gadget-1"), t) // local name "gadget"
+        first.flushNow()
+        assertEquals(listOf("name:gadget"), first.previouslySeenUnknownStructures().firstValue().map { it.structure.key })
+        first.close()
+
+        val second = hub(
+            version = "v2",
+            matchRules = rules + ("device--bulb" to "gadget"),
+            database = UncloseableDatabase(db),
+        )
+        withTimeout(10_000) { while (second.pendingRematchReport().firstValue() == null) delay(10) }
+        assertTrue(second.previouslySeenUnknownStructures().firstValue().isEmpty())
+    }
+
+    @Test
+    fun aMigratedFilesPayloadsGetTheirKeysInTheBackground() = runBlocking {
+        val key = sha256Hex(company(76))
+        db.execute(
+            "INSERT INTO seen_payload (hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version, structure_key) VALUES (?, ?, ?, ?, 3, 'v1+m1', NULL)",
+            listOf(key, company(76), now.get() - 10_000, now.get() - 5_000), // recent: expiry would take an old one
+        )
+        val hub = hub()
+        val groups = withTimeout(10_000) { hub.previouslySeenUnknownStructures().first { it.isNotEmpty() } }
+        assertEquals("company:76", groups.single().structure.key)
+        assertEquals(3L, groups.single().seenCount)
+        hub.close()
+    }
+
+    @Test
+    fun recordingNotesPersistAndObserversSeeEveryChange() = runBlocking {
+        val hub = hub()
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t)
+        assertEquals("", hub.getRecordingNote("rec-1"))
+        assertEquals("", hub.observeRecordingNote("rec-1").firstValue())
+
+        val seen = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val job = launch { hub.observeRecordingNote("rec-1").collect { seen += it } }
+        withTimeout(10_000) { while (seen.isEmpty()) delay(5) }
+        hub.setRecordingNote("rec-1", "Parking lot sweep")
+        assertEquals("Parking lot sweep", hub.getRecordingNote("rec-1")) // read-your-write
+        withTimeout(10_000) { while (seen.lastOrNull() != "Parking lot sweep") delay(5) }
+        hub.setRecordingNote("rec-1", "")
+        withTimeout(10_000) { while (seen.lastOrNull() != "") delay(5) }
+        assertEquals(listOf("", "Parking lot sweep", ""), seen.toList())
+        job.cancel()
+
+        hub.setRecordingNote("rec-1", "kept")
+        hub.close()
+        // a new process on the same file
+        val again = hub(database = UncloseableDatabase(db))
+        assertEquals("kept", again.getRecordingNote("rec-1"))
+        assertEquals("kept", again.observeRecordingNote("rec-1").firstValue())
+        assertEquals("", again.getRecordingNote("other"))
+    }
+
+    @Test
+    fun aNoteOnlyInvalidatesTheNoteQueries() = runBlocking {
+        val counting = CountingDatabase(db)
+        val hub = hub(database = counting)
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t)
+        hub.flushNow()
+        val recordings = hub.recordings().firstValue()
+        assertEquals(1, recordings.size)
+        val before = counting.count("FROM recording ORDER BY started_ms")
+        val noted = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val job = launch { hub.observeRecordingNote("rec-1").collect { noted += it } }
+        hub.setRecordingNote("rec-1", "hello")
+        withTimeout(10_000) { while (noted.lastOrNull() != "hello") delay(5) }
+        assertEquals(before, counting.count("FROM recording ORDER BY started_ms"))
+        job.cancel()
+    }
+
+    @Test
+    fun aNoteIsNotLostSilentlyWhenTheDatabaseIsUnavailable() = runBlocking {
+        val hub = LocalDataHub(
+            openDatabase = { throw java.io.IOException("No space left on device") },
+            loadBundleJson = { bundleJson("v1", *PAGES) },
+            createMatcher = { FakeMatcher("v1", rules) },
+            scope = scope,
+            clock = now::get,
+            flushIntervalMs = 3_600_000,
+            lightQueryIntervalMs = 0,
+            retryInitialMs = 3_600_000,
+        )
+        hub.start()
+        withTimeout(10_000) { hub.status.first { it.state == LocalDataStatus.State.UNAVAILABLE } }
+        assertEquals("", hub.getRecordingNote("rec-1"))
+        assertEquals("", hub.observeRecordingNote("rec-1").firstValue())
+        try {
+            hub.setRecordingNote("rec-1", "important")
+            org.junit.Assert.fail("expected the failure to be visible")
+        } catch (expected: IllegalStateException) {
+            assertTrue(expected.message!!.contains("not saved"))
+        }
+    }
+
+    @Test
+    fun sightingsInARecordingFollowTheBoundsAndTheRecording() = runBlocking {
+        val hub = hub()
+        val t = now.get() - now.get() % 60_000
+        hub.onRecordingStarted("rec-1", t)
+        hub.onLocation(fix(t, 32.80, -117.20))
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t + 1_000)
+        hub.onLocation(fix(t + 60_000, 33.50, -116.00))
+        hub.hear("AA:00:00:00:00:02", -70, adv("bulb-1"), t + 61_000)
+        hub.hear("AA:00:00:00:00:03", -75, adv("stranger"), t + 181_000) // no fresh fix
+        hub.flushNow()
+
+        val all = hub.sightingsInRecording("rec-1").firstValue()
+        assertEquals(3, all.size)
+        assertNull(all.first().location)
+        val box = GeoBounds(32.7, -117.3, 33.0, -117.0)
+        val inside = hub.sightingsInRecording("rec-1", box).firstValue()
+        assertEquals(listOf("AA:00:00:00:00:01"), inside.map { it.addr })
+        assertEquals(listOf("device--buds"), inside.single().pageIds)
+        assertEquals(GeoPoint(32.80, -117.20, 5.0), inside.single().location)
+        assertTrue(hub.sightingsInRecording("rec-other").firstValue().isEmpty())
+
+        // it re-emits when the recording grows
+        val updates = hub.sightingsInRecording("rec-1", box)
+        hub.onLocation(fix(t + 240_000, 32.81, -117.21))
+        hub.hear("AA:00:00:00:00:04", -50, adv("buds-9"), t + 241_000)
+        hub.flushNow()
+        val grown = withTimeout(10_000) { updates.first { it.size == 2 } }
+        assertEquals(setOf("AA:00:00:00:00:01", "AA:00:00:00:00:04"), grown.map { it.addr }.toSet())
+    }
+
+    @Test
+    fun recordingSightingsAreSharedPerBoundsAndThrottledLikeOtherHeavyQueries() = runBlocking {
+        val counting = CountingDatabase(db)
+        val hub = hub(database = counting, heavyIntervalMs = 10_000, shareLingerMs = 60_000)
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t)
+        hub.onLocation(fix(t))
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t + 1_000)
+        hub.flushNow()
+
+        val box = GeoBounds(31.0, -118.0, 33.0, -116.0)
+        val results = List(3) { mutableListOf<List<Sighting>>() }
+        val jobs = results.map { sink -> launch { hub.sightingsInRecording("rec-1", box).collect { sink += it } } }
+        withTimeout(10_000) { while (results.any { it.isEmpty() }) delay(5) }
+        assertEquals(1, counting.count("WHERE s.recording_id = ? AND s.lat >="))
+
+        repeat(3) { i ->
+            hub.hear("AA:00:00:00:00:0${i + 2}", -50, adv("buds-1"), t + 2_000L + i)
+            hub.flushNow()
+        }
+        delay(100)
+        assertEquals(1, counting.count("WHERE s.recording_id = ? AND s.lat >="))
+        // another rectangle is another key: it runs at once
+        val other = hub.sightingsInRecording("rec-1", GeoBounds(0.0, 0.0, 1.0, 1.0)).firstValue()
+        assertTrue(other.isEmpty())
+        jobs.forEach { it.cancel() }
+    }
 }

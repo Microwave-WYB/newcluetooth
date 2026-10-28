@@ -7,6 +7,8 @@ const val RETENTION_MS = 30L * 24 * 60 * 60 * 1000
 private const val META_RULES_VERSION = "rules_version"
 private const val REMATCH_BATCH = 500
 private const val PRUNE_BATCH = 2_000
+private const val KEY_BACKFILL_BATCH = 500
+private const val MAX_SEEN_UNKNOWN_GROUPS = 500
 private const val PRUNE_SIGHTING_MINUTES = 6L * 60
 private const val PRUNE_ROUTE_MS = 6L * 60 * 60 * 1000
 
@@ -128,6 +130,14 @@ class LocalStore(private val db: SqlDatabase) {
             db.execute(
                 "DELETE FROM recording WHERE COALESCE(ended_ms, started_ms) < ? AND " +
                     "NOT EXISTS (SELECT 1 FROM sighting_minute s WHERE s.recording_id = recording.id)",
+                listOf(cutoffMs),
+            ),
+        )
+        // A note outlives nothing: it goes with its recording (an orphan only once it is itself old).
+        deleted(
+            db.execute(
+                "DELETE FROM recording_note WHERE updated_ms < ? AND " +
+                    "NOT EXISTS (SELECT 1 FROM recording r WHERE r.id = recording_note.recording_id)",
                 listOf(cutoffMs),
             ),
         )
@@ -262,6 +272,44 @@ class LocalStore(private val db: SqlDatabase) {
         db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", listOf(key, value))
     }
 
+    // Structure keys ---------------------------------------------------------------------------------
+
+    /**
+     * Gives the payloads that predate schema version 3 their [StructureKey] (the migration can only add
+     * the column). Visits at most [limit] rows with an id above [afterId] and returns the highest id seen,
+     * or null when there is nothing left; call again with that id until null. New rows get their key on insert.
+     */
+    fun backfillStructureKeys(afterId: Long, limit: Int = KEY_BACKFILL_BATCH): Long? {
+        class Row(val id: Long, val raw: ByteArray)
+        val rows = db.query(
+            "SELECT id, raw FROM seen_payload WHERE id > ? AND structure_key IS NULL ORDER BY id LIMIT ?",
+            listOf(afterId, limit),
+        ) { Row(it.long(0), it.blob(1)) }
+        if (rows.isEmpty()) return null
+        db.transaction {
+            rows.forEach { db.execute("UPDATE seen_payload SET structure_key = ? WHERE id = ?", listOf(StructureKey.of(it.raw).key, it.id)) }
+        }
+        return rows.last().id
+    }
+
+    // Recording notes ------------------------------------------------------------------------------------
+
+    /** The note of a recording, or "" when there is none. */
+    fun recordingNote(recordingId: String): String =
+        db.query("SELECT note FROM recording_note WHERE recording_id = ?", listOf(recordingId)) { it.string(0) }.firstOrNull().orEmpty()
+
+    /** Replaces the note; a blank one deletes it. */
+    fun setRecordingNote(recordingId: String, note: String, nowMs: Long) {
+        if (note.isBlank()) {
+            db.execute("DELETE FROM recording_note WHERE recording_id = ?", listOf(recordingId))
+        } else {
+            db.execute(
+                "INSERT OR REPLACE INTO recording_note (recording_id, note, updated_ms) VALUES (?, ?, ?)",
+                listOf(recordingId, note, nowMs),
+            )
+        }
+    }
+
     // Recording lifecycle -----------------------------------------------------------------------
 
     fun startRecording(id: String, startedMs: Long) {
@@ -308,8 +356,8 @@ class LocalStore(private val db: SqlDatabase) {
                 val known = existing[hash]
                 if (known == null) {
                     val id = db.insert(
-                        "INSERT INTO seen_payload (hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version) VALUES (?, ?, ?, ?, ?, ?)",
-                        listOf(hash, delta.raw, delta.firstSeenMs, delta.lastSeenMs, delta.count, matchVersion),
+                        "INSERT INTO seen_payload (hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version, structure_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        listOf(hash, delta.raw, delta.firstSeenMs, delta.lastSeenMs, delta.count, matchVersion, StructureKey.of(delta.raw).key),
                     )
                     val pages = matchesOf(hash, delta.raw)
                     pages.forEach {
@@ -423,6 +471,19 @@ class LocalStore(private val db: SqlDatabase) {
         catalog.page(r.string(0))?.let { page -> SeenProduct(page, r.long(1), r.long(2), r.long(3).toInt(), r.long(4)) }
     }.filterNotNull()
 
+    /**
+     * Stored payloads no page matches, grouped by structure key, most recently heard first. Payloads without
+     * a key yet (pre-version-3 rows before the backfill reached them) are not listed.
+     */
+    fun seenUnknownStructures(): List<SeenUnknown> = db.query(
+        "SELECT structure_key, COUNT(*), SUM(seen_count), MIN(first_seen_ms), MAX(last_seen_ms) FROM seen_payload p " +
+            "WHERE structure_key IS NOT NULL AND NOT EXISTS (SELECT 1 FROM payload_match m WHERE m.payload_id = p.id) " +
+            "GROUP BY structure_key ORDER BY MAX(last_seen_ms) DESC, structure_key LIMIT ?",
+        listOf(MAX_SEEN_UNKNOWN_GROUPS),
+    ) { r ->
+        StructureKey.parse(r.string(0))?.let { SeenUnknown(it, r.long(1).toInt(), r.long(2), r.long(3), r.long(4)) }
+    }.filterNotNull()
+
     fun recordings(nowMs: Long): List<Recording> = db.query(
         "SELECT id, started_ms, ended_ms, distance_m, device_count FROM recording ORDER BY started_ms DESC",
     ) { it.toRecording(nowMs) }
@@ -463,6 +524,17 @@ class LocalStore(private val db: SqlDatabase) {
         "SELECT time_ms, lat, lon, accuracy FROM recording_route WHERE recording_id = ? ORDER BY time_ms",
         listOf(recordingId),
     ) { RoutePoint(it.long(0), it.double(1), it.double(2), it.double(3)) }
+
+    fun sightingsInRecording(recordingId: String, bounds: GeoBounds?, limit: Int): List<Sighting> {
+        if (bounds == null) return sightings("WHERE s.recording_id = ?", listOf(recordingId), limit)
+        // lat/lon compare as numbers: a text argument takes the column's REAL affinity
+        val lon = if (bounds.crossesAntimeridian) "(s.lon >= ? OR s.lon <= ?)" else "(s.lon >= ? AND s.lon <= ?)"
+        return sightings(
+            "WHERE s.recording_id = ? AND s.lat >= ? AND s.lat <= ? AND $lon",
+            listOf(recordingId, bounds.minLat, bounds.maxLat, bounds.minLon, bounds.maxLon),
+            limit,
+        )
+    }
 
     fun sightingsOfDevice(addr: String, limit: Int): List<Sighting> = sightings(
         "WHERE s.addr = ?", listOf(addr.uppercase()), limit,
