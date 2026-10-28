@@ -9,9 +9,6 @@ sealed interface Route {
     data class DeviceMap(val addr: String) : Route
     data class RecordingMap(val id: String) : Route
 
-    /** Debug builds only: the map page over fake data, to check the map layers without a walk. */
-    data class DemoMap(val variant: String) : Route
-
     /** The pre-v3 sessions, upload and export screen. */
     data object Legacy : Route
 }

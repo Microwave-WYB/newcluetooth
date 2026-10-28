@@ -37,15 +37,55 @@ class LiveSample(
  * variants per device, and devices unheard for [FORGET_AFTER_MS] are dropped by [prune].
  */
 class LiveDeviceTracker {
-    private class Bucket(val second: Long, var sum: Int, var count: Int)
-
     private data class VariantKey(val flags: Int, val hash: Int, val size: Int)
 
-    private class Variant(val raw: ByteArray, val legacy: Boolean, val primaryPhy: Int?, val secondaryPhy: Int?, val sid: Int?, val connectable: Boolean, val firstMs: Long) {
+    private class Variant(
+        val key: VariantKey,
+        val raw: ByteArray,
+        val legacy: Boolean,
+        val primaryPhy: Int?,
+        val secondaryPhy: Int?,
+        val sid: Int?,
+        val connectable: Boolean,
+        val firstMs: Long,
+    ) {
+        /** Parsed once per variant: the table is read every second while a detail page is open. */
+        val structures: List<AdStructureRow> by lazy { adStructures(raw) }
         var count = 0
         var lastMs = firstMs
         var min = Int.MAX_VALUE
         var max = Int.MIN_VALUE
+    }
+
+    /** One RSSI average per second in primitive arrays; the oldest second is overwritten when full. */
+    private class RssiRing {
+        private val seconds = LongArray(MAX_BUCKETS)
+        private val sums = IntArray(MAX_BUCKETS)
+        private val counts = IntArray(MAX_BUCKETS)
+        private var head = 0
+        private var size = 0
+
+        fun add(second: Long, rssi: Int) {
+            if (size > 0) {
+                val last = (head + size - 1) % MAX_BUCKETS
+                if (seconds[last] == second) {
+                    sums[last] += rssi
+                    counts[last]++
+                    return
+                }
+            }
+            val index = if (size < MAX_BUCKETS) (head + size++) % MAX_BUCKETS else head.also { head = (head + 1) % MAX_BUCKETS }
+            seconds[index] = second
+            sums[index] = rssi
+            counts[index] = 1
+        }
+
+        inline fun forEach(block: (second: Long, sum: Int, count: Int) -> Unit) {
+            for (i in 0 until size) {
+                val index = (head + i) % MAX_BUCKETS
+                block(seconds[index], sums[index], counts[index])
+            }
+        }
     }
 
     private class Device(val addr: String, val firstSeenMs: Long) {
@@ -55,8 +95,10 @@ class LiveDeviceTracker {
         var connectable = false
         var legacy = true
         var addrType: Int? = null
-        val buckets = ArrayDeque<Bucket>()
-        val variants = LinkedHashMap<VariantKey, Variant>()
+        val ring = RssiRing()
+
+        /** Access order: the variant least recently heard is the one evicted when full. */
+        val variants = LinkedHashMap<VariantKey, Variant>(16, 0.75f, true)
     }
 
     private val devices = LinkedHashMap<String, Device>()
@@ -72,15 +114,7 @@ class LiveDeviceTracker {
         d.lastSeenMs = s.timeMs
         if (s.rssi != null) {
             d.rssi = s.rssi
-            val sec = s.timeMs / 1000
-            val last = d.buckets.lastOrNull()
-            if (last != null && last.second == sec) {
-                last.sum += s.rssi
-                last.count++
-            } else {
-                d.buckets.addLast(Bucket(sec, s.rssi, 1))
-                while (d.buckets.size > MAX_BUCKETS) d.buckets.removeFirst()
-            }
+            d.ring.add(s.timeMs / 1000, s.rssi)
         }
         s.connectable?.let { d.connectable = it }
         s.legacy?.let { d.legacy = it }
@@ -91,7 +125,7 @@ class LiveDeviceTracker {
         val key = VariantKey(flags, s.raw.contentHashCode(), s.raw.size)
         val v = d.variants.getOrPut(key) {
             if (d.variants.size >= MAX_VARIANTS) d.variants.remove(d.variants.keys.first())
-            Variant(s.raw, legacy, s.primaryPhy, s.secondaryPhy, s.advSid, connectable, s.timeMs).also {
+            Variant(key, s.raw, legacy, s.primaryPhy, s.secondaryPhy, s.advSid, connectable, s.timeMs).also {
                 (s.localName ?: advertisedName(s.raw))?.let { name -> d.name = name }
             }
         }
@@ -105,6 +139,11 @@ class LiveDeviceTracker {
     }
 
     fun rssi(addr: String): Int? = devices[addr]?.rssi
+
+    /** The advertised name, without building a row. */
+    fun name(addr: String): String? = devices[addr]?.name
+
+    fun isStale(addr: String, nowMs: Long): Boolean = devices[addr]?.let { nowMs - it.lastSeenMs > STALE_AFTER_MS } ?: true
 
     /** The raw bytes of the most recently heard variant, for matching against the wiki. */
     fun latestAdvertisement(addr: String): ByteArray? = devices[addr]?.variants?.values?.maxByOrNull { it.lastMs }?.raw
@@ -126,51 +165,57 @@ class LiveDeviceTracker {
             advKind = if (d.legacy) AdvKind.Legacy else AdvKind.Extended,
             connectable = d.connectable,
             rssi = d.rssi ?: -100,
-            history = withCurrent(sparkline(d, nowMs), d.rssi),
+            history = sparkline(d, nowMs),
             stale = nowMs - d.lastSeenMs > STALE_AFTER_MS,
         )
     }
 
     /**
-     * The last point of every series is the value shown as the number, so the number's colour and
-     * the last point's colour always agree (bins are averages and may lag by a second or two).
+     * The last point of the sparkline is the value shown as the number, so the number's colour and the
+     * last point's colour always agree (bins are averages and may lag by a second or two).
      */
     private fun withCurrent(series: List<Int>, current: Int?): List<Int> =
         if (current == null || series.isEmpty()) series else series.dropLast(1) + current
 
     /** About 24 points covering the last 60 seconds, averaged per bin; empty bins are skipped. */
-    private fun sparkline(d: Device, nowMs: Long): List<Int> = binned(d, nowMs / 1000, 60, 24)
+    private fun sparkline(d: Device, nowMs: Long): List<Int> = withCurrent(binned(d, nowMs / 1000, 60, 24).filterNotNull(), d.rssi)
 
-    /** RSSI over the window for the detail chart, at most [CHART_POINTS] points, oldest first. */
-    fun chart(addr: String, window: ChartWindow, nowMs: Long): List<Int> {
+    /**
+     * RSSI over the window for the detail chart, at most [CHART_POINTS] bins, oldest first; a bin with
+     * no sample is null so the chart can show the gap. The last bin is the current RSSI.
+     */
+    fun chart(addr: String, window: ChartWindow, nowMs: Long): List<Int?> {
         val d = devices[addr] ?: return emptyList()
         val seconds = when (window) {
             ChartWindow.OneMinute -> 60
             ChartWindow.FiveMinutes -> 300
             ChartWindow.FifteenMinutes -> 900
         }
-        return withCurrent(binned(d, nowMs / 1000, seconds, minOf(seconds, CHART_POINTS)), d.rssi)
+        val bins = binned(d, nowMs / 1000, seconds, minOf(seconds, CHART_POINTS))
+        val current = d.rssi
+        return if (current == null || bins.isEmpty()) bins else bins.dropLast(1) + current
     }
 
-    private fun binned(d: Device, nowSec: Long, windowSec: Int, bins: Int): List<Int> {
+    private fun binned(d: Device, nowSec: Long, windowSec: Int, bins: Int): List<Int?> {
         val sums = IntArray(bins)
         val counts = IntArray(bins)
         val start = nowSec - windowSec + 1
-        for (b in d.buckets) {
-            if (b.second < start || b.second > nowSec) continue
-            val idx = (((b.second - start) * bins) / windowSec).toInt().coerceIn(0, bins - 1)
-            sums[idx] += b.sum
-            counts[idx] += b.count
+        d.ring.forEach { second, sum, count ->
+            if (second in start..nowSec) {
+                val idx = (((second - start) * bins) / windowSec).toInt().coerceIn(0, bins - 1)
+                sums[idx] += sum
+                counts[idx] += count
+            }
         }
-        return (0 until bins).filter { counts[it] > 0 }.map { sums[it] / counts[it] }
+        return List(bins) { if (counts[it] > 0) sums[it] / counts[it] else null }
     }
 
     fun variants(addr: String): List<AdVariantState> {
         val d = devices[addr] ?: return emptyList()
         val time = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
-        return d.variants.values.mapIndexed { index, v ->
+        return d.variants.values.map { v ->
             AdVariantState(
-                id = "v$index-${v.raw.contentHashCode()}",
+                id = "v${v.key.flags}-${v.key.hash}-${v.key.size}",
                 pduType = pduType(v.legacy, v.connectable),
                 phy = phyLabel(v.legacy, v.primaryPhy, v.secondaryPhy),
                 sid = v.sid,
@@ -179,7 +224,7 @@ class LiveDeviceTracker {
                 lastSeen = time.format(Instant.ofEpochMilli(v.lastMs)),
                 rssiMin = if (v.min == Int.MAX_VALUE) -100 else v.min,
                 rssiMax = if (v.max == Int.MIN_VALUE) -100 else v.max,
-                structures = adStructures(v.raw),
+                structures = v.structures,
             )
         }
     }

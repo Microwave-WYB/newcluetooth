@@ -218,7 +218,7 @@ fun RecordingsSavedSnackbar() = Frame { RecordingsPreview(FakeData.recordingsIdl
 
 @Composable
 private fun MapPreview(state: MapUiState) = AppShell(
-    recorder = state.recorder,
+    recorder = FakeData.idle,
     callbacks = cb,
     placement = RecordPlacement.Mini,
     floatingMini = true,

@@ -1,5 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -102,6 +103,8 @@ fun AppShell(
                 }
             }
             if (controlBarOpen) {
+                // Composed after the sheets, so Back closes the control bar before anything beneath it.
+                BackHandler(onBack = onDismissControlBar)
                 SheetLayer(onDismissControlBar, scrimTopInset = 0.dp) { RecordControlBar(recorder, callbacks) }
             }
             snackbar()

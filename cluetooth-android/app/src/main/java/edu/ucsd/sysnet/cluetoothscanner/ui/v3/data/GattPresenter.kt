@@ -8,6 +8,7 @@ import edu.ucsd.sysnet.cluetoothscanner.gatt.GattReadValue
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattServiceResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStage
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattCharState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattDescriptorState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattServiceState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattStepState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattUiState
@@ -79,6 +80,14 @@ object GattPresenter {
             properties = c.properties.joinToString(" ") { GattNames.property(it) },
             value = value,
             error = errorText(v.status),
+            descriptors = c.descriptors.map { d ->
+                GattDescriptorState(
+                    uuid = d.uuid,
+                    name = GattNames.descriptor(d.uuid),
+                    value = if (d.value.status == GattReadValue.OK) d.value.hex?.let { GattNames.valueText(d.uuid, it) } else null,
+                    error = errorText(d.value.status),
+                )
+            },
         )
     }
 
@@ -116,6 +125,13 @@ object GattNames {
         "notify" to "通知", "indicate" to "指示", "signed_write" to "签名写", "extended" to "扩展",
     )
 
+    private val descriptors = mapOf(
+        "2900" to "Characteristic Extended Properties", "2901" to "Characteristic User Description",
+        "2902" to "Client Characteristic Configuration", "2903" to "Server Characteristic Configuration",
+        "2904" to "Characteristic Presentation Format",
+    )
+
+    fun descriptor(uuid: String): String? = descriptors[uuid]
     fun service(uuid: String): String? = services[uuid]
     fun characteristic(uuid: String): String? = characteristics[uuid]
     fun property(wire: String): String = properties[wire] ?: wire

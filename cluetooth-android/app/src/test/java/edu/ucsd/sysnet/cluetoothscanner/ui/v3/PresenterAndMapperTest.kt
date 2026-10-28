@@ -25,7 +25,10 @@ import edu.ucsd.sysnet.cluetoothscanner.local.WikiPage
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingMode
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingState
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionUploadState
+import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
+import edu.ucsd.sysnet.cluetoothscanner.service.ScanOperatingState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattNames
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
@@ -216,9 +219,42 @@ class MapperTest {
     }
 
     @Test
+    fun anUploadTheCoreHasNotReportedIsNeverShownAsUploaded() {
+        val r = rec("x", 1_000_000)
+        assertEquals(UploadStatus.Unknown, RecordingMapper.summary(r, null, null).upload)
+        assertEquals(UploadStatus.Empty, RecordingMapper.summary(r, GatewaySessionUploadState.EMPTY, null).upload)
+        assertEquals(UploadStatus.Uploaded, RecordingMapper.summary(r, GatewaySessionUploadState.UPLOADED, null).upload)
+        // The active recording is uploading whatever the map says.
+        assertEquals(UploadStatus.Uploading, RecordingMapper.summary(rec("n", 1, active = true), null, null).upload)
+    }
+
+    @Test
     fun dayLabels() {
         val today = LocalDate.of(2026, 10, 28)
         assertEquals("今天 · 10月28日", RecordingMapper.dayLabel(today, today))
         assertEquals("2025年12月3日", RecordingMapper.dayLabel(LocalDate.of(2025, 12, 3), today))
+    }
+}
+
+class NoticesTest {
+    @Test
+    fun copyIsExact() {
+        assertEquals("蓝牙已关闭，打开后继续扫描", Notices.scanner(ScanOperatingState.BLUETOOTH_OFF))
+        assertEquals("蓝牙扫描暂时不可用，正在重试", Notices.scanner(ScanOperatingState.SCANNER_UNAVAILABLE))
+        assertEquals("正在保存，稍后自动恢复扫描", Notices.scanner(ScanOperatingState.PAUSED_BACKPRESSURE))
+        assertEquals("无法开始扫描，请检查蓝牙权限", Notices.scanner(ScanOperatingState.FAILED))
+        assertNull(Notices.scanner(ScanOperatingState.SCANNING))
+        assertEquals("本地数据库不可用，暂时不记录历史", Notices.data(LocalDataStatus.State.UNAVAILABLE))
+        assertEquals("产品识别不可用", Notices.data(LocalDataStatus.State.IDENTIFICATION_UNAVAILABLE))
+        assertNull(Notices.data(LocalDataStatus.State.READY))
+    }
+
+    @Test
+    fun locationNoticeOnlyWhileRecordingAndOnlyForNoFixOrAStaleFix() {
+        assertNull(Notices.location(recording = false, fixAgeMs = null))
+        assertEquals("还没有定位，轨迹暂时不会记录", Notices.location(true, null))
+        assertNull(Notices.location(true, 59_000))
+        assertNull(Notices.location(true, 60_000))
+        assertEquals("定位已超过 1 分钟没有更新，轨迹暂停", Notices.location(true, 60_001))
     }
 }

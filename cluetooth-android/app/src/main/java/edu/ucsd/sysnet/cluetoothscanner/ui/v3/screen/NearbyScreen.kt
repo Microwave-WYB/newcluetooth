@@ -132,6 +132,7 @@ private fun CategorySection(
 fun NearbyPage(
     state: NearbyUiState,
     modifier: Modifier = Modifier,
+    notice: String? = null,
     onOpenCategory: (NearbyCategoryState) -> Unit = {},
     onOpenProduct: (ProductItemState) -> Unit = {},
 ) {
@@ -139,7 +140,10 @@ fun NearbyPage(
     Column(modifier.fillMaxSize()) {
         V3TopBar(
             title = "附近",
-            status = { RecorderStatus(state.recorder, "$inRange 个产品在范围内") },
+            status = {
+                RecorderStatus(state.recorder, "$inRange 个产品在范围内")
+                HeaderNotice(notice)
+            },
         )
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
             items(state.categories, key = { it.id }) { c ->

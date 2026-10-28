@@ -27,16 +27,17 @@ class ScanOrder(private val initialSortDelayMs: Long = INITIAL_SORT_DELAY_MS) {
     }
 
     /** Applies the one-time initial sort when its time has come; true when it sorted now. */
-    fun tick(nowMs: Long, rssiOf: (String) -> Int?): Boolean {
+    fun tick(nowMs: Long, rssiOf: (String) -> Int?, isStale: (String) -> Boolean): Boolean {
         val first = firstArrivalMs ?: return false
         if (initialSortDone || nowMs - first < initialSortDelayMs) return false
-        resort(rssiOf)
+        resort(rssiOf, isStale)
         return true
     }
 
-    fun resort(rssiOf: (String) -> Int?) {
+    /** By signal, strongest first, with devices that are no longer being heard after the live ones. */
+    fun resort(rssiOf: (String) -> Int?, isStale: (String) -> Boolean) {
         initialSortDone = true
-        order.sortByDescending { rssiOf(it) ?: Int.MIN_VALUE }
+        order.sortWith(compareBy<String> { isStale(it) }.thenByDescending { rssiOf(it) ?: Int.MIN_VALUE })
     }
 
     companion object {

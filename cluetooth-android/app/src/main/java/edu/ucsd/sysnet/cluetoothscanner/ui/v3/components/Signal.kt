@@ -94,7 +94,7 @@ fun Sparkline(history: List<Int>, modifier: Modifier = Modifier) {
  */
 @Composable
 fun RssiChart(
-    samples: List<Int>,
+    samples: List<Int?>,
     window: ChartWindow,
     onWindowChange: (ChartWindow) -> Unit,
     modifier: Modifier = Modifier,
@@ -135,19 +135,35 @@ fun RssiChart(
                 drawRect(extra.signalRed.copy(alpha = 0.07f), Offset(0f, y80), androidx.compose.ui.geometry.Size(size.width, size.height - y80))
                 drawLine(grid, Offset(0f, y65), Offset(size.width, y65), 1.dp.toPx())
                 drawLine(grid, Offset(0f, y80), Offset(size.width, y80), 1.dp.toPx())
-                if (samples.size >= 2) {
-                    val path = Path()
-                    samples.forEachIndexed { i, v ->
-                        val x = size.width * i / (samples.size - 1)
-                        if (i == 0) path.moveTo(x, y(v)) else path.lineTo(x, y(v))
+                fun x(i: Int) = if (samples.size <= 1) size.width else size.width * i / (samples.size - 1)
+                val path = Path()
+                var pen = false
+                samples.forEachIndexed { i, v ->
+                    if (v == null) {
+                        pen = false
+                    } else if (!pen) {
+                        path.moveTo(x(i), y(v))
+                        pen = true
+                    } else {
+                        path.lineTo(x(i), y(v))
                     }
-                    drawPath(path, line, style = Stroke(1.75.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                    val lastColor = when (signalOf(samples.last())) {
+                }
+                drawPath(path, line, style = Stroke(1.75.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                // A lone sample between two gaps has no line to show it.
+                samples.forEachIndexed { i, v ->
+                    if (v != null && (i == 0 || samples[i - 1] == null) && (i == samples.lastIndex || samples[i + 1] == null)) {
+                        drawCircle(line, 2.dp.toPx(), Offset(x(i), y(v)))
+                    }
+                }
+                val lastIndex = samples.indexOfLast { it != null }
+                if (lastIndex >= 0) {
+                    val last = samples[lastIndex]!!
+                    val lastColor = when (signalOf(last)) {
                         Signal.Strong -> extra.signalGreen
                         Signal.Fair -> extra.signalYellow
                         Signal.Weak -> extra.signalRed
                     }
-                    drawCircle(lastColor, 4.dp.toPx(), Offset(size.width, y(samples.last())))
+                    drawCircle(lastColor, 4.dp.toPx(), Offset(x(lastIndex), y(last)))
                 }
             }
             Text("-65", fontFamily = MonoFamily, fontSize = 10.sp, color = label, modifier = Modifier.align(Alignment.TopStart).padding(top = chartHeight * (25f / 60f) - 14.dp))

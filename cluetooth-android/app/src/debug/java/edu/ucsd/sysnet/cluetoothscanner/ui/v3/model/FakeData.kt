@@ -324,7 +324,6 @@ object FakeData {
         mode = MapMode.Recording,
         title = "10月27日 18:05",
         subtitle = "23 分钟 · 1.8 km · 214 台设备",
-        recorder = idle,
         route = route,
         rows = mapRows,
         sort = DeviceSort.Signal,
@@ -350,7 +349,6 @@ object FakeData {
         mode = MapMode.Product,
         title = "WH-1000XM5",
         subtitle = "Sony · 3 个 MAC · 来自 4 次录制",
-        recorder = idle,
         route = emptyList(),
         rows = listOf(
             MapListRowState("p1", "WH-1000XM5", "88:C9:E8:20:4B:D7", "3 次录制 · 最近 10月27日", -49),

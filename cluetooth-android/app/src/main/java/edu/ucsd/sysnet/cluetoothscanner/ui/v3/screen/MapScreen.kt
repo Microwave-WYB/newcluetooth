@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.BackButton
@@ -91,7 +93,9 @@ fun MapPage(
     state: MapUiState,
     actions: MapActions,
     modifier: Modifier = Modifier,
-    map: @Composable (coveredFraction: Float) -> Unit,
+    /** A notice over the map, e.g. that the base map is offline. */
+    notice: String? = null,
+    map: @Composable (coveredFraction: () -> Float) -> Unit,
 ) {
     val sheet = rememberDragSheetState()
     val selecting = state.selected != null
@@ -112,7 +116,8 @@ fun MapPage(
 
     BoxWithConstraints(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val containerPx = with(density) { maxHeight.toPx() }
-        map((sheet.height.value / containerPx).coerceIn(0f, 1f).let { if (it == 0f) 0.5f else it })
+        // A lambda, so a sheet drag does not recompose the map; it is read when drawing or fitting.
+        map { (sheet.height.value / containerPx).coerceIn(0f, 1f).let { if (it == 0f) 0.5f else it } }
 
         Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -139,6 +144,14 @@ fun MapPage(
                         )
                     }
                 }
+            }
+            if (notice != null) {
+                Text(
+                    notice,
+                    Modifier.padding(top = 8.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
             if (state.emptyNote != null) {
                 Text(
@@ -189,9 +202,9 @@ fun MapPage(
 
         // OpenStreetMap and OpenFreeMap require visible attribution.
         Text(
-            "© OpenStreetMap contributors · OpenFreeMap",
+            "© OpenMapTiles · © OpenStreetMap contributors · OpenFreeMap",
             Modifier.align(Alignment.BottomStart).padding(start = 8.dp)
-                .padding(bottom = with(density) { sheet.height.value.toDp() } + 2.dp),
+                .offset { IntOffset(0, -sheet.height.value.toInt() - 2.dp.roundToPx()) },
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

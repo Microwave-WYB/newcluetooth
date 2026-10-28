@@ -78,12 +78,15 @@ enum class StepStatus { Pending, Active, Done, Failed }
 
 data class GattStepState(val label: String, val status: StepStatus, val detail: String? = null)
 
+data class GattDescriptorState(val uuid: String, val name: String?, val value: String?, val error: String?)
+
 data class GattCharState(
     val uuid: String,
     val name: String?,
     val properties: String,
     val value: String?,
     val error: String?,
+    val descriptors: List<GattDescriptorState> = emptyList(),
 )
 
 data class GattServiceState(val uuid: String, val name: String?, val characteristics: List<GattCharState>)
@@ -111,8 +114,8 @@ data class DeviceDetailUiState(
     val device: DeviceRowState,
     val variants: List<AdVariantState>,
     val chartWindow: ChartWindow,
-    /** One RSSI sample per second inside [chartWindow], oldest first. */
-    val chartSamples: List<Int>,
+    /** RSSI over [chartWindow], oldest first; null marks a stretch with no samples (a gap). */
+    val chartSamples: List<Int?>,
     val gatt: GattUiState,
     val wiki: WikiUiState?,
     /** Non-null disables 发现 GATT and says why. */
@@ -149,7 +152,17 @@ data class NearbyUiState(
 
 // ---- Recordings ----------------------------------------------------------------------------
 
-enum class UploadStatus(val label: String) { Uploaded("已上传"), Uploading("上传中"), Failed("失败") }
+enum class UploadStatus(val label: String) {
+    Uploaded("已上传"),
+    Uploading("上传中"),
+    Failed("失败"),
+
+    /** The core has not reported this recording's upload state. */
+    Unknown("未知"),
+
+    /** The recording had no rows to upload. */
+    Empty("无数据"),
+}
 
 data class RecordingSummaryState(
     val id: String,
@@ -197,7 +210,6 @@ data class MapUiState(
     val mode: MapMode,
     val title: String,
     val subtitle: String,
-    val recorder: RecorderUiState,
     val route: List<LatLon>,
     val rows: List<MapListRowState>,
     val sort: DeviceSort,

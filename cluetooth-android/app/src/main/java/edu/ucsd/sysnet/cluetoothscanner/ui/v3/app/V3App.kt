@@ -18,9 +18,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordPlacement
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordProblemSnackbar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordSavedSnackbar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
@@ -55,10 +59,28 @@ import kotlinx.coroutines.launch
 @Composable
 fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Unit) {
     V3Theme {
-        val stack by vm.stack.collectAsState()
+        val stack by vm.stack.collectAsStateWithLifecycle()
         val route = stack.last()
         val context = LocalContext.current
         LaunchedEffect(vm) { vm.toastFlow.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } }
+
+        // The live list and its one-second loop run only while the UI is on screen. A recording lives in
+        // its own service and is not affected by this.
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner, vm) {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_START -> vm.setUiActive(true)
+                    Lifecycle.Event.ON_STOP -> vm.setUiActive(false)
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                vm.setUiActive(false)
+            }
+        }
 
         if (route == Route.Legacy) {
             BackHandler { vm.back() }
@@ -66,18 +88,20 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             return@V3Theme
         }
 
-        val recorder by vm.recorder.collectAsState()
-        val controlBarOpen by vm.controlBarOpen.collectAsState()
-        val saved by vm.saved.collectAsState()
-        val selected by vm.selectedAddr.collectAsState()
-        val detail by vm.detail.collectAsState()
-        val scan by vm.scanState.collectAsState()
+        val recorder by vm.recorder.collectAsStateWithLifecycle()
+        val controlBarOpen by vm.controlBarOpen.collectAsStateWithLifecycle()
+        val saved by vm.saved.collectAsStateWithLifecycle()
+        val selected by vm.selectedAddr.collectAsStateWithLifecycle()
+        val detail by vm.detail.collectAsStateWithLifecycle()
+        val scan by vm.scanState.collectAsStateWithLifecycle()
+        val notice by vm.headerNotice.collectAsStateWithLifecycle()
+        val problem by vm.problem.collectAsStateWithLifecycle()
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
         val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
         val onScan = route == Route.Tab(AppTab.Scan)
-        val isMap = route is Route.RecordingMap || route is Route.ProductMap || route is Route.DeviceMap || route is Route.DemoMap
+        val isMap = route is Route.RecordingMap || route is Route.ProductMap || route is Route.DeviceMap
         val sheetOpen = onScan && selected != null && detail != null
         val tab = when (route) {
             is Route.Tab -> route.tab
@@ -85,12 +109,14 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             else -> null
         }
 
-        val sortVersion by vm.sortVersion.collectAsState()
+        val sortVersion by vm.sortVersion.collectAsStateWithLifecycle()
         // A re-sort moves the rows under a keyed list; start again from the top.
         LaunchedEffect(sortVersion) { if (sortVersion > 0) listState.scrollToItem(0) }
 
+        // Back: the control bar (closed in AppShell, composed last), the sheet, the selection, then pages;
+        // on the Nearby and Recordings tabs it goes to the Scan tab before leaving the app.
         BackHandler(enabled = stack.size > 1) { vm.back() }
-        BackHandler(enabled = controlBarOpen) { vm.setControlBar(false) }
+        BackHandler(enabled = stack.size == 1 && tab != null && tab != AppTab.Scan) { vm.selectTab(AppTab.Scan) }
 
         val detailActions = DeviceDetailActions(
             onWindowChange = vm::setWindow,
@@ -116,7 +142,12 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             },
             snackbar = {
                 val info = saved
-                if (info != null) {
+                val trouble = problem
+                if (trouble != null) {
+                    Box(Modifier.align(Alignment.BottomCenter).padding(bottom = (if (tab != null) 64.dp else 0.dp) + 12.dp)) {
+                        RecordProblemSnackbar(trouble, onRetry = vm::retrySave, onDismiss = vm::dismissProblem)
+                    }
+                } else if (info != null) {
                     Box(Modifier.align(Alignment.BottomCenter).padding(bottom = (if (tab != null) 64.dp else 0.dp) + 12.dp)) {
                         RecordSavedSnackbar(
                             info.summary.durationSeconds, info.summary.sightings,
@@ -133,27 +164,28 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                         rows = scan.rows,
                         recorder = scan.recorder,
                         listState = listState,
-                        refreshing = vm.refreshing.collectAsState().value,
+                        refreshing = vm.refreshing.collectAsStateWithLifecycle().value,
                         onRefresh = vm::refreshScan,
                         onRowClick = { vm.select(it.id) },
                         onSettings = { vm.open(Route.Legacy) },
-                        notice = vm.scanNotice.collectAsState().value,
+                        notice = notice,
                     )
                     AppTab.Nearby -> {
-                        val nearby by vm.nearby.collectAsState()
+                        val nearby by vm.nearby.collectAsStateWithLifecycle()
                         NearbyPage(
                             nearby,
+                            notice = notice,
                             onOpenCategory = { vm.open(Route.Category(it.id)) },
                             onOpenProduct = { vm.openProduct(it.id) },
                         )
                     }
                     AppTab.Recordings -> {
-                        val rec by vm.recordings.collectAsState()
-                        RecordingsPage(rec, onOpenRecording = { vm.open(Route.RecordingMap(it.id)) })
+                        val rec by vm.recordings.collectAsStateWithLifecycle()
+                        RecordingsPage(rec, notice = notice, onOpenRecording = { vm.open(Route.RecordingMap(it.id)) })
                     }
                 }
                 is Route.Category -> {
-                    val nearby by vm.nearby.collectAsState()
+                    val nearby by vm.nearby.collectAsStateWithLifecycle()
                     val category = (nearby.categories + nearby.unrecognized).firstOrNull { it.id == route.id }
                     if (category == null) {
                         Box(Modifier.fillMaxSize())
@@ -161,15 +193,15 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                         CategoryListPage(category, onBack = { vm.back() }, onOpenProduct = { vm.openProduct(it.id) })
                     }
                 }
-                is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap, is Route.DemoMap -> {
-                    val state by vm.mapState.collectAsState()
+                is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> {
+                    val state by vm.mapState.collectAsStateWithLifecycle()
                     state?.let { MapRoute(it, vm, detailActions) } ?: Box(Modifier.fillMaxSize())
                 }
                 Route.Legacy -> Unit
             }
         }
 
-        val noteTarget by vm.noteTarget.collectAsState()
+        val noteTarget by vm.noteTarget.collectAsStateWithLifecycle()
         if (noteTarget != null) NoteDialog(vm)
     }
 }
@@ -187,26 +219,30 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDe
         onLayerToggle = vm::toggleHeat,
         detail = detailActions,
     )
-    val route = vm.stack.collectAsState().value.last()
-    MapPage(state, actions) { covered ->
+    val route = vm.stack.collectAsStateWithLifecycle().value.last()
+    var offline by remember { mutableStateOf(false) }
+    // Frame the camera again when the content first arrives: points load after the selection is made.
+    val hasContent = state.route.size >= 2 || state.productPoints.isNotEmpty() || state.selectedPoints.isNotEmpty() || state.estimate != null
+    MapPage(state, actions, notice = if (offline) "离线地图不可用" else null) { covered ->
         MapLibreMap(
             overlay = MapOverlay(
                 route = if (state.selected != null) emptyList() else state.route,
                 points = if (state.selected != null) state.selectedPoints else state.productPoints,
                 estimate = state.estimate,
                 heat = state.heat,
-                fitKey = route to state.selected?.device?.id,
+                fitKey = Triple(route, state.selected?.device?.id, hasContent),
             ),
             coveredFraction = covered,
             onGesture = vm::onMapPanned,
             onViewport = vm::onViewport,
+            onOffline = { offline = it },
         )
     }
 }
 
 @Composable
 private fun NoteDialog(vm: V3ViewModel) {
-    val initial by vm.noteText.collectAsState()
+    val initial by vm.noteText.collectAsStateWithLifecycle()
     var text by remember(initial) { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = vm::dismissNote,

@@ -94,11 +94,13 @@ fun DeviceDetailHalf(
     detail: DeviceDetailUiState,
     onWindowChange: (ChartWindow) -> Unit,
     onDiscoverGatt: () -> Unit,
+    onCancelGatt: () -> Unit,
     onShowOnMap: () -> Unit,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val device = detail.device
+    val running = detail.gatt is GattUiState.InProgress
     Column(modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 16.dp)) {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f).padding(top = 2.dp)) {
@@ -134,14 +136,18 @@ fun DeviceDetailHalf(
         }
         RssiChart(detail.chartSamples, detail.chartWindow, onWindowChange, Modifier.padding(top = 14.dp))
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = onDiscoverGatt,
-                enabled = detail.gattDisabledReason == null,
-                modifier = Modifier.weight(1f).height(46.dp),
-            ) { Text("发现 GATT") }
+            if (running) {
+                OutlinedButton(onClick = onCancelGatt, modifier = Modifier.weight(1f).height(46.dp)) { Text("取消 GATT") }
+            } else {
+                Button(
+                    onClick = onDiscoverGatt,
+                    enabled = detail.gattDisabledReason == null,
+                    modifier = Modifier.weight(1f).height(46.dp),
+                ) { Text("发现 GATT") }
+            }
             OutlinedButton(onClick = onShowOnMap, modifier = Modifier.weight(1f).height(46.dp)) { Text("在地图上查看") }
         }
-        if (detail.gattDisabledReason != null) {
+        if (detail.gattDisabledReason != null && !running) {
             Text(
                 detail.gattDisabledReason,
                 style = MaterialTheme.typography.bodySmall,
@@ -408,6 +414,16 @@ private fun GattCharRow(c: GattCharState) {
                 c.error != null -> Text(c.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 2.dp))
                 c.value != null -> Text(c.value, fontFamily = MonoFamily, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
                 else -> Text("无值", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 2.dp))
+            }
+            c.descriptors.forEach { d ->
+                Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.Top) {
+                    Text("· ${d.name ?: d.uuid}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                    Text(
+                        "  " + (d.error ?: d.value ?: "无值"),
+                        fontFamily = MonoFamily, fontSize = 11.sp,
+                        color = if (d.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

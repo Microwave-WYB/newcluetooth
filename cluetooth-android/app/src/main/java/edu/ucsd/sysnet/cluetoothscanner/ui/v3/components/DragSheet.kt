@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -25,6 +24,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -33,7 +33,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalStaticRender
 import kotlin.math.abs
@@ -78,7 +78,6 @@ fun BoxScope.DragSheet(
         val lv = levels(containerPx)
         val top = lv.last()
         val scope = rememberCoroutineScope()
-        val density = LocalDensity.current
         val static = LocalStaticRender.current
         SideEffect { state.lowest = lv.first() }
 
@@ -105,14 +104,22 @@ fun BoxScope.DragSheet(
         }
 
         // A preview renders one frame: show the rest height at once instead of animating to it.
-        val heightPx = if (static) lv[level.coerceIn(lv.indices)] else state.height.value
-        val expanded = heightPx >= top - 2f && lv.size > 1
+        val restHeight = lv[level.coerceIn(lv.indices)]
+        val currentHeight = { if (static) restHeight else state.height.value }
+        // Only the flip to or from the top level recomposes the sheet; the height itself is read at layout time.
+        val expanded by remember(top, lv.size, static, restHeight) {
+            derivedStateOf { currentHeight() >= top - 2f && lv.size > 1 }
+        }
         val corner = if (expanded) 0.dp else 24.dp
         Surface(
             modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(with(density) { heightPx.toDp() })
+                .layout { measurable, constraints ->
+                    val h = currentHeight().toInt().coerceAtLeast(0)
+                    val placeable = measurable.measure(constraints.copy(minHeight = h, maxHeight = h))
+                    layout(placeable.width, h) { placeable.place(0, 0) }
+                }
                 .draggable(drag, Orientation.Vertical, enabled = !expanded, onDragStopped = { onStopped(it) }),
             shape = RoundedCornerShape(topStart = corner, topEnd = corner),
             color = MaterialTheme.colorScheme.surface,

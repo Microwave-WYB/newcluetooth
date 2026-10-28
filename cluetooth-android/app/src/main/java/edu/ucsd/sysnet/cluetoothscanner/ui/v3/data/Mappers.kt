@@ -105,10 +105,14 @@ object RecordingMapper {
         durationSeconds = (r.durationMs / 1000).toInt(),
         distanceMeters = r.distanceMeters.toInt(),
         deviceCount = r.deviceCount,
-        upload = when (upload) {
-            GatewaySessionUploadState.PENDING -> UploadStatus.Uploading
-            GatewaySessionUploadState.FAILED -> UploadStatus.Failed
-            else -> if (r.active) UploadStatus.Uploading else UploadStatus.Uploaded
+        // Never claim an upload that the core has not reported: no state is "unknown", not "uploaded".
+        upload = when {
+            r.active -> UploadStatus.Uploading
+            upload == null -> UploadStatus.Unknown
+            upload == GatewaySessionUploadState.UPLOADED -> UploadStatus.Uploaded
+            upload == GatewaySessionUploadState.FAILED -> UploadStatus.Failed
+            upload == GatewaySessionUploadState.EMPTY -> UploadStatus.Empty
+            else -> UploadStatus.Uploading
         },
         note = note?.takeIf { it.isNotBlank() },
     )

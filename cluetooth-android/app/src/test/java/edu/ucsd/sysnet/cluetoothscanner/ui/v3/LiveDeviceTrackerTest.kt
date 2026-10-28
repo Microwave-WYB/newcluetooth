@@ -69,8 +69,8 @@ class LiveDeviceTrackerTest {
         t.onSample(sample(rssi = -60, t = 1_000_400))
         t.onSample(sample(rssi = -80, t = 1_100_000))
         val now = 1_100_500L
-        assertEquals(listOf(-80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now))
-        assertEquals(listOf(-55, -80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FiveMinutes, now))
+        assertEquals(listOf(-80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).filterNotNull())
+        assertEquals(listOf(-55, -80), t.chart("AA:BB:CC:DD:EE:01", ChartWindow.FiveMinutes, now).filterNotNull())
     }
 
     @Test
@@ -90,6 +90,32 @@ class LiveDeviceTrackerTest {
         assertEquals(listOf("01", "09"), v[0].structures.map { it.type })
         assertEquals("54696c65", v[0].structures[1].data)
         assertEquals(5, v[0].structures[1].length)
+    }
+
+    @Test
+    fun theChartKeepsGapsAsNulls() {
+        val t = LiveDeviceTracker()
+        t.onSample(sample(rssi = -50, t = 1_000_000))
+        t.onSample(sample(rssi = -60, t = 1_030_000))
+        val series = t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, 1_030_500)
+        assertEquals(60, series.size)
+        assertEquals(-60, series.last())
+        assertEquals(-50, series[series.size - 31])
+        assertTrue(series.subList(series.size - 29, series.size - 1).all { it == null })
+    }
+
+    @Test
+    fun variantIdsAreStableAndTheLeastRecentlyHeardVariantIsEvicted() {
+        val t = LiveDeviceTracker()
+        t.onSample(sample(raw = byteArrayOf(2, 1, 1), t = 1_000_000))
+        val firstId = t.variants("AA:BB:CC:DD:EE:01").single().id
+        repeat(LiveDeviceTracker.MAX_VARIANTS - 1) { i -> t.onSample(sample(raw = byteArrayOf(2, 1, (i + 10).toByte()), t = 1_000_100L + i)) }
+        t.onSample(sample(raw = byteArrayOf(2, 1, 1), t = 1_001_000)) // the first one is heard again
+        t.onSample(sample(raw = byteArrayOf(2, 1, 99), t = 1_002_000)) // forces one eviction
+        val ids = t.variants("AA:BB:CC:DD:EE:01").map { it.id }
+        assertEquals(LiveDeviceTracker.MAX_VARIANTS, ids.size)
+        assertTrue(firstId in ids)
+        assertEquals(ids.size, ids.toSet().size)
     }
 
     @Test
@@ -136,7 +162,7 @@ class ScanOrderTest {
     fun listsInArrivalOrderUntilTheInitialSort() {
         val o = ScanOrder(3_000)
         o.onDevice("a", 0); o.onDevice("b", 500); o.onDevice("c", 900)
-        o.tick(2_900, rssi::get)
+        o.tick(2_900, rssi::get) { false }
         assertEquals(listOf("a", "b", "c"), o.addrs)
     }
 
@@ -144,11 +170,11 @@ class ScanOrderTest {
     fun sortsOnceThreeSecondsAfterTheFirstDeviceThenStaysFixed() {
         val o = ScanOrder(3_000)
         o.onDevice("a", 0); o.onDevice("b", 500); o.onDevice("c", 900)
-        o.tick(3_000, rssi::get)
+        o.tick(3_000, rssi::get) { false }
         assertEquals(listOf("b", "c", "a"), o.addrs)
         // The numbers change; the order does not.
         val changed = rssi + ("a" to -30)
-        o.tick(4_000, changed::get)
+        o.tick(4_000, changed::get) { false }
         assertEquals(listOf("b", "c", "a"), o.addrs)
     }
 
@@ -156,9 +182,9 @@ class ScanOrderTest {
     fun newDevicesAppendAtTheEndAfterTheSort() {
         val o = ScanOrder(3_000)
         o.onDevice("a", 0); o.onDevice("b", 500)
-        o.tick(3_000, rssi::get)
+        o.tick(3_000, rssi::get) { false }
         o.onDevice("d", 5_000)
-        o.tick(6_000, rssi::get)
+        o.tick(6_000, rssi::get) { false }
         assertEquals(listOf("b", "a", "d"), o.addrs)
     }
 
@@ -166,10 +192,22 @@ class ScanOrderTest {
     fun resortSortsEverythingAgain() {
         val o = ScanOrder(3_000)
         o.onDevice("a", 0); o.onDevice("b", 500)
-        o.tick(3_000, rssi::get)
+        o.tick(3_000, rssi::get) { false }
         o.onDevice("d", 5_000)
-        o.resort(rssi::get)
+        o.resort(rssi::get) { false }
         assertEquals(listOf("d", "b", "a"), o.addrs)
+    }
+
+    @Test
+    fun devicesNoLongerHeardSortAfterLiveOnesInTheInitialSortAndInRefresh() {
+        val o = ScanOrder(3_000)
+        o.onDevice("a", 0); o.onDevice("b", 100); o.onDevice("c", 200); o.onDevice("d", 300)
+        val stale = setOf("d") // the strongest, but gone
+        o.tick(3_000, rssi::get) { it in stale }
+        assertEquals(listOf("b", "c", "a", "d"), o.addrs)
+        val stale2 = setOf("b")
+        o.resort(rssi::get) { it in stale2 }
+        assertEquals(listOf("d", "c", "a", "b"), o.addrs)
     }
 
     @Test

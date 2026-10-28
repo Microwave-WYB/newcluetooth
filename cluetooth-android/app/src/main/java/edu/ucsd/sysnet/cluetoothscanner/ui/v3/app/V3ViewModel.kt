@@ -6,13 +6,14 @@ import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
-import edu.ucsd.sysnet.cluetoothscanner.local.AdvertisementMatcher
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
-import edu.ucsd.sysnet.cluetoothscanner.local.NativeAdvertisementMatcher
+import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataHub
 import edu.ucsd.sysnet.cluetoothscanner.local.RecordedDevice
 import edu.ucsd.sysnet.cluetoothscanner.local.Sighting
 import edu.ucsd.sysnet.cluetoothscanner.service.LiveScan
-import edu.ucsd.sysnet.cluetoothscanner.service.ScanOperatingState
+import edu.ucsd.sysnet.cluetoothscanner.service.RecordingMode
+import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecorderCallbacks
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDistance
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDuration
@@ -31,7 +32,6 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ChartWindow
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceSort
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.FakeData
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.LatLon
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapListRowState
@@ -60,7 +60,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -90,12 +92,24 @@ data class SavedInfo(val summary: SavedRecording, val recordingId: String?)
 @OptIn(ExperimentalCoroutinesApi::class)
 class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     private val localData = app.localData
+    private val hub = app.localData as? LocalDataHub
     private val recording = app.recordingController
+    private val coordinator = recording.coordinator
     private val gatt = app.gattManager
     private val notes = RecordingNotes(app)
-    private val matcher: AdvertisementMatcher? = runCatching {
-        NativeAdvertisementMatcher.fromBundleJson(app.assets.open("wiki-bundle.json").bufferedReader().use { it.readText() })
-    }.getOrNull()
+
+    /** Wiki pages per (address, payload), so the detail page does not run the matcher every second. */
+    private val matchCache = object : LinkedHashMap<Long, List<String>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, List<String>>) = size > MATCH_CACHE_SIZE
+    }
+
+    private fun pagesFor(addr: String, raw: ByteArray): List<String> {
+        val key = (addr.hashCode().toLong() shl 32) xor (raw.contentHashCode().toLong() and 0xFFFFFFFFL)
+        synchronized(matchCache) { matchCache[key]?.let { return it } }
+        val pages = hub?.identify(raw, addr).orEmpty()
+        synchronized(matchCache) { matchCache[key] = pages }
+        return pages
+    }
 
     // ---- navigation -----------------------------------------------------------------------
 
@@ -129,19 +143,35 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     // ---- recorder -------------------------------------------------------------------------
 
     val recorder: StateFlow<RecorderUiState> =
-        recording.state.map { it.toRecorderUi() }.stateIn(viewModelScope, SharingStarted.Eagerly, RecorderUiState())
+        recording.state.map { it.toRecorderUi() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecorderUiState())
 
     private val _controlBar = MutableStateFlow(false)
     val controlBarOpen: StateFlow<Boolean> = _controlBar
     fun setControlBar(open: Boolean) { _controlBar.value = open }
 
     val recorderCallbacks = RecorderCallbacks(
-        onStart = { recording.start() },
+        onStart = { startRecording() },
         onPause = { recording.pause() },
         onResume = { recording.resume() },
         onStop = { recording.stop(); _controlBar.value = false },
         onOpenControls = { _controlBar.value = !_controlBar.value },
     )
+
+    /** Starting while the last recording could not be sealed does nothing in the core; say why and retry the seal. */
+    private fun startRecording() {
+        if (coordinator.state.value == ScanTransitionState.FINALIZATION_FAILED) {
+            toasts.trySend("上一次录制还没有保存成功，正在重试保存；保存好后再开始新的录制")
+            recording.stop()
+            return
+        }
+        recording.start()
+    }
+
+    /** A recording that could not be saved or started, with a retry; null when all is well. */
+    private val _problem = MutableStateFlow<String?>(null)
+    val problem: StateFlow<String?> = _problem
+    fun retrySave() { recording.stop() }
+    fun dismissProblem() { _problem.value = null }
 
     private val _saved = MutableStateFlow<SavedInfo?>(null)
     val saved: StateFlow<SavedInfo?> = _saved
@@ -151,7 +181,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     private val _noteTarget = MutableStateFlow<String?>(null)
     val noteTarget: StateFlow<String?> = _noteTarget
     val noteText: StateFlow<String> = combine(_noteTarget, notes.notes) { id, all -> all[id].orEmpty() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
 
     fun addNote(recordingId: String?) { if (recordingId != null) _noteTarget.value = recordingId }
     fun dismissNote() { _noteTarget.value = null }
@@ -180,24 +210,31 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     val refreshing: StateFlow<Boolean> = _refreshing
 
     val scanState: StateFlow<ScanUiState> = combine(_scanRows, recorder) { rows, rec -> ScanUiState(rows, rec) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, ScanUiState(emptyList(), RecorderUiState()))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ScanUiState(emptyList(), RecorderUiState()))
 
-    /** A scanner or local-data problem in words, shown unobtrusively under the status line; null when all is well. */
-    val scanNotice: StateFlow<String?> = combine(app.bleScanService.scanStatus, recording.state, localData.status) { status, rec, data ->
-        if (rec.scannerDeferred) return@combine "录制在等待蓝牙恢复"
-        val scanner = when (status.state) {
-            ScanOperatingState.BLUETOOTH_OFF -> "蓝牙已关闭，打开后继续扫描"
-            ScanOperatingState.SCANNER_UNAVAILABLE -> "蓝牙扫描暂时不可用，正在重试"
-            ScanOperatingState.PAUSED_BACKPRESSURE -> "正在保存，稍后自动恢复扫描"
-            ScanOperatingState.FAILED -> "无法开始扫描，请检查蓝牙权限"
-            ScanOperatingState.SCANNING, ScanOperatingState.STOPPED -> null
-        }
-        scanner ?: when (data.state) {
-            LocalDataStatus.State.UNAVAILABLE -> "本地数据库不可用，暂时不记录历史"
-            LocalDataStatus.State.IDENTIFICATION_UNAVAILABLE -> "产品识别不可用"
-            LocalDataStatus.State.STARTING, LocalDataStatus.State.READY -> null
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    // ---- recording lifecycle state (read by onTransition) ----
+    private var previousTransition = ScanTransitionState.STOPPED
+    private var recordingReached = false
+    private var pendingSaved: SavedRecording? = null
+
+    private val gattResults = MutableStateFlow<Map<String, GattUiState.Done>>(emptyMap())
+
+    /** The UI is on screen (STARTED). Live collection and the one-second publish loop run only then. */
+    private val uiActive = MutableStateFlow(false)
+    fun setUiActive(active: Boolean) { uiActive.value = active }
+
+    /** The scan, data and location problems in one line under the page header; null when all is well. */
+    val headerNotice: StateFlow<String?> = combine(
+        app.bleScanService.scanStatus,
+        recording.state.map { it.scannerDeferred to (it.mode != RecordingMode.IDLE) }.distinctUntilChanged(),
+        localData.status,
+        app.locationService.currentLocation,
+        _tick,
+    ) { status, (deferred, recordingNow), data, fix, now ->
+        (if (deferred) Notices.RECORDING_WAITS_FOR_BLUETOOTH else Notices.scanner(status.state))
+            ?: Notices.data(data.state)
+            ?: Notices.location(recordingNow, fix?.let { now - it.time })
+    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private fun LiveScan.toSample() = LiveSample(
         addr = addr, rssi = rssi, timeMs = scannedAtMs, raw = raw, localName = localName,
@@ -206,18 +243,27 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     )
 
     init {
+        // The stores are fed by CluetoothApplication; this is only the on-screen list.
         viewModelScope.launch(Dispatchers.Default) {
-            app.bleScanService.liveScans.collect { scan ->
-                val now = System.currentTimeMillis()
-                synchronized(lock) {
-                    if (tracker.onSample(scan.toSample())) order.onDevice(scan.addr, now)
+            uiActive.collectLatest { active ->
+                if (active) {
+                    app.bleScanService.liveScans.collect { scan ->
+                        val now = System.currentTimeMillis()
+                        synchronized(lock) {
+                            if (tracker.onSample(scan.toSample())) order.onDevice(scan.addr, now)
+                        }
+                    }
                 }
             }
         }
         viewModelScope.launch(Dispatchers.Default) {
-            while (isActive) {
-                publish()
-                delay(1_000)
+            uiActive.collectLatest { active ->
+                if (active) {
+                    while (isActive) {
+                        publish()
+                        delay(1_000)
+                    }
+                }
             }
         }
         viewModelScope.launch {
@@ -225,13 +271,47 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 if (error != null) toasts.trySend("录制：$error")
             }
         }
+        viewModelScope.launch { coordinator.state.collect(::onTransition) }
         viewModelScope.launch {
-            var previous = RecorderPhase.Idle
-            recorder.collect { r ->
-                if (previous == RecorderPhase.Idle && r.phase != RecorderPhase.Idle) captureRecordingId()
-                if (previous != RecorderPhase.Idle && r.phase == RecorderPhase.Idle) showSaved(r)
-                previous = r.phase
+            gatt.state.collect { g ->
+                if (g is EngineGattState.Finished) {
+                    val key = g.result.request.target.addr
+                    gattResults.update { m -> (m - key + (key to GattPresenter.finished(g.result))).let { if (it.size > MAX_GATT_RESULTS) it.entries.drop(1).associate { e -> e.key to e.value } else it } }
+                }
             }
+        }
+    }
+
+    // The recording's life, seen from the coordinator: the snackbar appears only once sealing succeeded.
+    private fun onTransition(state: ScanTransitionState) {
+        val previous = previousTransition
+        previousTransition = state
+        when (state) {
+            ScanTransitionState.SCANNING, ScanTransitionState.DEFERRED, ScanTransitionState.PAUSED -> if (!recordingReached) {
+                recordingReached = true
+                pendingSaved = null
+                _problem.value = null
+                captureRecordingId()
+            }
+            ScanTransitionState.STOPPED -> {
+                val rec = recording.state.value
+                val summary = pendingSaved ?: if (recordingReached) SavedRecording((rec.elapsedMs / 1000).toInt(), rec.rowCount.toInt()) else null
+                recordingReached = false
+                pendingSaved = null
+                _problem.value = null
+                when {
+                    summary != null -> showSaved(summary)
+                    previous == ScanTransitionState.STARTING -> toasts.trySend("无法开始录制：本地存储还没有准备好")
+                    previous == ScanTransitionState.FINALIZING -> toasts.trySend("扫描无法启动，请检查蓝牙和权限")
+                }
+            }
+            ScanTransitionState.FINALIZATION_FAILED -> {
+                val rec = recording.state.value
+                if (recordingReached) pendingSaved = SavedRecording((rec.elapsedMs / 1000).toInt(), rec.rowCount.toInt())
+                recordingReached = false
+                _problem.value = "这次录制没有保存成功，数据还在手机上。"
+            }
+            ScanTransitionState.STARTING, ScanTransitionState.FINALIZING -> Unit
         }
     }
 
@@ -240,7 +320,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         var sorted = false
         val rows = synchronized(lock) {
             order.remove(tracker.prune(now))
-            sorted = order.tick(now, tracker::rssi)
+            sorted = order.tick(now, tracker::rssi) { tracker.isStale(it, now) }
             order.addrs.mapNotNull { tracker.row(it, now) }
         }
         if (sorted) _sortVersion.update { it + 1 }
@@ -252,7 +332,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     fun refreshScan() {
         viewModelScope.launch {
             _refreshing.value = true
-            withContextDefault { synchronized(lock) { order.resort(tracker::rssi) } }
+            withContextDefault { synchronized(lock) { val now = System.currentTimeMillis(); order.resort(tracker::rssi) { tracker.isStale(it, now) } } }
             publish()
             _sortVersion.update { it + 1 }
             delay(500)
@@ -272,8 +352,8 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         }
     }
 
-    private fun showSaved(r: RecorderUiState) {
-        val info = SavedInfo(SavedRecording(r.elapsedSeconds, r.sightings), pendingRecordingId)
+    private fun showSaved(summary: SavedRecording) {
+        val info = SavedInfo(summary, pendingRecordingId)
         _saved.value = info
         savedJob?.cancel()
         savedJob = viewModelScope.launch {
@@ -301,12 +381,25 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     private val selectedHistory: Flow<List<Sighting>> =
         _selected.flatMapLatest { a -> if (a == null) flowOf(emptyList()) else localData.sightingsOfDevice(a, 600) }
 
-    val detail: StateFlow<DeviceDetailUiState?> =
-        combine(_selected, _window, _tick, gatt.state, selectedHistory) { addr, window, now, g, history ->
-            addr?.let { buildDetail(it, window, now, g, history) }
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    /** Built on the default dispatcher: it reads the tracker, parses and matches advertisements once a second. */
+    val detail: StateFlow<DeviceDetailUiState?> = combine(
+        combine(_selected, _window, _tick) { addr, window, now -> Triple(addr, window, now) },
+        combine(gatt.state, gattResults, selectedHistory) { g, saved, history -> Triple(g, saved, history) },
+    ) { (addr, window, now), (g, saved, history) ->
+        addr?.let { buildDetail(it, window, now, g, saved, history) }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    private fun buildDetail(addr: String, window: ChartWindow, now: Long, g: EngineGattState, history: List<Sighting>): DeviceDetailUiState {
+    /** The detail of the selected device, or null; collected by the maps only while something is selected. */
+    private val selectedDetail: Flow<DeviceDetailUiState?> = _selected.flatMapLatest { a -> if (a == null) flowOf(null) else detail }
+
+    private fun buildDetail(
+        addr: String,
+        window: ChartWindow,
+        now: Long,
+        g: EngineGattState,
+        saved: Map<String, GattUiState.Done>,
+        history: List<Sighting>,
+    ): DeviceDetailUiState {
         val catalog = localData.catalog.value
         val (live, variants, chart, raw) = synchronized(lock) {
             Quad(
@@ -316,18 +409,19 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 tracker.latestAdvertisement(addr),
             )
         }
-        val pageIds = if (raw != null) matcher?.match(raw, addr).orEmpty() else history.firstOrNull()?.pageIds.orEmpty()
+        val pageIds = if (raw != null) pagesFor(addr, raw) else history.firstOrNull()?.pageIds.orEmpty()
         val page = pageIds.firstNotNullOfOrNull { catalog?.page(it) }
         val row = live ?: DeviceRowState(
             id = addr, name = page?.title, mac = addr, addressType = AddressType.Unknown, advKind = AdvKind.Legacy,
             connectable = false, rssi = history.firstNotNullOfOrNull { it.bestRssi } ?: -100, history = emptyList(), stale = true,
         )
-        val samples = if (live != null) chart else history.mapNotNull { it.bestRssi }.reversed().takeLast(120)
-        val engine = gattFor(addr, g)
+        val samples: List<Int?> = if (live != null) chart else history.mapNotNull { it.bestRssi }.reversed().takeLast(120)
+        val engine = gattFor(addr, g, saved)
         val busyElsewhere = g is EngineGattState.Running && g.request.target.addr != addr
         val reason = when {
             engine is GattUiState.InProgress -> "正在发现 GATT"
             live == null -> "设备不在范围内，无法发现 GATT"
+            row.stale -> "这台设备已有一阵子没有收到广播，无法发现 GATT"
             !row.connectable -> "该设备的广播不可连接，无法发现 GATT"
             busyElsewhere -> "正在发现另一台设备的 GATT"
             else -> null
@@ -358,12 +452,18 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         )
     }
 
+    private companion object {
+        const val DEMO_PREFIX = "demo:"
+        const val MATCH_CACHE_SIZE = 256
+        const val MAX_GATT_RESULTS = 20
+    }
+
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
-    private fun gattFor(addr: String, g: EngineGattState): GattUiState = when (g) {
-        EngineGattState.Idle -> GattUiState.NotStarted
-        is EngineGattState.Running -> if (g.request.target.addr == addr) GattPresenter.running(g.progress) else GattUiState.NotStarted
-        is EngineGattState.Finished -> if (g.result.request.target.addr == addr) GattPresenter.finished(g.result) else GattUiState.NotStarted
+    /** This device's discovery in flight, else the last result kept for it, else nothing. */
+    private fun gattFor(addr: String, g: EngineGattState, saved: Map<String, GattUiState.Done>): GattUiState {
+        if (g is EngineGattState.Running && g.request.target.addr == addr) return GattPresenter.running(g.progress)
+        return saved[addr] ?: GattUiState.NotStarted
     }
 
     fun discoverGatt() {
@@ -399,6 +499,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         localData.previouslySeenProducts(),
         localData.catalog,
     ) { rec, inRange, seen, catalog -> NearbyMapper.map(rec, inRange, seen, catalog) }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NearbyMapper.map(RecorderUiState(), null, emptyList(), null))
 
     // ---- recordings -----------------------------------------------------------------------
@@ -406,9 +507,10 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     val recordings: StateFlow<RecordingsUiState> = combine(
         recorder,
         localData.recordings(),
-        app.repository.uiState.map { s -> s.sessions.associate { it.sessionId to it.uploadState } }.distinctUntilChanged(),
+        app.repository.uiState.map { s -> if (s.coreReady) s.sessions.associate { it.sessionId to it.uploadState } else emptyMap() }.distinctUntilChanged(),
         notes.notes,
     ) { rec, list, uploads, noteMap -> RecordingMapper.state(rec, list, uploads, noteMap) }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecordingsUiState(RecorderUiState(), null, emptyList()))
 
     // ---- maps -----------------------------------------------------------------------------
@@ -426,12 +528,13 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     val mapState: StateFlow<MapUiState?> = _stack.map { it.last() }.distinctUntilChanged().flatMapLatest { route ->
         when (route) {
             is Route.RecordingMap -> recordingMap(route.id)
-            is Route.ProductMap -> sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), productTitle = route.pageId)
+            is Route.ProductMap ->
+                if (route.pageId.startsWith(DEMO_PREFIX)) demoMap(route.pageId.removePrefix(DEMO_PREFIX))
+                else sightingMap(localData.sightingsOfProduct(route.pageId, 2_000), productTitle = route.pageId)
             is Route.DeviceMap -> sightingMap(localData.sightingsOfDevice(route.addr, 2_000), deviceAddr = route.addr)
-            is Route.DemoMap -> demoMap(route.variant)
             else -> flowOf(null)
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private fun md(ms: Long): String {
         val d = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate()
@@ -452,7 +555,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     }
 
     private fun titleFor(addr: String, pageIds: List<String>): String {
-        val live = synchronized(lock) { tracker.row(addr, System.currentTimeMillis())?.name }
+        val live = synchronized(lock) { tracker.name(addr) }
         if (live != null) return live
         val catalog = localData.catalog.value
         return pageIds.firstNotNullOfOrNull { catalog?.page(it)?.title } ?: "未命名"
@@ -462,9 +565,8 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         val data = combine(localData.recording(id), localData.route(id), localData.devicesInRecording(id), localData.catalog) { r, route, devices, catalog ->
             Triple(r, route, devices) to catalog
         }
-        return combine(data, selectedHistory, _selected, _mapLocal, combine(recorder, detail) { a, b -> a to b }) { d, history, selected, local, rd ->
+        return combine(data, selectedHistory, _selected, _mapLocal, selectedDetail) { d, history, selected, local, det ->
             val (r, route, devices) = d.first
-            val (rec, det) = rd
             if (r == null) return@combine null
             val routePts = route.map { LatLon(it.lat, it.lon) }
             val rows = devices.map { dev: RecordedDevice ->
@@ -486,7 +588,6 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 mode = MapMode.Recording,
                 title = "${start.monthValue}月${start.dayOfMonth}日 ${"%02d:%02d".format(start.hour, start.minute)}" + if (r.active) " · 录制中" else "",
                 subtitle = "${formatDuration((r.durationMs / 1000).toInt())} · ${formatDistance(r.distanceMeters.toInt())} · ${r.deviceCount} 台设备",
-                recorder = rec,
                 route = routePts,
                 rows = rows,
                 sort = local.sort, query = local.query, searching = local.searching,
@@ -506,8 +607,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
 
     /** The product map (one wiki page) and the device map (one address) share this. */
     private fun sightingMap(sightings: Flow<List<Sighting>>, productTitle: String? = null, deviceAddr: String? = null): Flow<MapUiState?> =
-        combine(sightings, localData.catalog, _selected, _mapLocal, combine(recorder, detail) { a, b -> a to b }) { all, catalog, selected, local, rd ->
-            val (rec, det) = rd
+        combine(sightings, localData.catalog, _selected, _mapLocal, selectedDetail) { all, catalog, selected, local, det ->
             val located = all.filter { it.location != null }
             fun point(s: Sighting) = SightingPoint(LatLon(s.location!!.lat, s.location.lon), s.bestRssi ?: -90)
             val rows = all.groupBy { it.addr }.map { (addr, list) ->
@@ -532,7 +632,6 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 mode = MapMode.Product,
                 title = title,
                 subtitle = if (productTitle != null) "$macs 个 MAC · 来自 $recordingsCount 次录制" else "来自 $recordingsCount 次录制 · ${all.size} 个分钟记录",
-                recorder = rec,
                 route = emptyList(),
                 rows = rows,
                 sort = local.sort, query = local.query, searching = local.searching,
@@ -549,18 +648,17 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             )
         }
 
-    /** Debug only: fake map data (FakeData) behind a real map; [variant] is route, selected, heat or product. */
-    private fun demoMap(variant: String): Flow<MapUiState?> = combine(_mapLocal, recorder) { local, rec ->
-        val base = when (variant) {
-            "selected" -> FakeData.recordingMapSelected
-            "product" -> FakeData.productMap
-            else -> FakeData.recordingMap
-        }
-        base.copy(recorder = rec, heatmap = local.heat || variant == "heat", heat = if (local.heat || variant == "heat") FakeData.recordingMapPanned.heat else emptyList(), showAreaChip = local.panned)
+    /** Debug builds only: `DebugDemoMaps` (debug source set) supplies fake map data; release has no such class. */
+    private fun demoMap(variant: String): Flow<MapUiState?> = _mapLocal.map { local ->
+        runCatching {
+            val demo = Class.forName("edu.ucsd.sysnet.cluetoothscanner.ui.v3.app.DebugDemoMaps")
+            demo.getMethod("state", String::class.java, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+                .invoke(null, variant, local.heat, local.panned) as MapUiState
+        }.getOrNull()
     }
 
     fun openDemoMap(variant: String) {
-        _stack.value = listOf(Route.Tab(AppTab.Scan), Route.DemoMap(variant))
+        _stack.value = listOf(Route.Tab(AppTab.Scan), Route.ProductMap(DEMO_PREFIX + variant))
     }
 
     /** Opens the product map for a Nearby tile; the "unidentified" tile has no map. */

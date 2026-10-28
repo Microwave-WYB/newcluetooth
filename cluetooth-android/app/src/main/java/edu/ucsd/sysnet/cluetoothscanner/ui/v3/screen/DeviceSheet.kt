@@ -76,6 +76,7 @@ fun ColumnScope.DeviceSheetBody(
         DeviceDetailHalf(
             detail = detail,
             onWindowChange = actions.onWindowChange,
+            onCancelGatt = actions.onCancelGatt,
             onDiscoverGatt = {
                 actions.onDiscoverGatt()
                 tabState.value = DetailTab.Gatt

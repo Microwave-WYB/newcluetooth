@@ -84,6 +84,12 @@ fun RecorderStatus(recorder: RecorderUiState, idleText: String) {
     }
 }
 
+/** A one-line problem under a page header (Bluetooth off, no location fix, ...); nothing when null. */
+@Composable
+fun HeaderNotice(text: String?) {
+    if (text != null) Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
+}
+
 /** Two text lines, then a sparkline and the RSSI number on the right. */
 @Composable
 fun ScanRow(row: DeviceRowState, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -185,9 +191,7 @@ fun ScanPage(
             title = "扫描",
             status = {
                 RecorderStatus(recorder, "未录制 · ${rows.size} 台")
-                if (notice != null) {
-                    Text(notice, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
-                }
+                HeaderNotice(notice)
             },
             actions = {
                 if (searching) {

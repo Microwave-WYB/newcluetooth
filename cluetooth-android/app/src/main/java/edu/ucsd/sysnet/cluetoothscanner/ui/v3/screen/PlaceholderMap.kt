@@ -56,7 +56,7 @@ private val blocks = listOf(
 @Composable
 fun PlaceholderMap(
     modifier: Modifier = Modifier,
-    bottomCovered: Float = 0.5f,
+    bottomCovered: () -> Float = { 0.5f },
     route: List<LatLon> = emptyList(),
     points: List<SightingPoint> = emptyList(),
     estimate: LatLon? = null,
@@ -70,7 +70,7 @@ fun PlaceholderMap(
         drawRect(extra.mapBackground)
         // Unit square -> visible area (below the top controls, above the sheet).
         val top = 120.dp.toPx()
-        val bottom = size.height * (1f - bottomCovered) - 28.dp.toPx()
+        val bottom = size.height * (1f - bottomCovered()) - 28.dp.toPx()
         // The geometry's bounding box fills the visible area (with a margin).
         val every = route + points.map { it.at } + listOfNotNull(estimate) + heat
         val minLat = every.minOfOrNull { it.lat } ?: 0.0
@@ -143,7 +143,7 @@ private fun DrawScope.marker(c: Offset, fill: Color, ring: Color) {
 
 /** The placeholder drawn from a [MapUiState]: the route by default, a selected device's points otherwise. */
 @Composable
-fun PlaceholderMapFor(state: edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState, coveredFraction: Float) {
+fun PlaceholderMapFor(state: edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState, coveredFraction: () -> Float) {
     val selecting = state.selected != null
     PlaceholderMap(
         bottomCovered = coveredFraction,

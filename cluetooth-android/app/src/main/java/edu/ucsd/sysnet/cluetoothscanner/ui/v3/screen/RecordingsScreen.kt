@@ -47,7 +47,7 @@ private fun UploadLabel(status: UploadStatus) {
         status.label,
         style = MaterialTheme.typography.labelMedium,
         color = when (status) {
-            UploadStatus.Uploaded -> MaterialTheme.colorScheme.onSurfaceVariant
+            UploadStatus.Uploaded, UploadStatus.Unknown, UploadStatus.Empty -> MaterialTheme.colorScheme.onSurfaceVariant
             UploadStatus.Uploading -> MaterialTheme.colorScheme.primary
             UploadStatus.Failed -> MaterialTheme.colorScheme.error
         },
@@ -106,11 +106,18 @@ fun RecordingRow(rec: RecordingSummaryState, onClick: () -> Unit, modifier: Modi
 fun RecordingsPage(
     state: RecordingsUiState,
     modifier: Modifier = Modifier,
+    notice: String? = null,
     onOpenRecording: (RecordingSummaryState) -> Unit = {},
 ) {
     val total = state.days.sumOf { it.recordings.size } + if (state.current != null) 1 else 0
     Column(modifier.fillMaxSize()) {
-        V3TopBar(title = "录制", status = { RecorderStatus(state.recorder, "共 $total 次") })
+        V3TopBar(
+            title = "录制",
+            status = {
+                RecorderStatus(state.recorder, "共 $total 次")
+                HeaderNotice(notice)
+            },
+        )
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
             if (state.current != null) {
                 item(key = "current") {

@@ -312,3 +312,22 @@ fun ScrollToTopButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/** A recording that could not be saved: what happened, retry, dismiss. */
+@Composable
+fun RecordProblemSnackbar(message: String, onRetry: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        shadowElevation = 4.dp,
+    ) {
+        Row(Modifier.padding(start = 16.dp, end = 4.dp).height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+            val action = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.inversePrimary)
+            TextButton(onClick = onRetry, colors = action) { Text("重试") }
+            TextButton(onClick = onDismiss, colors = action) { Text("关闭") }
+        }
+    }
+}

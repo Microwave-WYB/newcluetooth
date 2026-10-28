@@ -52,6 +52,13 @@ private const val STYLE_LIGHT = "https://tiles.openfreemap.org/styles/liberty"
 private const val STYLE_DARK = "https://tiles.openfreemap.org/styles/dark"
 
 private const val MIN_SPAN_DEGREES = 0.0014
+private const val STYLE_TIMEOUT_MS = 8_000L
+
+/** A background-only style: the offline fallback, still able to carry our layers. */
+private fun blankStyle(dark: Boolean): String {
+    val color = if (dark) "#26272a" else "#e9eaec"
+    return """{"version":8,"name":"blank","sources":{},"layers":[{"id":"background","type":"background","paint":{"background-color":"$color"}}]}"""
+}
 
 private const val SRC_ROUTE = "v3-route"
 private const val SRC_ENDS = "v3-ends"
@@ -86,10 +93,12 @@ private fun LatLon.toPoint() = Point.fromLngLat(lon, lat)
 @Composable
 fun MapLibreMap(
     overlay: MapOverlay,
-    coveredFraction: Float,
+    coveredFraction: () -> Float,
     onGesture: () -> Unit,
     onViewport: (GeoBounds) -> Unit,
     modifier: Modifier = Modifier,
+    /** Called with true when the base map could not be loaded (offline); the overlay is then drawn on a plain background. */
+    onOffline: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val dark = isSystemInDarkTheme()
@@ -102,6 +111,8 @@ fun MapLibreMap(
     val currentOnGesture by rememberUpdatedState(onGesture)
     val currentOnViewport by rememberUpdatedState(onViewport)
     val currentCovered by rememberUpdatedState(coveredFraction)
+    val currentOnOffline by rememberUpdatedState(onOffline)
+    var useFallback by remember { androidx.compose.runtime.mutableStateOf(false) }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, mapView) {
@@ -118,8 +129,10 @@ fun MapLibreMap(
         lifecycle.addObserver(observer)
         onDispose {
             lifecycle.removeObserver(observer)
-            mapView.onPause()
-            mapView.onStop()
+            // The observer already paused and stopped the view if the lifecycle got there first; never twice.
+            val state = lifecycle.currentState
+            if (state.isAtLeast(Lifecycle.State.RESUMED)) mapView.onPause()
+            if (state.isAtLeast(Lifecycle.State.STARTED)) mapView.onStop()
             mapView.onDestroy()
         }
     }
@@ -142,13 +155,27 @@ fun MapLibreMap(
         }
     }
 
-    // The base style follows the system theme; our layers are re-added each time it loads.
-    LaunchedEffect(map, dark) {
+    // The base style follows the system theme; our layers are re-added each time it loads. If the
+    // style does not load (offline), a plain background style carries the same layers.
+    LaunchedEffect(map, dark, useFallback) {
         val m = map ?: return@LaunchedEffect
-        m.setStyle(Style.Builder().fromUri(if (dark) STYLE_DARK else STYLE_LIGHT)) { style ->
+        val builder = if (useFallback) Style.Builder().fromJson(blankStyle(dark)) else Style.Builder().fromUri(if (dark) STYLE_DARK else STYLE_LIGHT)
+        val loadedVersion = styleVersion
+        m.setStyle(builder) { style ->
             addLayers(style)
             styleVersion++
+            currentOnOffline(useFallback)
         }
+        if (!useFallback) {
+            kotlinx.coroutines.delay(STYLE_TIMEOUT_MS)
+            if (styleVersion == loadedVersion) useFallback = true
+        }
+    }
+    DisposableEffect(mapView) {
+        // A failed tile after the style is up is not a reason to drop the base map.
+        val listener = MapView.OnDidFailLoadingMapListener { if (map?.style?.isFullyLoaded != true) useFallback = true }
+        mapView.addOnDidFailLoadingMapListener(listener)
+        onDispose { mapView.removeOnDidFailLoadingMapListener(listener) }
     }
 
     LaunchedEffect(map, styleVersion, overlay) {
@@ -165,7 +192,7 @@ fun MapLibreMap(
             listOfNotNull(overlay.estimate?.let { LatLng(it.lat, it.lon) })
         if (all.isEmpty()) return@LaunchedEffect
         val height = mapView.height.takeIf { it > 0 } ?: 1600
-        val bottom = (height * currentCovered).toInt() + 48
+        val bottom = (height * currentCovered()).toInt() + 48
         // Never frame tighter than about 150 m, so a stationary recording still shows the streets.
         val south = all.minOf { it.latitude }
         val north = all.maxOf { it.latitude }
