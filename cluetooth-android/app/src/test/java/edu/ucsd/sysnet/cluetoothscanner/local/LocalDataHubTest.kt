@@ -35,6 +35,7 @@ class LocalDataHubTest {
         database: SqlDatabase = UncloseableDatabase(db),
         heavyIntervalMs: Long = 0,
         shareLingerMs: Long = 0,
+        retryMs: Long = 10,
         createMatcher: (String) -> AdvertisementMatcher = { FakeMatcher(version, matchRules, addressRules).also { m -> matcherOf = m } },
     ) = LocalDataHub(
         openDatabase = { database },
@@ -47,6 +48,8 @@ class LocalDataHubTest {
         heavyQueryIntervalMs = heavyIntervalMs,
         shareLingerMs = shareLingerMs,
         pruneIntervalMs = 3_600_000,
+        retryInitialMs = retryMs,
+        rematchRetryMs = retryMs,
     ).also { it.start() }
 
     private fun fix(atMs: Long, lat: Double = 32.0, lon: Double = -117.0, accuracy: Double = 5.0) =
@@ -208,8 +211,8 @@ class LocalDataHubTest {
         val second = hub(version = "v2")
         // startup does not wait for the re-match; the report appears once it ran
         val report = withTimeout(10_000) { second.pendingRematchReport().first { it != null } }
-        assertEquals("v1", report!!.fromVersion)
-        assertEquals("v2", report.toVersion)
+        assertEquals("v1+m1", report!!.fromVersion) // rules version + matcher engine
+        assertEquals("v2+m1", report.toVersion)
         assertEquals(2, report.payloadsChecked)
         assertEquals(listOf(listOf("device--bulb")), report.newlyIdentified.map { it.pageIds })
         second.acknowledgeRematch(report.id)
@@ -423,5 +426,87 @@ class LocalDataHubTest {
         hub.flushNow()
         val afterStart = withTimeout(10_000) { updates.first { it.isNotEmpty() } }
         assertEquals("rec-1", afterStart.single().id)
+    }
+
+    // Review round 2 ----------------------------------------------------------------------------------
+
+    @Test
+    fun aDatabaseThatOpensLaterIsRetriedAndTheQueuedEventsAreKept() = runBlocking {
+        var attempts = 0
+        val hub = LocalDataHub(
+            openDatabase = { if (++attempts <= 2) throw java.io.IOException("No space left on device") else UncloseableDatabase(db) },
+            loadBundleJson = { bundleJson("v1", *PAGES) },
+            createMatcher = { FakeMatcher("v1", rules) },
+            scope = scope,
+            clock = now::get,
+            flushIntervalMs = 3_600_000,
+            lightQueryIntervalMs = 0,
+            retryInitialMs = 20,
+        )
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t) // before the database exists
+        hub.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), t)
+        val seen = java.util.concurrent.CopyOnWriteArrayList<List<Recording>>()
+        val job = launch { hub.recordings().collect { seen += it } }
+        hub.start()
+
+        withTimeout(10_000) { hub.status.first { it.state == LocalDataStatus.State.UNAVAILABLE } }
+        assertEquals("No space left on device", hub.status.value.message)
+        withTimeout(10_000) { hub.status.first { it.state == LocalDataStatus.State.READY } }
+        // the collector that started while it was unavailable now gets the real data
+        withTimeout(10_000) { while (seen.none { it.isNotEmpty() }) delay(10) }
+        assertEquals("rec-1", seen.last().single().id)
+        hub.flushNow()
+        assertEquals(1, hub.sightingsOfDevice("AA:00:00:00:00:01").firstValue().size)
+        assertTrue(attempts >= 3)
+        // nothing was deleted along the way
+        assertEquals(1, db.query("SELECT COUNT(*) FROM recording") { it.long(0) }.single().toInt())
+        job.cancel()
+    }
+
+    @Test
+    fun aFailedRematchBatchIsRetriedWithBackoffInsteadOfStallingUntilRestart() = runBlocking {
+        val t = now.get()
+        val payloads = (0 until 5).associate { sha256Hex(adv("item-$it-buds")) to PayloadDelta(adv("item-$it-buds"), t, t, 1L) }
+        LocalStore(db).flush(FlushBatch(payloads, emptyMap(), null, emptyList(), 0.0), HashMap(), "old") { _, _ -> emptyList() }
+        val flaky = FakeMatcher("v2", rules).also { it.failFirst = 2 }
+        val hub = hub(version = "v2", createMatcher = { flaky })
+        val report = withTimeout(10_000) { hub.pendingRematchReport().first { it != null } }
+        assertEquals(5, report!!.newlyIdentified.size)
+        assertEquals(5, report.payloadsChecked)
+    }
+
+    @Test
+    fun aNewMatcherEngineRematchesEvenWhenTheRulesAreTheSame() = runBlocking {
+        val first = hub(version = "v1", bundle = { bundleJson("v1", "r1", PAGES.toList()) })
+        first.onAdvertisement("AA:00:00:00:00:01", -60, adv("buds-1"), now.get())
+        first.flushNow()
+        first.close()
+        assertEquals(0, db.query("SELECT COUNT(*) FROM rematch_run") { it.long(0) }.single().toInt())
+
+        val second = hub(version = "v1", bundle = { bundleJson("v1", "r1", PAGES.toList()) }, createMatcher = { FakeMatcher("v1", rules, engineVersion = 2) })
+        second.flushNow()
+        withTimeout(10_000) { while (db.query("SELECT COUNT(*) FROM rematch_run WHERE finished_ms IS NOT NULL") { it.long(0) }.single() == 0L) delay(10) }
+        assertEquals(setOf("r1+m2"), db.query("SELECT DISTINCT match_version FROM seen_payload") { it.string(0) }.toSet())
+    }
+
+    @Test
+    fun aThrottledQueryRunsAgainAfterItsIntervalAndShowsTheLaterWrite() = runBlocking {
+        val hub = hub(heavyIntervalMs = 300)
+        val t = now.get() - now.get() % 60_000
+        hub.onRecordingStarted("rec-1", t)
+        hub.onAdvertisement("AA:00:00:00:00:01", -70, adv("buds-1"), t + 1_000)
+        hub.flushNow()
+        val seen = java.util.concurrent.CopyOnWriteArrayList<List<Sighting>>()
+        val job = launch { hub.sightingsOfDevice("AA:00:00:00:00:01").collect { seen += it } }
+        withTimeout(10_000) { while (seen.isEmpty()) delay(5) }
+        assertEquals(-70, seen.first().single().bestRssi)
+
+        // a stronger sample arrives while the query is waiting out its interval
+        hub.onAdvertisement("AA:00:00:00:00:01", -50, adv("buds-1"), t + 2_000)
+        hub.flushNow()
+        withTimeout(10_000) { while (seen.last().single().bestRssi != -50) delay(5) }
+        assertEquals(2, seen.last().single().sampleCount)
+        job.cancel()
     }
 }

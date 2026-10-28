@@ -100,15 +100,20 @@ Plain SQLite (`local-data.db`, WAL), not Room: no annotation processor, and the
 SQL runs unchanged on the JVM for tests (`SqlDatabase` is the only seam; tests
 use an in-memory SQLite through JDBC, which is newer than API 24's 3.9, so a unit
 test scans the main SQL for UPSERT, window functions, RETURNING and the like).
-The file is a cache: an upgrade or a downgrade wipes and recreates it, and an
-unreadable file is deleted and recreated once.
+Recordings, routes and sighting history exist nowhere else on the phone once uploaded, so the
+file is **never wiped for a schema change**: `LocalSchema.MIGRATIONS` holds the statements from
+version N to N+1 (kept forever, one transaction each; a test migrates a real version-1 file and
+compares the result with a fresh one). An older build opening a newer file fails to open and
+reports `UNAVAILABLE` (it does not touch the file). The file is deleted only when SQLite says it
+is corrupt (`SQLiteDatabaseCorruptException`); a full disk or storage that is not ready yet
+surfaces in `status` and the hub retries (5 s, doubling to 5 min), queueing events meanwhile.
 
 | Table | What |
 |---|---|
 | `seen_payload` | one row per distinct advertisement: SHA-256 (hex), raw (any length, extended advertising included), first/last seen, count, `match_version` (the rules version) |
 | `payload_match` | pages the payload matched (payload-level; address rules cannot match here) |
 | `seen_product` | per page, forever: first/last seen, seen count, payload count, last payload id (may have expired) |
-| `rematch_run`, `newly_identified` | a rules update: cursor, payloads checked, payloads that went from unmatched to matched |
+| `rematch_run`, `newly_identified` | a rules/engine update: cursor, payloads checked, payloads that went from unmatched to matched; kept until acknowledged (90 days at most) |
 | `recording` | a core scan session: start, end, distance, device count |
 | `sighting_minute` | per recording, address, minute, payload: best RSSI, location of the best sample, sample count, first/last ms |
 | `recording_route` | location samples per recording |
@@ -119,7 +124,10 @@ unreadable file is deleted and recreated once.
   They never leave the phone. A payload expires 30 days after it was last heard,
   matched or not (beacons such as Eddystone TLM, MiBeacon, Tile and mesh proxy
   rotate payloads constantly, so keeping matched ones forever is unbounded),
-  unless a sighting or an unacknowledged re-match still refers to it.
+  unless a sighting or a re-match report nobody acknowledged yet still refers to it (an
+  unacknowledged report and its payloads are kept until acknowledged, 90 days at most;
+  acknowledged reports are history for 30 days). The expiry query is a range on the
+  `last_seen_ms` index, oldest first, limited.
   **`seen_product` keeps a per-page summary forever**, which is what
   "previously seen products" reads; its payload count is the number of payload
   rows ever created for the page (an expired payload heard again counts again).
@@ -139,12 +147,16 @@ unreadable file is deleted and recreated once.
 * **Route:** a fix is stored when it is the first, moved at least 5 m, or the
   previous point is 30 s old; fixes worse than 100 m are ignored; distance only
   adds real steps (at least 5 m), so a stationary phone's drift adds nothing.
-* **Re-match** happens when the bundle's `rules_version` differs from the rules a
-  stored payload was matched under (so also for payloads heard while the bundle
-  failed to load). It runs in the background after startup, one batch of 500
+* **Re-match** happens when the key `<rules_version>+m<engine>` differs from the one a
+  stored payload was matched under: a changed rule (`rules_version` of the bundle) or a
+  changed evaluator (`MATCHER_ENGINE_VERSION` in the Rust core, pinned by a test, bumped
+  when evaluation semantics change); also for payloads heard while the bundle failed to
+  load. A failed batch (nothing was written) is re-queued after 5 s, doubling to 10 min. It runs in the background after startup, one batch of 500
   per turn of the writer's queue (keyset pagination on a persisted cursor,
   resumable, matching before the write), and records which payloads went from
-  unmatched to matched; pages a payload newly matches also join `seen_product`.
+  unmatched to matched. The page summary follows the payload: a page it newly matches
+  counts it, a page it stops matching gives its counts back (a page left with no payload
+  loses its row; first/last seen are not un-merged), so A -> B -> A nets to A.
   Payloads inserted later are matched on arrival and never appear as newly
   identified. "N devices newly identified" = `newlyIdentified.size`, i.e.
   distinct advertisements: the store keeps no per-address history outside
@@ -161,8 +173,8 @@ unreadable file is deleted and recreated once.
   cleared after expiry. The distinct-address count of a recording is its own
   statement after the commit. The repository feeds the local stores only after the
   core admitted the observation, so both counts agree.
-* **Failure:** if the database cannot be opened every query emits empty data and
-  `status` says `UNAVAILABLE`; if the bundle or the native matcher (including an
+* **Failure:** while the database cannot be opened every query emits empty data (and
+  switches to real data once it opens) and `status` says `UNAVAILABLE`; if the bundle or the native matcher (including an
   `UnsatisfiedLinkError`) cannot load, recording continues, nothing is identified
   and `status` says `IDENTIFICATION_UNAVAILABLE`. Skipped rules are logged.
 * The stores are fed from `CluetoothRepository` (observations, location,

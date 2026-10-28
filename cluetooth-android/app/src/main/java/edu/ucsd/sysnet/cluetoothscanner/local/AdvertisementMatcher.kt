@@ -10,6 +10,12 @@ interface AdvertisementMatcher {
     /** The wiki bundle version the rules come from. */
     val bundleVersion: String
 
+    /**
+     * Version of the evaluation semantics (cluetooth-core `MATCHER_ENGINE_VERSION`). Stored matches are
+     * re-done when it changes, even if the rules did not.
+     */
+    val engineVersion: Int get() = 1
+
     /** `page-id: reason` for rules that were skipped; empty for a healthy bundle. */
     val ruleErrors: List<String> get() = emptyList()
 
@@ -32,6 +38,7 @@ class NativeAdvertisementMatcher private constructor(private val native: RuleMat
 
     override val ruleErrors: List<String> = native.ruleErrors()
     override val usesAddressRules: Boolean = native.usesAddressRules()
+    override val engineVersion: Int = native.engineVersion().toInt()
 
     override fun match(raw: ByteArray, addr: String?, addrType: AddressType?): List<String> =
         native.matchAdvertisement(

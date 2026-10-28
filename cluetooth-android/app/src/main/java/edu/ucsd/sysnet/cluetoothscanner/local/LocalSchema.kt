@@ -1,10 +1,12 @@
 package edu.ucsd.sysnet.cluetoothscanner.local
 
 /**
- * The phone's local database (`local-data.db`). Nothing in it is uploaded, and
- * all of it can be rebuilt from scanning again: it is a cache. So a schema
- * change that is not trivial wipes and recreates it ([WIPE] then [CREATE]) on
- * upgrade, and so does a downgrade (an older build opening a newer file).
+ * The phone's local database (`local-data.db`). Nothing in it is uploaded, but not all of it can be
+ * rebuilt: recordings, routes and sighting history exist nowhere else on the phone once the scan
+ * session has been uploaded. So **schema changes are real migrations ([MIGRATIONS]), never a wipe**:
+ * add the statements that take version N to N+1 under key N and bump [VERSION]. An older build
+ * opening a newer file fails to open (Android's default `onDowngrade` throws), which the data layer
+ * reports as unavailable and retries; the file is deleted only when SQLite says it is corrupt.
  */
 object LocalSchema {
     /** 2: seen_product, rules-version re-match cursor, prune indexes (1 never shipped). */
@@ -50,6 +52,8 @@ object LocalSchema {
 
         // A bundle update's re-match of every stored payload, and what it newly identified.
         // cursor_id: the highest payload id processed (keyset pagination, resumable).
+        // newly_identified rows (and the payloads they point to) are kept until the report is
+        // acknowledged or 90 days old, whichever comes first; see LocalStore.pruneStep.
         """CREATE TABLE rematch_run (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             from_version TEXT,
@@ -108,11 +112,36 @@ object LocalSchema {
         """CREATE INDEX recording_route_time ON recording_route(time_ms)""",
     )
 
-    val WIPE: List<String> = listOf(
-        "meta", "seen_payload", "payload_match", "seen_product", "rematch_run", "newly_identified",
-        "recording", "sighting_minute", "recording_route",
-    ).map { "DROP TABLE IF EXISTS $it" }
+    /**
+     * Statements that take a file from version `key` to `key + 1`, run in one transaction by
+     * SQLiteOpenHelper. Keep old entries forever: a phone can skip releases.
+     */
+    private val MIGRATIONS: Map<Int, List<String>> = mapOf(
+        1 to listOf(
+            // The page summary did not exist: rebuild it from the payloads that are still stored.
+            """CREATE TABLE seen_product (
+                page_id TEXT PRIMARY KEY,
+                first_seen_ms INTEGER NOT NULL,
+                last_seen_ms INTEGER NOT NULL,
+                seen_count INTEGER NOT NULL,
+                payload_count INTEGER NOT NULL,
+                last_payload_id INTEGER
+            )""",
+            """INSERT INTO seen_product (page_id, first_seen_ms, last_seen_ms, seen_count, payload_count, last_payload_id)
+               SELECT m.page_id, MIN(p.first_seen_ms), MAX(p.last_seen_ms), SUM(p.seen_count), COUNT(*), MAX(p.id)
+               FROM payload_match m JOIN seen_payload p ON p.id = m.payload_id GROUP BY m.page_id""",
+            // v1 matched under the bundle version; v2 under the rules version, so every payload re-matches once.
+            """ALTER TABLE rematch_run ADD COLUMN cursor_id INTEGER NOT NULL DEFAULT 0""",
+            """DROP INDEX IF EXISTS seen_payload_match_version""",
+            """CREATE INDEX seen_payload_last_seen ON seen_payload(last_seen_ms)""",
+            """CREATE INDEX newly_identified_payload ON newly_identified(payload_id)""",
+            """CREATE INDEX recording_route_time ON recording_route(time_ms)""",
+        ),
+    )
 
-    /** Statements for opening a file of schema [from] (older or newer): start over. */
-    fun reset(): List<String> = WIPE + CREATE
+    /** The statements that take a file from version [from] to [to]. */
+    fun upgrade(from: Int, to: Int = VERSION): List<String> =
+        (from until to).flatMap { step ->
+            MIGRATIONS[step] ?: throw IllegalStateException("No migration from schema version $step")
+        }
 }

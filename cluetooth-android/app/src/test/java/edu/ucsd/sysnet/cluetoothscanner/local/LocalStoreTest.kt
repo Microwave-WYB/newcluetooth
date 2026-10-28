@@ -408,4 +408,134 @@ class LocalStoreTest {
         assertEquals(1, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
         assertTrue(ids.getValue(sha256Hex(adv("buds-1"))) >= first)
     }
+
+    // Review round 2 ----------------------------------------------------------------------------------
+
+    private fun products() = store.seenProducts(catalog).associateBy { it.page.id }
+
+    @Test
+    fun aRematchGivesBackWhatAPageNoLongerMatchesAndAToBToANetsToA() {
+        flush(mapOf(payload("buds-1", t0, t0 + 10, 3), payload("buds-2", t0 + 5, t0 + 20, 2)))
+        assertEquals(2, products().getValue("device--buds").payloadCount)
+        assertEquals(5L, products().getValue("device--buds").seenCount)
+
+        // B: buds-1 now identifies a bulb, buds-2 stays a buds
+        val b = FakeMatcher("v2", mapOf("device--bulb" to "buds-1", "device--buds" to "buds-2"))
+        store.rematchAll(b, "v2", t0 + 100)
+        assertEquals(1, products().getValue("device--buds").payloadCount)
+        assertEquals(2L, products().getValue("device--buds").seenCount)
+        assertEquals(1, products().getValue("device--bulb").payloadCount)
+        assertEquals(3L, products().getValue("device--bulb").seenCount)
+
+        // back to A: nothing is counted twice
+        val a = FakeMatcher("v3", mapOf("device--buds" to "buds"))
+        store.rematchAll(a, "v3", t0 + 200)
+        assertEquals(setOf("device--buds"), products().keys) // the bulb page lost its only payload
+        assertEquals(2, products().getValue("device--buds").payloadCount)
+        assertEquals(5L, products().getValue("device--buds").seenCount)
+    }
+
+    @Test
+    fun aPayloadHeardAfterItsPageWasDroppedCountsOnTheNewPage() {
+        flush(mapOf(payload("buds-1", t0, t0, 3)))
+        store.rematchAll(FakeMatcher("v2", mapOf("device--bulb" to "buds")), "v2", t0 + 1)
+        flush(mapOf(payload("buds-1", t0 + 5, t0 + 5, 4))) // matched under the old matcher lambda only for new rows
+        assertEquals(setOf("device--bulb"), products().keys)
+        assertEquals(7L, products().getValue("device--bulb").seenCount)
+    }
+
+    @Test
+    fun theExpiryQueryUsesTheLastSeenIndexWithoutASort() {
+        val plan = db.query("EXPLAIN QUERY PLAN $EXPIRED_PAYLOADS_SQL", listOf(1L, 10)) { it.string(3) }.joinToString("\n")
+        assertTrue(plan, "seen_payload_last_seen" in plan)
+        assertFalse(plan, "TEMP B-TREE" in plan)
+    }
+
+    @Test
+    fun anUnacknowledgedReportKeepsItsPayloadsForNinetyDaysAndAcknowledgedOnesDoNot() {
+        val day = 24 * 60 * minute
+        val now = t0 + 200 * day
+        val lamp = payload("lamp-1", now - 60 * day, now - 60 * day, 5) // unmatched by v1, matched by v2
+        flush(mapOf(lamp))
+        val v2 = FakeMatcher("v2", mapOf("device--bulb" to "lamp"))
+        store.rematchAll(v2, "v2", now - 60 * day) // a report made 60 days ago, never acknowledged
+        val lampId = db.query("SELECT id FROM seen_payload") { it.long(0) }.single()
+
+        store.pruneExpired(now)
+        assertEquals("unacknowledged: kept past 30 days", 1, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertEquals(1, db.query("SELECT COUNT(*) FROM newly_identified WHERE payload_id = ?", listOf(lampId)) { it.long(0) }.single().toInt())
+        assertNotNull(store.pendingRematchReport())
+
+        store.pruneExpired(now + 40 * day) // the report is now 100 days old
+        assertEquals(0, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertEquals(0, db.query("SELECT COUNT(*) FROM newly_identified") { it.long(0) }.single().toInt())
+        assertEquals(0, db.query("SELECT COUNT(*) FROM rematch_run") { it.long(0) }.single().toInt())
+        assertNull(store.pendingRematchReport())
+    }
+
+    @Test
+    fun anAcknowledgedReportNoLongerHoldsItsPayloads() {
+        val day = 24 * 60 * minute
+        val now = t0 + 200 * day
+        flush(mapOf(payload("lamp-1", now - 60 * day, now - 60 * day, 5)))
+        store.rematchAll(FakeMatcher("v2", mapOf("device--bulb" to "lamp")), "v2", now - 60 * day)
+        store.acknowledgeRematch(store.pendingRematchReport()!!.id)
+        store.pruneExpired(now)
+        assertEquals(0, db.query("SELECT COUNT(*) FROM seen_payload") { it.long(0) }.single().toInt())
+        assertEquals(0, db.query("SELECT COUNT(*) FROM rematch_run") { it.long(0) }.single().toInt())
+    }
+
+    @Test
+    fun upgradingAVersion1FileMigratesInPlaceAndKeepsEverything() {
+        val v1 = JdbcSqlDatabase(createSchema = false)
+        V1_SCHEMA.forEach { v1.execute(it) }
+        v1.execute("INSERT INTO seen_payload (id, hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version) VALUES (1, 'h1', x'00', 10, 20, 4, 'oldbundle')")
+        v1.execute("INSERT INTO seen_payload (id, hash, raw, first_seen_ms, last_seen_ms, seen_count, match_version) VALUES (2, 'h2', x'01', 5, 30, 6, 'oldbundle')")
+        v1.execute("INSERT INTO payload_match VALUES (1, 'device--buds'), (2, 'device--buds')")
+        v1.execute("INSERT INTO recording (id, started_ms, ended_ms, distance_m, device_count) VALUES ('rec', 1, 2, 3.5, 1)")
+        v1.execute("INSERT INTO recording_route VALUES ('rec', 1, 1.0, 2.0, 3.0)")
+        v1.execute("INSERT INTO rematch_run (from_version, to_version, started_ms) VALUES ('a', 'b', 1)")
+
+        LocalSchema.upgrade(1).forEach { v1.execute(it) }
+
+        fun shape(d: SqlDatabase) = d.query("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") { it.string(0) to it.string(1) }.toSet()
+        assertEquals(shape(JdbcSqlDatabase()), shape(v1))
+        val migrated = LocalStore(v1)
+        val product = migrated.seenProducts(catalog).single()
+        assertEquals(2, product.payloadCount)
+        assertEquals(10L, product.seenCount)
+        assertEquals(5L, product.firstSeenMs)
+        assertEquals(30L, product.lastSeenMs)
+        assertEquals("rec", migrated.recordings(10).single().id)
+        assertEquals(1, migrated.route("rec").size)
+        assertEquals(0L, v1.query("SELECT cursor_id FROM rematch_run") { it.long(0) }.single())
+        // the stored matches belong to the old bundle version: the next start re-matches them
+        assertNotNull(migrated.beginRematch("rules+m1", 100))
+        try {
+            LocalSchema.upgrade(0)
+            org.junit.Assert.fail("no migration from 0")
+        } catch (expected: IllegalStateException) {
+            assertTrue(expected.message!!.contains("version 0"))
+        }
+    }
+
+    private companion object {
+        /** The version-1 schema, as it was before seen_product (kept here to test the migration). */
+        val V1_SCHEMA = listOf(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            "CREATE TABLE seen_payload (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT NOT NULL UNIQUE, raw BLOB NOT NULL, first_seen_ms INTEGER NOT NULL, last_seen_ms INTEGER NOT NULL, seen_count INTEGER NOT NULL, match_version TEXT)",
+            "CREATE INDEX seen_payload_match_version ON seen_payload(match_version)",
+            "CREATE TABLE payload_match (payload_id INTEGER NOT NULL, page_id TEXT NOT NULL, PRIMARY KEY (payload_id, page_id)) WITHOUT ROWID",
+            "CREATE INDEX payload_match_page ON payload_match(page_id, payload_id)",
+            "CREATE TABLE rematch_run (id INTEGER PRIMARY KEY AUTOINCREMENT, from_version TEXT, to_version TEXT NOT NULL, started_ms INTEGER NOT NULL, finished_ms INTEGER, payloads_checked INTEGER NOT NULL DEFAULT 0, acknowledged INTEGER NOT NULL DEFAULT 0)",
+            "CREATE TABLE newly_identified (run_id INTEGER NOT NULL, payload_id INTEGER NOT NULL, PRIMARY KEY (run_id, payload_id)) WITHOUT ROWID",
+            "CREATE TABLE recording (id TEXT PRIMARY KEY, started_ms INTEGER NOT NULL, ended_ms INTEGER, distance_m REAL NOT NULL DEFAULT 0, device_count INTEGER NOT NULL DEFAULT 0)",
+            "CREATE INDEX recording_started ON recording(started_ms)",
+            "CREATE TABLE sighting_minute (recording_id TEXT NOT NULL, addr TEXT NOT NULL, minute INTEGER NOT NULL, payload_id INTEGER NOT NULL, first_ms INTEGER NOT NULL, last_ms INTEGER NOT NULL, best_rssi INTEGER, lat REAL, lon REAL, accuracy REAL, sample_count INTEGER NOT NULL, PRIMARY KEY (recording_id, addr, minute, payload_id)) WITHOUT ROWID",
+            "CREATE INDEX sighting_addr ON sighting_minute(addr, minute)",
+            "CREATE INDEX sighting_payload ON sighting_minute(payload_id, minute)",
+            "CREATE INDEX sighting_minute_time ON sighting_minute(minute)",
+            "CREATE TABLE recording_route (recording_id TEXT NOT NULL, time_ms INTEGER NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, accuracy REAL NOT NULL, PRIMARY KEY (recording_id, time_ms)) WITHOUT ROWID",
+        )
+    }
 }

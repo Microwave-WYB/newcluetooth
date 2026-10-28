@@ -187,6 +187,7 @@ data class NewlyIdentified(val payloadHash: String, val pageIds: List<String>, v
  */
 data class RematchReport(
     val id: Long,
+    /** The matching key before and after: the bundle's rules version plus the matcher engine (`<rules>+m<engine>`). */
     val fromVersion: String?,
     val toVersion: String,
     val ranAtMs: Long,

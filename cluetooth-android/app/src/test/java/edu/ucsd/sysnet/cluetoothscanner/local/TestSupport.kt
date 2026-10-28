@@ -8,11 +8,14 @@ import java.sql.ResultSet
  * An in-memory SQLite behind [SqlDatabase]. Query arguments are bound as text, like
  * Android's rawQuery, so SQL that only works with typed binds fails here too.
  */
-class JdbcSqlDatabase(private val connection: Connection = DriverManager.getConnection("jdbc:sqlite::memory:")) : SqlDatabase {
+class JdbcSqlDatabase(
+    private val connection: Connection = DriverManager.getConnection("jdbc:sqlite::memory:"),
+    createSchema: Boolean = true,
+) : SqlDatabase {
     private var depth = 0
 
     init {
-        LocalSchema.CREATE.forEach { sql -> connection.createStatement().use { it.execute(sql) } }
+        if (createSchema) LocalSchema.CREATE.forEach { sql -> connection.createStatement().use { it.execute(sql) } }
     }
 
     @Synchronized
@@ -94,9 +97,14 @@ class FakeMatcher(
     override val bundleVersion: String,
     private val rules: Map<String, String>,
     private val addressRules: Map<String, String> = emptyMap(),
+    override val engineVersion: Int = 1,
 ) : AdvertisementMatcher {
     var failAfter: Int? = null
     private var attempts = 0
+
+    /** Fails this many calls, then works (a transient fault). */
+    var failFirst: Int = 0
+    private var failed = 0
 
     /** How many times [match] ran. */
     val calls = java.util.concurrent.atomic.AtomicInteger()
@@ -105,6 +113,10 @@ class FakeMatcher(
 
     override fun match(raw: ByteArray, addr: String?, addrType: AddressType?): List<String> {
         calls.incrementAndGet()
+        if (failed < failFirst) {
+            failed++
+            error("matcher failed")
+        }
         failAfter?.let { if (++attempts > it) error("matcher failed") }
         val text = String(raw, Charsets.ISO_8859_1)
         return rules.filterValues { text.contains(it) }.keys.toList() +

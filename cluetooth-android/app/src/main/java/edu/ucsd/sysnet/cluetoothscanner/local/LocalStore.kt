@@ -10,6 +10,20 @@ private const val PRUNE_BATCH = 2_000
 private const val PRUNE_SIGHTING_MINUTES = 6L * 60
 private const val PRUNE_ROUTE_MS = 6L * 60 * 60 * 1000
 
+/** An unacknowledged re-match report, and the payloads it points to, are kept this long at most. */
+const val UNACKNOWLEDGED_REPORT_RETENTION_MS = 90L * 24 * 60 * 60 * 1000
+
+/**
+ * Payloads that expired: a range on `last_seen_ms` (its index, oldest first, stops at the limit), not
+ * referenced by a sighting or by a report nobody acknowledged yet.
+ */
+internal const val EXPIRED_PAYLOADS_SQL =
+    "SELECT id FROM seen_payload WHERE last_seen_ms < ? " +
+        "AND NOT EXISTS (SELECT 1 FROM sighting_minute s WHERE s.payload_id = seen_payload.id) " +
+        "AND NOT EXISTS (SELECT 1 FROM newly_identified n JOIN rematch_run r ON r.id = n.run_id " +
+        "WHERE n.payload_id = seen_payload.id AND r.acknowledged = 0) " +
+        "ORDER BY last_seen_ms LIMIT ?"
+
 /** A payload heard since the last flush. */
 class PayloadDelta(val raw: ByteArray, var firstSeenMs: Long, var lastSeenMs: Long, var count: Long)
 
@@ -81,8 +95,8 @@ class LocalStore(private val db: SqlDatabase) {
      * recordings and payloads older than 30 days. Returns true while more is left to delete, so the
      * caller can interleave other work between steps.
      *
-     * A payload expires once nobody heard it for 30 days, matched or not, unless a sighting or an
-     * unacknowledged re-match still refers to it. [seen_product] keeps what "previously seen
+     * A payload expires once nobody heard it for 30 days, matched or not, unless a sighting or a
+     * re-match report nobody acknowledged yet (90 days at most) still refers to it. [seen_product] keeps what "previously seen
      * products" needs, so rotating payloads (beacons that change their advertisement every few
      * minutes) cost 30 days of rows, not forever.
      */
@@ -117,21 +131,15 @@ class LocalStore(private val db: SqlDatabase) {
                 listOf(cutoffMs),
             ),
         )
-        deleted(
-            db.execute(
-                "DELETE FROM newly_identified WHERE run_id IN (SELECT id FROM rematch_run WHERE started_ms < ?)",
-                listOf(cutoffMs),
-            ),
-        )
-        deleted(db.execute("DELETE FROM rematch_run WHERE started_ms < ? AND finished_ms IS NOT NULL", listOf(cutoffMs)))
+        // Reports: acknowledged ones are only history (30 days); unacknowledged ones stay until
+        // acknowledged, but at most 90 days.
+        val staleReports = "SELECT id FROM rematch_run WHERE finished_ms IS NOT NULL AND " +
+            "((acknowledged = 1 AND started_ms < ?) OR started_ms < ?)"
+        val staleArgs = listOf(cutoffMs, nowMs - UNACKNOWLEDGED_REPORT_RETENTION_MS)
+        deleted(db.execute("DELETE FROM newly_identified WHERE run_id IN ($staleReports)", staleArgs))
+        deleted(db.execute("DELETE FROM rematch_run WHERE id IN ($staleReports)", staleArgs))
 
-        val expired = db.query(
-            "SELECT id FROM seen_payload WHERE last_seen_ms < ? " +
-                "AND NOT EXISTS (SELECT 1 FROM sighting_minute s WHERE s.payload_id = seen_payload.id) " +
-                "AND NOT EXISTS (SELECT 1 FROM newly_identified n WHERE n.payload_id = seen_payload.id) " +
-                "ORDER BY id LIMIT ?",
-            listOf(cutoffMs, PRUNE_BATCH),
-        ) { it.long(0) }
+        val expired = db.query(EXPIRED_PAYLOADS_SQL, listOf(cutoffMs, PRUNE_BATCH)) { it.long(0) }
         if (expired.isNotEmpty()) {
             // ids come from our own query: safe to inline
             val ids = expired.joinToString(",")
@@ -227,8 +235,10 @@ class LocalStore(private val db: SqlDatabase) {
                 if (was.isEmpty() && now.isNotEmpty()) {
                     db.execute("INSERT OR IGNORE INTO newly_identified (run_id, payload_id) VALUES (?, ?)", listOf(runId, row.id))
                 }
-                // a page this payload did not match before now counts it in the page's summary
+                // the page summary follows the payload: it counts a page the payload now matches and
+                // gives back what a page it no longer matches had counted (so A -> B -> A nets to A)
                 (now - was.toSet()).forEach { page -> addToProduct(page, row.firstMs, row.lastMs, row.seen, 1, row.id) }
+                (was - now.toSet()).forEach { page -> removeFromProduct(page, row.seen, row.id) }
             }
             db.execute(
                 "UPDATE rematch_run SET payloads_checked = payloads_checked + ?, cursor_id = ? WHERE id = ?",
@@ -354,6 +364,20 @@ class LocalStore(private val db: SqlDatabase) {
                 "last_seen_ms = CASE WHEN last_seen_ms > ? THEN last_seen_ms ELSE ? END WHERE page_id = ?",
             listOf(count, payloads, lastMs, payloadId, firstMs, firstMs, lastMs, lastMs, page),
         )
+    }
+
+    /**
+     * Gives back one payload's counts to a page it stopped matching. First/last seen stay (they cannot be
+     * un-merged); a page left with no payloads loses its summary row.
+     */
+    private fun removeFromProduct(page: String, count: Long, payloadId: Long) {
+        db.execute(
+            "UPDATE seen_product SET seen_count = CASE WHEN seen_count > ? THEN seen_count - ? ELSE 0 END, " +
+                "payload_count = payload_count - 1, " +
+                "last_payload_id = CASE WHEN last_payload_id = ? THEN NULL ELSE last_payload_id END WHERE page_id = ?",
+            listOf(count, count, payloadId, page),
+        )
+        db.execute("DELETE FROM seen_product WHERE page_id = ? AND payload_count <= 0", listOf(page))
     }
 
     private fun writeMinute(recordingId: String, key: MinuteKey, payloadId: Long, d: MinuteDelta) {

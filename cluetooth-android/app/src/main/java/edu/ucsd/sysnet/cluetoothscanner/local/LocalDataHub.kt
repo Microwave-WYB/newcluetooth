@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -26,10 +27,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -47,6 +51,8 @@ private const val DEVICE_COUNT_REFRESH_MS = 5_000L
 private const val IN_RANGE_REFRESH_MS = 1_000L
 private const val SHARED_QUERIES = 64
 private const val HOUR_MS = 60L * 60 * 1000
+private const val MAX_INIT_RETRY_MS = 5L * 60 * 1000
+private const val MAX_REMATCH_RETRY_MS = 10L * 60 * 1000
 
 /**
  * The phone's local data layer: the [LocalDataSink] the scan pipeline feeds and the
@@ -61,14 +67,15 @@ private const val HOUR_MS = 60L * 60 * 1000
  * **Queries.** Each is a cold flow that re-runs only when a table group it reads changed
  * (version counters per group, replayed to new collectors), at most once per
  * [lightQueryIntervalMs] (heavy aggregates: [heavyQueryIntervalMs]), always on [ioDispatcher],
- * and shared between collectors of the same key. If the layer cannot start, every query emits
- * empty data and [status] says why.
+ * and shared between collectors of the same key. While the layer cannot start, every query emits
+ * empty data (and picks up real data once it opens) and [status] says why.
  *
  * What is kept, and when (see docs/local-data.md):
  *  * every distinct payload heard while the app scans, recording or not, for 30 days after it
  *    was last heard, plus a per-page summary forever;
  *  * sighting history and the route only while a recording (a core scan session) is active.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class LocalDataHub(
     private val openDatabase: () -> SqlDatabase,
     private val loadBundleJson: () -> String,
@@ -81,6 +88,10 @@ class LocalDataHub(
     private val heavyQueryIntervalMs: Long = 5_000L,
     private val shareLingerMs: Long = 5_000L,
     private val pruneIntervalMs: Long = HOUR_MS,
+    /** First wait before opening the database again after a failure; doubles up to 5 minutes. */
+    private val retryInitialMs: Long = 5_000L,
+    /** First wait before re-queueing a failed re-match batch; doubles up to 10 minutes. */
+    private val rematchRetryMs: Long = 5_000L,
 ) : LocalData, LocalDataSink, AutoCloseable {
 
     private sealed interface Event {
@@ -106,8 +117,8 @@ class LocalDataHub(
     private val events = Channel<Event>(Channel.UNLIMITED)
     private val queuedAdvertisements = AtomicInteger(0)
 
-    /** Completes with whether the database opened. */
-    private val ready = CompletableDeferred<Boolean>()
+    /** null while starting, false while the database is unavailable (retrying), true once it works. */
+    private val availability = MutableStateFlow<Boolean?>(null)
     private val versions = Group.entries.associateWith { MutableStateFlow(0L) }
     private val _catalog = MutableStateFlow<WikiCatalog?>(null)
     override val catalog: StateFlow<WikiCatalog?> = _catalog.asStateFlow()
@@ -138,26 +149,34 @@ class LocalDataHub(
     private var lastDeviceCountRefreshMs = 0L
     private var lastFix: CoreLocationInput? = null
     private var rematchRun: Long? = null
+    private var rematchBackoffMs = rematchRetryMs
     private val droppedAdvertisements = AtomicInteger(0)
 
-    /** Opens the database, loads the bundle, then starts ingest, expiry and the re-match. Call once. */
+    /**
+     * Opens the database, loads the bundle, then starts ingest, expiry and the re-match. Call once.
+     * A database that cannot be opened (full disk, storage not ready, newer schema) is reported in
+     * [status] and retried with a growing wait; events are queued meanwhile (advertisements up to a cap)
+     * and nothing on disk is touched.
+     */
     fun start() {
         scope.launch(ioDispatcher) {
-            val opened = try {
-                initialize()
-                true
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                LOGGER.log(Level.SEVERE, "Local data unavailable", error)
-                _status.value = LocalDataStatus(LocalDataStatus.State.UNAVAILABLE, error.message ?: error::class.java.simpleName)
-                false
+            var wait = retryInitialMs
+            while (true) {
+                try {
+                    initialize()
+                    break
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    LOGGER.log(Level.SEVERE, "Local data unavailable; retrying in ${wait}ms", error)
+                    runCatching { if (::db.isInitialized) db.close() }
+                    _status.value = LocalDataStatus(LocalDataStatus.State.UNAVAILABLE, error.message ?: error::class.java.simpleName)
+                    availability.value = false
+                    delay(wait)
+                    wait = minOf(wait * 2, MAX_INIT_RETRY_MS)
+                }
             }
-            ready.complete(opened)
-            if (!opened) {
-                events.close()
-                return@launch
-            }
+            availability.value = true
             jobs += launch { while (true) { delay(flushIntervalMs); events.trySend(Event.Flush(null)) } }
             jobs += launch { while (true) { events.trySend(Event.Prune); delay(pruneIntervalMs) } }
             if (matcher != null) events.trySend(Event.Rematch)
@@ -176,7 +195,8 @@ class LocalDataHub(
             check(m.bundleVersion == catalog.version) { "matcher and catalog come from different bundles" }
             m.ruleErrors.forEach { LOGGER.warning("Wiki rule skipped: $it") }
             matcher = m
-            rulesVersion = catalog.rulesVersion ?: catalog.version
+            // stored matches are re-done when the rules or the engine that evaluates them change
+            rulesVersion = (catalog.rulesVersion ?: catalog.version) + "+m" + m.engineVersion
             _catalog.value = catalog
             _status.value = LocalDataStatus.READY_STATUS
         } catch (error: CancellationException) {
@@ -193,8 +213,9 @@ class LocalDataHub(
 
     /** Writes everything buffered now and returns; mainly for tests and orderly shutdown. */
     suspend fun flushNow() {
+        if (availability.filterNotNull().first() != true) return // unavailable: nothing can be written now
         val done = CompletableDeferred<Unit>()
-        if (events.trySend(Event.Flush(done)).isFailure) return // the layer is not running
+        if (events.trySend(Event.Flush(done)).isFailure) return
         done.await()
     }
 
@@ -298,13 +319,26 @@ class LocalDataHub(
         }
     }
 
-    /** One batch of the re-match; queues itself again until the run is done, so ingest interleaves. */
+    /**
+     * One batch of the re-match; queues itself again until the run is done, so ingest interleaves. A failed
+     * batch (nothing was written) is re-queued after a growing wait instead of stalling until restart.
+     */
     private fun rematchStep() {
         val m = matcher ?: return
-        val run = rematchRun ?: store.beginRematch(rulesVersion, clock())?.also { rematchRun = it } ?: return
-        val more = store.rematchBatch(m, rulesVersion, run, clock())
-        bump(Group.PAYLOADS, Group.REMATCH)
-        if (more) events.trySend(Event.Rematch) else rematchRun = null
+        try {
+            val run = rematchRun ?: store.beginRematch(rulesVersion, clock())?.also { rematchRun = it } ?: return
+            val more = store.rematchBatch(m, rulesVersion, run, clock())
+            rematchBackoffMs = rematchRetryMs
+            bump(Group.PAYLOADS, Group.REMATCH)
+            if (more) events.trySend(Event.Rematch) else rematchRun = null
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            val wait = rematchBackoffMs
+            rematchBackoffMs = minOf(wait * 2, MAX_REMATCH_RETRY_MS)
+            LOGGER.log(Level.WARNING, "Re-match batch failed; retrying in ${wait}ms", error)
+            jobs += scope.launch { delay(wait); events.trySend(Event.Rematch) }
+        }
     }
 
     /** Payload-level pages (no address), cached per distinct payload; these are what the store keeps. */
@@ -390,10 +424,10 @@ class LocalDataHub(
      * at most every [intervalMs]. When the layer is unavailable, or the query fails, it emits [fallback].
      */
     private fun <T> observe(groups: List<Group>, intervalMs: Long, fallback: T, query: () -> T): Flow<T> =
-        flow {
-            if (!ready.await()) {
-                emit(fallback)
-                return@flow
+        availability.filterNotNull().transformLatest { available ->
+            if (!available) {
+                emit(fallback) // until the database opens; then this restarts with the real thing
+                return@transformLatest
             }
             // StateFlow versions replay: a change between collecting and the first query is not lost
             val changed = combine(groups.map { versions.getValue(it) }) { }.conflate()
@@ -428,16 +462,17 @@ class LocalDataHub(
             } as Flow<T>
         }
 
-    override fun productsInRange(windowMs: Long): Flow<InRangeSnapshot> = flow {
-        if (!ready.await()) {
-            emit(InRangeSnapshot(clock(), windowMs, emptyList(), 0, 0))
-            return@flow
-        }
-        while (true) {
-            emit(inRangeSnapshot(clock(), windowMs))
-            delay(IN_RANGE_REFRESH_MS)
-        }
-    }.flowOn(ioDispatcher).distinctUntilChanged { a, b -> a.copy(atMs = 0) == b.copy(atMs = 0) }
+    override fun productsInRange(windowMs: Long): Flow<InRangeSnapshot> =
+        availability.filterNotNull().transformLatest { available ->
+            if (!available) {
+                emit(InRangeSnapshot(clock(), windowMs, emptyList(), 0, 0))
+                return@transformLatest
+            }
+            while (true) {
+                emit(inRangeSnapshot(clock(), windowMs))
+                delay(IN_RANGE_REFRESH_MS)
+            }
+        }.flowOn(ioDispatcher).distinctUntilChanged { a, b -> a.copy(atMs = 0) == b.copy(atMs = 0) }
 
     internal fun inRangeSnapshot(nowMs: Long, windowMs: Long): InRangeSnapshot {
         val catalog = _catalog.value
@@ -509,7 +544,7 @@ class LocalDataHub(
         query("rematch", listOf(Group.REMATCH), lightQueryIntervalMs, null) { store.pendingRematchReport() }
 
     override suspend fun acknowledgeRematch(reportId: Long) {
-        if (!ready.await()) return
+        if (availability.filterNotNull().first() != true) return
         val done = CompletableDeferred<Unit>()
         // through the consumer, the only writer
         if (events.trySend(Event.Acknowledge(reportId, done)).isFailure) return

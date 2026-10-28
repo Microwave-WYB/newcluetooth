@@ -3,7 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.local
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteException
+import android.database.sqlite.SQLiteDatabaseCorruptException
 import android.database.sqlite.SQLiteOpenHelper
 import android.database.sqlite.SQLiteStatement
 
@@ -101,11 +101,15 @@ class AndroidSqlDatabase private constructor(private val db: SQLiteDatabase) : S
     companion object {
         const val FILE_NAME = "local-data.db"
 
-        /** Opens the database; a file SQLite cannot read is deleted and recreated once. */
+        /**
+         * Opens the database. Only a file SQLite reports as corrupt is deleted and recreated, once;
+         * any other failure (full disk, storage not available yet, a newer schema) propagates so the
+         * caller can report it and retry later without touching the data.
+         */
         fun open(context: Context, name: String = FILE_NAME): AndroidSqlDatabase = try {
             openHelper(context, name)
-        } catch (error: SQLiteException) {
-            java.util.logging.Logger.getLogger("LocalData").log(java.util.logging.Level.WARNING, "Recreating unreadable $name", error)
+        } catch (error: SQLiteDatabaseCorruptException) {
+            java.util.logging.Logger.getLogger("LocalData").log(java.util.logging.Level.WARNING, "Recreating corrupt $name", error)
             context.deleteDatabase(name)
             openHelper(context, name)
         }
@@ -120,14 +124,11 @@ class AndroidSqlDatabase private constructor(private val db: SQLiteDatabase) : S
                     LocalSchema.CREATE.forEach(db::execSQL)
                 }
 
-                // It is a cache: start over rather than migrate, in either direction.
                 override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                    LocalSchema.reset().forEach(db::execSQL)
+                    LocalSchema.upgrade(oldVersion, newVersion).forEach(db::execSQL)
                 }
 
-                override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                    LocalSchema.reset().forEach(db::execSQL)
-                }
+                // No onDowngrade: the default throws, and the file stays untouched for the newer build.
             }
             return AndroidSqlDatabase(helper.writableDatabase)
         }

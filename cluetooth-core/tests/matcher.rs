@@ -14,8 +14,8 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use cluetooth_core::{
-    AddrContext, AddrType, AdvAddressType, MatcherError, Node, RuleMatcher, compile, evaluate_rule,
-    regex_ok, structures,
+    AddrContext, AddrType, AdvAddressType, MATCHER_ENGINE_VERSION, MatcherError, Node, RuleMatcher,
+    compile, evaluate_rule, regex_ok, structures,
 };
 use regex_syntax::hir::{Class, Hir, HirKind};
 use serde_json::{Value, json};
@@ -1055,6 +1055,20 @@ fn extended_advertisements_beyond_255_bytes_parse_in_full() {
         None,
         None
     ));
+}
+
+#[test]
+fn the_engine_version_is_pinned_so_a_semantic_change_bumps_it_on_purpose() {
+    // If this fails because evaluation changed, bump MATCHER_ENGINE_VERSION (apps then re-match
+    // their stored payloads) and update the value here.
+    assert_eq!(MATCHER_ENGINE_VERSION, 1);
+    let bundle = json!({"version": "x", "pages": []});
+    assert_eq!(
+        RuleMatcher::from_bundle_json(bundle.to_string())
+            .unwrap()
+            .engine_version(),
+        MATCHER_ENGINE_VERSION
+    );
 }
 
 #[test]
