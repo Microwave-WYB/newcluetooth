@@ -61,6 +61,8 @@ from cluetooth_sync.wigle import (
 
 
 DEFAULT_HEARTBEAT_PATH = Path("/tmp/cluetooth-sync/heartbeat.json")
+# Scan objects (legacy, v2, v3) and GATT discoveries live under separate roots.
+DEFAULT_PREFIXES = ["scans/", "gatt/"]
 HEARTBEAT_INTERVAL_SECONDS = 15.0
 MAX_CYCLE_ERROR_BACKOFF_SECONDS = 600
 
@@ -206,14 +208,17 @@ def sync(
             help="Base64 or raw 32-byte private key for decrypting blobs.",
         ),
     ],
-    prefix: Annotated[
-        str,
+    prefixes: Annotated[
+        list[str],
         typer.Option(
             "--prefix",
             envvar="CLUETOOTH_PREFIX",
-            help="Object prefix to discover.",
+            help=(
+                "Object prefix to discover; repeat the option (or separate the "
+                "environment variable's values by spaces) for several."
+            ),
         ),
-    ] = "scans/",
+    ] = DEFAULT_PREFIXES,
     mirror_dir: Annotated[
         Path | None,
         typer.Option(
@@ -304,7 +309,7 @@ def sync(
 ) -> None:
     storage_client = _build_storage_client(service_account_key, mirror_dir)
     if list_only:
-        _print_survey(storage_client, database_url, bucket_name, prefix)
+        _print_survey(storage_client, database_url, bucket_name, prefixes)
         return
 
     private_key = _read_private_key(private_key_path)
@@ -326,7 +331,7 @@ def sync(
                             storage_client=storage_client,
                             database_url=database_url,
                             bucket_name=bucket_name,
-                            prefix=prefix,
+                            prefixes=prefixes,
                             private_key=private_key,
                             download_executor=download_executor,
                             ingest_executor=ingest_executor,
@@ -390,9 +395,9 @@ def _print_survey(
     storage_client: StorageClient,
     database_url: str,
     bucket_name: str,
-    prefix: str,
+    prefixes: list[str],
 ) -> None:
-    summary = survey_blobs(storage_client, database_url, bucket_name, prefix)
+    summary = survey_blobs(storage_client, database_url, bucket_name, prefixes)
     with pl.Config(tbl_rows=-1, tbl_width_chars=200, tbl_hide_dataframe_shape=True):
         print(summary)
         print(

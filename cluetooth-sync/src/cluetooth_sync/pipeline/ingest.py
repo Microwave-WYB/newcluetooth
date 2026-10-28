@@ -1,6 +1,8 @@
 import io
+import json
 import sys
 import time
+from collections.abc import Callable
 
 import polars as pl
 from polars._typing import SchemaDict
@@ -34,6 +36,17 @@ SCAN_POLARS_SCHEMA: SchemaDict = {
     "lat": pl.Float64,
     "lon": pl.Float64,
     "accuracy": pl.Float64,
+}
+# Producer payload v3 columns of the stage; legacy and v2 sightings have none.
+STAGE_V3_SCHEMA: SchemaDict = {
+    "is_legacy": pl.Boolean,
+    "primary_phy": pl.Int64,
+    "secondary_phy": pl.Int64,
+    "adv_sid": pl.Int64,
+    "adv_tx_power": pl.Int64,
+    "periodic_interval": pl.Int64,
+    "data_status": pl.Int64,
+    "addr_type": pl.Int64,
 }
 MAX_INSERT_ATTEMPTS = 5
 RETRYABLE_SQLSTATES = ("40P01", "40001")
@@ -88,10 +101,14 @@ def insert_prepared_scans(
     database_url: str,
     scans: pl.DataFrame,
     *,
+    meta: dict[str, str] | None = None,
     mark_failure: bool = True,
     skip_if_succeeded: bool = False,
 ) -> int:
-    """Insert one blob's scans; return inserted rows (0 if skipped as done)."""
+    """Insert one blob's scans; return inserted rows (0 if skipped as done).
+
+    `meta` is the producer's footer metadata (v3), stored in `blobs.meta`.
+    """
     if scans.is_empty():
         return 0
 
@@ -100,12 +117,27 @@ def insert_prepared_scans(
         raise ValueError("prepared scans must contain exactly one non-null blob URI")
 
     gcs_blob_uri: str = unique_blobs.item()
+    return run_with_retries(
+        database_url,
+        gcs_blob_uri,
+        lambda: _insert_prepared_scans_once(
+            database_url, scans, gcs_blob_uri, skip_if_succeeded, meta
+        ),
+        mark_failure=mark_failure,
+    )
 
+
+def run_with_retries[T](
+    database_url: str,
+    gcs_blob_uri: str,
+    insert_once: Callable[[], T],
+    *,
+    mark_failure: bool,
+) -> T:
+    """Run one blob's ingest transaction, retrying deadlocks/serialization failures."""
     for attempt in range(1, MAX_INSERT_ATTEMPTS + 1):
         try:
-            return _insert_prepared_scans_once(
-                database_url, scans, gcs_blob_uri, skip_if_succeeded
-            )
+            return insert_once()
         except Exception as exc:
             if _is_retryable_insert_error(exc) and attempt < MAX_INSERT_ATTEMPTS:
                 sleep_seconds = 0.1 * (2 ** (attempt - 1))
@@ -129,6 +161,11 @@ def stage_frame(scans: pl.DataFrame) -> pl.DataFrame:
     """Prepared blob frame -> stage columns (per-row local_name is not stored)."""
     if "session_id" not in scans.columns:
         scans = scans.with_columns(pl.lit(None, dtype=pl.String).alias("session_id"))
+    scans = scans.with_columns(
+        pl.lit(None, dtype=dtype).alias(name)
+        for name, dtype in STAGE_V3_SCHEMA.items()
+        if name not in scans.columns
+    )
     return scans.select(
         "addr",
         "rssi",
@@ -140,6 +177,7 @@ def stage_frame(scans: pl.DataFrame) -> pl.DataFrame:
         "lon",
         "accuracy",
         "session_id",
+        *STAGE_V3_SCHEMA,
     )
 
 
@@ -185,10 +223,11 @@ def _insert_prepared_scans_once(
     scans: pl.DataFrame,
     gcs_blob_uri: str,
     skip_if_succeeded: bool,
+    meta: dict[str, str] | None,
 ) -> int:
     stage = stage_frame(scans)
     ensure_partitions(database_url, frame_months(stage))
-    uploader, app_version = legacy_blob_identity(gcs_blob_uri)
+    uploader, app_version = blob_identity(gcs_blob_uri, meta)
     session_ids = stage.get_column("session_id").drop_nulls().unique()
     blob_session_id = session_ids.item() if len(session_ids) == 1 else None
 
@@ -197,7 +236,7 @@ def _insert_prepared_scans_once(
         session.cursor.fetch_polars()
         uploader_id = ensure_uploader(session, uploader)
         blob_id, already_succeeded = ensure_blob(
-            session, gcs_blob_uri, uploader_id, app_version, blob_session_id
+            session, gcs_blob_uri, uploader_id, app_version, blob_session_id, meta
         )
         if skip_if_succeeded and already_succeeded:
             # Another sync process committed this blob after our discovery.
@@ -219,12 +258,23 @@ def ensure_uploader(session: db.DatabaseSession, uploader: str | None) -> int | 
     return int(session.cursor.fetch_polars().item(0, "id"))
 
 
+def blob_identity(
+    gcs_blob_uri: str, meta: dict[str, str] | None
+) -> tuple[str | None, str | None]:
+    """(uploader, app_version): from a legacy name, else from the footer."""
+    uploader, app_version = legacy_blob_identity(gcs_blob_uri)
+    if app_version is None and meta is not None:
+        app_version = meta.get("app_version")
+    return uploader, app_version
+
+
 def ensure_blob(
     session: db.DatabaseSession,
     gcs_blob_uri: str,
     uploader_id: int | None,
     app_version: str | None,
     session_id: str | None,
+    meta: dict[str, str] | None = None,
 ) -> tuple[int, bool]:
     session.cursor.execute(
         read_query("blobs/ensure_ingest.sql"),
@@ -233,6 +283,7 @@ def ensure_blob(
             NO_UPLOADER_ID if uploader_id is None else uploader_id,
             app_version or "",
             session_id or "",
+            "" if meta is None else json.dumps(meta),
         ],
     )
     row = session.cursor.fetch_polars()
@@ -252,9 +303,11 @@ def mark_blob_failed(database_url: str, gcs_blob_uri: str, exc: Exception) -> No
         )
 
 
-def mark_blob_succeeded_empty(database_url: str, gcs_blob_uri: str) -> None:
-    uploader, app_version = legacy_blob_identity(gcs_blob_uri)
+def mark_blob_succeeded_empty(
+    database_url: str, gcs_blob_uri: str, meta: dict[str, str] | None = None
+) -> None:
+    uploader, app_version = blob_identity(gcs_blob_uri, meta)
     with db.session(database_url) as session:
         uploader_id = ensure_uploader(session, uploader)
-        ensure_blob(session, gcs_blob_uri, uploader_id, app_version, None)
+        ensure_blob(session, gcs_blob_uri, uploader_id, app_version, None, meta)
         session.cursor.execute(read_query("blobs/mark_succeeded.sql"), [gcs_blob_uri])

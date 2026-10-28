@@ -164,7 +164,7 @@ def test_survey_is_list_only(database_url: str) -> None:
         [done],
     )
 
-    summary = survey_blobs(_ListingStorage(uris), database_url, "test-bucket", prefix)
+    summary = survey_blobs(_ListingStorage(uris), database_url, "test-bucket", [prefix])
 
     assert summary.select("month", "objects", "succeeded", "new").to_dicts() == [
         {"month": "2026-08", "objects": 1, "succeeded": 1, "new": 0},

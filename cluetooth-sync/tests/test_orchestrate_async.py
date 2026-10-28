@@ -70,7 +70,7 @@ def test_bounded_multiworker_pipeline_drains_mixed_peer_failures(
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.insert_prepared_scans",
-        lambda database_url, scans, mark_failure, skip_if_succeeded: (
+        lambda database_url, scans, meta, mark_failure, skip_if_succeeded: (
             inserted.append(scans.item(0, "blob")) or scans.height
         ),
     )
@@ -89,7 +89,7 @@ def test_bounded_multiworker_pipeline_drains_mixed_peer_failures(
                     storage_client=storage,
                     database_url="db",
                     bucket_name="bucket",
-                    prefix="scans/",
+                    prefixes=["scans/"],
                     private_key=b"key",
                     download_executor=downloads,
                     ingest_executor=ingests,

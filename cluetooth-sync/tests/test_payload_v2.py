@@ -179,7 +179,7 @@ def test_v2_fixture_has_no_outer_zstd_layer() -> None:
             UnsupportedPayloadSchemaError,
         ),
         (
-            f"gs://bucket/scans/v3/2025/03/24/{PAYLOAD_ID}.parquet.encrypted",
+            f"gs://bucket/scans/v4/2025/03/24/{PAYLOAD_ID}.parquet.encrypted",
             UnsupportedPayloadSchemaError,
         ),
         (
@@ -456,12 +456,12 @@ def test_valid_empty_exact_schema_payload_is_marked_successful(
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.mark_blob_succeeded_empty",
-        lambda database_url, uri: succeeded.append(uri),
+        lambda database_url, uri, meta: succeeded.append(uri),
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.insert_prepared_scans",
-        lambda database_url, scans, mark_failure, skip_if_succeeded: inserted.append(
-            "unexpected"
+        lambda database_url, scans, meta, mark_failure, skip_if_succeeded: (
+            inserted.append("unexpected")
         ),
     )
     monkeypatch.setattr(
@@ -498,7 +498,7 @@ def test_mixed_legacy_and_v2_ingest_routes_before_decoding(
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.insert_prepared_scans",
-        lambda database_url, scans, mark_failure, skip_if_succeeded: (
+        lambda database_url, scans, meta, mark_failure, skip_if_succeeded: (
             inserted.append((scans.item(0, "blob"), scans.height)) or scans.height
         ),
     )
@@ -540,7 +540,7 @@ def test_whole_blob_failure_is_bookkept_once_and_retryable(
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.insert_prepared_scans",
-        lambda database_url, scans, mark_failure, skip_if_succeeded: scans.height,
+        lambda database_url, scans, meta, mark_failure, skip_if_succeeded: scans.height,
     )
     monkeypatch.setattr(
         "cluetooth_sync.pipeline.orchestrate.mark_blob_failed",

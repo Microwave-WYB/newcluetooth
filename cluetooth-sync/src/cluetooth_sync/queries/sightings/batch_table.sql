@@ -12,6 +12,15 @@ create temporary table {{ batch }} (
   lat float8,
   lon float8,
   accuracy float4,
+  -- Producer payload v3 PDU fields; null for legacy and v2 sightings.
+  is_legacy boolean,
+  primary_phy smallint,
+  secondary_phy smallint,
+  adv_sid smallint,
+  adv_tx_power smallint,
+  periodic_interval integer,
+  data_status smallint,
+  addr_type smallint,
   -- Old scans.id, only set by the backfill (WiGLE membership mapping).
   scan_id bigint
 ) on commit drop
