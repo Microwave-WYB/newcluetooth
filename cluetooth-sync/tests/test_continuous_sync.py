@@ -262,3 +262,14 @@ def test_health_command_exit_codes(tmp_path: Path) -> None:
         cli.app, ["health", "--heartbeat-path", str(tmp_path / "nope.json")]
     )
     assert missing.exit_code == 1
+
+
+def test_survey_lists_overlapping_prefixes_once(database_url: str) -> None:
+    uris = ["gs://overlap-bucket/scans/v3/2026/10/27/a.parquet.encrypted"]
+    summary = survey_blobs(
+        _ListingStorage(uris),
+        database_url,
+        "overlap-bucket",
+        ["scans/", "scans/v3/", "scans/"],
+    )
+    assert summary.select("kind", "objects").rows() == [("v3", 1)]

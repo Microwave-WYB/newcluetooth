@@ -44,9 +44,9 @@ FOOTER = {
     "cluetooth.android_release": "15",
     "cluetooth.android_sdk": "35",
     "cluetooth.app_version": "0.2.0",
-    "cluetooth.cap.ext_adv": "true",
-    "cluetooth.cap.coded_phy": "true",
-    "cluetooth.cap.max_adv_len": "1650",
+    "cluetooth.cap_ext_adv": "true",
+    "cluetooth.cap_coded_phy": "true",
+    "cluetooth.cap_max_adv_len": "1650",
     "cluetooth.scan.phy": "all_supported",
     "cluetooth.scan.legacy_only": "false",
 }
@@ -254,9 +254,9 @@ def test_valid_v3_file_prepares_columns_and_footer_meta() -> None:
         "android_release": "15",
         "android_sdk": "35",
         "app_version": "0.2.0",
-        "cap.ext_adv": "true",
-        "cap.coded_phy": "true",
-        "cap.max_adv_len": "1650",
+        "cap_ext_adv": "true",
+        "cap_coded_phy": "true",
+        "cap_max_adv_len": "1650",
         "scan.phy": "all_supported",
         "scan.legacy_only": "false",
     }
@@ -502,7 +502,7 @@ def test_v3_ingest_fills_columns_and_blob_meta(database_url: str) -> None:
     assert ledger["app_version"] == "0.2.0"
     meta = json.loads(ledger["meta"])
     assert meta["payload_id"] == _payload_id(uri)
-    assert meta["cap.max_adv_len"] == "1650"
+    assert meta["cap_max_adv_len"] == "1650"
     assert meta["device_model"] == "Pixel 8"
 
 
@@ -649,7 +649,7 @@ def test_valid_empty_v3_file_is_successful_and_keeps_its_meta(
     uri = _uri("b8")
     assert _ingest(database_url, uri, _parquet(_frame([]), uri)) == 0
     ledger = pl.read_database_uri(
-        "select success, app_version, meta ->> 'cap.coded_phy' as coded "
+        "select success, app_version, meta ->> 'cap_coded_phy' as coded "
         "from blobs where uri = $1",
         database_url,
         engine="adbc",

@@ -3,6 +3,7 @@ from collections.abc import Sequence
 
 import polars as pl
 
+from cluetooth_sync.pipeline.discover import distinct_prefixes
 from cluetooth_sync.pipeline.storage import StorageClient
 
 _DATED_MONTH = re.compile(
@@ -47,7 +48,7 @@ def survey_blobs(
 ) -> pl.DataFrame:
     """List-only inventory: a GCS listing plus one read-only ledger SELECT per prefix."""
     rows = []
-    for prefix in prefixes:
+    for prefix in distinct_prefixes(prefixes):
         uri_prefix = f"gs://{bucket_name}/{prefix}"
         # Columns that exist before and after the retry-backoff migration.
         ledger = pl.read_database_uri(

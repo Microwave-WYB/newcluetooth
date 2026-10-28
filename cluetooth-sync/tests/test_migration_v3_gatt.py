@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -93,7 +94,7 @@ def test_migration_rolls_back_and_reapplies(scratch_url: str, tmp_path: Path) ->
     [(payload_id,)] = _sql(
         scratch_url,
         "insert into payloads (sha256, structure_ids, first_seen, last_seen, sightings) "
-        "values ('\\x01', '{}', '2031-03-01 00:00:10+00', '2031-03-01 00:00:50+00', 3) "
+        "values ('\\x01', '{}', '2031-03-01 00:00:10+00', '2031-03-01 00:00:50+00', 4) "
         "returning id",
     )
     [(v2_blob,)] = _sql(
@@ -132,6 +133,16 @@ def test_migration_rolls_back_and_reapplies(scratch_url: str, tmp_path: Path) ->
         Exception, match="duplicate key value violates unique constraint"
     ):
         _sql(scratch_url, insert_minute("null", "null", v2_blob, "10"))
+    # A v3 file from an old Android reports no PDU field: its row has an all-null
+    # key, but only a v3 blob behind it.
+    _sql(
+        scratch_url,
+        "insert into sighting_minutes (minute, addr, payload_id, blob_counts, "
+        "sightings, first_seen, last_seen) values ('2031-03-01 00:00:00+00', "
+        f"'aa:00:00:00:00:09', {payload_id}, '{{\"{v3_blob}\": 1}}', 1, "
+        "'2031-03-01 00:00:20+00', '2031-03-01 00:00:20+00')",
+    )
+    assert _sql(scratch_url, "select count(*) from sighting_minutes") == [(4,)]
 
     # GATT side.
     [(blob_id,)] = _sql(
@@ -173,7 +184,8 @@ def test_migration_rolls_back_and_reapplies(scratch_url: str, tmp_path: Path) ->
         "periodic_interval",
         "data_status",
     } & _columns(scratch_url, "sighting_minutes")
-    # Only the row without v3 key fields survives; the old key is back.
+    # Only the row the older code wrote survives, however its key looked (the
+    # all-null v3 row went too, by provenance); the old key is back.
     assert _sql(scratch_url, "select count(*) from sighting_minutes") == [(1,)]
     # The ledger is put back: v3 and GATT objects are pending again, others are not.
     ledger = {
@@ -240,7 +252,7 @@ def test_migration_refuses_to_replace_non_empty_legacy_gatt_tables(
     assert "adv_sid" not in _columns(scratch_url, "sighting_minutes")
 
 
-def test_rollback_refuses_when_a_v3_blob_also_fed_rows_without_v3_fields(
+def test_rollback_refuses_only_rows_that_mix_v3_and_other_blobs(
     scratch_url: str, tmp_path: Path
 ) -> None:
     directory = _migrations_up_to(tmp_path, include_this=True)
@@ -254,19 +266,115 @@ def test_rollback_refuses_when_a_v3_blob_also_fed_rows_without_v3_fields(
         "insert into blobs (uri, success) "
         "values ('gs://b/scans/v3/2031/03/01/mixed.parquet.encrypted', true) returning id",
     )
-    # A v3 file whose rows reported no PDU field: its minute row is a null-key row.
+    [(v2_blob,)] = _sql(
+        scratch_url,
+        "insert into blobs (uri, success) "
+        "values ('gs://b/scans/v2/2031/03/01/old.parquet.encrypted', true) returning id",
+    )
+    # A v3 file whose rows reported no PDU field (old Android) next to a v2 file of
+    # the same phone and minute: one null-key row with both blobs behind it.
     _sql(
         scratch_url,
         "insert into sighting_minutes (minute, addr, payload_id, blob_counts, sightings) "
         "values ('2031-03-01 00:00:00+00', 'aa:00:00:00:00:02', "
-        f"{payload_id}, '{{\"{v3_blob}\": 1}}', 1)",
+        f'{payload_id}, \'{{"{v3_blob}": 1, "{v2_blob}": 1}}\', 2)',
     )
 
     result = _dbmate(scratch_url, directory, "rollback")
     assert result.returncode != 0
-    assert "also contributed to minute rows without v3 key fields" in (
-        result.stdout + result.stderr
-    )
+    assert "mixes scans/v3 blobs with other blobs" in result.stdout + result.stderr
     # Nothing changed: still migrated, ledger untouched.
     assert "adv_sid" in _columns(scratch_url, "sighting_minutes")
-    assert _sql(scratch_url, "select success from blobs") == [(True,)]
+    assert _sql(scratch_url, "select success from blobs order by id") == [
+        (True,),
+        (True,),
+    ]
+    assert _sql(scratch_url, "select count(*) from sighting_minutes") == [(1,)]
+
+
+def test_rollback_at_realistic_size_recomputes_payload_stats_in_one_pass(
+    scratch_url: str, tmp_path: Path
+) -> None:
+    """1M minute rows over 2k payloads; a per-payload probe took 27 s here."""
+    directory = _migrations_up_to(tmp_path, include_this=True)
+    assert _dbmate(scratch_url, directory, "up").returncode == 0
+    payloads, rows = 2_000, 1_000_000
+    _sql(
+        scratch_url,
+        "insert into payloads (sha256, structure_ids) "
+        f"select sha256(int4send(g)), '{{}}' from generate_series(1, {payloads}) g",
+    )
+    [(v2_blob,)] = _sql(
+        scratch_url,
+        "insert into blobs (uri, success) "
+        "values ('gs://b/scans/v2/2031/03/01/big.parquet.encrypted', true) returning id",
+    )
+    [(v3_blob,)] = _sql(
+        scratch_url,
+        "insert into blobs (uri, success) "
+        "values ('gs://b/scans/v3/2031/03/01/big.parquet.encrypted', true) returning id",
+    )
+    # Every 10th row is a v3 row: half with PDU fields, half with an all-null key.
+    _sql(
+        scratch_url,
+        f"""
+        insert into sighting_minutes (
+          minute, addr, payload_id, blob_counts, sightings, first_seen, last_seen,
+          is_legacy, adv_sid
+        )
+        select
+          timestamptz '2031-03-01 00:00:00+00' + (g % 1000) * interval '1 minute',
+          lpad(to_hex(g), 12, '0')::macaddr,
+          (select min(id) from payloads) + g % {payloads},
+          case when g % 10 = 0 then jsonb_build_object('{v3_blob}', 1)
+               else jsonb_build_object('{v2_blob}', 1) end,
+          1,
+          timestamptz '2031-03-01 00:00:00+00' + (g % 1000) * interval '1 minute',
+          timestamptz '2031-03-01 00:00:00+00' + (g % 1000) * interval '1 minute',
+          case when g % 20 = 0 then false end,
+          case when g % 20 = 0 then g % 16 end
+        from generate_series(1, {rows}) g
+        """,
+    )
+    _sql(
+        scratch_url,
+        """
+        update payloads p
+        set sightings = s.n, first_seen = s.first_seen, last_seen = s.last_seen
+        from (
+          select payload_id, sum(sightings) as n, min(first_seen) as first_seen,
+                 max(last_seen) as last_seen
+          from sighting_minutes group by payload_id
+        ) s
+        where p.id = s.payload_id
+        """,
+    )
+
+    started = time.monotonic()
+    result = _dbmate(scratch_url, directory, "rollback")
+    elapsed = time.monotonic() - started
+    assert result.returncode == 0, result.stderr
+
+    assert _sql(scratch_url, "select count(*) from sighting_minutes") == [
+        (rows - rows // 10,)
+    ]
+    # Every payload's stats equal what its remaining rows say.
+    assert _sql(
+        scratch_url,
+        """
+        select count(*)
+        from payloads p
+        left join (
+          select payload_id, sum(sightings) as n, min(first_seen) as first_seen,
+                 max(last_seen) as last_seen
+          from sighting_minutes group by payload_id
+        ) r on r.payload_id = p.id
+        where p.sightings is distinct from coalesce(r.n, 0)
+           or p.first_seen is distinct from r.first_seen
+           or p.last_seen is distinct from r.last_seen
+        """,
+    ) == [(0,)]
+    # The delete, the one-pass recompute and the rest take seconds; probing the
+    # table once per payload would take far longer than this bound.
+    print(f"rollback of {rows} rows / {payloads} payloads: {elapsed:.1f}s")
+    assert elapsed < 10, f"rollback took {elapsed:.1f}s"

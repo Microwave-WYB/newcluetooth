@@ -266,15 +266,18 @@ Nothing in this section has been run against production. It needs the owner.
 3. Only then release a producer that writes `scans/v3/` or `gatt/v1/`.
 
 Rolling back (`dbmate down`, once) drops the GATT tables (recreating the empty
-legacy ones), **deletes the minute rows that carry a v3 key field**, resets the
+legacy ones), **deletes the minute rows that only `scans/v3/` blobs fed** (any
+row with a v3 key field, and any row whose blobs are all `scans/v3/` blobs, so a
+v3 file from an old Android with all-null PDU fields goes too), resets the
 ledger entries of the `scans/v3/` and `gatt/v1/` blobs (`success` null, no
 attempts, so they are pending again), and recomputes the stats of the affected
-payloads from the remaining rows. Older sync code rejects those objects
-(unsupported path, hourly backoff) until the migration is applied again, after
-which they are ingested afresh. The rollback refuses (and changes nothing) if a
-`scans/v3/` blob also contributed to minute rows without v3 key fields, since
-those rows cannot be taken apart; rebuild those minutes first. A minute row
-claimed by a WiGLE batch blocks the delete and aborts the rollback.
+payloads from the remaining rows in one pass (about 2 s for 1M rows and 2k
+payloads). Older sync code rejects those objects (unsupported path, hourly
+backoff) until the migration is applied again, after which they are ingested
+afresh. The rollback refuses, changing nothing, only if a minute row mixes
+`scans/v3/` blobs with other blobs, since such a row cannot be taken apart;
+rebuild those minutes first. A minute row claimed by a WiGLE batch blocks the
+delete and aborts the rollback.
 
 ## Restart / stop
 

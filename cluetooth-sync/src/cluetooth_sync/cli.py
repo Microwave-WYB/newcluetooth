@@ -284,7 +284,7 @@ def sync(
             "--max-blobs",
             envvar="CLUETOOTH_MAX_BLOBS",
             min=1,
-            help="Only process up to N pending blobs per sync cycle.",
+            help="Only process up to N pending blobs per prefix per sync cycle.",
         ),
     ] = None,
     heartbeat_path: Annotated[

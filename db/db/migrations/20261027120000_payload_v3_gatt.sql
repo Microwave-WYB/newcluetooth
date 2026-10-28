@@ -220,27 +220,34 @@ create index gatt_attributes_kind_uuid_idx on gatt_attributes (kind, uuid);
 create index gatt_attributes_uuid_idx on gatt_attributes (uuid);
 
 -- migrate:down
--- Destroys every GATT discovery and the minute rows that carry a v3 key field,
--- and puts the ledger back so they can be ingested again:
---   * the scans/v3/ and gatt/v1/ blobs are reset (success null, no attempts);
---     a sync of the older code rejects them (unsupported path) until this
+-- Destroys every GATT discovery and the minute rows that only scans/v3/ blobs
+-- fed, and puts the ledger back so those objects can be ingested again:
+--   * a minute row goes if it carries a v3 key field or if every blob behind it
+--     is a scans/v3/ blob. Provenance decides, not the fields: a v3 file from
+--     Android 7 has no PDU field at all and lands in all-null rows;
+--   * a row that mixes scans/v3/ blobs with other blobs cannot be taken apart,
+--     so the rollback refuses (and changes nothing) until those minutes are
+--     rebuilt;
+--   * the scans/v3/ and gatt/v1/ blobs are reset (success null, no attempts); a
+--     sync of the older code rejects them (unsupported path) until this
 --     migration is applied again, after which they are ingested afresh;
---   * the stats of the payloads those rows pointed at are recomputed from the
+--   * the stats of the payloads behind the deleted rows are recomputed from the
 --     remaining rows, so ingesting again does not count them twice.
--- A v3 file whose rows carried no PDU field at all lands in rows that also hold
--- other blobs; those cannot be taken apart, so the rollback refuses then.
 -- A minute row a WiGLE batch already claims blocks the delete and aborts.
+create temporary table v3_rollback_blobs on commit drop as
+select coalesce(array_agg(id), '{}'::bigint[]) as ids
+from blobs
+where uri ~ '^gs://[^/]+/scans/v3/';
+
 do $$
 begin
   if exists (
     select 1
     from sighting_minutes m
-    join blobs b on b.id = any (m.blob_ids)
-    where b.uri ~ '^gs://[^/]+/scans/v3/'
-      and m.addr_type is null and m.is_legacy is null and m.primary_phy is null
-      and m.secondary_phy is null and m.adv_sid is null and m.data_status is null
+    where m.blob_ids && (select ids from v3_rollback_blobs)
+      and not m.blob_ids <@ (select ids from v3_rollback_blobs)
   ) then
-    raise exception 'a scans/v3 blob also contributed to minute rows without v3 key fields; rebuild those minutes first';
+    raise exception 'a minute row mixes scans/v3 blobs with other blobs; rebuild those minutes first';
   end if;
 end;
 $$;
@@ -300,36 +307,46 @@ alter table gatt_discoveries
       and (accuracy is null or (accuracy >= 0 and accuracy < 'Infinity'::float4))
     ) not valid;
 
-create temporary table v3_rollback_payloads on commit drop as
-select distinct payload_id
-from sighting_minutes
-where addr_type is not null
-  or is_legacy is not null
-  or primary_phy is not null
-  or secondary_phy is not null
-  or adv_sid is not null
-  or data_status is not null;
+create temporary table v3_rollback_rows on commit drop as
+select m.id, m.minute, m.payload_id
+from sighting_minutes m
+where m.addr_type is not null
+  or m.is_legacy is not null
+  or m.primary_phy is not null
+  or m.secondary_phy is not null
+  or m.adv_sid is not null
+  or m.data_status is not null
+  or (
+    cardinality(m.blob_ids) > 0
+    and m.blob_ids <@ (select ids from v3_rollback_blobs)
+  );
 
-delete from sighting_minutes
-where addr_type is not null
-  or is_legacy is not null
-  or primary_phy is not null
-  or secondary_phy is not null
-  or adv_sid is not null
-  or data_status is not null;
+delete from sighting_minutes m
+using v3_rollback_rows r
+where m.id = r.id
+  and m.minute = r.minute;
 
+-- One pass over the table for all affected payloads (there is no index that
+-- leads with payload_id, so a probe per payload would scan it once each).
+with affected as (
+  select distinct payload_id from v3_rollback_rows
+),
+rest as (
+  select m.payload_id,
+         min(m.first_seen) as first_seen,
+         max(m.last_seen) as last_seen,
+         sum(m.sightings)::bigint as sightings
+  from sighting_minutes m
+  where m.payload_id in (select payload_id from affected)
+  group by m.payload_id
+)
 update payloads p
 set first_seen = rest.first_seen,
     last_seen = rest.last_seen,
     sightings = coalesce(rest.sightings, 0)
-from v3_rollback_payloads r
-left join lateral (
-  select min(m.first_seen) as first_seen, max(m.last_seen) as last_seen,
-         sum(m.sightings)::bigint as sightings
-  from sighting_minutes m
-  where m.payload_id = r.payload_id
-) rest on true
-where p.id = r.payload_id;
+from affected
+left join rest on rest.payload_id = affected.payload_id
+where p.id = affected.payload_id;
 
 update blobs
 set success = null, error = null, attempts = 0, next_attempt_at = null, synced_at = null

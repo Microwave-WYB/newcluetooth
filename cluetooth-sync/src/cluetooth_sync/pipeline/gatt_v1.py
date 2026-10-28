@@ -104,7 +104,14 @@ class GattDiscovery:
 
     @property
     def meta(self) -> dict[str, str]:
-        """`blobs.meta`: the same keys as scan v3 footers where they exist."""
+        """`blobs.meta` of a GATT object: `payload_schema`, `payload_id`, and when
+        present `app_version`, `device_model` and `android_version`.
+
+        `app_version` and `device_model` are named like the scan v3 footer keys.
+        `android_version` is the object's own `device.android` string (for example
+        `15 (API 35)`); scan footers have `android_release` and `android_sdk`
+        instead, so the Android version is not queryable the same way for both.
+        """
         meta = {"payload_schema": SCHEMA, "payload_id": self.discovery_uuid}
         for key, value in (
             ("app_version", self.app_version),
