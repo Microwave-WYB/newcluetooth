@@ -167,7 +167,7 @@ fun DeviceDetailHalf(
                 Text("dBm", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        RssiChart(detail.chartSamples, detail.chartWindow, detail.chartHeardSeconds, onWindowChange, Modifier.padding(top = 14.dp))
+        RssiChart(detail.chartSamples, detail.device.rssi, detail.chartWindow, detail.chartHeardSeconds, onWindowChange, Modifier.padding(top = 14.dp))
         detail.positionEstimate?.let { PositionEstimateRow(it) }
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (running) {

@@ -42,7 +42,7 @@ class LiveDeviceTrackerTest {
     }
 
     @Test
-    fun theEndMarkerOfTheSparklineAndChartIsTheNewestBucket() {
+    fun theSparklineAndChartHoldTheNewestSampleInTheirNewestBuckets() {
         val t = LiveDeviceTracker()
         // Two seconds ago strong, now weak, with the weak sample in a fresh second.
         t.onSample(sample(rssi = -50, t = 1_000_000))
@@ -50,9 +50,11 @@ class LiveDeviceTrackerTest {
         val now = 1_002_000L
         val row = t.row("AA:BB:CC:DD:EE:01", now)!!
         assertEquals(-82, row.rssi)
-        assertEquals(-82, RssiBuckets.endMarker(row.history)!!.rssi)
         assertEquals(30, row.history.size) // 60 s in 2 s buckets
-        assertEquals(-82, RssiBuckets.endMarker(t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).buckets)!!.rssi)
+        // the newest bucket holds the strongest sample of its second(s); the displayed number is the latest
+        assertEquals(-82, row.history.last())
+        assertEquals(-82, t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, now).buckets[58])
+        assertEquals(-82, RssiBuckets.plan(row.history, row.rssi).end!!.rssi)
     }
 
     @Test

@@ -47,18 +47,19 @@ object RssiBuckets {
         return out
     }
 
-    /** What to draw: lines for runs of two or more, a small dot per lone bucket (never the end one), and the single end marker. */
+    /** What to draw: lines for runs of two or more, a small dot per lone bucket, and the single end marker. */
     class Plan(val lines: List<List<BucketPoint>>, val dots: List<BucketPoint>, val end: BucketPoint?)
 
-    fun plan(buckets: List<Int?>, maxGap: Int = MAX_GAP_BUCKETS): Plan {
-        val end = endMarker(buckets)
+    /**
+     * The line follows the buckets (it ends at the newest bucket's strongest sample); the end marker is
+     * the current reading, [current], at "now" (the last bucket's x): the very number shown beside the
+     * chart, in the color of that number, so the two cannot disagree. No reading, no marker.
+     */
+    fun plan(buckets: List<Int?>, current: Int?, maxGap: Int = MAX_GAP_BUCKETS): Plan {
         val runs = segments(buckets, maxGap)
-        return Plan(runs.filter { it.size >= 2 }, runs.filter { it.size == 1 && it[0] != end }.map { it[0] }, end)
+        val end = if (current != null && buckets.isNotEmpty()) BucketPoint(buckets.lastIndex, current) else null
+        return Plan(runs.filter { it.size >= 2 }, runs.filter { it.size == 1 }.map { it[0] }, end)
     }
-
-    /** The one end marker: the last bucket with data, colored by its band by the caller. */
-    fun endMarker(buckets: List<Int?>): BucketPoint? =
-        buckets.indexOfLast { it != null }.takeIf { it >= 0 }?.let { BucketPoint(it, buckets[it]!!) }
 
     /** The window is drawn as a short one when the device was heard for less than a tenth of it. */
     fun isShortLived(heardSeconds: Int?, windowSec: Int): Boolean = heardSeconds != null && heardSeconds * 10 < windowSec

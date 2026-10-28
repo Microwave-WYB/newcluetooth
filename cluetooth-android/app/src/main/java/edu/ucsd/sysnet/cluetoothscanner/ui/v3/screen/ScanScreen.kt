@@ -166,7 +166,7 @@ fun ScanRow(row: DeviceRowState, onClick: () -> Unit, modifier: Modifier = Modif
                 maxLines = 1,
             )
         }
-        Sparkline(row.history, Modifier.alpha(if (row.stale) 0.4f else 1f))
+        Sparkline(row.history, row.rssi, Modifier.alpha(if (row.stale) 0.4f else 1f))
         RssiText(row.rssi, Modifier.width(38.dp).alpha(if (row.stale) 0.4f else 1f), textAlign = TextAlign.End)
     }
 }

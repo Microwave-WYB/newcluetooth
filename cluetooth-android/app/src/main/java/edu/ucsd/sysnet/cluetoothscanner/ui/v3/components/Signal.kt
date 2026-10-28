@@ -75,45 +75,44 @@ fun RssiText(rssi: Int, modifier: Modifier = Modifier, size: Int = 15, textAlign
 /**
  * Draws bucketed RSSI the one way for the sparkline and the chart: consecutive buckets with data are
  * joined (the line breaks only across a long gap, [RssiBuckets.MAX_GAP_BUCKETS]), a lone bucket is a
- * small dot in the line color, and the last bucket carries the single end marker in its band's color.
+ * small dot in the line color, and the single end marker is the current reading at now, in its band's color.
  *
  * Bucket `i` of `n` sits at `(i + 1) / n` of the plot width, so the last bucket (the one that
  * contains now) is at the right edge and x only ever increases with time.
  */
 private fun DrawScope.drawBuckets(
     buckets: List<Int?>,
+    current: Int?,
     xOf: (Int) -> Float,
     yOf: (Int) -> Float,
     line: Color,
     strokeWidth: Float,
     dotRadius: Float,
     endRadius: Float,
-    endColor: Color?,
+    endColor: Color,
 ) {
-    val plan = RssiBuckets.plan(buckets)
+    val plan = RssiBuckets.plan(buckets, current)
     plan.lines.forEach { run ->
         val path = Path()
         run.forEachIndexed { k, p -> if (k == 0) path.moveTo(xOf(p.index), yOf(p.rssi)) else path.lineTo(xOf(p.index), yOf(p.rssi)) }
         drawPath(path, line, style = Stroke(strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
     plan.dots.forEach { drawCircle(line, dotRadius, Offset(xOf(it.index), yOf(it.rssi))) }
-    plan.end?.let { if (endColor != null) drawCircle(endColor, endRadius, Offset(xOf(it.index), yOf(it.rssi))) }
+    plan.end?.let { drawCircle(endColor, endRadius, Offset(xOf(it.index), yOf(it.rssi))) }
 }
 
 /** About 56x20 dp: the last 60 s in 2 s buckets, gray line, the last bucket colored by its band. */
 @Composable
-fun Sparkline(history: List<Int?>, modifier: Modifier = Modifier) {
+fun Sparkline(history: List<Int?>, current: Int, modifier: Modifier = Modifier) {
     val line = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
-    val end = RssiBuckets.endMarker(history)
-    val endColor = if (end != null) signalColor(end.rssi) else null
+    val endColor = signalColor(current)
     Canvas(modifier.size(width = 56.dp, height = 20.dp)) {
-        if (end == null) return@Canvas
         val pad = 3.dp.toPx()
         val lo = -100f
         val hi = -35f
         val n = history.size
         drawBuckets(
-            history,
+            history, current,
             xOf = { i -> pad + (size.width - 2 * pad) * (i + 1) / n },
             yOf = { v -> pad + (size.height - 2 * pad) * (1f - (v.coerceIn(-100, -35) - lo) / (hi - lo)) },
             line = line, strokeWidth = 1.25.dp.toPx(), dotRadius = 1.5.dp.toPx(), endRadius = 2.5.dp.toPx(), endColor = endColor,
@@ -135,6 +134,8 @@ private fun chartFraction(rssi: Float) = (CHART_HI - rssi) / (CHART_HI - CHART_L
 @Composable
 fun RssiChart(
     samples: List<Int?>,
+    /** The reading shown as the big number; the end marker is this value at now. */
+    current: Int,
     window: ChartWindow,
     heardSeconds: Int?,
     onWindowChange: (ChartWindow) -> Unit,
@@ -145,8 +146,7 @@ fun RssiChart(
     val line = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
     val label = MaterialTheme.colorScheme.onSurfaceVariant
-    val end = RssiBuckets.endMarker(samples)
-    val endColor = if (end != null) signalColor(end.rssi) else null
+    val endColor = signalColor(current)
     Column(modifier) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.signal_strength), style = MaterialTheme.typography.labelMedium, color = label, modifier = Modifier.weight(1f))
@@ -180,7 +180,7 @@ fun RssiChart(
                     val pad = 5.dp.toPx() // room for the end marker at the right edge
                     val n = samples.size
                     drawBuckets(
-                        samples,
+                        samples, current,
                         xOf = { i -> pad + (size.width - 2 * pad) * (i + 1) / n },
                         yOf = { v -> y(v.toFloat()) },
                         line = line, strokeWidth = 1.75.dp.toPx(), dotRadius = 2.25.dp.toPx(), endRadius = 4.dp.toPx(), endColor = endColor,

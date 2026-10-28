@@ -6,6 +6,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBucketer
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiBuckets
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ChartWindow
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.signalOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -73,16 +74,48 @@ class RssiBucketsTest {
                 else -> null
             }
         }
-        val plan = RssiBuckets.plan(buckets)
-        assertEquals(listOf(BucketPoint(5, -60)), plan.dots)
+        val plan = RssiBuckets.plan(buckets, current = -90)
+        // the lone buckets are dots; the newest one is a dot too, and the marker is separate (the current value)
+        assertEquals(listOf(BucketPoint(5, -60), BucketPoint(59, -90)), plan.dots)
         assertEquals(1, plan.lines.size)
         assertEquals(BucketPoint(59, -90), plan.end)
-        assertFalse(BucketPoint(59, -90) in plan.dots)
-        // a line that ends on the last bucket: its last point is the marker, not a second dot
+        // a line that ends on the last bucket: no extra dot
         val ending = List(60) { i -> if (i >= 55) -50 - i else null }
-        assertEquals(BucketPoint(59, -109), RssiBuckets.plan(ending).end)
-        assertTrue(RssiBuckets.plan(ending).dots.isEmpty())
-        assertNull(RssiBuckets.plan(List(60) { null }).end)
+        assertTrue(RssiBuckets.plan(ending, current = -60).dots.isEmpty())
+        // no reading, no marker; nothing heard in the window still shows the current reading at now
+        assertNull(RssiBuckets.plan(List(60) { null }, current = null).end)
+        assertEquals(BucketPoint(59, -77), RssiBuckets.plan(List(60) { null }, current = -77).end)
+    }
+
+    @Test
+    fun theEndMarkerIsTheCurrentReadingAtNowWhateverTheNewestBucketHolds() {
+        val t = LiveDeviceTracker()
+        val raw = byteArrayOf(2, 1, 6)
+        fun sample(rssi: Int, ms: Long) = LiveSample("AA:BB:CC:DD:EE:01", rssi, ms, raw, null, true, true, null, null, null, 1)
+        // Strong, then weak within the same 5 s bucket: the bucket's strongest is -50, the current reading -82.
+        t.onSample(sample(-50, 1_000_000))
+        t.onSample(sample(-82, 1_001_900))
+        val now = 1_002_000L
+        val row = t.row("AA:BB:CC:DD:EE:01", now)!!
+        for (window in ChartWindow.entries) {
+            val series = t.chart("AA:BB:CC:DD:EE:01", window, now)
+            val plan = RssiBuckets.plan(series.buckets, row.rssi)
+            assertEquals("marker value is the displayed number", row.rssi, plan.end!!.rssi)
+            assertEquals("marker sits at now, the right edge", series.buckets.lastIndex, plan.end!!.index)
+            assertEquals(signalOf(row.rssi), signalOf(plan.end!!.rssi))
+            // while the line itself still ends at the newest bucket's strongest sample
+            val newestBucket = series.buckets.last { it != null }!!
+            assertEquals(newestBucket, plan.lines.flatten().lastOrNull()?.rssi ?: plan.dots.last().rssi)
+            if (window != ChartWindow.OneMinute) assertEquals("the one 5 s / 15 s bucket holds both samples", -50, newestBucket)
+        }
+        val spark = RssiBuckets.plan(row.history, row.rssi)
+        assertEquals(row.rssi, spark.end!!.rssi)
+        assertEquals(row.history.lastIndex, spark.end!!.index)
+        // a quiet device: the marker is still its current (last) reading at now
+        val later = 1_000_000L + 90_000
+        val quiet = t.row("AA:BB:CC:DD:EE:01", later)!!
+        assertEquals(-82, quiet.rssi)
+        assertEquals(-82, RssiBuckets.plan(t.chart("AA:BB:CC:DD:EE:01", ChartWindow.OneMinute, later).buckets, quiet.rssi).end!!.rssi)
     }
 
     @Test
