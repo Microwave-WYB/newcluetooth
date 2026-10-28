@@ -31,6 +31,11 @@ pub use session::{
 };
 pub use state::{CoreEffect, CoreState, CoreUpdate};
 
+/// Checks one `gatt/v1` object against the producer contract without storing it.
+pub fn validate_gatt_json(json: String) -> Result<String, CoreError> {
+    gatt::validate_gatt_json(json.as_bytes())
+}
+
 pub const API_VERSION: u32 = 7;
 
 #[uniffi::export]

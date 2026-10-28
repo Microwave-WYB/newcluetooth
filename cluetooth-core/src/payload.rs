@@ -14,14 +14,14 @@ pub const PAYLOAD_SCHEMA_METADATA_KEY: &str = "cluetooth.payload_schema";
 pub const PAYLOAD_ID_METADATA_KEY: &str = "cluetooth.payload_id";
 pub const SCAN_SESSION_ID_METADATA_KEY: &str = "cluetooth.scan_session_id";
 pub const DEVICE_MODEL_METADATA_KEY: &str = "cluetooth.device_model";
-pub const ANDROID_VERSION_METADATA_KEY: &str = "cluetooth.android_version";
+pub const ANDROID_RELEASE_METADATA_KEY: &str = "cluetooth.android_release";
+pub const ANDROID_SDK_METADATA_KEY: &str = "cluetooth.android_sdk";
 pub const APP_VERSION_METADATA_KEY: &str = "cluetooth.app_version";
-pub const EXTENDED_ADVERTISING_METADATA_KEY: &str = "cluetooth.le_extended_advertising_supported";
-pub const CODED_PHY_METADATA_KEY: &str = "cluetooth.le_coded_phy_supported";
-pub const MAX_ADVERTISING_DATA_LENGTH_METADATA_KEY: &str =
-    "cluetooth.le_max_advertising_data_length";
-pub const SCAN_PHY_METADATA_KEY: &str = "cluetooth.scan_phy";
-pub const SCAN_LEGACY_ONLY_METADATA_KEY: &str = "cluetooth.scan_legacy_only";
+pub const CAP_EXT_ADV_METADATA_KEY: &str = "cluetooth.cap_ext_adv";
+pub const CAP_CODED_PHY_METADATA_KEY: &str = "cluetooth.cap_coded_phy";
+pub const CAP_MAX_ADV_LEN_METADATA_KEY: &str = "cluetooth.cap_max_adv_len";
+pub const SCAN_PHY_METADATA_KEY: &str = "cluetooth.scan.phy";
+pub const SCAN_LEGACY_ONLY_METADATA_KEY: &str = "cluetooth.scan.legacy_only";
 /// Longest advertisement a producer may record (extended advertising maximum).
 pub const MAX_RAW_BYTES: usize = 1650;
 const MAX_ENVIRONMENT_STRING_BYTES: usize = 256;
@@ -129,11 +129,14 @@ impl From<SchemaV2Row> for SchemaV3Row {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ScanEnvironment {
     pub device_model: String,
-    pub android_version: String,
+    /// `Build.VERSION.RELEASE`, e.g. `15`.
+    pub android_release: String,
+    /// `Build.VERSION.SDK_INT`.
+    pub android_sdk: u32,
     pub app_version: String,
-    pub le_extended_advertising_supported: bool,
-    pub le_coded_phy_supported: bool,
-    pub le_max_advertising_data_length: u32,
+    pub cap_ext_adv: bool,
+    pub cap_coded_phy: bool,
+    pub cap_max_adv_len: u32,
     /// `all_supported` (`PHY_LE_ALL_SUPPORTED`, Coded PHY where supported) or `1m`.
     pub scan_phy: String,
     /// True when the scan was restricted to legacy PDUs (`setLegacy(true)`).
@@ -368,24 +371,28 @@ fn environment_metadata(environment: &ScanEnvironment) -> Vec<(String, String)> 
             environment.device_model.clone(),
         ),
         (
-            ANDROID_VERSION_METADATA_KEY.to_owned(),
-            environment.android_version.clone(),
+            ANDROID_RELEASE_METADATA_KEY.to_owned(),
+            environment.android_release.clone(),
+        ),
+        (
+            ANDROID_SDK_METADATA_KEY.to_owned(),
+            environment.android_sdk.to_string(),
         ),
         (
             APP_VERSION_METADATA_KEY.to_owned(),
             environment.app_version.clone(),
         ),
         (
-            EXTENDED_ADVERTISING_METADATA_KEY.to_owned(),
-            environment.le_extended_advertising_supported.to_string(),
+            CAP_EXT_ADV_METADATA_KEY.to_owned(),
+            environment.cap_ext_adv.to_string(),
         ),
         (
-            CODED_PHY_METADATA_KEY.to_owned(),
-            environment.le_coded_phy_supported.to_string(),
+            CAP_CODED_PHY_METADATA_KEY.to_owned(),
+            environment.cap_coded_phy.to_string(),
         ),
         (
-            MAX_ADVERTISING_DATA_LENGTH_METADATA_KEY.to_owned(),
-            environment.le_max_advertising_data_length.to_string(),
+            CAP_MAX_ADV_LEN_METADATA_KEY.to_owned(),
+            environment.cap_max_adv_len.to_string(),
         ),
         (
             SCAN_PHY_METADATA_KEY.to_owned(),
@@ -401,7 +408,7 @@ fn environment_metadata(environment: &ScanEnvironment) -> Vec<(String, String)> 
 pub(crate) fn validate_environment(environment: &ScanEnvironment) -> Result<(), CoreError> {
     for (name, value) in [
         ("device_model", &environment.device_model),
-        ("android_version", &environment.android_version),
+        ("android_release", &environment.android_release),
         ("app_version", &environment.app_version),
     ] {
         if value.is_empty() || value.len() > MAX_ENVIRONMENT_STRING_BYTES {
@@ -428,19 +435,23 @@ fn read_environment(
     }
     let environment = ScanEnvironment {
         device_model: metadata_value(key_values, DEVICE_MODEL_METADATA_KEY)?,
-        android_version: metadata_value(key_values, ANDROID_VERSION_METADATA_KEY)?,
+        android_release: metadata_value(key_values, ANDROID_RELEASE_METADATA_KEY)?,
+        android_sdk: parse(
+            ANDROID_SDK_METADATA_KEY,
+            &metadata_value(key_values, ANDROID_SDK_METADATA_KEY)?,
+        )?,
         app_version: metadata_value(key_values, APP_VERSION_METADATA_KEY)?,
-        le_extended_advertising_supported: parse(
-            EXTENDED_ADVERTISING_METADATA_KEY,
-            &metadata_value(key_values, EXTENDED_ADVERTISING_METADATA_KEY)?,
+        cap_ext_adv: parse(
+            CAP_EXT_ADV_METADATA_KEY,
+            &metadata_value(key_values, CAP_EXT_ADV_METADATA_KEY)?,
         )?,
-        le_coded_phy_supported: parse(
-            CODED_PHY_METADATA_KEY,
-            &metadata_value(key_values, CODED_PHY_METADATA_KEY)?,
+        cap_coded_phy: parse(
+            CAP_CODED_PHY_METADATA_KEY,
+            &metadata_value(key_values, CAP_CODED_PHY_METADATA_KEY)?,
         )?,
-        le_max_advertising_data_length: parse(
-            MAX_ADVERTISING_DATA_LENGTH_METADATA_KEY,
-            &metadata_value(key_values, MAX_ADVERTISING_DATA_LENGTH_METADATA_KEY)?,
+        cap_max_adv_len: parse(
+            CAP_MAX_ADV_LEN_METADATA_KEY,
+            &metadata_value(key_values, CAP_MAX_ADV_LEN_METADATA_KEY)?,
         )?,
         scan_phy: metadata_value(key_values, SCAN_PHY_METADATA_KEY)?,
         scan_legacy_only: parse(

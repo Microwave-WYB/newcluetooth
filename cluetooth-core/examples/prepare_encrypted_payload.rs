@@ -32,11 +32,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let core = CluetoothCore::open(data_directory.to_string_lossy().into_owned(), config)?;
     core.configure_scan(ScanEnvironment {
         device_model: "fixture".to_owned(),
-        android_version: "15 (API 35)".to_owned(),
+        android_release: "15".to_owned(),
+        android_sdk: 35,
         app_version: "0.0.0-fixture".to_owned(),
-        le_extended_advertising_supported: true,
-        le_coded_phy_supported: true,
-        le_max_advertising_data_length: 1650,
+        cap_ext_adv: true,
+        cap_coded_phy: true,
+        cap_max_adv_len: 1650,
         scan_phy: "all_supported".to_owned(),
         scan_legacy_only: false,
     })?;

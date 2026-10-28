@@ -68,18 +68,24 @@ every row in a file was collected under the footer it carries.
 | `cluetooth.payload_schema` | `v3` |
 | `cluetooth.payload_id` | the object's UUIDv7 |
 | `cluetooth.device_model` | `Build.MODEL`, 1-256 bytes |
-| `cluetooth.android_version` | release and API level, e.g. `15 (API 35)`, 1-256 bytes |
+| `cluetooth.android_release` | `Build.VERSION.RELEASE`, e.g. `15`, 1-256 bytes |
+| `cluetooth.android_sdk` | `Build.VERSION.SDK_INT`, decimal, e.g. `35` |
 | `cluetooth.app_version` | the producer's `versionName`, 1-256 bytes |
-| `cluetooth.le_extended_advertising_supported` | `true` / `false` (`isLeExtendedAdvertisingSupported`) |
-| `cluetooth.le_coded_phy_supported` | `true` / `false` (`isLeCodedPhySupported`) |
-| `cluetooth.le_max_advertising_data_length` | decimal bytes (`getLeMaximumAdvertisingDataLength`; `0` if unreported) |
-| `cluetooth.scan_phy` | `all_supported` (`PHY_LE_ALL_SUPPORTED`, Coded where supported) or `1m` (the Coded PHY switch is off) |
-| `cluetooth.scan_legacy_only` | `true` / `false`; the producer scans with `setLegacy(false)`, so `false` |
+| `cluetooth.cap.ext_adv` | `true` / `false` (`isLeExtendedAdvertisingSupported`) |
+| `cluetooth.cap.coded_phy` | `true` / `false` (`isLeCodedPhySupported`) |
+| `cluetooth.cap.max_adv_len` | decimal bytes (`getLeMaximumAdvertisingDataLength`; `31` before API 26, `0` if unreported) |
+| `cluetooth.scan.phy` | `all_supported` (`PHY_LE_ALL_SUPPORTED`, Coded where supported) or `1m` (the Coded PHY switch is off) |
+| `cluetooth.scan.legacy_only` | `true` / `false`; the producer scans with `setLegacy(false)`, so `false` |
+
+The list is exact: every `cluetooth.*` key above must appear once in a v3 file
+and the sync side stores every `cluetooth.*` key it finds, so a later producer
+may add keys under the same prefix without a schema bump. The key names follow
+the owner's clarification on #23.
 
 `cluetooth.scan_session_id` stays optional and diagnostic as in v2. Absence of
 a pattern in a file (no Coded PHY, no extended PDUs, no long payloads) must be
 read against these keys: for example a device with
-`le_coded_phy_supported=false` cannot have produced `primary_phy=3`.
+`cluetooth.cap.coded_phy=false` cannot have produced `primary_phy=3`.
 
 ### Producer behavior
 
@@ -159,8 +165,8 @@ Rules:
   `YYYY-MM-DDTHH:MM:SS.mmmZ`. `location` is the most recent fix at the start of
   the discovery or `null`. `session_id` is the scan session running when the
   discovery started or `null`.
-- `error`, `disconnect`, `mtu`, `phy` and `timings_ms` are `null` when not
-  applicable. `error.status` is the Android `BluetoothGatt` status integer
+- `error`, `disconnect`, `mtu` and `phy` are `null` when not applicable; in
+  `timings_ms` a stage that was not reached is `null`. `error.status` is the Android `BluetoothGatt` status integer
   (`133` is the generic `GATT_ERROR`); `error.name` is advisory. A timeout has
   `disconnect.initiator = "timeout"` and `error.status = -1`.
 - `outcome`: `complete` read everything readable; `partial` kept some results
@@ -195,8 +201,10 @@ different bytes for an existing id are refused.
 
 | #23 says | This contract | Reason |
 | --- | --- | --- |
-| `data_status`: 0 complete, 1 truncated | `0` complete, `2` truncated | Android's `ScanResult.DATA_TRUNCATED` is `2` (`1` is not a value Android reports); storing the platform value avoids a lossy remap |
+| `data_status`: 0 complete, 1 truncated | `0` complete, `2` truncated | Android's `ScanResult.DATA_TRUNCATED` is `2`; confirmed by the owner on #23 |
+| footer keys `le_*`, `android_version`, `scan_phy` | `cluetooth.cap.*`, `cluetooth.android_release` + `cluetooth.android_sdk`, `cluetooth.scan.*` | owner's clarification on #23 |
 | `target.trigger_adv` example only shows some fields | `raw`, `rssi`, `scanned_at`, `is_legacy`, `primary_phy`, `secondary_phy`, `adv_sid`, each nullable | matches the example; extra fields would be unverifiable from the engine |
 | descriptors have no `instance` in the example | descriptor `instance` is always `null` | Android exposes no descriptor instance id |
 | `error` / `disconnect` always present | nullable | a successful discovery has neither |
+| `addr_type` | `0`/`1`/`null`; unknown or anonymous is `null` | owner's clarification on #23 |
 | footer facts "once per file" | enforced by sealing on any change | keeps a file's footer true for every row |

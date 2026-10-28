@@ -35,11 +35,12 @@ const V3_COLUMNS: [&str; 18] = [
 fn environment() -> ScanEnvironment {
     ScanEnvironment {
         device_model: "Pixel 8".to_owned(),
-        android_version: "15 (API 35)".to_owned(),
+        android_release: "15".to_owned(),
+        android_sdk: 35,
         app_version: "0.1.0-debug".to_owned(),
-        le_extended_advertising_supported: true,
-        le_coded_phy_supported: false,
-        le_max_advertising_data_length: 1650,
+        cap_ext_adv: true,
+        cap_coded_phy: false,
+        cap_max_adv_len: 1650,
         scan_phy: "all_supported".to_owned(),
         scan_legacy_only: false,
     }
@@ -191,13 +192,14 @@ fn footer_carries_device_and_scanner_environment_once() {
     assert_eq!(value("cluetooth.payload_schema"), "v3");
     assert_eq!(value("cluetooth.payload_id"), PAYLOAD_ID);
     assert_eq!(value("cluetooth.device_model"), "Pixel 8");
-    assert_eq!(value("cluetooth.android_version"), "15 (API 35)");
+    assert_eq!(value("cluetooth.android_release"), "15");
+    assert_eq!(value("cluetooth.android_sdk"), "35");
     assert_eq!(value("cluetooth.app_version"), "0.1.0-debug");
-    assert_eq!(value("cluetooth.le_extended_advertising_supported"), "true");
-    assert_eq!(value("cluetooth.le_coded_phy_supported"), "false");
-    assert_eq!(value("cluetooth.le_max_advertising_data_length"), "1650");
-    assert_eq!(value("cluetooth.scan_phy"), "all_supported");
-    assert_eq!(value("cluetooth.scan_legacy_only"), "false");
+    assert_eq!(value("cluetooth.cap_ext_adv"), "true");
+    assert_eq!(value("cluetooth.cap_coded_phy"), "false");
+    assert_eq!(value("cluetooth.cap_max_adv_len"), "1650");
+    assert_eq!(value("cluetooth.scan.phy"), "all_supported");
+    assert_eq!(value("cluetooth.scan.legacy_only"), "false");
 }
 
 #[test]
@@ -318,13 +320,14 @@ fn inspection_rejects_v3_files_missing_or_corrupting_footer_environment() {
                 ("cluetooth.payload_schema", "v3"),
                 ("cluetooth.payload_id", PAYLOAD_ID),
                 ("cluetooth.device_model", "Pixel 8"),
-                ("cluetooth.android_version", "15"),
+                ("cluetooth.android_release", "15"),
+                ("cluetooth.android_sdk", "35"),
                 ("cluetooth.app_version", "1"),
-                ("cluetooth.le_extended_advertising_supported", "yes"),
-                ("cluetooth.le_coded_phy_supported", "true"),
-                ("cluetooth.le_max_advertising_data_length", "1650"),
-                ("cluetooth.scan_phy", "1m"),
-                ("cluetooth.scan_legacy_only", "false"),
+                ("cluetooth.cap_ext_adv", "yes"),
+                ("cluetooth.cap_coded_phy", "true"),
+                ("cluetooth.cap_max_adv_len", "1650"),
+                ("cluetooth.scan.phy", "1m"),
+                ("cluetooth.scan.legacy_only", "false"),
             ],
         ),
     ] {
@@ -343,4 +346,20 @@ fn inspection_rejects_v3_files_missing_or_corrupting_footer_environment() {
         let error = inspect_schema_v2_parquet(broken.to_string_lossy().into_owned()).unwrap_err();
         assert!(matches!(error, CoreError::InvalidPayload { .. }), "{name}");
     }
+}
+
+#[test]
+fn gatt_v1_golden_fixtures_satisfy_the_producer_contract() {
+    // The Kotlin serializer test builds the same objects and compares them to these files,
+    // so a drift on either side fails a host test without needing a device.
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gatt-v1");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        let json = std::fs::read_to_string(&path).unwrap();
+        cluetooth_core::validate_gatt_json(json)
+            .unwrap_or_else(|error| panic!("{path:?}: {error}"));
+        checked += 1;
+    }
+    assert_eq!(checked, 3);
 }

@@ -1,0 +1,19 @@
+{
+  "schema": "gatt/v1",
+  "id": "0195ca99-5000-7131-b131-313131313131",
+  "session_id": null,
+  "app_version": "0.1.0",
+  "device": {"model": "Pixel 8", "android": "15 (API 35)"},
+  "target": {"addr": "AA:BB:CC:DD:EE:FF", "addr_type": null, "name": null, "trigger_adv": null},
+  "started_at": "2025-03-25T00:00:01.000Z",
+  "ended_at": "2025-03-25T00:00:11.000Z",
+  "location": null,
+  "outcome": "failed",
+  "stage_reached": "connect",
+  "error": {"stage": "connect", "status": -1, "name": "TIMEOUT"},
+  "disconnect": {"initiator": "timeout", "status": null},
+  "mtu": null,
+  "phy": null,
+  "timings_ms": {"connect": null, "mtu": null, "discover": null, "read": null},
+  "services": []
+}
