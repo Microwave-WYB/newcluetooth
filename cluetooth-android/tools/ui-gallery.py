@@ -28,6 +28,7 @@ SCREENS = [
     ("DiscoverRecording", "Discover, recording", "Floating pill"),
     ("ProductPage", "Product page", "Image stand-in, full name, wiki, map preview card, devices"),
     ("ProductPageNoMap", "Product page, no located sightings", "Record to put it on the map"),
+    ("SettingsPage", "Settings", "Stock ListItems and switches; replaces Scan Sessions"),
     ("HistoryList", "History", "Pinned in-progress recording, then days"),
     ("HistoryIdle", "History, idle", "Round record button"),
     ("RecordingMapRoute", "Recording map", "Stock TopAppBar; persistent BottomSheetScaffold sheet peeking"),

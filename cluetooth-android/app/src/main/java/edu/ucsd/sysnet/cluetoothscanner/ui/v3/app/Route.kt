@@ -10,8 +10,8 @@ sealed interface Route {
     data class DeviceMap(val addr: String) : Route
     data class RecordingMap(val id: String) : Route
 
-    /** The pre-v3 sessions, upload and export screen. */
-    data object Legacy : Route
+    /** The gear on the Scan page: user ID, recording and upload options, version. */
+    data object Settings : Route
 }
 
 /** The visible area of the map, reported by the map after the user moved it. */

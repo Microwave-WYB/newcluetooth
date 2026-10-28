@@ -45,9 +45,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CluetoothScanner"
         tools:targetApi="31">
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="${CLUETOOTH_MAPS_API_KEY}" />
         <service
             android:name=".service.RecordingService"
             android:exported="false"

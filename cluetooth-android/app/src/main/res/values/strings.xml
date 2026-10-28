@@ -23,6 +23,10 @@
         <item quantity="one">%1$s row</item>
         <item quantity="other">%1$s rows</item>
     </plurals>
+    <plurals name="pending_recordings">
+        <item quantity="one">%1$s recording waiting</item>
+        <item quantity="other">%1$s recordings waiting</item>
+    </plurals>
     <plurals name="products_seen">
         <item quantity="one">%1$s product seen</item>
         <item quantity="other">%1$s products seen</item>
@@ -66,6 +70,34 @@
     <!-- Tabs and pages -->
     <string name="tab_scan">Scan</string>
     <string name="tab_discover">Discover</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_user_id">User ID</string>
+    <string name="settings_user_id_unset">Not set</string>
+    <string name="settings_auto_record">Record when the app opens</string>
+    <string name="settings_auto_record_detail">Starts a recording each time Cluetooth opens</string>
+    <string name="settings_wifi_only">Upload over Wi-Fi only</string>
+    <string name="settings_coded_phy">Scan LE Coded PHY</string>
+    <string name="settings_coded_phy_detail">Also hear long-range devices; applies within a minute</string>
+    <string name="settings_pending">Pending uploads</string>
+    <string name="settings_upload_now">Upload now</string>
+    <string name="settings_upload_started">Uploading</string>
+    <string name="settings_version">App version</string>
+    <string name="user_id_rule">Lowercase letters and numbers only, max 9 characters.</string>
+    <string name="menu_more">More options</string>
+    <string name="menu_upload_status">Upload: %1$s</string>
+    <string name="menu_retry_upload">Retry upload</string>
+    <string name="menu_export_jsonl">Export JSONL</string>
+    <string name="menu_export_parquet">Export Parquet</string>
+    <string name="menu_delete_local">Delete local data</string>
+    <string name="delete_title">Delete local data?</string>
+    <string name="delete_text_uploaded">Deletes this recording\'s scan data from the phone. The uploaded copy is kept; the History entry stays.</string>
+    <string name="delete_text_not_uploaded">This recording isn\'t uploaded yet: its scan data will be lost for good. The History entry stays.</string>
+    <string name="action_delete">Delete</string>
+    <string name="delete_done">Local data deleted</string>
+    <string name="delete_nothing">Nothing stored on the phone for this recording</string>
+    <string name="delete_failed">Couldn\'t delete: %1$s</string>
+    <string name="export_done">Exported</string>
+    <string name="export_failed">Export failed: %1$s</string>
     <string name="discover_mode_nearby">Nearby</string>
     <string name="discover_mode_all">All</string>
     <string name="discover_empty_nearby">No known products in range right now.</string>

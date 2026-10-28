@@ -49,6 +49,9 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryContent
@@ -198,6 +201,13 @@ fun ProductPage() = Frame { ProductPreview(FakeData.productMap.copy(rows = FakeD
 
 @PreviewTest @PhonePreview @Composable
 fun ProductPageNoMap() = Frame { ProductPreview(FakeData.productMap.copy(productPoints = emptyList())) }
+
+@PreviewTest @PhonePreview @Composable
+fun SettingsPage() = Frame {
+    AppShell(FakeData.idle, cb, recordPlacement(FakeData.idle.phase, false), startAllowed = false, topBar = { SettingsTopBar {} }) {
+        SettingsContent(FakeData.settings, SettingsActions(), it)
+    }
+}
 
 @PreviewTest @PhonePreview @Composable
 fun HistoryList() = Frame {

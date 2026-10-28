@@ -213,6 +213,13 @@ object FakeData {
         icon = CategoryIcon.Headphones,
     )
 
+    // ---- Settings ----
+
+    val settings = SettingsUiState(
+        userId = "wyb", autoRecord = false, wifiOnly = true, codedPhy = true,
+        pendingUploads = 2, canUploadNow = true, version = "0.1.0-debug",
+    )
+
     // ---- Recordings ----
 
     private fun rec(

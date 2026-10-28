@@ -12,11 +12,9 @@ Pending legacy filenames retain their original producer version and remain uploa
 
 ## Scan sessions, exports, and maps
 
-The upload screen is session-oriented: it shows chronological active/completed/interrupted sessions, upload state, route/statistics/structural clusters, session export/deletion, and full local export. Internal payload filenames, chunk counts, schema labels, upload markers, and raw cleanup controls are not shown. Retained pre-0.0.5 files appear as synthetic legacy sessions.
+Settings (the gear on Scan) holds the user ID, "Record when the app opens", upload over Wi-Fi only, LE Coded PHY scanning, pending uploads with "Upload now", and the app version. Each History recording's overflow menu shows its upload status and offers retry, export and deleting its local data. Rust prepares one combined JSONL or Parquet artifact for a session; Android first requires an acknowledged flush, then only copies the prepared app-private file to the user-selected SAF URI and acknowledges cleanup. Export Parquet is marked as a session export and is never presented as a sync-ingest payload. The pre-v3 "Scan Sessions" screen is gone; leftover pre-0.0.5 files are still uploaded by the upload worker.
 
-Rust prepares one combined JSONL or Parquet artifact for a v2 session and a ZIP with one combined artifact per retained v2 session plus a checksummed manifest for full export. Android first requires an acknowledged flush, then only copies the prepared app-private file to the user-selected SAF URI and acknowledges cleanup. For retained legacy scan v1, Kotlin decodes the historical app-private JSONL into domain rows and Rust/Polars prepares the combined JSONL or Parquet artifact; full archives include these synthetic sessions rather than silently omitting them. Export Parquet is marked as a session export and is never presented as a sync-ingest payload.
-
-Maps Compose renders only Rust-derived local route and observation overlays. No Routes, reverse-geocoding, or Static Maps route API is used. Google still receives normal viewport/tile requests. Supply `CLUETOOTH_MAPS_API_KEY` through a Gradle property or environment variable; never check it in. Restrict it to the Android package/signing certificate and enable only Maps SDK for Android. With no key, the detail screen safely shows a map-unavailable message. A future renderer seam is retained if viewport disclosure later requires MapLibre/offline tiles.
+Maps are MapLibre with OpenFreeMap tiles; there is no Google Maps key.
 
 ## v3 UI previews
 

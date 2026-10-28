@@ -7,6 +7,7 @@ object AppSettings {
     private const val KEY_LAST_UPLOAD_AT = "last_upload_at_ms"
     private const val KEY_WIFI_ONLY_UPLOAD = "wifi_only_upload"
     private const val KEY_CODED_PHY = "scan_coded_phy"
+    private const val KEY_AUTO_RECORD = "auto_record"
 
     fun isWifiOnlyUpload(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -32,6 +33,14 @@ object AppSettings {
             .edit()
             .putBoolean(KEY_CODED_PHY, enabled)
             .apply()
+    }
+
+    /** Start a recording when the app opens (off by default); nothing records in the background or at boot. */
+    fun isAutoRecord(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(KEY_AUTO_RECORD, false)
+
+    fun setAutoRecord(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTO_RECORD, enabled).apply()
     }
 
     fun lastUploadAtMs(context: Context): Long? {

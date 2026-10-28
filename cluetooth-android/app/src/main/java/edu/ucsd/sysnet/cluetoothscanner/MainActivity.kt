@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import android.util.Log
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -29,30 +28,19 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
-import edu.ucsd.sysnet.cluetoothscanner.data.BleRecord
-import edu.ucsd.sysnet.cluetoothscanner.core.GatewayLegacyRow
-import edu.ucsd.sysnet.cluetoothscanner.core.GatewayLegacySessionRows
 import edu.ucsd.sysnet.cluetoothscanner.service.LocationService
 import edu.ucsd.sysnet.cluetoothscanner.service.StorageService
 import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanReadiness
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanReadinessAction
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanViewModel
-import edu.ucsd.sysnet.cluetoothscanner.ui.screen.UploadStatusScreen
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.app.V3App
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.app.V3ViewModel
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.V3Theme
 import edu.ucsd.sysnet.cluetoothscanner.utils.DeviceIdManager
-import edu.ucsd.sysnet.cluetoothscanner.utils.CompressionUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.time.Instant
-import java.util.UUID
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
@@ -124,47 +112,10 @@ class MainActivity : ComponentActivity() {
         val locationService = cluetoothApplication.locationService
         val uploadService = remember { UploadService(context) }
         val storageService = remember { StorageService(context, serviceScope, uploadService) }
-        val exportScope = rememberCoroutineScope()
-        var preparedExport by remember {
-            mutableStateOf<edu.ucsd.sysnet.cluetoothscanner.core.GatewayPreparedExport?>(null)
-        }
-        val exportLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument("application/octet-stream")
-        ) { uri ->
-            val prepared = preparedExport
-            preparedExport = null
-            if (prepared != null) {
-                exportScope.launch(Dispatchers.IO) {
-                    try {
-                        if (uri != null) {
-                            context.contentResolver.openOutputStream(uri)?.use { output ->
-                                File(prepared.localPath).inputStream().use { input -> input.copyTo(output) }
-                            } ?: error("Unable to open export destination")
-                            launch(Dispatchers.Main) {
-                                Toast.makeText(context, "Exported ${prepared.fileCount} session${if (prepared.fileCount == 1uL) "" else "s"}", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    } catch (error: Exception) {
-                        Log.e(TAG, "Export failed", error)
-                        launch(Dispatchers.Main) {
-                            Toast.makeText(context, "Export failed: ${error.message ?: "unknown error"}", Toast.LENGTH_LONG).show()
-                        }
-                    } finally {
-                        if (prepared.exportId.startsWith("legacy:")) {
-                            File(prepared.localPath).delete()
-                        } else {
-                            runCatching { repository.acknowledgeExport(prepared.exportId) }
-                        }
-                    }
-                }
-            }
-        }
-
         val scanViewModel: ScanViewModel = viewModel {
             ScanViewModel(
                 locationService,
                 storageService,
-                uploadService,
                 repository,
                 cluetoothApplication.recordingController,
                 cluetoothApplication.scanSupervisor,
@@ -285,57 +236,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            V3App(v3) { onBack ->
-                UploadStatusScreen(
-                                storageService = storageService,
-                                uploadService = uploadService,
-                                scanViewModel = scanViewModel,
-                                onExportSession = { sessionId, format ->
-                                    exportScope.launch {
-                                        try {
-                                            val prepared = scanViewModel.prepareSessionExport(sessionId, format)
-                                            preparedExport = prepared
-                                            exportLauncher.launch(prepared.suggestedFileName)
-                                        } catch (error: Exception) {
-                                            Log.e(TAG, "Session export preparation failed", error)
-                                            Toast.makeText(context, "Export failed: ${error.message ?: "unable to save scans"}", Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                },
-                                onExportAll = { format ->
-                                    exportScope.launch {
-                                        try {
-                                            val legacy = withContext(Dispatchers.IO) {
-                                                storageService.generatedFiles.value.map(::readLegacySessionRows)
-                                            }
-                                            val prepared = scanViewModel.prepareFullExport(format, legacy)
-                                            preparedExport = prepared
-                                            exportLauncher.launch(prepared.suggestedFileName)
-                                        } catch (error: Exception) {
-                                            Log.e(TAG, "Full export preparation failed", error)
-                                            Toast.makeText(context, "Export failed: ${error.message ?: "unable to save scans"}", Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                },
-                                onExportLegacy = { legacyFile, format ->
-                                    exportScope.launch {
-                                        try {
-                                            val session = withContext(Dispatchers.IO) { readLegacySessionRows(legacyFile) }
-                                            val prepared = scanViewModel.prepareLegacySessionExport(
-                                                session,
-                                                format,
-                                            )
-                                            preparedExport = prepared
-                                            exportLauncher.launch(prepared.suggestedFileName)
-                                        } catch (error: Exception) {
-                                            Log.e(TAG, "Legacy export preparation failed", error)
-                                            Toast.makeText(context, "Export failed: ${error.message ?: "unable to read legacy session"}", Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                },
-                                onNavigateBack = onBack
-                            )
-            }
+            V3App(v3)
         } else {
             PermissionScreen(
                 requiredPermissions = requiredPermissions,
@@ -528,26 +429,3 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun readLegacySessionRows(file: File): GatewayLegacySessionRows {
-    val text = String(CompressionUtils.decompressData(file.readBytes()), Charsets.UTF_8)
-    val rows = text.lineSequence().filter { it.isNotBlank() }.map { line ->
-        val record = BleRecord.fromJson(line)
-        GatewayLegacyRow(
-            addr = record.mac.uppercase(Locale.US),
-            rssi = record.rssi,
-            scannedAtMs = Instant.parse(record.timestamp).toEpochMilli(),
-            raw = record.raw,
-            lat = record.lat,
-            lon = record.lon,
-            accuracy = record.accuracy,
-        )
-    }.toList()
-    val started = rows.minOfOrNull { it.scannedAtMs } ?: file.lastModified()
-    val ended = rows.maxOfOrNull { it.scannedAtMs } ?: started
-    return GatewayLegacySessionRows(
-        sessionId = "legacy-${UUID.nameUUIDFromBytes(file.name.toByteArray())}",
-        startedAtMs = started,
-        endedAtMs = ended,
-        rows = rows,
-    )
-}

@@ -1,59 +1,72 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.app
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import edu.ucsd.sysnet.cluetoothscanner.BuildConfig
 import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
 import edu.ucsd.sysnet.cluetoothscanner.R
+import edu.ucsd.sysnet.cluetoothscanner.core.GatewayDeleteResult
+import edu.ucsd.sysnet.cluetoothscanner.core.GatewayExportFormat
+import edu.ucsd.sysnet.cluetoothscanner.core.GatewayPreparedExport
+import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionUploadState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
-import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
 import edu.ucsd.sysnet.cluetoothscanner.local.GeoBounds as LocalBounds
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataHub
+import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
 import edu.ucsd.sysnet.cluetoothscanner.local.RecordedDevice
 import edu.ucsd.sysnet.cluetoothscanner.local.Sighting
 import edu.ucsd.sysnet.cluetoothscanner.service.LiveScan
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingMode
+import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
+import edu.ucsd.sysnet.cluetoothscanner.service.sealThenUpload
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingOutcome
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecorderCallbacks
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDistance
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDuration
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ResourceTexts
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Texts
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.DiscoverMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSpot
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.DiscoverMapper
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveScanList
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSpot
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LocationFix
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingOutcome
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ResourceTexts
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiSeries
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.SigNumbers
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LocationFix
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.scanLocationOf
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Texts
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.estimatePosition
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.scanLocationOf
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.toRecorderUi
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdvKind
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceSort
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverMode
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.LatLon
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapListRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapMode
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverMode
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductHeaderState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderPhase
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingSummaryState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingsUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.SettingsUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.SightingPoint
+import edu.ucsd.sysnet.cluetoothscanner.utils.AppSettings
+import edu.ucsd.sysnet.cluetoothscanner.utils.DeviceIdManager
+import java.io.File
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -66,10 +79,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -174,6 +187,100 @@ class V3ViewModel(
         }
         recording.start()
     }
+
+    // ---- settings ------------------------------------------------------------------------
+
+    private val uploadService = UploadService(app)
+    private val settingsRevision = MutableStateFlow(0)
+
+    val settings: StateFlow<SettingsUiState> = combine(settingsRevision, app.repository.uiState) { _, s ->
+        val pending = if (s.coreReady) s.sessions.count { it.uploadState == GatewaySessionUploadState.PENDING || it.uploadState == GatewaySessionUploadState.FAILED } else 0
+        SettingsUiState(
+            userId = DeviceIdManager.getUserId(app),
+            autoRecord = AppSettings.isAutoRecord(app),
+            wifiOnly = uploadService.isWifiOnlyUpload(),
+            codedPhy = AppSettings.isCodedPhyEnabled(app),
+            pendingUploads = pending,
+            canUploadNow = pending > 0 || s.activePayloadRows > 0u,
+            version = BuildConfig.VERSION_NAME,
+        )
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
+
+    /** False (and nothing saved) unless [id] follows the user ID rule. */
+    fun setUserId(id: String): Boolean {
+        if (!DeviceIdManager.isValidUserId(id)) return false
+        DeviceIdManager.setUserId(app, id)
+        settingsRevision.update { it + 1 }
+        return true
+    }
+
+    fun setAutoRecord(on: Boolean) { AppSettings.setAutoRecord(app, on); settingsRevision.update { it + 1 } }
+
+    fun setWifiOnly(on: Boolean) { uploadService.setWifiOnlyUpload(on); settingsRevision.update { it + 1 } }
+
+    fun setCodedPhy(on: Boolean) { AppSettings.setCodedPhyEnabled(app, on); settingsRevision.update { it + 1 } }
+
+    /** Seal what is buffered, then upload everything pending now (also the History menu's retry). */
+    fun uploadNow() {
+        viewModelScope.launch {
+            sealThenUpload(flush = { app.repository.flushPayloadAndWait() }, enqueueImmediate = uploadService::forceUpload)
+            toasts.trySend(texts.string(R.string.settings_upload_started))
+        }
+    }
+
+    // ---- one recording's actions (History detail menu) ------------------------------------
+
+    private var pendingExport: GatewayPreparedExport? = null
+    private val exportRequests = Channel<String>(Channel.CONFLATED)
+
+    /** File names to save, for the page's document picker; [finishExport] gets the chosen place. */
+    val exportFileNames: Flow<String> = exportRequests.receiveAsFlow()
+
+    fun exportRecording(id: String, format: GatewayExportFormat) {
+        viewModelScope.launch {
+            try {
+                val prepared = app.repository.prepareSessionExport(id, format)
+                pendingExport = prepared
+                exportRequests.trySend(prepared.suggestedFileName)
+            } catch (e: Exception) {
+                toasts.trySend(texts.string(R.string.export_failed, e.message ?: ""))
+            }
+        }
+    }
+
+    /** Copies the prepared file to [uri] (null: the picker was cancelled), then lets the core drop it. */
+    fun finishExport(uri: Uri?) {
+        val prepared = pendingExport ?: return
+        pendingExport = null
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (uri != null) {
+                    app.contentResolver.openOutputStream(uri)?.use { out -> File(prepared.localPath).inputStream().use { it.copyTo(out) } }
+                        ?: error("cannot open the destination")
+                    toasts.trySend(texts.string(R.string.export_done))
+                }
+            } catch (e: Exception) {
+                toasts.trySend(texts.string(R.string.export_failed, e.message ?: ""))
+            } finally {
+                runCatching { app.repository.acknowledgeExport(prepared.exportId) }
+            }
+        }
+    }
+
+    /** Deletes the recording's scan data kept on the phone; the History entry (route, devices) stays. */
+    fun deleteRecordingData(id: String) {
+        viewModelScope.launch {
+            val message = runCatching { app.repository.deleteScanSession(id, allowUnuploadedDataLoss = true) }.fold(
+                onSuccess = { r -> texts.string(if (r == GatewayDeleteResult.NOTHING_LOCAL_TO_DELETE) R.string.delete_nothing else R.string.delete_done) },
+                onFailure = { texts.string(R.string.delete_failed, it.message ?: "") },
+            )
+            toasts.trySend(message)
+        }
+    }
+
+    /** One recording in History (current or finished), for its detail page's menu. */
+    fun recordingSummary(id: String): RecordingSummaryState? =
+        recordings.value.let { r -> r.current?.takeIf { it.id == id } ?: r.days.firstNotNullOfOrNull { d -> d.recordings.firstOrNull { it.id == id } } }
 
     /** A recording that could not be saved or started, with a retry; null when all is well. */
     private val _problem = MutableStateFlow<String?>(null)
@@ -433,6 +540,7 @@ class V3ViewModel(
     }
 
     private companion object {
+        @Volatile var autoRecordDone = false
         const val HEAT_MAX_POINTS = 4_000
         const val DEMO_PREFIX = "demo:"
         const val MATCH_CACHE_SIZE = 2_048
@@ -738,6 +846,15 @@ class V3ViewModel(
 
     /** From the product page's map preview: the full product map. */
     fun openProductMap(pageId: String) = open(Route.ProductMap(pageId))
+
+    // Last, once everything it uses is initialised. "Record when the app opens": once per process, so a
+    // rotated or re-created page does not restart a recording the user stopped.
+    init {
+        if (!autoRecordDone) {
+            autoRecordDone = true
+            if (AppSettings.isAutoRecord(app) && recording.state.value.mode == RecordingMode.IDLE) startRecording()
+        }
+    }
 
     override fun onCleared() {
         toasts.close()

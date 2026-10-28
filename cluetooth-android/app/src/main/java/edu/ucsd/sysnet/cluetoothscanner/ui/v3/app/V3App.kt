@@ -2,38 +2,21 @@ package edu.ucsd.sysnet.cluetoothscanner.ui.v3.app
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
-import androidx.compose.runtime.saveable.rememberSaveable
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.filterScanRows
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductTopBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryTopBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapLibreMap
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapOverlay
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapTopBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverTopBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanDeviceSheet
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanTopBar
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,31 +26,53 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import edu.ucsd.sysnet.cluetoothscanner.R
+import edu.ucsd.sysnet.cluetoothscanner.core.GatewayExportFormat
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.filterScanRows
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapLibreMap
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapOverlay
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ProductTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.RecordingMenu
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanDeviceSheet
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.ScanTopBar
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsActions
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.SettingsTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.V3Theme
 import kotlinx.coroutines.launch
 
 /**
  * The v3 app: one [AppShell] (a stock Scaffold, so the record button can move between pages) with the
  * current route's top app bar and content in it, the device sheet, the error snackbar and the note dialog.
- *
- * @param legacyContent the pre-v3 sessions/upload screen, shown for [Route.Legacy]
  */
 @Composable
-fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Unit) {
+fun V3App(vm: V3ViewModel) {
     V3Theme {
         val stack by vm.stack.collectAsStateWithLifecycle()
         val route = stack.last()
@@ -92,11 +97,11 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             }
         }
 
-        if (route == Route.Legacy) {
-            BackHandler { vm.back() }
-            legacyContent { vm.back() }
-            return@V3Theme
+        // A recording's export: the core prepares the file, the stock document picker says where it goes.
+        val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            vm.finishExport(uri)
         }
+        LaunchedEffect(vm) { vm.exportFileNames.collect { exportLauncher.launch(it) } }
 
         val recorder by vm.recorder.collectAsStateWithLifecycle()
         val controlBarOpen by vm.controlBarOpen.collectAsStateWithLifecycle()
@@ -173,14 +178,27 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                             notice = notice,
                             searching = searching,
                             onSearchToggle = { searching = !searching; if (!searching) query = "" },
-                            onSettings = { vm.open(Route.Legacy) },
+                            onSettings = { vm.open(Route.Settings) },
                         )
                         AppTab.Discover -> DiscoverTopBar(discover, discoverMode, notice)
                         AppTab.History -> HistoryTopBar(rec, notice)
                     }
                     is Route.Product -> ProductTopBar(product?.title.orEmpty(), onBack = { vm.back() })
-                    is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap -> mapState?.let { MapTopBar(it, mapActions) }
-                    Route.Legacy -> Unit
+                    is Route.RecordingMap -> mapState?.let { state ->
+                        val summary = vm.recordingSummary(route.id)
+                        MapTopBar(state, mapActions) {
+                            RecordingMenu(
+                                status = summary?.upload,
+                                inProgress = rec.current?.id == route.id,
+                                onRetryUpload = vm::uploadNow,
+                                onExportJsonl = { vm.exportRecording(route.id, GatewayExportFormat.JSONL) },
+                                onExportParquet = { vm.exportRecording(route.id, GatewayExportFormat.PARQUET) },
+                                onDelete = { vm.deleteRecordingData(route.id) },
+                            )
+                        }
+                    }
+                    is Route.ProductMap, is Route.DeviceMap -> mapState?.let { MapTopBar(it, mapActions) }
+                    Route.Settings -> SettingsTopBar { vm.back() }
                 }
             },
             showScrollToTop = onScan && showTop,
@@ -230,7 +248,17 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                 }
                 is Route.RecordingMap, is Route.ProductMap, is Route.DeviceMap ->
                     mapState?.let { MapRoute(it, vm, mapActions, padding) } ?: Box(Modifier.fillMaxSize())
-                Route.Legacy -> Unit
+                Route.Settings -> SettingsContent(
+                    vm.settings.collectAsStateWithLifecycle().value,
+                    SettingsActions(
+                        onUserId = vm::setUserId,
+                        onAutoRecord = vm::setAutoRecord,
+                        onWifiOnly = vm::setWifiOnly,
+                        onCodedPhy = vm::setCodedPhy,
+                        onUploadNow = vm::uploadNow,
+                    ),
+                    padding,
+                )
             }
         }
         val d = detail

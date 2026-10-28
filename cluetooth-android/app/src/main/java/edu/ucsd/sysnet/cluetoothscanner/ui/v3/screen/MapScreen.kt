@@ -85,7 +85,7 @@ class MapActions(
 
 /** The map pages' stock top app bar: back, the recording or product, its one-line summary, the density layer toggle. */
 @Composable
-fun MapTopBar(state: MapUiState, actions: MapActions) {
+fun MapTopBar(state: MapUiState, actions: MapActions, menu: (@Composable () -> Unit)? = null) {
     PageTopBar(
         title = state.title,
         subtitle = state.subtitle,
@@ -95,6 +95,7 @@ fun MapTopBar(state: MapUiState, actions: MapActions) {
                 Icons.Filled.Layers, stringResource(R.string.map_density), actions.onLayerToggle,
                 tint = if (state.heatmap) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            menu?.invoke()
         },
     )
 }
