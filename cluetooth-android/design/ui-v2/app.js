@@ -260,7 +260,7 @@
     phone.innerHTML = `
       <div class="main">
       <div class="map main-map" id="main-map"></div>
-      <section class="sheet disc-sheet" aria-label="Discover">
+      <section class="sheet disc-sheet" aria-label="Discover" data-snaps="collapsed half full">
         <div class="handle"></div>
         <div class="disc-head" id="disc-head"></div>
         <div class="disc-chips" id="disc-chips"></div>
@@ -275,7 +275,7 @@
       ${UI.topSearch(false)}
       <div id="pages"></div>
       <div class="scrim sheet-scrim" data-action="sheet-close"></div>
-      <section class="sheet dev-sheet" aria-label="Device"></section>`;
+      <section class="sheet dev-sheet" aria-label="Device" data-snaps="collapsed expanded"></section>`;
   }
 
   /** The Discover sheet: categories or the device list (Nearby / All only while live), or one product. */
@@ -303,16 +303,16 @@
       body.innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
     }
     sheet.style.setProperty("--peek", `${$(".handle", sheet).offsetHeight + head.offsetHeight}px`);
-    if (!sheet.classList.contains("expanded")) setSheetState(sheet, "collapsed");
+    if (!sheetState(sheet)) setSheetState(sheet, "collapsed");
     liftRecorder();
   }
   const nameMatch = (name, q) => !q || (name || "").toLowerCase().includes(q);
 
-  /** The record FAB sits above the Discover sheet's peek and hides while the sheet is expanded. */
+  /** The record FAB sits above the Discover sheet's peek and hides while the sheet is raised (Half or Full). */
   function liftRecorder() {
     const sheet = $(".disc-sheet", phone), open = sheet.classList.contains("open");
     phone.style.setProperty("--rec-lift", `${open ? parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 0 : 0}px`);
-    $(".recorder", phone).classList.toggle("sheet-up", open && sheet.classList.contains("expanded"));
+    $(".recorder", phone).classList.toggle("sheet-up", open && sheetState(sheet) !== "collapsed");
   }
 
   // ---- Left sidebar: the current session (pinned while recording), the history, Settings ----
@@ -434,12 +434,8 @@
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
     const M = { sel: null, cache: {}, shown: {}, points: [], at: {}, routeMarks: [], me: null, ready: false, pending: [] };
     const whenReady = (f) => (M.ready ? f() : M.pending.push(f));
-    // frame what the Discover sheet leaves visible: above its peek, or above the expanded sheet
-    const pad = () => {
-      const ds = $(".disc-sheet", phone), open = ds.classList.contains("open");
-      const below = !open ? 0 : ds.classList.contains("expanded") ? ds.offsetHeight : parseFloat(getComputedStyle(ds).getPropertyValue("--peek")) || 0;
-      return { top: 90, bottom: below + 40, left: 40, right: 40 };
-    };
+    // frame what the Discover sheet leaves visible above it
+    const pad = () => ({ top: 90, bottom: sheetCover() + 40, left: 40, right: 40 });
 
     map.on("load", () => {
       map.addSource("route", { type: "geojson", data: lineGeo([]) });
@@ -534,7 +530,7 @@
       const sightings = D.getDeviceSightings(addr);
       map.getSource("sightings").setData(fc(sightings));
       const at = M.at[addr] || (sightings[0] && sightings[0].at);
-      const ds = $(".disc-sheet", phone), below = ds.classList.contains("open") && ds.classList.contains("expanded") ? ds.offsetHeight : 320;
+      const below = Math.max(sheetCover(), 320);
       if (move && at) map.easeTo({ center: at, zoom: Math.max(map.getZoom(), 18.2), padding: { top: 0, bottom: below, left: 0, right: 0 }, duration: 600 });
       paintSelection();
       openSheet(addr, { onMap: true });
@@ -686,26 +682,69 @@
     if (wasMap && !fromMap) S.map.clear(true);
   }
 
-  // ---- Sheet snapping: two states, chosen on release from position and velocity ----
+  // ---- Sheet snapping ----
+  // Each sheet lists its snap states in data-snaps: the device sheet "collapsed expanded", the Discover sheet
+  // "collapsed half full". The sheet is always its full height; a state is a translateY offset (px from the top).
+  const SNAP_STATES = ["collapsed", "half", "full", "expanded"];
+  const sheetState = (sheet) => SNAP_STATES.find((st) => sheet.classList.contains(st)) || null;
   function setSheetState(sheet, state) {
-    sheet.classList.toggle("collapsed", state === "collapsed");
-    sheet.classList.toggle("expanded", state === "expanded");
+    SNAP_STATES.forEach((st) => sheet.classList.toggle(st, st === state));
     if (sheet.classList.contains("disc-sheet")) liftRecorder();
   }
+  function snapOffsets(sheet) {
+    const h = sheet.offsetHeight, peek = parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 92;
+    const hv = tok("--discover-sheet-half"); // e.g. "67cqh": a share of the phone's height
+    const half = hv.endsWith("cqh") ? (phone.clientHeight * parseFloat(hv)) / 100 : parseFloat(hv) || h;
+    const at = { collapsed: h - peek, half: Math.max(0, h - half), full: 0, expanded: 0 };
+    return sheet.dataset.snaps.split(" ").map((st) => ({ st, y: at[st] })).sort((a, b) => b.y - a.y); // lowest first
+  }
+  /** How much of the screen bottom the Discover sheet covers. */
+  function sheetCover() {
+    const ds = $(".disc-sheet", phone);
+    if (!ds || !ds.classList.contains("open")) return 0;
+    const o = snapOffsets(ds).find((x) => x.st === sheetState(ds));
+    return ds.offsetHeight - (o ? o.y : 0);
+  }
+  /** On release: a flick goes to the next state in its direction, otherwise the nearest state. */
+  function snapTo(sheet, y, v) {
+    const offs = snapOffsets(sheet);
+    let pick;
+    if (Math.abs(v) > 0.4) pick = v < 0 ? offs.filter((o) => o.y < y - 1).pop() || offs[offs.length - 1] : offs.find((o) => o.y > y + 1) || offs[0];
+    else pick = offs.reduce((a, b) => (Math.abs(b.y - y) < Math.abs(a.y - y) ? b : a));
+    setSheetState(sheet, pick.st);
+  }
+  function nextUp(sheet) { const offs = snapOffsets(sheet), i = offs.findIndex((o) => o.st === sheetState(sheet)); return offs[Math.min(i + 1, offs.length - 1)].st; }
+  function nextDown(sheet) { const offs = snapOffsets(sheet), i = offs.findIndex((o) => o.st === sheetState(sheet)); return offs[Math.max(i - 1, 0)].st; }
+
+  // Dragging. On the handle and header the sheet moves directly. On the Discover sheet's content (Google Maps
+  // style) dragging up first raises the sheet to Full and only then scrolls; dragging down first scrolls the
+  // content back to its top and then lowers the sheet.
+  let suppressClick = false;
+  phone.addEventListener("click", (e) => { if (suppressClick) { suppressClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
   phone.addEventListener("pointerdown", (e) => {
     const sheet = e.target.closest(".sheet.open:not(.static)");
-    if (!sheet || !e.target.closest(".handle, .dev-head, .disc-head") || e.target.closest("a, button")) return;
-    const full = sheet.offsetHeight, peek = parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 92;
-    const travel = full - peek, base = sheet.classList.contains("expanded") ? 0 : travel;
+    if (!sheet || e.button > 0) return;
+    const onHead = !!e.target.closest(".handle, .dev-head, .disc-head");
+    const body = sheet.classList.contains("disc-sheet") && e.target.closest(".sheet-body, .disc-chips");
+    if (!onHead && !body) return;
+    if (onHead && e.target.closest("a, button") && !e.target.closest(".handle")) return; // header controls are taps
+    const scroller = $(".sheet-body", sheet);
+    const offs = snapOffsets(sheet), top = offs[offs.length - 1].y, bottom = offs[0].y;
+    let y = (offs.find((o) => o.st === sheetState(sheet)) || offs[0]).y, lastY = e.clientY, moved = false, sheetMoved = false;
     const y0 = e.clientY, samples = [[e.timeStamp, e.clientY]];
-    let y = base, moved = false;
-    sheet.setPointerCapture(e.pointerId);
     const move = (ev) => {
-      if (Math.abs(ev.clientY - y0) > 4) moved = true;
-      if (!moved) return;
-      sheet.classList.add("dragging");
-      y = Math.max(0, Math.min(travel, base + ev.clientY - y0));
-      sheet.style.transform = `translateY(${y}px)`;
+      if (!moved && Math.abs(ev.clientY - y0) < 6) return;
+      if (!moved) { moved = true; sheet.setPointerCapture(ev.pointerId); sheet.classList.add("dragging"); }
+      let dy = ev.clientY - lastY;
+      lastY = ev.clientY;
+      if (body && !onHead) {
+        if (dy < 0 && y <= top) { scroller.scrollTop -= dy; dy = 0; }            // at Full: scroll the content
+        else if (dy > 0 && scroller.scrollTop > 0) {                             // content first back to its top
+          const used = Math.min(dy, scroller.scrollTop);
+          scroller.scrollTop -= used; dy -= used;
+        }
+      }
+      if (dy) { y = Math.max(top, Math.min(bottom, y + dy)); sheetMoved = true; sheet.style.transform = `translateY(${y}px)`; }
       samples.push([ev.timeStamp, ev.clientY]);
       if (samples.length > 5) samples.shift();
     };
@@ -715,15 +754,31 @@
       sheet.removeEventListener("pointercancel", up);
       sheet.classList.remove("dragging");
       sheet.style.transform = "";
-      if (!moved) return setSheetState(sheet, sheet.classList.contains("expanded") ? "collapsed" : "expanded"); // a tap toggles
+      if (!moved) {
+        // a tap on the handle: collapsed rises one step, anything else goes back down
+        if (onHead && e.target.closest(".handle, .dev-head, .disc-head") && !e.target.closest("a, button"))
+          setSheetState(sheet, sheetState(sheet) === "collapsed" ? nextUp(sheet) : "collapsed");
+        return;
+      }
+      suppressClick = true;
+      setTimeout(() => (suppressClick = false), 0);
+      if (!sheetMoved) return;
       const [t0, p0] = samples[0], [t1, p1] = samples[samples.length - 1];
-      const v = (p1 - p0) / Math.max(1, t1 - t0); // px per ms, positive is down
-      setSheetState(sheet, Math.abs(v) > 0.4 ? (v < 0 ? "expanded" : "collapsed") : (y < travel / 2 ? "expanded" : "collapsed"));
+      snapTo(sheet, y, (p1 - p0) / Math.max(1, t1 - t0)); // px per ms, positive is down
     };
     sheet.addEventListener("pointermove", move);
     sheet.addEventListener("pointerup", up);
     sheet.addEventListener("pointercancel", up);
   });
+  // A wheel or trackpad does the same on the Discover sheet: down raises it to Full first, up at the top lowers it.
+  let wheelLock = 0;
+  phone.addEventListener("wheel", (e) => {
+    const sheet = e.target.closest(".disc-sheet.open");
+    if (!sheet || !e.target.closest(".sheet-body, .disc-chips, .disc-head, .handle")) return;
+    const scroller = $(".sheet-body", sheet), st = sheetState(sheet);
+    if (e.deltaY > 0 && st !== "full") { e.preventDefault(); if (Date.now() > wheelLock) { setSheetState(sheet, "full"); wheelLock = Date.now() + 400; } }
+    else if (e.deltaY < 0 && scroller.scrollTop <= 0 && st !== "collapsed") { e.preventDefault(); if (Date.now() > wheelLock) { setSheetState(sheet, nextDown(sheet)); wheelLock = Date.now() + 400; } }
+  }, { passive: false });
 
   /** The sidebar pushes the map 82% to the right; ☰ rides its edge and turns into "collapse sidebar". */
   function setDrawer(open) {
@@ -823,7 +878,11 @@
     const t = e.target.closest("[data-action]");
     if (!t || !phone.contains(t)) return;
     const f = ACTIONS[t.dataset.action];
+    // any control in the Discover sheet's header also raises a collapsed sheet to Half
+    const ds = t.closest(".disc-sheet");
+    const raise = ds && t.closest(".disc-head") && sheetState(ds) === "collapsed";
     if (f) { e.stopPropagation(); f(t, e); }
+    if (raise) setSheetState(ds, "half");
   });
   // A .when-scrolled fade shows only once its page's scroller has left the top (the product hero stays clean).
   phone.addEventListener("scroll", (e) => {
@@ -980,7 +1039,7 @@
         ${cell("cluster, unidentified", UI.markerCluster("unidentified", 26))}
         ${cell("route", `<span class="route-mark start">Start</span> <span class="route-mark end">End</span>`)}
       </div>
-      ${sect("Discover sheet", ".disc-sheet · --discover-sheet-h (67%); view switch shows the view it switches TO")}
+      ${sect("Discover sheet", ".disc-sheet · three snaps: collapsed (peek), --discover-sheet-half (67%), --discover-sheet-full; view switch shows the view it switches TO")}
       <div class="g-row">
         ${cell("live, categories", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: true, mode: "nearby" })}</div><div class="sheet-body">${UI.categorySection({ ...groups[1], products: groups[1].products.slice(0, 2) })}</div></section>`, "width: 412px; padding: 0")}
         ${cell("live, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: true, mode: "all" })}</div><div class="disc-chips">${UI.chipRow(CATS, "all", "", "inline")}</div><div class="sheet-body"><div class="rows">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}</div></div></section>`, "width: 412px; padding: 0")}

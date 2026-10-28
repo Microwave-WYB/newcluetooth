@@ -283,7 +283,8 @@ button.item:active { background: var(--fill2); }
 }
 .sheet.open { visibility: visible; }
 .sheet.open.collapsed { transform: translateY(calc(100% - var(--peek, var(--sheet-peek)))); }
-.sheet.open.expanded { transform: none; }
+.sheet.open.expanded, .sheet.open.full { transform: none; }
+.sheet.open.half { transform: translateY(calc(100% - var(--discover-sheet-half))); }
 .sheet.dragging { transition: none; }
 .sheet.static { position: relative; transform: none; visibility: visible; height: auto; border-radius: var(--r-sheet); }
 .sheet .handle, .sheet .dev-head { cursor: grab; touch-action: none; }
@@ -341,7 +342,8 @@ button.item:active { background: var(--fill2); }
 .map { position: absolute; inset: 0; background: var(--fill2); }
 
 /* ---------- Main map screen ---------- */
-.disc-sheet { z-index: 12; height: var(--discover-sheet-h); }
+.disc-sheet { z-index: 12; height: var(--discover-sheet-full); }
+.disc-sheet .sheet-body, .disc-sheet .disc-chips { touch-action: none; } /* the sheet drives scrolling (raise first) */
 .disc-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 0 var(--edge) 10px; touch-action: none; cursor: grab; }
 .disc-head .seg { width: 184px; }
 .disc-chips .chips { position: static; padding: 0 var(--edge) 10px; }

@@ -108,7 +108,8 @@
   --me-dot: 16px;
   --sheet-peek: 92px;
   --sheet-expanded-h: calc(100% - var(--top-zone)); /* the expanded device sheet stops below the top float-button row */
-  --discover-sheet-h: 67%;  /* the expanded Discover sheet */
+  --discover-sheet-half: 67cqh;  /* the Discover sheet's Half snap */
+  --discover-sheet-full: calc(100% - var(--top-zone)); /* its Full snap: below the top float-button row */
   --handle-w: 36px;
   --handle-h: 4px;
   --card-w: 148px;
