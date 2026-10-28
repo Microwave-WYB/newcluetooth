@@ -61,6 +61,17 @@ being written. The scanner and location run while either is true.
 - Declaring the footer environment (`configure_scan`) is ordered ahead of the first row of
   a recording, so a payload footer always describes its rows.
 
+## Location
+
+`ScanSupervisor` is the only starter and stopper of location and picks a `LocationProfile`:
+`RECORDING` while rows are written (a fix every 2 s, minimum interval 1 s, no distance filter, high
+accuracy, and no wait for an "accurate" fix, which otherwise holds a stationary or indoor recording
+down to a fix about every 40 s) and `LIVE` otherwise (balanced power, every 10 s). Starting a
+recording or ending it re-registers the request at the other profile without dropping the current
+fix. `LocationService` uses the Play services fused provider when available and otherwise the platform
+GPS and network providers (GPS and network for `RECORDING`, one of them for `LIVE`); the newest fix
+wins, except that a less accurate fix from another provider waits 5 s behind a fresher one.
+
 ## The foreground service
 
 `RecordingService` is declared with `foregroundServiceType="location|connectedDevice"` and the

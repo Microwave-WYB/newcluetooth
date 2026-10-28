@@ -18,7 +18,8 @@ internal interface ScannerPort {
 }
 
 internal interface LocationPort {
-    fun start()
+    /** Starts location at [profile]; already running at another profile switches it. */
+    fun start(profile: LocationProfile)
     fun stop()
 }
 
@@ -31,6 +32,8 @@ internal interface LocationPort {
  *   [endRowWriting]; the recording layer opens and closes the core session around those calls.
  *   A recording keeps the scanner and location running in the background (the foreground service
  *   keeps the process alive); without one, the scanner stops when the app leaves the foreground.
+ * - **Location** is requested at [LocationProfile.RECORDING] while rows are written and at
+ *   [LocationProfile.LIVE] otherwise; this class is its only starter and stopper.
  */
 class ScanSupervisor internal constructor(
     private val scanner: ScannerPort,
@@ -50,6 +53,9 @@ class ScanSupervisor internal constructor(
     val wantsLocation: Boolean
         get() = foreground || rowWriting
 
+    private val locationProfile: LocationProfile
+        get() = if (rowWriting) LocationProfile.RECORDING else LocationProfile.LIVE
+
     /**
      * The Activity moved to or from the foreground. Runs in the application scope, so it is not
      * cancelled with a ViewModel and a stop can never be lost half way.
@@ -60,7 +66,7 @@ class ScanSupervisor internal constructor(
 
     /** (Re)starts location updates if (and only if) something wants them; used by retry loops. */
     suspend fun startLocationIfWanted() = mutex.withLock {
-        if (wantsLocation) location.start()
+        if (wantsLocation) location.start(locationProfile)
     }
 
     /** The app is in the foreground (true) or not (false). Starts or stops live scanning. */
@@ -74,7 +80,7 @@ class ScanSupervisor internal constructor(
      * outcome is the scanner's, so a recording can be deferred (Bluetooth off) or rejected.
      */
     suspend fun beginRowWriting(): ScannerStartOutcome = mutex.withLock {
-        location.start()
+        location.start(LocationProfile.RECORDING)
         val outcome = if (scanner.isScanning()) ScannerStartOutcome.STARTED else scanner.start()
         if (outcome != ScannerStartOutcome.REJECTED) {
             rowWriting = true
@@ -104,7 +110,7 @@ class ScanSupervisor internal constructor(
 
     private suspend fun reconcile() {
         if (foreground || rowWriting) {
-            location.start()
+            location.start(locationProfile)
             if (!scanner.isScanning()) {
                 // A deferred or rejected live start is retried when the platform recovers.
                 scanner.start()
