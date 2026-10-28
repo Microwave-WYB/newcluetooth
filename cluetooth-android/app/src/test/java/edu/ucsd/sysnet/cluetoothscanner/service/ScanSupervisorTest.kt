@@ -38,8 +38,9 @@ class ScanSupervisorTest {
     private class FakeLocation : LocationPort {
         var running = false
         var starts = 0
-        override fun start() { running = true; starts++ }
-        override fun stop() { running = false }
+        var profile: LocationProfile? = null
+        override fun start(profile: LocationProfile) { running = true; starts++; this.profile = profile }
+        override fun stop() { running = false; profile = null }
     }
 
     private fun TestScope.setup(outcome: ScannerStartOutcome = ScannerStartOutcome.STARTED): Triple<ScanSupervisor, FakeScanner, FakeLocation> {
@@ -219,5 +220,75 @@ class ScanSupervisorTest {
         assertFalse(scanner.scanning)
         assertFalse(location.running)
         assertEquals(listOf("start", "stop"), scanner.events)
+    }
+
+    @Test
+    fun `location is low power while live and high rate while recording`() = runTest {
+        val (supervisor, _, location) = setup()
+        supervisor.setForeground(true)
+        assertEquals(LocationProfile.LIVE, location.profile)
+
+        supervisor.beginRowWriting()
+        assertEquals(LocationProfile.RECORDING, location.profile)
+
+        supervisor.endRowWriting()
+        assertTrue("still in the foreground", location.running)
+        assertEquals(LocationProfile.LIVE, location.profile)
+    }
+
+    @Test
+    fun `a recording in the background keeps the recording profile until it stops`() = runTest {
+        val (supervisor, _, location) = setup()
+        supervisor.setForeground(true)
+        supervisor.beginRowWriting()
+        supervisor.setForeground(false)
+        assertEquals(LocationProfile.RECORDING, location.profile)
+
+        supervisor.endRowWriting()
+        assertFalse(location.running)
+        assertEquals(null, location.profile)
+    }
+
+    @Test
+    fun `a recording started with no foreground uses the recording profile and a retry keeps it`() = runTest {
+        val (supervisor, _, location) = setup()
+        supervisor.beginRowWriting()
+        supervisor.startLocationIfWanted()
+        assertEquals(LocationProfile.RECORDING, location.profile)
+    }
+
+    @Test
+    fun `a rejected recording start falls back to live location`() = runTest {
+        val (supervisor, _, location) = setup(ScannerStartOutcome.REJECTED)
+        supervisor.setForeground(true)
+        supervisor.beginRowWriting()
+        assertEquals(LocationProfile.LIVE, location.profile)
+    }
+
+    @Test
+    fun `the recording profile asks for a fix every two seconds with no distance filter`() {
+        val recording = LocationProfile.RECORDING
+        assertEquals(2_000L, recording.intervalMs)
+        assertEquals(0f, recording.minDistanceMeters, 0f)
+        assertTrue(recording.highAccuracy)
+        assertFalse(LocationProfile.LIVE.highAccuracy)
+        assertTrue(LocationProfile.LIVE.intervalMs >= 5 * recording.intervalMs)
+    }
+
+    @Test
+    fun `the newest fix wins and an older or repeated fix is ignored`() {
+        val current = FixStamp("fused", 20f, 10_000_000_000L)
+        assertTrue(acceptsFix(null, current))
+        assertTrue("worse but newer, same provider", acceptsFix(current, FixStamp("fused", 40f, 12_000_000_000L)))
+        assertFalse("older", acceptsFix(current, FixStamp("fused", 5f, 9_000_000_000L)))
+        assertFalse("same instant", acceptsFix(current, FixStamp("fused", 5f, 10_000_000_000L)))
+    }
+
+    @Test
+    fun `a less accurate fix from another provider waits out the grace period`() {
+        val gps = FixStamp("gps", 6f, 10_000_000_000L)
+        assertFalse(acceptsFix(gps, FixStamp("network", 30f, 11_000_000_000L)))
+        assertTrue("more accurate", acceptsFix(gps, FixStamp("network", 5f, 11_000_000_000L)))
+        assertTrue("gps went quiet", acceptsFix(gps, FixStamp("network", 30f, 16_000_000_000L)))
     }
 }

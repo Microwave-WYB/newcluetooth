@@ -18,6 +18,7 @@ import edu.ucsd.sysnet.cluetoothscanner.service.BleScanService
 import edu.ucsd.sysnet.cluetoothscanner.service.LocationService
 import edu.ucsd.sysnet.cluetoothscanner.service.InterruptedRecordingNotifier
 import edu.ucsd.sysnet.cluetoothscanner.service.LocationPort
+import edu.ucsd.sysnet.cluetoothscanner.service.LocationProfile
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingController
 import edu.ucsd.sysnet.cluetoothscanner.service.ScanSupervisor
 import edu.ucsd.sysnet.cluetoothscanner.service.ScannerPort
@@ -114,7 +115,7 @@ class CluetoothApplication : Application() {
                 override suspend fun fence() = bleScanService.fenceCallbacks()
             },
             location = object : LocationPort {
-                override fun start() = locationService.startLocationUpdates()
+                override fun start(profile: LocationProfile) = locationService.startLocationUpdates(profile)
                 override fun stop() = locationService.stopLocationUpdates()
             },
             scope = applicationScope,
