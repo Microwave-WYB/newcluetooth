@@ -1,10 +1,11 @@
 package edu.ucsd.sysnet.cluetoothscanner
 
 import android.app.Application
+import android.os.SystemClock
 import edu.ucsd.sysnet.cluetoothscanner.ble.AdvertisementTriggerCache
 import edu.ucsd.sysnet.cluetoothscanner.core.NativeCoreGateway
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattDiscoveryManager
-import edu.ucsd.sysnet.cluetoothscanner.gatt.PrefsPendingDiscoveryStore
+import edu.ucsd.sysnet.cluetoothscanner.gatt.FilePendingDiscoveryStore
 import edu.ucsd.sysnet.cluetoothscanner.gatt.RepositoryGattStore
 import edu.ucsd.sysnet.cluetoothscanner.gatt.gattDeviceInfo
 import edu.ucsd.sysnet.cluetoothscanner.repository.CluetoothRepository
@@ -40,8 +41,9 @@ class CluetoothApplication : Application() {
         gattManager = GattDiscoveryManager(
             scope = applicationScope,
             store = RepositoryGattStore(repository),
-            pending = PrefsPendingDiscoveryStore(this),
+            pending = FilePendingDiscoveryStore(File(filesDir, "gatt-pending")),
             device = gattDeviceInfo(),
+            elapsedMs = SystemClock::elapsedRealtime,
         )
         // A discovery cut short by process death counts as failed; store it now.
         applicationScope.launch { gattManager.recoverStale() }

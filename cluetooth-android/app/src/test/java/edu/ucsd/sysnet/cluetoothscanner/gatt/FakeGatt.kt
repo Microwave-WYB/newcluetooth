@@ -1,6 +1,9 @@
 package edu.ucsd.sysnet.cluetoothscanner.gatt
 
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 fun uuid16(short: Int): UUID = UUID.fromString(String.format("0000%04x-0000-1000-8000-00805f9b34fb", short))
 
@@ -58,6 +61,7 @@ class FakeLink(
     private val sink: GattEventSink,
     private val services: List<GattServiceSnapshot>,
     private val behavior: Behavior,
+    private val scope: CoroutineScope? = null,
 ) : GattLink {
     interface Behavior {
         fun onConnect(link: FakeLink) {
@@ -84,13 +88,33 @@ class FakeLink(
         }
     }
 
+    /**
+     * Like `BluetoothGatt`, the stack takes one read at a time: while a request is
+     * outstanding (not yet answered by a callback) every new read is refused.
+     */
+    var outstanding: AttributeRef? = null
+        private set
+    var refusedWhileOutstanding = 0
+        private set
     val reads = mutableListOf<AttributeRef>()
     var mtuRequests = 0
     var disconnects = 0
     var closes = 0
     var phyReads = 0
 
-    fun emit(event: GattEvent) = sink.deliver(event)
+    fun emit(event: GattEvent) {
+        if (event is GattEvent.AttributeRead && event.ref == outstanding) outstanding = null
+        if (event is GattEvent.Disconnected) outstanding = null
+        sink.deliver(event)
+    }
+
+    /** Delivers [block] after [delayMs] of (virtual) time; needs the factory's scope. */
+    fun after(delayMs: Long, block: () -> Unit) {
+        checkNotNull(scope) { "the factory needs a scope to schedule late callbacks" }.launch {
+            delay(delayMs)
+            block()
+        }
+    }
 
     init {
         behavior.onConnect(this)
@@ -111,8 +135,15 @@ class FakeLink(
     override fun services(): List<GattServiceSnapshot> = services
 
     override fun read(ref: AttributeRef): Boolean {
+        if (outstanding != null) {
+            refusedWhileOutstanding++
+            return false
+        }
         reads += ref
-        return behavior.onRead(this, ref)
+        outstanding = ref
+        val accepted = behavior.onRead(this, ref)
+        if (!accepted) outstanding = null
+        return accepted
     }
 
     override fun disconnect() {
@@ -132,13 +163,14 @@ fun valueFor(ref: AttributeRef): ByteArray = byteArrayOf(
 
 class FakeFactory(
     private val services: List<GattServiceSnapshot> = sampleServices(),
+    private val scope: CoroutineScope? = null,
     private vararg val attempts: FakeLink.Behavior,
 ) : GattLinkFactory {
     val links = mutableListOf<FakeLink>()
 
     override fun connect(sink: GattEventSink): GattLink {
         val behavior = attempts.getOrElse(links.size) { attempts.last() }
-        return FakeLink(sink, services, behavior).also { links += it }
+        return FakeLink(sink, services, behavior, scope).also { links += it }
     }
 }
 

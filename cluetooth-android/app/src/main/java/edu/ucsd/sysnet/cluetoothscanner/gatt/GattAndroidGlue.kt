@@ -18,25 +18,6 @@ class RepositoryGattStore(private val repository: CluetoothRepository) : GattSto
     override suspend fun save(json: String) = repository.saveGattDiscovery(json)
 }
 
-/** Keeps the in-flight / unsaved discovery JSON in app-private preferences. */
-class PrefsPendingDiscoveryStore(context: Context) : PendingDiscoveryStore {
-    private val prefs = context.applicationContext.getSharedPreferences("cluetooth_gatt", Context.MODE_PRIVATE)
-
-    // commit(): the slot exists for process death, so it must be on disk when this returns.
-    override fun put(json: String) {
-        prefs.edit().putString(KEY, json).commit()
-    }
-
-    override fun peek(): String? = prefs.getString(KEY, null)
-    override fun clear() {
-        prefs.edit().remove(KEY).commit()
-    }
-
-    private companion object {
-        const val KEY = "pending_discovery_json"
-    }
-}
-
 fun gattDeviceInfo() = GattDeviceInfo(
     appVersion = BuildConfig.VERSION_NAME,
     deviceModel = Build.MODEL.ifBlank { "unknown" },

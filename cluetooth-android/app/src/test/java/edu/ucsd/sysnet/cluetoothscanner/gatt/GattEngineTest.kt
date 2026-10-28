@@ -88,7 +88,7 @@ class GattEngineTest {
 
     @Test
     fun `an empty gatt table completes with no services`() = runTest {
-        val result = engine(FakeFactory(emptyList(), Cooperative)).run(request)
+        val result = engine(FakeFactory(emptyList(), attempts = arrayOf(Cooperative))).run(request)
         assertEquals(GattOutcome.COMPLETE, result.outcome)
         assertTrue(result.services.isEmpty())
     }
@@ -223,7 +223,31 @@ class GattEngineTest {
     }
 
     @Test
-    fun `a silent read is recorded as timeout and the next attribute is read`() = runTest {
+    fun `a read that answers late within the grace period keeps its real value and the queue moves on`() = runTest {
+        val slow = AttributeRef(0, 0, 0)
+        val factory = FakeFactory(scope = this, attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                if (ref == slow) {
+                    // Past the 3 s read timeout, inside the grace period.
+                    link.after(4_000) { link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS)) }
+                } else {
+                    link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS))
+                }
+                return true
+            }
+        }))
+        val result = engine(factory).run(request)
+
+        assertEquals(GattOutcome.COMPLETE, result.outcome)
+        assertEquals(GattReadValue.ok(valueFor(slow)), result.descriptor(0, 0))
+        assertEquals(GattReadValue.ok(valueFor(AttributeRef(0, 1))), result.value(0, 1))
+        assertEquals(SAMPLE_READ_ORDER, factory.links.single().reads)
+        // The engine never queued a request behind an outstanding one.
+        assertEquals(0, factory.links.single().refusedWhileOutstanding)
+    }
+
+    @Test
+    fun `a read that never answers stalls the queue and ends the discovery as partial`() = runTest {
         val silent = AttributeRef(0, 0, 0)
         val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
             override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
@@ -233,15 +257,28 @@ class GattEngineTest {
         }))
         val result = engine(factory).run(request)
 
-        assertEquals(GattOutcome.COMPLETE, result.outcome)
+        assertEquals(GattOutcome.PARTIAL, result.outcome)
+        assertEquals(GattStage.READ, result.stageReached)
+        assertEquals(GattError(GattStage.READ, GattStatus.READ_QUEUE_STALLED, "READ_QUEUE_STALLED"), result.error)
+        assertEquals(DisconnectInitiator.TIMEOUT, result.disconnect?.initiator)
+        // The silent attribute is recorded as a timeout; nothing after it is read, and nothing
+        // is recorded as a stack refusal (error:257).
         assertEquals(GattReadValue(null, "timeout"), result.descriptor(0, 0))
-        assertEquals(GattReadValue.ok(valueFor(AttributeRef(0, 1))), result.value(0, 1))
-        assertEquals(SAMPLE_READ_ORDER, factory.links.single().reads)
+        assertEquals(GattReadValue.ok(valueFor(AttributeRef(0, 0))), result.value(0, 0))
+        assertEquals(GattReadValue.NOT_READ_VALUE, result.value(0, 1))
+        assertEquals(GattReadValue.NOT_READ_VALUE, result.value(1, 0))
+        val statuses = result.services.flatMap { s -> s.characteristics.flatMap { c -> listOf(c.value) + c.descriptors.map { it.value } } }
+        assertTrue(statuses.none { it.status == "error:257" })
+        assertEquals(listOf(AttributeRef(0, 0), silent), factory.links.single().reads)
+        assertEquals(0, factory.links.single().refusedWhileOutstanding)
+        assertEquals(1, factory.links.single().closes)
+        // 3 s read timeout plus the 5 s grace period: the stall is declared at that point.
+        assertEquals(3_000L + 5_000L, result.timings.readMs)
     }
 
     @Test
     fun `the read stage stops at its total budget and keeps what it has`() = runTest {
-        // Every read takes the full per-read timeout; ten of them exhaust 30 s.
+        // Every read takes 2.9 s, so ten of them nearly use the 30 s budget.
         val manyServices = listOf(
             GattServiceSnapshot(
                 uuid16(0x1800), true, 1,
@@ -250,9 +287,12 @@ class GattEngineTest {
                 },
             ),
         )
-        val factory = FakeFactory(manyServices, object : FakeLink.Behavior {
-            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean = true
-        })
+        val factory = FakeFactory(manyServices, this, attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                link.after(2_900) { link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS)) }
+                return true
+            }
+        }))
         val result = engine(factory).run(request)
 
         assertEquals(GattOutcome.PARTIAL, result.outcome)
@@ -260,9 +300,10 @@ class GattEngineTest {
         assertEquals(GattError(GattStage.READ, GattStatus.TIMED_OUT, "TIMEOUT"), result.error)
         assertEquals(DisconnectInitiator.TIMEOUT, result.disconnect?.initiator)
         val values = result.services[0].characteristics.map { it.value.status }
-        assertEquals(10, values.count { it == "timeout" })
-        assertEquals(10, values.count { it == "not_read" })
-        assertEquals(30_000L, result.timings.readMs)
+        // Ten reads fit; the eleventh answered after the budget ran out and is still recorded.
+        assertEquals(11, values.count { it == "ok" })
+        assertEquals(9, values.count { it == "not_read" })
+        assertEquals(0, factory.links.single().refusedWhileOutstanding)
         assertEquals(1, factory.links.single().closes)
     }
 
@@ -471,18 +512,86 @@ class GattEngineTest {
     }
 
     @Test
-    fun `a read the stack refuses outright is recorded with the failure status`() = runTest {
+    fun `a standing refusal ends the discovery as partial and is not recorded as an attribute result`() = runTest {
+        val refused = AttributeRef(0, 1)
         val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
             override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
-                if (ref == AttributeRef(0, 1)) return false
+                if (ref == refused) return false
+                link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS))
+                return true
+            }
+        }))
+        val result = engine(factory).run(request)
+
+        assertEquals(GattOutcome.PARTIAL, result.outcome)
+        assertEquals(GattStage.READ, result.stageReached)
+        assertEquals(GattError(GattStage.READ, GattStatus.FAILURE, "READ_REFUSED"), result.error)
+        // The attribute stays "not_read": the refusal says nothing about the attribute.
+        assertEquals(GattReadValue.NOT_READ_VALUE, result.value(0, 1))
+        assertEquals(GattReadValue.ok(valueFor(AttributeRef(0, 0, 0))), result.descriptor(0, 0))
+        assertEquals(3, factory.links.single().reads.count { it == refused })
+        assertEquals(1, factory.links.single().closes)
+    }
+
+    @Test
+    fun `a transient refusal is retried and the discovery completes`() = runTest {
+        var refusals = 2
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                if (ref == AttributeRef(0, 1) && refusals-- > 0) return false
                 link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS))
                 return true
             }
         }))
         val result = engine(factory).run(request)
         assertEquals(GattOutcome.COMPLETE, result.outcome)
-        assertEquals(GattReadValue(null, "error:257"), result.value(0, 1))
-        assertEquals(SAMPLE_READ_ORDER, factory.links.single().reads)
+        assertEquals(GattReadValue.ok(valueFor(AttributeRef(0, 1))), result.value(0, 1))
+    }
+
+    @Test
+    fun `a refused discoverServices fails at discover and disconnects`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onDiscover(link: FakeLink): Boolean = false
+        }))
+        val result = engine(factory).run(request)
+
+        assertEquals(GattOutcome.FAILED, result.outcome)
+        assertEquals(GattStage.DISCOVER, result.stageReached)
+        assertEquals(GattError(GattStage.DISCOVER, GattStatus.FAILURE, "GATT_FAILURE"), result.error)
+        assertEquals(1, factory.links.single().disconnects)
+        assertEquals(1, factory.links.single().closes)
+        assertTrue(result.services.isEmpty())
+    }
+
+    @Test
+    fun `a connectGatt that returns no client fails at connect without a link to leak`() = runTest {
+        val result = engine(GattLinkFactory { throw IllegalStateException("connectGatt returned null") }).run(request)
+
+        assertEquals(GattOutcome.FAILED, result.outcome)
+        assertEquals(GattStage.CONNECT, result.stageReached)
+        assertEquals(GattError(GattStage.CONNECT, GattStatus.FAILURE, "CALL_REJECTED"), result.error)
+        assertNull(result.disconnect)
+    }
+
+    @Test
+    fun `cancelling the coroutine mid discovery drops the connection and releases the link once`() = runTest {
+        val hang = AttributeRef(0, 1)
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                if (ref != hang) link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS))
+                return true
+            }
+        }))
+        val running = async { engine(factory).run(request) }
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue(factory.links.single().reads.contains(hang))
+        running.cancel()
+        runCurrent()
+
+        assertTrue(running.isCancelled)
+        assertEquals(1, factory.links.single().disconnects)
+        assertEquals(1, factory.links.single().closes)
     }
 
     // --- stale events and edge cases -----------------------------------------------------
@@ -511,5 +620,126 @@ class GattEngineTest {
         assertNotNull(result.endedAtMs)
         assertTrue(result.endedAtMs >= result.startedAtMs)
         assertEquals(request, result.request)
+    }
+
+    // --- more cancellation, refusals and clocks --------------------------------------------
+
+    @Test
+    fun `cancel while waiting for the mtu answer disconnects and closes`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onMtu(link: FakeLink, mtu: Int): Boolean = true // never answered
+        }))
+        val engine = engine(factory)
+        val running = async { engine.run(request) }
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(1, factory.links.single().mtuRequests)
+        engine.cancel()
+        val result = running.await()
+
+        assertEquals(GattOutcome.CANCELLED, result.outcome)
+        assertEquals(GattStage.MTU, result.stageReached)
+        assertEquals(1, factory.links.single().disconnects)
+        assertEquals(1, factory.links.single().closes)
+        assertTrue(testScheduler.currentTime < 3_000) // did not wait out the mtu timeout
+    }
+
+    @Test
+    fun `cancel while waiting for service discovery disconnects and closes`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onDiscover(link: FakeLink): Boolean = true // never answered
+        }))
+        val engine = engine(factory)
+        val running = async { engine.run(request) }
+        advanceTimeBy(5_000)
+        runCurrent()
+        engine.cancel()
+        val result = running.await()
+
+        assertEquals(GattOutcome.CANCELLED, result.outcome)
+        assertEquals(GattStage.DISCOVER, result.stageReached)
+        assertTrue(result.services.isEmpty())
+        assertEquals(1, factory.links.single().disconnects)
+        assertEquals(1, factory.links.single().closes)
+        assertTrue(testScheduler.currentTime < 15_000)
+    }
+
+    @Test
+    fun `cancel is noticed while the stack keeps refusing reads`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean {
+                if (ref == AttributeRef(0, 1)) {
+                    // Cancel arrives during the pause between refused attempts.
+                    return false
+                }
+                link.emit(GattEvent.AttributeRead(ref, valueFor(ref), GattStatus.SUCCESS))
+                return true
+            }
+        }))
+        val engine = GattEngine(
+            linkFactory = factory,
+            timeouts = GattTimeouts(readRefusedTries = 50, readRefusedBackoffMs = 1_000),
+            nowMs = { testScheduler.currentTime },
+        )
+        val running = async { engine.run(request) }
+        advanceTimeBy(1_500)
+        runCurrent()
+        engine.cancel()
+        val result = running.await()
+
+        assertEquals(GattOutcome.CANCELLED, result.outcome)
+        assertEquals(GattReadValue.NOT_READ_VALUE, result.value(0, 1))
+        assertTrue("cancel took ${testScheduler.currentTime} ms", testScheduler.currentTime < 3_000)
+        assertEquals(1, factory.links.single().closes)
+    }
+
+    @Test
+    fun `after a stalled read no later read is issued so no refusal cascade is recorded`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean = true // every read is silent
+        }))
+        val result = engine(factory).run(request)
+
+        assertEquals(GattOutcome.PARTIAL, result.outcome)
+        assertEquals(GattStatus.READ_QUEUE_STALLED, result.error?.status)
+        // Exactly one request reached the stack; the remaining four attributes were never asked.
+        assertEquals(1, factory.links.single().reads.size)
+        assertEquals(0, factory.links.single().refusedWhileOutstanding)
+        val all = result.services.flatMap { s -> s.characteristics.flatMap { c -> listOf(c.value) + c.descriptors.map { it.value } } }
+        assertEquals(1, all.count { it.status == "timeout" })
+        assertTrue(all.none { it.status.startsWith("error:") })
+    }
+
+    @Test
+    fun `a revoked permission in any link call is a refusal and not a crash`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onMtu(link: FakeLink, mtu: Int): Boolean = throw SecurityException("no BLUETOOTH_CONNECT")
+            override fun onRead(link: FakeLink, ref: AttributeRef): Boolean = throw SecurityException("no BLUETOOTH_CONNECT")
+        }))
+        val result = engine(factory).run(request)
+
+        // MTU is optional; the first read is then refused for good.
+        assertEquals(GattOutcome.PARTIAL, result.outcome)
+        assertEquals(GattError(GattStage.READ, GattStatus.FAILURE, "READ_REFUSED"), result.error)
+        assertEquals(1, factory.links.single().closes)
+    }
+
+    @Test
+    fun `durations come from the monotonic clock even when the wall clock jumps`() = runTest {
+        var wall = 1_742_860_800_000L
+        val engine = GattEngine(
+            linkFactory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+                override fun onConnect(link: FakeLink) {
+                    link.after(800) { link.emit(GattEvent.Connected) }
+                }
+            }), scope = this),
+            nowMs = { wall.also { wall -= 5_000 } }, // runs backwards, 5 s per look
+            elapsedMs = { testScheduler.currentTime },
+        )
+        val result = engine.run(request)
+
+        assertEquals(GattOutcome.COMPLETE, result.outcome)
+        assertEquals(800L, result.timings.connectMs)
+        assertTrue(result.endedAtMs >= result.startedAtMs)
     }
 }

@@ -1,5 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.gatt
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -12,6 +13,11 @@ data class GattTimeouts(
     val readTotalMs: Long = 30_000,
     val disconnectMs: Long = 2_000,
     val retryBackoffMs: Long = 1_000,
+    /** How long a read that timed out may still answer before the read queue counts as stalled. */
+    val readStallGraceMs: Long = 5_000,
+    /** Tries when the stack refuses a read request, and the pause between them. */
+    val readRefusedTries: Int = 3,
+    val readRefusedBackoffMs: Long = 200,
     val requestedMtu: Int = 517,
 )
 
@@ -27,8 +33,11 @@ data class GattTimeouts(
 class GattEngine(
     private val linkFactory: GattLinkFactory,
     private val timeouts: GattTimeouts = GattTimeouts(),
+    /** Wall clock, for `started_at` / `ended_at` only; it may step. */
     private val nowMs: () -> Long,
     private val onProgress: (GattProgress) -> Unit = {},
+    /** Monotonic clock (`SystemClock.elapsedRealtime`) for every duration and the read budget. */
+    private val elapsedMs: () -> Long = nowMs,
 ) {
     private class Tagged(val attempt: Int, val event: GattEvent?)
 
@@ -111,7 +120,7 @@ class GattEngine(
     /** Returns true when the attempt failed in a way worth one retry. */
     private suspend fun runAttempt(attempt: Int, run: Run): Boolean {
         val link = try {
-            linkFactory.connect { event -> inbox.trySend(Tagged(attempt, event)) }
+            GuardedLink(linkFactory.connect { event -> inbox.trySend(Tagged(attempt, event)) })
         } catch (error: Exception) {
             run.error = GattError(GattStage.CONNECT, GattStatus.FAILURE, "CALL_REJECTED")
             run.outcome = GattOutcome.FAILED
@@ -119,7 +128,7 @@ class GattEngine(
         }
         try {
             enter(run, GattStage.CONNECT, attempt)
-            val connectStart = nowMs()
+            val connectStart = elapsedMs()
             when (val waited = await<Unit>(attempt, timeouts.connectMs) { if (it is GattEvent.Connected) Unit else null }) {
                 is Wait.Got -> run.connectMs = elapsedSince(connectStart)
                 is Wait.Disconnected -> return failRemote(run, waited.status, attempt)
@@ -128,7 +137,7 @@ class GattEngine(
             }
 
             enter(run, GattStage.MTU, attempt)
-            val mtuStart = nowMs()
+            val mtuStart = elapsedMs()
             link.readPhy()
             if (link.requestMtu(timeouts.requestedMtu)) {
                 when (val waited = await<GattEvent.MtuChanged>(attempt, timeouts.mtuMs) { it as? GattEvent.MtuChanged }) {
@@ -146,7 +155,7 @@ class GattEngine(
             run.mtuMs = elapsedSince(mtuStart)
 
             enter(run, GattStage.DISCOVER, attempt)
-            val discoverStart = nowMs()
+            val discoverStart = elapsedMs()
             if (!link.discoverServices()) {
                 run.error = GattError(GattStage.DISCOVER, GattStatus.FAILURE, GattStatus.name(GattStatus.FAILURE))
                 run.outcome = GattOutcome.FAILED
@@ -167,6 +176,10 @@ class GattEngine(
 
             readAll(attempt, run, link)
             return false
+        } catch (cancelled: CancellationException) {
+            // The caller's coroutine was cancelled (app teardown): drop the connection too.
+            runCatching { link.disconnect() }
+            throw cancelled
         } finally {
             link.close()
         }
@@ -220,11 +233,11 @@ class GattEngine(
 
         enter(run, GattStage.READ, attempt, readsDone = 0, readsTotal = plan.size)
         run.services = assemble()
-        val readStart = nowMs()
+        val readStart = elapsedMs()
         val deadline = readStart + timeouts.readTotalMs
         var done = 0
         for (ref in plan) {
-            val remaining = deadline - nowMs()
+            val remaining = deadline - elapsedMs()
             if (remaining <= 0) {
                 run.error = GattError(GattStage.READ, GattStatus.TIMED_OUT, GattStatus.name(GattStatus.TIMED_OUT))
                 finishRead(run, assemble(), readStart)
@@ -232,38 +245,70 @@ class GattEngine(
                 disconnect(run, link, attempt, DisconnectInitiator.TIMEOUT)
                 return
             }
-            if (!link.read(ref)) {
-                store(ref, GattReadValue.failed(GattStatus.FAILURE))
-            } else {
-                val waited = await<GattEvent.AttributeRead>(attempt, minOf(timeouts.readEachMs, remaining)) {
+            // BluetoothGatt refuses a new request while one is outstanding, so a refusal is
+            // retried briefly (a callback may be in flight); a standing refusal is a stack
+            // problem, not a property of this attribute, and ends the discovery.
+            when (requestRead(link, ref)) {
+                ReadRequest.ACCEPTED -> Unit
+                ReadRequest.CANCELLED -> {
+                    finishRead(run, assemble(), readStart)
+                    run.outcome = GattOutcome.CANCELLED
+                    disconnect(run, link, attempt, DisconnectInitiator.LOCAL)
+                    return
+                }
+                ReadRequest.REFUSED -> {
+                    run.error = GattError(GattStage.READ, GattStatus.FAILURE, "READ_REFUSED")
+                    finishRead(run, assemble(), readStart)
+                    run.outcome = GattOutcome.PARTIAL
+                    disconnect(run, link, attempt, DisconnectInitiator.LOCAL)
+                    return
+                }
+            }
+            var waited = await<GattEvent.AttributeRead>(attempt, minOf(timeouts.readEachMs, remaining)) {
+                (it as? GattEvent.AttributeRead)?.takeIf { read -> read.ref == ref }
+            }
+            if (waited == Wait.TimedOut) {
+                // The request is still outstanding inside the stack, and no further read can
+                // be issued until it answers (Android's own authentication retry can take
+                // longer than the per-read timeout). Record the timeout, but give the late
+                // callback a grace period; if none comes the read queue is stalled.
+                store(ref, GattReadValue(null, GattReadValue.TIMEOUT))
+                waited = await<GattEvent.AttributeRead>(attempt, timeouts.readStallGraceMs) {
                     (it as? GattEvent.AttributeRead)?.takeIf { read -> read.ref == ref }
                 }
-                when (waited) {
-                    is Wait.Got -> store(
-                        ref,
-                        if (waited.value.status == GattStatus.SUCCESS) {
-                            GattReadValue.ok(waited.value.value ?: ByteArray(0))
-                        } else {
-                            // Insufficient authentication/encryption included: record it and move on.
-                            GattReadValue.failed(waited.value.status)
-                        },
-                    )
-                    // A silent read is recorded as such; the total budget bounds the stage.
-                    Wait.TimedOut -> store(ref, GattReadValue(null, GattReadValue.TIMEOUT))
-                    is Wait.Disconnected -> {
-                        run.error = GattError(GattStage.READ, waited.status, GattStatus.name(waited.status))
-                        run.disconnect = GattDisconnect(DisconnectInitiator.REMOTE, waited.status)
-                        finishRead(run, assemble(), readStart)
-                        run.outcome = GattOutcome.PARTIAL
-                        return
-                    }
-                    Wait.Cancelled -> {
-                        finishRead(run, assemble(), readStart)
-                        run.outcome = GattOutcome.CANCELLED
-                        disconnect(run, link, attempt, DisconnectInitiator.LOCAL)
-                        return
-                    }
+                if (waited == Wait.TimedOut) {
+                    run.error = GattError(GattStage.READ, GattStatus.READ_QUEUE_STALLED, "READ_QUEUE_STALLED")
+                    finishRead(run, assemble(), readStart)
+                    run.outcome = GattOutcome.PARTIAL
+                    disconnect(run, link, attempt, DisconnectInitiator.TIMEOUT)
+                    return
                 }
+            }
+            when (waited) {
+                is Wait.Got -> store(
+                    ref,
+                    if (waited.value.status == GattStatus.SUCCESS) {
+                        GattReadValue.ok(waited.value.value ?: ByteArray(0))
+                    } else {
+                        // Insufficient authentication/encryption included: record it and move on.
+                        GattReadValue.failed(waited.value.status)
+                    },
+                )
+                is Wait.Disconnected -> {
+                    run.error = GattError(GattStage.READ, waited.status, GattStatus.name(waited.status))
+                    run.disconnect = GattDisconnect(DisconnectInitiator.REMOTE, waited.status)
+                    finishRead(run, assemble(), readStart)
+                    run.outcome = GattOutcome.PARTIAL
+                    return
+                }
+                Wait.Cancelled -> {
+                    finishRead(run, assemble(), readStart)
+                    run.outcome = GattOutcome.CANCELLED
+                    disconnect(run, link, attempt, DisconnectInitiator.LOCAL)
+                    return
+                }
+                // Unreachable: a timeout was turned into a stall above.
+                Wait.TimedOut -> Unit
             }
             done++
             onProgress(GattProgress(GattStage.READ, done, plan.size, attempt))
@@ -274,8 +319,23 @@ class GattEngine(
         disconnect(run, link, attempt, DisconnectInitiator.LOCAL)
     }
 
+    private enum class ReadRequest { ACCEPTED, REFUSED, CANCELLED }
+
+    /** Refusals are retried a few times; a cancel during the pause ends the wait at once. */
+    private suspend fun requestRead(link: GattLink, ref: AttributeRef): ReadRequest {
+        repeat(timeouts.readRefusedTries) { index ->
+            if (link.read(ref)) return ReadRequest.ACCEPTED
+            if (index < timeouts.readRefusedTries - 1) {
+                if (await<Unit>(RETRY_WAIT, timeouts.readRefusedBackoffMs) { null } is Wait.Cancelled) {
+                    return ReadRequest.CANCELLED
+                }
+            }
+        }
+        return ReadRequest.REFUSED
+    }
+
     /** Timings are never negative, even if the wall clock stepped back. */
-    private fun elapsedSince(start: Long): Long = (nowMs() - start).coerceAtLeast(0)
+    private fun elapsedSince(start: Long): Long = (elapsedMs() - start).coerceAtLeast(0)
 
     private fun finishRead(run: Run, services: List<GattServiceResult>, readStart: Long) {
         run.services = services
@@ -364,6 +424,28 @@ class GattEngine(
 
     @Volatile
     private var observedPhy: GattPhy? = null
+
+    /**
+     * A revoked permission surfaces as `SecurityException` from any `BluetoothGatt` call. The
+     * engine treats that as "the stack refused" (and as already disconnected for teardown) so a
+     * discovery always ends with a result instead of throwing out of the coroutine.
+     */
+    private class GuardedLink(private val link: GattLink) : GattLink {
+        private inline fun <T> guarded(fallback: T, block: () -> T): T =
+            try {
+                block()
+            } catch (_: SecurityException) {
+                fallback
+            }
+
+        override fun requestMtu(mtu: Int) = guarded(false) { link.requestMtu(mtu) }
+        override fun readPhy() = guarded(Unit) { link.readPhy() }
+        override fun discoverServices() = guarded(false) { link.discoverServices() }
+        override fun services() = link.services()
+        override fun read(ref: AttributeRef) = guarded(false) { link.read(ref) }
+        override fun disconnect() = guarded(Unit) { link.disconnect() }
+        override fun close() = guarded(Unit) { link.close() }
+    }
 
     private companion object {
         /** Attempt tag no link ever uses; the retry backoff only listens for cancel. */
