@@ -34,6 +34,7 @@ class LocalDataHubTest {
         addressRules: Map<String, String> = emptyMap(),
         database: SqlDatabase = UncloseableDatabase(db),
         heavyIntervalMs: Long = 0,
+        activeSightingsIntervalMs: Long = heavyIntervalMs,
         shareLingerMs: Long = 0,
         retryMs: Long = 10,
         createMatcher: (String) -> AdvertisementMatcher = { FakeMatcher(version, matchRules, addressRules).also { m -> matcherOf = m } },
@@ -46,6 +47,7 @@ class LocalDataHubTest {
         flushIntervalMs = 3_600_000,
         lightQueryIntervalMs = 0,
         heavyQueryIntervalMs = heavyIntervalMs,
+        activeRecordingSightingsIntervalMs = activeSightingsIntervalMs,
         shareLingerMs = shareLingerMs,
         pruneIntervalMs = 3_600_000,
         retryInitialMs = retryMs,
@@ -712,7 +714,7 @@ class LocalDataHubTest {
         )
         hub.start()
         withTimeout(10_000) { hub.status.first { it.state == LocalDataStatus.State.UNAVAILABLE } }
-        assertEquals("", hub.getRecordingNote("rec-1"))
+        assertNull(hub.getRecordingNote("rec-1")) // unknown, not "no note": an editor must not save over it
         assertEquals("", hub.observeRecordingNote("rec-1").firstValue())
         try {
             hub.setRecordingNote("rec-1", "important")
@@ -779,5 +781,83 @@ class LocalDataHubTest {
         val other = hub.sightingsInRecording("rec-1", GeoBounds(0.0, 0.0, 1.0, 1.0)).firstValue()
         assertTrue(other.isEmpty())
         jobs.forEach { it.cancel() }
+    }
+
+    @Test
+    fun aFinishedRecordingsSightingsDoNotReRunOnNewSightingsElsewhere() = runBlocking {
+        val counting = CountingDatabase(db)
+        val hub = hub(database = counting)
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t)
+        hub.onLocation(fix(t))
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t + 1_000)
+        hub.onRecordingFinished("rec-1", t + 2_000)
+        hub.flushNow()
+
+        val seen = java.util.concurrent.CopyOnWriteArrayList<List<Sighting>>()
+        val job = launch { hub.sightingsInRecording("rec-1").collect { seen += it } }
+        withTimeout(10_000) { while (seen.isEmpty()) delay(5) }
+        val runs = counting.count("WHERE s.recording_id = ?")
+
+        hub.onRecordingStarted("rec-2", t + 10_000)
+        hub.onLocation(fix(t + 10_000))
+        repeat(3) { i ->
+            hub.hear("AA:00:00:00:00:0${i + 2}", -50, adv("buds-1"), t + 11_000L + i)
+            hub.flushNow()
+        }
+        delay(200)
+        assertEquals(runs, counting.count("WHERE s.recording_id = ?"))
+        assertEquals(1, seen.last().size)
+        job.cancel()
+    }
+
+    @Test
+    fun anActiveRecordingsSightingsUseTheirOwnIntervalAndRunOnceMoreWhenItFinishes() = runBlocking {
+        val counting = CountingDatabase(db)
+        val hub = hub(database = counting, activeSightingsIntervalMs = 60_000)
+        val t = now.get()
+        hub.onRecordingStarted("rec-1", t)
+        hub.onLocation(fix(t))
+        hub.hear("AA:00:00:00:00:01", -60, adv("buds-1"), t + 1_000)
+        hub.flushNow()
+
+        val seen = java.util.concurrent.CopyOnWriteArrayList<List<Sighting>>()
+        val job = launch { hub.sightingsInRecording("rec-1").collect { seen += it } }
+        withTimeout(10_000) { while (seen.isEmpty()) delay(5) }
+        hub.hear("AA:00:00:00:00:02", -60, adv("buds-1"), t + 2_000)
+        hub.flushNow()
+        delay(200)
+        assertEquals(1, seen.last().size) // throttled by the 60 s interval
+
+        // finishing switches to the finished-recording flavour, which reads the final rows at once
+        hub.onRecordingFinished("rec-1", t + 3_000)
+        hub.flushNow()
+        withTimeout(10_000) { while (seen.last().size != 2) delay(5) }
+        job.cancel()
+    }
+
+    @Test
+    fun theInterfaceDefaultOfSetRecordingNoteFailsLoudly() = runBlocking {
+        val fake = object : LocalData {
+            override val catalog = kotlinx.coroutines.flow.MutableStateFlow<WikiCatalog?>(null)
+            override fun productsInRange(windowMs: Long) = kotlinx.coroutines.flow.emptyFlow<InRangeSnapshot>()
+            override fun previouslySeenProducts() = kotlinx.coroutines.flow.emptyFlow<List<CategoryProducts>>()
+            override fun previouslySeenProducts(categoryId: String) = kotlinx.coroutines.flow.emptyFlow<List<SeenProduct>>()
+            override fun recordings() = kotlinx.coroutines.flow.emptyFlow<List<Recording>>()
+            override fun recording(recordingId: String) = kotlinx.coroutines.flow.emptyFlow<Recording?>()
+            override fun devicesInRecording(recordingId: String) = kotlinx.coroutines.flow.emptyFlow<List<RecordedDevice>>()
+            override fun route(recordingId: String) = kotlinx.coroutines.flow.emptyFlow<List<RoutePoint>>()
+            override fun sightingsOfDevice(addr: String, limit: Int) = kotlinx.coroutines.flow.emptyFlow<List<Sighting>>()
+            override fun sightingsOfProduct(pageId: String, limit: Int) = kotlinx.coroutines.flow.emptyFlow<List<Sighting>>()
+            override fun pendingRematchReport() = kotlinx.coroutines.flow.emptyFlow<RematchReport?>()
+            override suspend fun acknowledgeRematch(reportId: Long) = Unit
+        }
+        assertNull(fake.getRecordingNote("rec"))
+        try {
+            fake.setRecordingNote("rec", "lost?")
+            org.junit.Assert.fail("a fake that cannot save must say so")
+        } catch (expected: IllegalStateException) {
+            assertTrue(expected.message!!.contains("setRecordingNote"))
+        }
     }
 }

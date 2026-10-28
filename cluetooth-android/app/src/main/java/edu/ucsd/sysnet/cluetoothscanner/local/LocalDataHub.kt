@@ -30,7 +30,9 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.transformLatest
@@ -87,6 +89,8 @@ class LocalDataHub(
     private val flushIntervalMs: Long = 1_000L,
     private val lightQueryIntervalMs: Long = 1_000L,
     private val heavyQueryIntervalMs: Long = 5_000L,
+    /** Re-run interval of [sightingsInRecording] while its recording is active (tens of thousands of rows). */
+    private val activeRecordingSightingsIntervalMs: Long = 15_000L,
     private val shareLingerMs: Long = 5_000L,
     private val pruneIntervalMs: Long = HOUR_MS,
     /** First wait before opening the database again after a failure; doubles up to 5 minutes. */
@@ -508,20 +512,24 @@ class LocalDataHub(
             )
         }.flowOn(ioDispatcher).distinctUntilChanged()
 
-    /** [observe], shared between collectors of the same [key] (kept while someone collects, plus the linger). */
+    /** [build]'s flow, shared between collectors of the same [key] (kept while someone collects, plus the linger). */
     @Suppress("UNCHECKED_CAST")
-    private fun <T> query(key: String, groups: List<Group>, intervalMs: Long, fallback: T, query: () -> T): Flow<T> =
+    private fun <T> shared(key: String, build: () -> Flow<T>): Flow<T> =
         if (shareLingerMs <= 0) {
-            observe(groups, intervalMs, fallback, query) // not shared: each collector queries (tests)
+            build() // not shared: each collector queries (tests)
         } else synchronized(sharedQueries) {
             sharedQueries.getOrPut(key) {
-                observe(groups, intervalMs, fallback, query).shareIn(
+                build().shareIn(
                     scope,
                     SharingStarted.WhileSubscribed(stopTimeoutMillis = shareLingerMs, replayExpirationMillis = shareLingerMs),
                     replay = 1,
                 )
             } as Flow<T>
         }
+
+    /** [observe], shared between collectors of the same [key]. */
+    private fun <T> query(key: String, groups: List<Group>, intervalMs: Long, fallback: T, query: () -> T): Flow<T> =
+        shared(key) { observe(groups, intervalMs, fallback, query) }
 
     /** Re-computes [compute] once a second (cheap, in memory); [empty] while the database is unavailable. */
     private fun <T> ticking(empty: (Long) -> T, same: (T, T) -> Boolean, compute: (Long) -> T): Flow<T> =
@@ -623,16 +631,27 @@ class LocalDataHub(
     override fun route(recordingId: String): Flow<List<RoutePoint>> =
         query("route:$recordingId", listOf(Group.ROUTE), lightQueryIntervalMs, emptyList()) { store.route(recordingId) }
 
+    /**
+     * A finished recording only changes when a re-match changes its pages, so new sightings do not re-run it;
+     * an active one re-runs on new sightings, at most every [activeRecordingSightingsIntervalMs].
+     */
     override fun sightingsInRecording(recordingId: String, bounds: GeoBounds?, limit: Int): Flow<List<Sighting>> =
-        query("recording-sightings:$recordingId:$bounds:$limit", listOf(Group.SIGHTINGS, Group.REMATCH), heavyQueryIntervalMs, emptyList()) {
-            store.sightingsInRecording(recordingId, bounds, limit)
+        shared("recording-sightings:$recordingId:$bounds:$limit") {
+            recording(recordingId).map { it?.active == true }.distinctUntilChanged().flatMapLatest { active ->
+                val read = { store.sightingsInRecording(recordingId, bounds, limit) }
+                if (active) {
+                    observe(listOf(Group.SIGHTINGS, Group.REMATCH), activeRecordingSightingsIntervalMs, emptyList(), read)
+                } else {
+                    observe(listOf(Group.REMATCH), heavyQueryIntervalMs, emptyList(), read)
+                }
+            }
         }
 
     override fun observeRecordingNote(recordingId: String): Flow<String> =
         query("note:$recordingId", listOf(Group.NOTES), lightQueryIntervalMs, "") { store.recordingNote(recordingId) }
 
-    override suspend fun getRecordingNote(recordingId: String): String {
-        if (availability.filterNotNull().first() != true) return ""
+    override suspend fun getRecordingNote(recordingId: String): String? {
+        if (availability.filterNotNull().first() != true) return null
         return withContext(ioDispatcher) { store.recordingNote(recordingId) }
     }
 
