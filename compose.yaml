@@ -50,7 +50,7 @@ services:
     environment:
       CLUETOOTH_DATABASE_URL: postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable
       CLUETOOTH_BUCKET: ${CLUETOOTH_BUCKET:-cluetooth-1da02.firebasestorage.app}
-      CLUETOOTH_PREFIX: ${CLUETOOTH_PREFIX:-scans/}
+      CLUETOOTH_PREFIX: ${CLUETOOTH_PREFIX:-scans/ gatt/}
       CLUETOOTH_PRIVATE_KEY_PATH: /run/secrets/cluetooth-private-key
       CLUETOOTH_MIRROR_DIR: /mirror
       CLUETOOTH_DOWNLOAD_WORKERS: ${CLUETOOTH_DOWNLOAD_WORKERS:-4}
@@ -77,7 +77,7 @@ services:
     environment:
       CLUETOOTH_DATABASE_URL: postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable
       CLUETOOTH_BUCKET: ${CLUETOOTH_BUCKET:-cluetooth-1da02.firebasestorage.app}
-      CLUETOOTH_PREFIX: ${CLUETOOTH_PREFIX:-scans/}
+      CLUETOOTH_PREFIX: ${CLUETOOTH_PREFIX:-scans/ gatt/}
       CLUETOOTH_PRIVATE_KEY_PATH: /run/secrets/cluetooth-private-key
       CLUETOOTH_MIRROR_DIR: /mirror
       CLUETOOTH_DOWNLOAD_WORKERS: ${CLUETOOTH_DOWNLOAD_WORKERS:-4}

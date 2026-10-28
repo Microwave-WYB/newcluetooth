@@ -172,6 +172,22 @@ def test_survey_is_list_only(database_url: str) -> None:
     ]
 
 
+def test_survey_names_v3_and_gatt_kinds_across_prefixes(database_url: str) -> None:
+    uris = [
+        "gs://survey-bucket/scans/v2/2026/10/26/a.parquet.encrypted",
+        "gs://survey-bucket/scans/v3/2026/10/27/b.parquet.encrypted",
+        "gs://survey-bucket/gatt/v1/2026/10/27/c.json.encrypted",
+    ]
+    summary = survey_blobs(
+        _ListingStorage(uris), database_url, "survey-bucket", ["scans/", "gatt/"]
+    )
+    assert summary.select("kind", "month", "objects", "new").sort("kind").rows() == [
+        ("gatt/v1", "2026-10", 1, 1),
+        ("v2", "2026-10", 1, 1),
+        ("v3", "2026-10", 1, 1),
+    ]
+
+
 def test_heartbeat_health(tmp_path: Path) -> None:
     path = tmp_path / "heartbeat.json"
     status = SyncStatus()

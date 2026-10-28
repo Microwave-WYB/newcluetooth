@@ -6,8 +6,10 @@ objects are the raw archive: `cluetooth replay` reads them back, and
 is a small dictionary of exact advertisements plus one aggregate row per
 sighting minute.
 
-Definitions in `db/db/migrations/20261026000000_minute_index_schema.sql`; a
-readable snapshot is `db/schema.sql`.
+Definitions in `db/db/migrations/20261026000000_minute_index_schema.sql` and
+`20261027120000_payload_v3_gatt.sql` (the v3 key and the GATT tables); a
+readable snapshot is `db/schema.sql`. The producer contracts are
+`docs/payload-schema-v2.md` and `docs/payload-schema-v3.md`.
 
 ## Tables
 
@@ -48,8 +50,13 @@ Partitioned by month on `minute`; minutes outside every partition land in
 `sighting_minutes_default`.
 
 Key: `unique nulls not distinct (minute, addr, payload_id, uploader_id,
-session_id)`. The session is part of the key because v2 objects carry no
-uploader identity; one row holds one payload.
+session_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid,
+data_status)`. The session is part of the key because v2 objects carry no
+uploader identity; one row holds one payload. The last six are the producer v3
+PDU fields (null for legacy and v2 sightings): they say which kind of
+advertisement was received, so the same bytes seen as a legacy PDU and as an
+extended PDU on another PHY or set are separate rows. See
+`docs/payload-schema-v3.md` for why they are key columns.
 
 | column group | columns | merge rule |
 |---|---|---|
@@ -59,7 +66,9 @@ uploader identity; one row holds one payload.
 | best sample | `location` (geography), `best_rssi`, `best_accuracy`, `best_score`, `best_seen` | the better sample wins |
 | extent | `min_lat`, `max_lat`, `min_lon`, `max_lon` | min/max of all phone positions |
 | convenience | `tx_power`, `is_connectable` | max, any |
-| reserved (v3) | `addr_type`, `adv_length`, `is_legacy`, `primary_phy`, `secondary_phy` | first non-null |
+| v3 measurements | `adv_tx_power`, `periodic_interval` | max |
+| v3 key columns | `addr_type`, `is_legacy`, `primary_phy`, `secondary_phy`, `adv_sid`, `data_status` | part of the key |
+| reserved | `adv_length` | unused (equals the payload's raw length) |
 
 Every column is exact under merge, so a minute split across blobs, batches or
 rebuilds equals a single pass. Indexes: the unique key (the merge upsert), the
@@ -93,7 +102,11 @@ a whole-database analysis ever needs that.
 
 - `uploaders` — producer tokens from legacy object names (`<ts>_<uploader>_<version>`).
 - `blobs` — the processing ledger, now with `id`, `session_id`, `uploader_id`
-  and the retry columns (`attempts`, `next_attempt_at`).
+  and the retry columns (`attempts`, `next_attempt_at`). `meta` (jsonb) holds
+  the Parquet footer entries of a v3 file (`cluetooth.*` keys without the
+  prefix: device model, Android version, app version, scanner capabilities, ...)
+  or the device and app fields of a GATT object; `app_version` is filled from
+  the footer when the object name carries none.
 - `adv_enrichments` — passive enrichment output per `(addr, payload_id)`,
   keyed by `(addr, payload_id, enrichment_kind, enrichment_id, enrichment_revision)`.
   Built-in AD structure parsing is no longer stored here: it lives in
@@ -104,10 +117,44 @@ a whole-database analysis ever needs that.
 - `backfill_progress` — resumability ledger for `cluetooth backfill`; dropped
   together with the `*_old` tables.
 
+### `gatt_discoveries` and `gatt_attributes` — manual GATT discoveries
+
+Replaced the legacy tables of the same names (never written by any code; the
+migration aborts if they hold rows). One `gatt/v1` object is one
+`gatt_discoveries` row, linked to its `blobs` row by `blob_id` (unique) and
+identified by `discovery_uuid` (the object's UUIDv7).
+
+| column group | columns |
+|---|---|
+| source | `blob_id`, `discovery_uuid`, `session_id`, `app_version`, `device_model`, `android_version` |
+| target | `addr`, `addr_type` (`public`, `random`, ...) |
+| trigger advertisement | `trigger_payload_id` (references `payloads`, stored once; not counted as a sighting), `trigger_rssi`, `trigger_scanned_at`, `trigger_is_legacy`, `trigger_primary_phy`, `trigger_secondary_phy`, `trigger_adv_sid` |
+| time and place | `started_at`, `ended_at`, `lat`, `lon`, `accuracy`, `location` (set by trigger) |
+| result | `outcome`, `stage_reached`, `error_stage`, `error_status`, `error_name`, `disconnect_initiator`, `disconnect_status`, `mtu`, `phy_tx`, `phy_rx`, `connect_ms`, `mtu_ms`, `discover_ms`, `read_ms` |
+| structure | `profile_hash` (SHA-256 hex over UUIDs and properties without values; null without services) |
+| source of truth | `raw` jsonb, the full object |
+
+`gatt_attributes` has one row per service, characteristic or descriptor in
+document order: `(discovery_id, attribute_id)` is the key (ids count from 1,
+parents before children), `parent_attribute_id`, `kind`, `uuid` (lowercase,
+`ad_structures.uuids` notation), `is_primary` (services), `instance` (Android
+instance id, not an ATT handle), `properties` (characteristics), `value` (bytea,
+only when read) and `read_status` (`ok`, `insufficient_authentication`,
+`insufficient_encryption`, `read_not_permitted`, `timeout`, `not_read`,
+`error:<n>`; null for services). A partial discovery keeps every attribute that
+was discovered; unread ones are `not_read` or carry the failure status.
+
+Group devices by GATT structure with `profile_hash`; see
+`docs/payload-schema-v3.md` for its definition.
+
 ## Write paths
 
 All three share `pipeline/sightings.py`: distinct raws → `raws` temp table →
 structures and payloads → `batch` temp table → merge into `sighting_minutes`.
+
+GATT objects use the same ledger and payload dictionary but their own
+transaction (`pipeline/gatt_ingest.py`): the trigger payload, the discovery, its
+attributes and `success = true` commit together.
 
 | command | source | payload stats | notes |
 |---|---|---|---|

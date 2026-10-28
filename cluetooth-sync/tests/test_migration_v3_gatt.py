@@ -107,7 +107,9 @@ def test_migration_rolls_back_and_reapplies(scratch_url: str, tmp_path: Path) ->
     _sql(scratch_url, insert_minute("true", "2"))
     assert _sql(scratch_url, "select count(*) from sighting_minutes") == [(3,)]
     # The same key twice is refused (nulls compare equal).
-    with pytest.raises(Exception, match="duplicate key value violates unique constraint"):
+    with pytest.raises(
+        Exception, match="duplicate key value violates unique constraint"
+    ):
         _sql(scratch_url, insert_minute("null", "null"))
 
     # GATT side.
@@ -151,7 +153,9 @@ def test_migration_rolls_back_and_reapplies(scratch_url: str, tmp_path: Path) ->
     } & _columns(scratch_url, "sighting_minutes")
     # Only the row without v3 key fields survives; the old key is back.
     assert _sql(scratch_url, "select count(*) from sighting_minutes") == [(1,)]
-    with pytest.raises(Exception, match="duplicate key value violates unique constraint"):
+    with pytest.raises(
+        Exception, match="duplicate key value violates unique constraint"
+    ):
         _sql(
             scratch_url,
             "insert into sighting_minutes (minute, addr, payload_id, blob_counts, "
