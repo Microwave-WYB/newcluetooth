@@ -58,6 +58,11 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SearchButton
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SheetLayer
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.Sparkline
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.StatusLine
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.devicesText
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
+import androidx.compose.ui.res.stringResource
+import androidx.annotation.StringRes
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.V3TopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatCount
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SheetSurface
@@ -74,20 +79,10 @@ import kotlinx.coroutines.launch
 /** What the stop snackbar reports. */
 data class SavedRecording(val durationSeconds: Int, val sightings: Int)
 
-/** Status line shared by every page that has a recorder: "未录制 · 132 台" or "● 录制中 · 1.2k 条". */
-@Composable
-fun RecorderStatus(recorder: RecorderUiState, idleText: String) {
-    when (recorder.phase) {
-        RecorderPhase.Idle -> StatusLine(idleText)
-        RecorderPhase.Recording -> StatusLine("录制中 · ${formatCount(recorder.sightings)} 条", dot = MaterialTheme.extra.record)
-        RecorderPhase.Paused -> StatusLine("已暂停 · ${formatCount(recorder.sightings)} 条", dot = MaterialTheme.colorScheme.outline)
-    }
-}
-
 /** A one-line problem under a page header (Bluetooth off, no location fix, ...); nothing when null. */
 @Composable
-fun HeaderNotice(text: String?) {
-    if (text != null) Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
+fun HeaderNotice(@StringRes text: Int?) {
+    if (text != null) Text(stringResource(text), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
 }
 
 /** Two text lines, then a sparkline and the RSSI number on the right. */
@@ -101,13 +96,13 @@ fun ScanRow(row: DeviceRowState, onClick: () -> Unit, modifier: Modifier = Modif
             if (row.name != null) {
                 Text(row.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } else {
-                Text("未命名", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.outline)
+                Text(stringResource(R.string.unnamed), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.outline)
             }
             Text(
                 text = buildAnnotatedString {
                     appendMac(row.mac)
-                    append(" · ${row.advKind.label}")
-                    if (row.connectable) append(" · 可连接")
+                    append(" · ${stringResource(row.advKind.label)}")
+                    if (row.connectable) append(" · ${stringResource(R.string.connectable)}")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -172,7 +167,6 @@ fun ScanList(
 @Composable
 fun ScanPage(
     rows: List<DeviceRowState>,
-    recorder: RecorderUiState,
     listState: LazyListState,
     modifier: Modifier = Modifier,
     refreshing: Boolean = false,
@@ -180,7 +174,7 @@ fun ScanPage(
     onRowClick: (DeviceRowState) -> Unit = {},
     onSettings: (() -> Unit)? = null,
     /** A scanner problem (Bluetooth off, no permission), shown under the status line. */
-    notice: String? = null,
+    notice: Int? = null,
 ) {
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -188,22 +182,22 @@ fun ScanPage(
     val shown = if (!searching || q.isEmpty()) rows else rows.filter { (it.name.orEmpty() + " " + it.mac).lowercase().contains(q) }
     Column(modifier.fillMaxSize()) {
         V3TopBar(
-            title = "扫描",
+            title = stringResource(R.string.tab_scan),
             status = {
-                RecorderStatus(recorder, "未录制 · ${rows.size} 台")
+                StatusLine(devicesText(rows.size, LocalTexts.current))
                 HeaderNotice(notice)
             },
             actions = {
                 if (searching) {
-                    TopBarIconButton(Icons.Filled.Close, "关闭搜索", { searching = false; query = "" })
+                    TopBarIconButton(Icons.Filled.Close, stringResource(R.string.action_close_search), { searching = false; query = "" })
                 } else {
                     SearchButton { searching = true }
                 }
-                if (onSettings != null) TopBarIconButton(Icons.Filled.Settings, "设置", onSettings)
+                if (onSettings != null) TopBarIconButton(Icons.Filled.Settings, stringResource(R.string.action_settings), onSettings)
             },
         )
         if (searching) {
-            SearchField(query, { query = it }, "搜索名称或 MAC", Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+            SearchField(query, { query = it }, stringResource(R.string.search_hint_scan), Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
         }
         ScanList(shown, listState, refreshing, onRefresh, onRowClick, Modifier.weight(1f))
     }

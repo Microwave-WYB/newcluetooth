@@ -8,6 +8,10 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ResourceTexts
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Texts
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.compositionLocalOf
@@ -121,6 +125,9 @@ private val LocalExtraColors = compositionLocalOf { LightExtra }
 /** Previews set this so infinite animations (pulse, blink) render as one stable frame. */
 val LocalStaticRender = compositionLocalOf { false }
 
+/** Words and dates for composables that format text from plain values; set by [V3Theme]. */
+val LocalTexts = compositionLocalOf<Texts> { error("LocalTexts is provided by V3Theme") }
+
 val MaterialTheme.extra: ExtraColors
     @Composable @ReadOnlyComposable get() = LocalExtraColors.current
 
@@ -131,7 +138,9 @@ fun V3Theme(
     content: @Composable () -> Unit,
 ) {
     val scheme: ColorScheme = if (darkTheme) DarkScheme else LightScheme
-    CompositionLocalProvider(LocalExtraColors provides if (darkTheme) DarkExtra else LightExtra) {
+    val context = LocalContext.current
+    val texts = remember(context) { ResourceTexts(context) }
+    CompositionLocalProvider(LocalExtraColors provides if (darkTheme) DarkExtra else LightExtra, LocalTexts provides texts) {
         MaterialTheme(colorScheme = scheme, typography = V3Typography, content = content)
     }
 }

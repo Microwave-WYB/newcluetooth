@@ -49,6 +49,9 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.appendMac
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiChart
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiText
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.V3TopBar
+import androidx.compose.ui.res.stringResource
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatCount
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.signalColor
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AdStructureRow
@@ -60,6 +63,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattCharState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattServiceState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattStepState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.PositionEstimateState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.StepStatus
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.WikiUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.MonoFamily
@@ -73,7 +77,7 @@ private fun MacLine(detail: DeviceDetailUiState) {
     Text(
         text = buildAnnotatedString {
             appendMac(detail.device.mac)
-            append(" · ${detail.device.addressType.label}")
+            append(" · ${stringResource(detail.device.addressType.label)}")
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -85,7 +89,30 @@ private fun MacLine(detail: DeviceDetailUiState) {
 @Composable
 private fun DeviceName(name: String?, style: androidx.compose.ui.text.TextStyle) {
     if (name != null) Text(name, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    else Text("未命名", style = style, color = MaterialTheme.colorScheme.outline)
+    else Text(stringResource(R.string.unnamed), style = style, color = MaterialTheme.colorScheme.outline)
+}
+
+/** The estimated position with its accuracy; the map shows it only as the ring and dot. */
+@Composable
+private fun PositionEstimateRow(estimate: PositionEstimateState) {
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (estimate.accuracyMeters != null) {
+                stringResource(R.string.map_estimated_position_accuracy, estimate.accuracyMeters)
+            } else {
+                stringResource(R.string.map_estimated_position)
+            },
+            Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            String.format(java.util.Locale.US, "%.5f, %.5f", estimate.at.lat, estimate.at.lon),
+            fontFamily = MonoFamily,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.outline,
+        )
+    }
 }
 
 /** Half-height sheet content. */
@@ -109,13 +136,16 @@ fun DeviceDetailHalf(
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (device.connectable) "可连接" else "不可连接",
+                        stringResource(if (device.connectable) R.string.connectable else R.string.not_connectable),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(" · ", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        "${detail.variants.size} 种广播变体 ›",
+                        stringResource(
+                            R.string.variants_link,
+                            LocalTexts.current.plural(R.plurals.ad_variants, detail.variants.size, detail.variants.size),
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable(onClick = onExpand),
@@ -135,17 +165,18 @@ fun DeviceDetailHalf(
             }
         }
         RssiChart(detail.chartSamples, detail.chartWindow, onWindowChange, Modifier.padding(top = 14.dp))
+        detail.positionEstimate?.let { PositionEstimateRow(it) }
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (running) {
-                OutlinedButton(onClick = onCancelGatt, modifier = Modifier.weight(1f).height(46.dp)) { Text("取消 GATT") }
+                OutlinedButton(onClick = onCancelGatt, modifier = Modifier.weight(1f).height(46.dp)) { Text(stringResource(R.string.gatt_cancel)) }
             } else {
                 Button(
                     onClick = onDiscoverGatt,
                     enabled = detail.gattDisabledReason == null,
                     modifier = Modifier.weight(1f).height(46.dp),
-                ) { Text("发现 GATT") }
+                ) { Text(stringResource(R.string.gatt_discover)) }
             }
-            OutlinedButton(onClick = onShowOnMap, modifier = Modifier.weight(1f).height(46.dp)) { Text("在地图上查看") }
+            OutlinedButton(onClick = onShowOnMap, modifier = Modifier.weight(1f).height(46.dp)) { Text(stringResource(R.string.view_on_map)) }
         }
         if (detail.gattDisabledReason != null && !running) {
             Text(
@@ -158,7 +189,7 @@ fun DeviceDetailHalf(
     }
 }
 
-/** Expanded, full-screen detail: 广播 / GATT / Wiki. */
+/** Expanded, full-screen detail: Advertising / GATT / Wiki. */
 @Composable
 fun DeviceDetailFull(
     detail: DeviceDetailUiState,
@@ -176,14 +207,14 @@ fun DeviceDetailFull(
     val device = detail.device
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         V3TopBar(
-            title = device.name ?: "未命名",
+            title = device.name ?: stringResource(R.string.unnamed),
             navigation = { BackButton(onCollapse) },
             statusBarInset = statusBarInset,
             status = {
                 Text(
                     buildAnnotatedString {
                         appendMac(device.mac)
-                        append(" · ${device.addressType.label}")
+                        append(" · ${stringResource(device.addressType.label)}")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -203,7 +234,7 @@ fun DeviceDetailFull(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        t.label,
+                        stringResource(t.label),
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 10.dp),
                         style = MaterialTheme.typography.labelLarge,
                         color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -227,7 +258,7 @@ fun DeviceDetailFull(
     }
 }
 
-// ---- 广播 ----------------------------------------------------------------------------------
+// ---- Advertising ----------------------------------------------------------------------------------
 
 @Composable
 private fun AdvertisingTab(variants: List<AdVariantState>, expandedId: String?, onToggle: (String) -> Unit) {
@@ -251,7 +282,10 @@ private fun VariantRow(v: AdVariantState, expanded: Boolean, onToggle: () -> Uni
                     fontFamily = MonoFamily,
                 )
                 Text(
-                    "${formatCount(v.count)} 次 · ${v.firstSeen} – ${v.lastSeen}",
+                    stringResource(
+                        R.string.times_range,
+                        LocalTexts.current.plural(R.plurals.times_heard, v.count, formatCount(v.count)), v.firstSeen, v.lastSeen,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -278,9 +312,9 @@ private fun AdStructureTable(structures: List<AdStructureRow>) {
     val rule = MaterialTheme.colorScheme.outlineVariant
     Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp)) {
         Row(Modifier.padding(start = 12.dp, bottom = 4.dp)) {
-            TableHeader("类型", Modifier.width(34.dp))
-            TableHeader("名称", Modifier.weight(1f))
-            TableHeader("长度", Modifier.width(36.dp), TextAlign.End)
+            TableHeader(stringResource(R.string.table_type), Modifier.width(34.dp))
+            TableHeader(stringResource(R.string.table_name), Modifier.weight(1f))
+            TableHeader(stringResource(R.string.table_length), Modifier.width(36.dp), TextAlign.End)
         }
         structures.forEach { s ->
             Row(Modifier.height(IntrinsicSize.Min)) {
@@ -314,9 +348,9 @@ private fun TableHeader(text: String, modifier: Modifier, align: TextAlign? = nu
 private fun GattTab(detail: DeviceDetailUiState, onDiscover: () -> Unit, onCancel: () -> Unit) {
     when (val g = detail.gatt) {
         GattUiState.NotStarted -> Column(Modifier.padding(20.dp)) {
-            Text("还没有读取过这个设备的 GATT。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.gatt_not_read_yet), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = onDiscover, enabled = detail.gattDisabledReason == null, modifier = Modifier.padding(top = 12.dp)) {
-                Text("发现 GATT")
+                Text(stringResource(R.string.gatt_discover))
             }
             detail.gattDisabledReason?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
@@ -324,7 +358,7 @@ private fun GattTab(detail: DeviceDetailUiState, onDiscover: () -> Unit, onCance
         }
         is GattUiState.InProgress -> {
             GattSteps(g.steps)
-            OutlinedButton(onClick = onCancel, modifier = Modifier.padding(start = 20.dp, top = 4.dp)) { Text("取消") }
+            OutlinedButton(onClick = onCancel, modifier = Modifier.padding(start = 20.dp, top = 4.dp)) { Text(stringResource(R.string.action_cancel)) }
         }
         is GattUiState.Done -> {
             GattSteps(g.steps)
@@ -342,7 +376,7 @@ private fun GattTab(detail: DeviceDetailUiState, onDiscover: () -> Unit, onCance
                 onClick = onDiscover,
                 enabled = detail.gattDisabledReason == null,
                 modifier = Modifier.padding(start = 20.dp, top = 12.dp),
-            ) { Text("再次发现 GATT") }
+            ) { Text(stringResource(R.string.gatt_discover_again)) }
         }
     }
 }
@@ -392,7 +426,7 @@ private fun StepGlyph(status: StepStatus) {
 private fun GattServiceBlock(service: GattServiceState) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(service.name ?: "未知服务", style = MaterialTheme.typography.titleSmall)
+            Text(service.name ?: stringResource(R.string.gatt_unknown_service), style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.width(8.dp))
             Text(service.uuid, fontFamily = MonoFamily, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -406,20 +440,20 @@ private fun GattCharRow(c: GattCharState) {
         Box(Modifier.fillMaxHeight().width(2.dp).background(MaterialTheme.colorScheme.outlineVariant))
         Column(Modifier.padding(start = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(c.name ?: "未知特征", Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(c.name ?: stringResource(R.string.gatt_unknown_characteristic), Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("  ${c.properties}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
             }
             Text(c.uuid, fontFamily = MonoFamily, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
             when {
                 c.error != null -> Text(c.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 2.dp))
                 c.value != null -> Text(c.value, fontFamily = MonoFamily, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
-                else -> Text("无值", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 2.dp))
+                else -> Text(stringResource(R.string.gatt_no_value), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 2.dp))
             }
             c.descriptors.forEach { d ->
                 Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.Top) {
                     Text("· ${d.name ?: d.uuid}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                     Text(
-                        "  " + (d.error ?: d.value ?: "无值"),
+                        "  " + (d.error ?: d.value ?: stringResource(R.string.gatt_no_value)),
                         fontFamily = MonoFamily, fontSize = 11.sp,
                         color = if (d.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     )

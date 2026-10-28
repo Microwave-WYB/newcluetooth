@@ -25,7 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.outlined.BluetoothSearching
 import androidx.compose.material.icons.outlined.Place
-import androidx.compose.material.icons.outlined.RadioButtonChecked
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,13 +35,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import edu.ucsd.sysnet.cluetoothscanner.R
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 
 /**
- * Page title, optional status line and trailing actions. The record button's mini form
- * is passed in as the last action by the shell.
+ * Page title, optional subtitle and trailing actions. The floating record pill is drawn by the
+ * shell over the top-right corner; while it shows, the actions end [LocalRecordPillInset] early.
  */
 @Composable
 fun V3TopBar(
@@ -49,7 +51,6 @@ fun V3TopBar(
     modifier: Modifier = Modifier,
     navigation: (@Composable () -> Unit)? = null,
     status: (@Composable () -> Unit)? = null,
-    reserveRecordSlot: Boolean = true,
     statusBarInset: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
@@ -67,8 +68,7 @@ fun V3TopBar(
             status?.invoke()
         }
         actions()
-        // The record button is drawn by the shell on top of this spot.
-        if (reserveRecordSlot) Spacer(Modifier.width(MiniRecordSlotWidth))
+        Spacer(Modifier.width(LocalRecordPillInset.current))
     }
 }
 
@@ -83,26 +83,32 @@ fun StatusLine(text: String, modifier: Modifier = Modifier, dot: Color? = null) 
 }
 
 @Composable
-fun TopBarIconButton(icon: ImageVector, description: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun TopBarIconButton(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+) {
     Box(
         modifier.size(44.dp).clip(CircleShape).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, description, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(24.dp))
+        Icon(icon, description, tint = tint, modifier = Modifier.size(24.dp))
     }
 }
 
 @Composable
 fun BackButton(onClick: () -> Unit = {}) =
-    TopBarIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回", onClick)
+    TopBarIconButton(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back), onClick)
 
 @Composable
-fun SearchButton(onClick: () -> Unit = {}) = TopBarIconButton(Icons.Filled.Search, "搜索", onClick)
+fun SearchButton(onClick: () -> Unit = {}) = TopBarIconButton(Icons.Filled.Search, stringResource(R.string.action_search), onClick)
 
 private fun tabIcon(tab: AppTab): ImageVector = when (tab) {
     AppTab.Scan -> Icons.AutoMirrored.Outlined.BluetoothSearching
     AppTab.Nearby -> Icons.Outlined.Place
-    AppTab.Recordings -> Icons.Outlined.RadioButtonChecked
+    AppTab.History -> Icons.Outlined.History
 }
 
 /** Bottom navigation with three tabs; a quiet bar with an indicator pill, no elevation. */
@@ -130,7 +136,7 @@ fun V3BottomNav(selected: AppTab, onSelect: (AppTab) -> Unit, modifier: Modifier
                         )
                     }
                     Text(
-                        tab.label,
+                        stringResource(tab.label),
                         style = MaterialTheme.typography.labelMedium,
                         color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp),

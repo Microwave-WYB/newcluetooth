@@ -1,6 +1,9 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.res.stringResource
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
+import edu.ucsd.sysnet.cluetoothscanner.R
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -106,11 +109,11 @@ fun RssiChart(
     val label = MaterialTheme.colorScheme.onSurfaceVariant
     Column(modifier) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("信号强度", style = MaterialTheme.typography.labelMedium, color = label, modifier = Modifier.weight(1f))
+            Text(stringResource(R.string.signal_strength), style = MaterialTheme.typography.labelMedium, color = label, modifier = Modifier.weight(1f))
             ChartWindow.entries.forEach { w ->
                 val selected = w == window
                 Text(
-                    text = w.label,
+                    text = stringResource(w.label),
                     style = MaterialTheme.typography.labelMedium,
                     color = if (selected) MaterialTheme.colorScheme.primary else label,
                     modifier = Modifier

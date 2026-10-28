@@ -32,6 +32,12 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -41,13 +47,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import edu.ucsd.sysnet.cluetoothscanner.R
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,38 +66,48 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalStaticRender
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.MonoFamily
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.extra
 
-enum class RecordPlacement { Full, Mini }
+/**
+ * Where the one record control is drawn. [Round] is the idle red button and [Expanded] the
+ * recording controls, both at the bottom-right; [Pill] is the floating top-right form.
+ */
+enum class RecordPlacement { Round, Expanded, Pill }
 
 data class RecorderCallbacks(
     val onStart: () -> Unit = {},
     val onPause: () -> Unit = {},
     val onResume: () -> Unit = {},
     val onStop: () -> Unit = {},
-    /** Tapping the mini pill. */
+    /** Tapping the pill. */
     val onOpenControls: () -> Unit = {},
 )
 
 /**
- * The one global record button. [Full] is the round button that grows into a pill while
- * recording; [Mini] is the icon-sized form for the top bar. The shell moves it between the
- * two with a shared-bounds transition.
+ * Idle: the round button. Recording: the expanded controls when the page has room for them
+ * ([roomForExpanded]: the Scan page with nothing covering it), otherwise the floating pill.
  */
-@Composable
-fun RecordControl(
-    state: RecorderUiState,
-    placement: RecordPlacement,
-    callbacks: RecorderCallbacks,
-    modifier: Modifier = Modifier,
-) {
-    when (placement) {
-        RecordPlacement.Full -> FullRecordControl(state, callbacks, modifier)
-        RecordPlacement.Mini -> MiniRecordControl(state, callbacks, modifier)
-    }
+fun recordPlacement(phase: RecorderPhase, roomForExpanded: Boolean): RecordPlacement = when {
+    phase == RecorderPhase.Idle -> RecordPlacement.Round
+    roomForExpanded -> RecordPlacement.Expanded
+    else -> RecordPlacement.Pill
 }
 
+/**
+ * Shadow of the record family (round button, expanded controls, pill, scroll-to-top, the map's
+ * floating surfaces): 2 dp, a slight shadow close to the button, lighter than the FAB default of 6 dp.
+ * The round button passes it through `FloatingActionButtonDefaults.elevation` (4 dp while pressed);
+ * the surfaces use it as `shadowElevation`, so all three states cast the same shadow.
+ */
+val FabElevation = 2.dp
+
+/** Pill height; pages reserve room for it with [LocalRecordPillInset]. */
+val RecordPillHeight = 32.dp
+
+/**
+ * The bottom-right form: a bare red button with a white dot while idle, the recording controls
+ * (blinking dot, time, pause/resume, stop) while recording on a page with room for them.
+ */
 @Composable
-private fun FullRecordControl(state: RecorderUiState, callbacks: RecorderCallbacks, modifier: Modifier) {
-    val red = MaterialTheme.extra.record
+fun BottomRecordControl(state: RecorderUiState, callbacks: RecorderCallbacks, modifier: Modifier = Modifier) {
     val active = state.phase != RecorderPhase.Idle
     AnimatedContent(
         targetState = active,
@@ -98,34 +117,43 @@ private fun FullRecordControl(state: RecorderUiState, callbacks: RecorderCallbac
             (fadeIn(tween(160, delayMillis = 60)) togetherWith fadeOut(tween(90)))
                 .using(SizeTransform(clip = false))
         },
-        label = "record-full",
+        label = "record-bottom",
     ) { isActive ->
         if (!isActive) {
-            // A bare red disc, no container.
-            Box(
-                Modifier
-                    .size(60.dp)
-                    .shadow(6.dp, CircleShape)
-                    .clip(CircleShape)
-                    .background(red)
-                    .clickable(onClick = callbacks.onStart),
-            )
+            val description = stringResource(R.string.record_start)
+            FloatingActionButton(
+                onClick = callbacks.onStart,
+                modifier = Modifier.semantics { contentDescription = description },
+                shape = CircleShape,
+                containerColor = MaterialTheme.extra.record,
+                contentColor = Color.White,
+                elevation = FloatingActionButtonDefaults.elevation(
+                    defaultElevation = FabElevation,
+                    pressedElevation = 4.dp,
+                    focusedElevation = FabElevation,
+                    hoveredElevation = FabElevation,
+                ),
+            ) {
+                Box(Modifier.size(20.dp).clip(CircleShape).background(Color.White))
+            }
         } else {
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 6.dp,
+                shadowElevation = FabElevation,
                 border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Row(
-                    Modifier.height(60.dp).padding(start = 20.dp, end = 10.dp),
+                    Modifier.height(56.dp).padding(start = 20.dp, end = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    PulseDot(paused = state.phase == RecorderPhase.Paused, size = 10)
+                    val paused = state.phase == RecorderPhase.Paused
+                    PulseDot(paused = paused, size = 10)
                     Spacer(Modifier.width(10.dp))
-                    ElapsedTime(state, fontSize = 20)
+                    // Frozen while paused, and dimmed.
+                    Box(Modifier.alpha(if (paused) 0.5f else 1f)) { ElapsedTime(state, fontSize = 20, blinkWhenPaused = false) }
                     Spacer(Modifier.width(20.dp))
-                    PauseResumeButton(state.phase == RecorderPhase.Paused, callbacks)
+                    PauseResumeButton(paused, callbacks)
                     Spacer(Modifier.width(8.dp))
                     StopButton(callbacks.onStop)
                 }
@@ -134,29 +162,22 @@ private fun FullRecordControl(state: RecorderUiState, callbacks: RecorderCallbac
     }
 }
 
+/** The compact form for the top-right corner: a blinking dot and the time, nothing else. */
 @Composable
-private fun MiniRecordControl(state: RecorderUiState, callbacks: RecorderCallbacks, modifier: Modifier) {
-    if (state.phase == RecorderPhase.Idle) {
-        Box(
-            modifier.size(44.dp).clip(CircleShape).clickable(onClick = callbacks.onStart),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(Modifier.size(16.dp).clip(CircleShape).background(MaterialTheme.extra.record))
-        }
-    } else {
-        Box(modifier.height(44.dp).padding(horizontal = 2.dp), contentAlignment = Alignment.Center) {
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .clickable(onClick = callbacks.onOpenControls)
-                    .padding(horizontal = 11.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                PulseDot(paused = state.phase == RecorderPhase.Paused, size = 8)
-                Spacer(Modifier.width(7.dp))
-                ElapsedTime(state, fontSize = 13)
-            }
+fun RecordPill(state: RecorderUiState, callbacks: RecorderCallbacks, modifier: Modifier = Modifier) {
+    val description = stringResource(R.string.record_controls)
+    Surface(
+        onClick = callbacks.onOpenControls,
+        modifier = modifier.height(RecordPillHeight).semantics { contentDescription = description },
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = FabElevation,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(Modifier.padding(horizontal = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+            PulseDot(paused = state.phase == RecorderPhase.Paused, size = 8)
+            Spacer(Modifier.width(7.dp))
+            ElapsedTime(state, fontSize = 13)
         }
     }
 }
@@ -180,9 +201,9 @@ private fun PulseDot(paused: Boolean, size: Int) {
 
 /** Monospace time; frozen and slowly blinking while paused. */
 @Composable
-private fun ElapsedTime(state: RecorderUiState, fontSize: Int) {
+private fun ElapsedTime(state: RecorderUiState, fontSize: Int, blinkWhenPaused: Boolean = true) {
     val paused = state.phase == RecorderPhase.Paused
-    val alpha = if (!paused || LocalStaticRender.current) 1f else {
+    val alpha = if (!paused || !blinkWhenPaused || LocalStaticRender.current) 1f else {
         val t = rememberInfiniteTransition(label = "blink")
         val a by t.animateFloat(
             1f, 0.25f,
@@ -201,32 +222,26 @@ private fun ElapsedTime(state: RecorderUiState, fontSize: Int) {
 }
 
 @Composable
-private fun RoundControl(icon: ImageVector, description: String, background: Color, tint: Color, onClick: () -> Unit) {
-    Box(
-        Modifier.size(42.dp).clip(CircleShape).background(background).clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, description, tint = tint, modifier = Modifier.size(22.dp))
+private fun PauseResumeButton(paused: Boolean, callbacks: RecorderCallbacks) {
+    FilledTonalIconButton(onClick = if (paused) callbacks.onResume else callbacks.onPause) {
+        Icon(
+            if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+            stringResource(if (paused) R.string.record_resume else R.string.record_pause),
+        )
     }
 }
 
 @Composable
-private fun PauseResumeButton(paused: Boolean, callbacks: RecorderCallbacks) {
-    RoundControl(
-        icon = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-        description = if (paused) "继续" else "暂停",
-        background = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tint = MaterialTheme.colorScheme.onSurface,
-        onClick = if (paused) callbacks.onResume else callbacks.onPause,
-    )
-}
-
-@Composable
 private fun StopButton(onClick: () -> Unit) {
-    RoundControl(Icons.Filled.Stop, "停止", MaterialTheme.extra.record, Color.White, onClick)
+    FilledIconButton(
+        onClick = onClick,
+        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.extra.record, contentColor = Color.White),
+    ) {
+        Icon(Icons.Filled.Stop, stringResource(R.string.record_stop))
+    }
 }
 
-/** The bar opened by tapping the mini pill: time, count, pause/resume and stop. */
+/** The bar opened by tapping the pill: time, row count, pause/resume and stop. */
 @Composable
 fun RecordControlBar(state: RecorderUiState, callbacks: RecorderCallbacks, modifier: Modifier = Modifier) {
     val paused = state.phase == RecorderPhase.Paused
@@ -238,7 +253,7 @@ fun RecordControlBar(state: RecorderUiState, callbacks: RecorderCallbacks, modif
                 ElapsedTime(state, fontSize = 28)
                 Spacer(Modifier.weight(1f))
                 Text(
-                    if (paused) "已暂停 · ${formatCount(state.sightings)} 条" else "录制中 · ${formatCount(state.sightings)} 条",
+                    rowsText(state.sightings, LocalTexts.current),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -250,7 +265,7 @@ fun RecordControlBar(state: RecorderUiState, callbacks: RecorderCallbacks, modif
                 ) {
                     Icon(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null, Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(if (paused) "继续" else "暂停")
+                    Text(stringResource(if (paused) R.string.record_resume else R.string.record_pause))
                 }
                 Button(
                     onClick = callbacks.onStop,
@@ -259,14 +274,14 @@ fun RecordControlBar(state: RecorderUiState, callbacks: RecorderCallbacks, modif
                 ) {
                     Icon(Icons.Filled.Stop, null, Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("结束录制")
+                    Text(stringResource(R.string.record_stop))
                 }
             }
         }
     }
 }
 
-/** Shown after stop: "已保存 · 23 分钟 · 1.4k 条" with 加备注 and 查看. */
+/** Shown after stop: "Saved · 23 min · 1.4k rows" with Add note and View. */
 @Composable
 fun RecordSavedSnackbar(
     durationSeconds: Int,
@@ -284,14 +299,17 @@ fun RecordSavedSnackbar(
     ) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp).height(52.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "已保存 · ${formatDuration(durationSeconds)} · ${formatCount(sightings)} 条",
+                stringResource(
+                    R.string.record_saved,
+                    formatDuration(durationSeconds, LocalTexts.current), rowsText(sightings, LocalTexts.current),
+                ),
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
             )
             val action = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.inversePrimary)
-            TextButton(onClick = onAddNote, colors = action) { Text("加备注") }
-            TextButton(onClick = onView, colors = action) { Text("查看") }
+            TextButton(onClick = onAddNote, colors = action) { Text(stringResource(R.string.action_add_note)) }
+            TextButton(onClick = onView, colors = action) { Text(stringResource(R.string.action_view)) }
         }
     }
 }
@@ -299,17 +317,20 @@ fun RecordSavedSnackbar(
 /** Small round button stacked directly above the full-size record button. */
 @Composable
 fun ScrollToTopButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
+    SmallFloatingActionButton(
         onClick = onClick,
-        modifier = modifier.size(40.dp),
+        modifier = modifier,
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 4.dp,
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        elevation = FloatingActionButtonDefaults.elevation(
+            defaultElevation = FabElevation,
+            pressedElevation = 4.dp,
+            focusedElevation = FabElevation,
+            hoveredElevation = FabElevation,
+        ),
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.KeyboardArrowUp, "回到顶部", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
-        }
+        Icon(Icons.Filled.KeyboardArrowUp, stringResource(R.string.action_scroll_to_top), modifier = Modifier.size(22.dp))
     }
 }
 
@@ -326,8 +347,8 @@ fun RecordProblemSnackbar(message: String, onRetry: () -> Unit, onDismiss: () ->
         Row(Modifier.padding(start = 16.dp, end = 4.dp).height(52.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 2)
             val action = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.inversePrimary)
-            TextButton(onClick = onRetry, colors = action) { Text("重试") }
-            TextButton(onClick = onDismiss, colors = action) { Text("关闭") }
+            TextButton(onClick = onRetry, colors = action) { Text(stringResource(R.string.action_retry)) }
+            TextButton(onClick = onDismiss, colors = action) { Text(stringResource(R.string.action_close)) }
         }
     }
 }

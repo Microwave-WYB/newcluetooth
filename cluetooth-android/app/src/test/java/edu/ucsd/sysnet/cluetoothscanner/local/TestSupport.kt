@@ -136,7 +136,7 @@ fun bundleJson(version: String, rulesVersion: String, pages: List<Triple<String,
         """{"id":"$id","title":"$title","kind":"device","one_line":"$title product","categories":[$cats],"entity":null,"has_rule":true,"rule":{"name":{"prefix":"x"}}}"""
     }
     return """{"schema":1,"version":"$version","rules_version":"$rulesVersion","categories":[
-        {"id":"audio","label":"Audio","label_zh":"音频"},{"id":"lighting","label":"Lighting","label_zh":"照明"}],
+        {"id":"audio","label":"Audio"},{"id":"lighting","label":"Lighting"}],
         "pages":[$pagesJson]}"""
 }
 

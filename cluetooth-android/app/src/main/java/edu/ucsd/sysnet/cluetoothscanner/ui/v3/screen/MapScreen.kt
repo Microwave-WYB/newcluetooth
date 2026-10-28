@@ -34,7 +34,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +59,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.BackButton
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.DragSheet
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.MiniRecordSlotWidth
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.FabElevation
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.LocalRecordButtonLift
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.PositionEstimateState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.StatusLine
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.TopBarIconButton
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.V3TopBar
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.res.stringResource
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiText
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SearchField
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.appendMac
@@ -94,10 +106,14 @@ fun MapPage(
     actions: MapActions,
     modifier: Modifier = Modifier,
     /** A notice over the map, e.g. that the base map is offline. */
-    notice: String? = null,
+    notice: Int? = null,
     map: @Composable (coveredFraction: () -> Float) -> Unit,
 ) {
     val sheet = rememberDragSheetState()
+    // The shell's record button rides above this sheet, and steps aside when the sheet is full height.
+    val lift = LocalRecordButtonLift.current
+    LaunchedEffect(sheet, lift) { snapshotFlow { sheet.height.value }.collect { lift.px = it } }
+    DisposableEffect(lift) { onDispose { lift.px = 0f; lift.hidden = false } }
     val selecting = state.selected != null
     // Level 1 is the half sheet; a selection or a new search starts there.
     var level by rememberSaveable(state.selected?.device?.id) { mutableIntStateOf(1) }
@@ -105,6 +121,7 @@ fun MapPage(
     val density = LocalDensity.current
     val handlePx = with(density) { 22.dp.toPx() }
     val backRowPx = with(density) { 48.dp.toPx() }
+    SideEffect { lift.hidden = level == 2 }
 
     BackHandler {
         when {
@@ -116,50 +133,48 @@ fun MapPage(
 
     BoxWithConstraints(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val containerPx = with(density) { maxHeight.toPx() }
-        // A lambda, so a sheet drag does not recompose the map; it is read when drawing or fitting.
-        map { (sheet.height.value / containerPx).coerceIn(0f, 1f).let { if (it == 0f) 0.5f else it } }
+        var mapHeightPx by remember { mutableIntStateOf(0) }
 
-        Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FloatingSurface(CircleShape) { BackButton(actions.onBack) }
-                FloatingSurface(RoundedCornerShape(22.dp), Modifier.weight(1f)) {
-                    Column(Modifier.height(44.dp).padding(horizontal = 14.dp), verticalArrangement = Arrangement.Center) {
-                        Text(state.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(state.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.fillMaxSize()) {
+            // The same top bar as the other pages; the layer toggle is one of its actions.
+            V3TopBar(
+                title = state.title,
+                navigation = { BackButton(actions.onBack) },
+                status = { StatusLine(state.subtitle) },
+                actions = {
+                    TopBarIconButton(
+                        Icons.Filled.Layers, stringResource(R.string.map_density), actions.onLayerToggle,
+                        tint = if (state.heatmap) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    )
+                },
+            )
+            Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged { mapHeightPx = it.height }) {
+                // A lambda, so a sheet drag does not recompose the map; it is read when drawing or fitting.
+                map {
+                    val h = if (mapHeightPx > 0) mapHeightPx.toFloat() else containerPx
+                    (sheet.height.value / h).coerceIn(0f, 1f).let { if (it == 0f) 0.5f else it }
+                }
+                Column(Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, top = 10.dp)) {
+                    if (state.showAreaChip) {
+                        MapChip(stringResource(if (state.areaOnly) R.string.map_show_all else R.string.map_this_area), actions.onAreaChip)
                     }
-                }
-                // The shell draws the floating mini record button here.
-                Spacer(Modifier.width(MiniRecordSlotWidth - 8.dp))
-            }
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.Top) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (state.showAreaChip) MapChip(if (state.areaOnly) "显示全部" else "只看此区域", actions.onAreaChip)
-                    if (state.estimate != null) EstimateLegend(state.estimateAccuracyMeters)
-                }
-                FloatingSurface(CircleShape, onClick = actions.onLayerToggle) {
-                    Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Filled.Layers, "热力图",
-                            tint = if (state.heatmap) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    if (notice != null) {
+                        Text(
+                            stringResource(notice),
+                            Modifier.padding(top = 8.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (state.emptyNote != null) {
+                        Text(
+                            state.emptyNote,
+                            Modifier.fillMaxWidth().padding(top = 24.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-            }
-            if (notice != null) {
-                Text(
-                    notice,
-                    Modifier.padding(top = 8.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            if (state.emptyNote != null) {
-                Text(
-                    state.emptyNote,
-                    Modifier.fillMaxWidth().padding(top = 24.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
 
@@ -179,7 +194,9 @@ fun MapPage(
         ) { expanded ->
             if (state.selected != null) {
                 DeviceSheetBody(
-                    detail = state.selected,
+                    detail = state.selected.copy(
+                        positionEstimate = state.estimate?.let { PositionEstimateState(it, state.estimateAccuracyMeters) },
+                    ),
                     actions = DeviceDetailActions(
                         onWindowChange = actions.detail.onWindowChange,
                         onDiscoverGatt = actions.detail.onDiscoverGatt,
@@ -192,7 +209,7 @@ fun MapPage(
                     onHalfMeasured = { halfPx = it },
                     backRow = { Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         BackButton(actions.onBackToList)
-                        Text("设备列表", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.map_device_list), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } },
                 )
             } else {
@@ -202,7 +219,7 @@ fun MapPage(
 
         // OpenStreetMap and OpenFreeMap require visible attribution.
         Text(
-            "© OpenMapTiles · © OpenStreetMap contributors · OpenFreeMap",
+            stringResource(R.string.map_attribution),
             Modifier.align(Alignment.BottomStart).padding(start = 8.dp)
                 .offset { IntOffset(0, -sheet.height.value.toInt() - 2.dp.roundToPx()) },
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
@@ -220,9 +237,9 @@ private fun FloatingSurface(
 ) {
     val colors = MaterialTheme.colorScheme
     if (onClick != null) {
-        Surface(onClick, modifier, shape = shape, color = colors.surface, shadowElevation = 3.dp, border = BorderStroke(0.5.dp, colors.outlineVariant), content = content)
+        Surface(onClick, modifier, shape = shape, color = colors.surface, shadowElevation = FabElevation, border = BorderStroke(0.5.dp, colors.outlineVariant), content = content)
     } else {
-        Surface(modifier, shape = shape, color = colors.surface, shadowElevation = 3.dp, border = BorderStroke(0.5.dp, colors.outlineVariant), content = content)
+        Surface(modifier, shape = shape, color = colors.surface, shadowElevation = FabElevation, border = BorderStroke(0.5.dp, colors.outlineVariant), content = content)
     }
 }
 
@@ -238,27 +255,14 @@ private fun MapChip(text: String, onClick: () -> Unit) {
     }
 }
 
-/** Not tappable: says what the blue ring on the map is. */
-@Composable
-private fun EstimateLegend(accuracyMeters: Int?) {
-    FloatingSurface(RoundedCornerShape(50)) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.padding(end = 6.dp).size(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
-            Text(
-                if (accuracyMeters != null) "估计位置 ±$accuracyMeters m" else "估计位置",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
 /** Sheet list: count, sort and search, then one row per device (or MAC). */
 @Composable
 private fun DeviceListSheet(state: MapUiState, actions: MapActions) {
     Row(Modifier.padding(start = 20.dp, end = 8.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
-            if (state.mode == MapMode.Product) "${state.rows.size} 个 MAC" else "${state.rows.size} 台设备",
+            LocalTexts.current.plural(
+                if (state.mode == MapMode.Product) R.plurals.macs else R.plurals.devices, state.rows.size, state.rows.size,
+            ),
             Modifier.weight(1f),
             style = MaterialTheme.typography.titleSmall,
         )
@@ -267,19 +271,19 @@ private fun DeviceListSheet(state: MapUiState, actions: MapActions) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(Icons.AutoMirrored.Filled.Sort, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(" ${state.sort.label}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(" ${stringResource(state.sort.label)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = actions.onSearchToggle), contentAlignment = Alignment.Center) {
             Icon(
                 if (state.searching) Icons.Filled.Close else Icons.Filled.Search,
-                if (state.searching) "关闭搜索" else "搜索",
+                stringResource(if (state.searching) R.string.action_close_search else R.string.action_search),
                 Modifier.size(22.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
     if (state.searching) {
-        SearchField(state.query, actions.onQueryChange, "搜索名称、MAC 或产品", Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+        SearchField(state.query, actions.onQueryChange, stringResource(R.string.search_hint_map), Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
     }
     LazyColumn(Modifier.fillMaxWidth().navigationBarsPadding()) {
         items(state.rows, key = { it.id }) { row ->
@@ -291,7 +295,7 @@ private fun DeviceListSheet(state: MapUiState, actions: MapActions) {
                     Text(
                         row.title,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = if (row.title == "未命名") MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface,
+                        color = if (row.unnamed) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

@@ -20,7 +20,6 @@ data class WikiCategory(
     val id: String,
     /** English label from the wiki's vocabulary. */
     val label: String,
-    @SerialName("label_zh") val labelZh: String,
 )
 
 @Serializable

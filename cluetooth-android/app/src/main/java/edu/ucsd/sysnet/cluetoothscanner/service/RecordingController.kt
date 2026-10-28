@@ -1,7 +1,9 @@
 package edu.ucsd.sysnet.cluetoothscanner.service
 
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionCoordinator
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Texts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -202,21 +204,23 @@ class RecordingController internal constructor(
 
 /** Text for the foreground notification; pure so it can be tested. */
 internal object RecordingNotificationText {
-    fun title(state: RecordingState) = when {
-        state.finalizing -> "Saving recording"
-        state.mode == RecordingMode.RECORDING && state.scannerDeferred -> "Recording waiting for Bluetooth"
-        state.mode == RecordingMode.RECORDING -> "Recording"
-        state.mode == RecordingMode.PAUSED -> "Recording paused"
-        else -> "Recording stopped"
-    }
+    fun title(state: RecordingState, texts: Texts) = texts.string(
+        when {
+            state.finalizing -> R.string.notification_saving
+            state.mode == RecordingMode.RECORDING && state.scannerDeferred -> R.string.notification_waiting
+            state.mode == RecordingMode.RECORDING -> R.string.notification_recording
+            state.mode == RecordingMode.PAUSED -> R.string.notification_paused
+            else -> R.string.notification_stopped
+        },
+    )
 
-    fun text(state: RecordingState): String {
+    fun text(state: RecordingState, texts: Texts): String {
         val seconds = state.elapsedMs / 1_000
         val clock = if (seconds >= 3_600) {
             "%d:%02d:%02d".format(seconds / 3_600, seconds % 3_600 / 60, seconds % 60)
         } else {
             "%d:%02d".format(seconds / 60, seconds % 60)
         }
-        return "$clock · ${"%,d".format(state.rowCount)} rows"
+        return "$clock · ${texts.plural(R.plurals.rows, state.rowCount.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), "%,d".format(state.rowCount))}"
     }
 }

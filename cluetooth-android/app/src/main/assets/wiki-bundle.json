@@ -1,102 +1,83 @@
 {
   "schema": 1,
-  "version": "2026-10-26+9f9ccfd7",
+  "version": "2026-10-26+6f7713ec",
   "rules_version": "82f6f951efdf6f32",
   "categories": [
     {
       "id": "asset-tracker",
-      "label": "Asset tracker",
-      "label_zh": "资产追踪器"
+      "label": "Asset tracker"
     },
     {
       "id": "fleet-telematics",
-      "label": "Fleet telematics",
-      "label_zh": "车队远程信息"
+      "label": "Fleet telematics"
     },
     {
       "id": "vehicle-equipment",
-      "label": "Vehicle equipment",
-      "label_zh": "车载设备"
+      "label": "Vehicle equipment"
     },
     {
       "id": "wearable",
-      "label": "Wearable",
-      "label_zh": "可穿戴设备"
+      "label": "Wearable"
     },
     {
       "id": "audio-device",
-      "label": "Audio device",
-      "label_zh": "音频设备"
+      "label": "Audio device"
     },
     {
       "id": "telephony",
-      "label": "Telephony",
-      "label_zh": "电话"
+      "label": "Telephony"
     },
     {
       "id": "camera",
-      "label": "Camera",
-      "label_zh": "相机"
+      "label": "Camera"
     },
     {
       "id": "security-and-access",
-      "label": "Security and access",
-      "label_zh": "安防与门禁"
+      "label": "Security and access"
     },
     {
       "id": "lighting-control",
-      "label": "Lighting control",
-      "label_zh": "照明控制"
+      "label": "Lighting control"
     },
     {
       "id": "smart-appliance",
-      "label": "Smart appliance",
-      "label_zh": "智能家电"
+      "label": "Smart appliance"
     },
     {
       "id": "personal-care",
-      "label": "Personal care",
-      "label_zh": "个人护理"
+      "label": "Personal care"
     },
     {
       "id": "medical-device",
-      "label": "Medical device",
-      "label_zh": "医疗设备"
+      "label": "Medical device"
     },
     {
       "id": "reader-terminal",
-      "label": "Reader or terminal",
-      "label_zh": "读卡与扫码终端"
+      "label": "Reader or terminal"
     },
     {
       "id": "printer",
-      "label": "Printer",
-      "label_zh": "打印机"
+      "label": "Printer"
     },
     {
       "id": "power-energy",
-      "label": "Power and energy",
-      "label_zh": "电源与能源"
+      "label": "Power and energy"
     },
     {
       "id": "environmental-monitor",
-      "label": "Environmental monitor",
-      "label_zh": "环境监测"
+      "label": "Environmental monitor"
     },
     {
       "id": "display",
-      "label": "Display",
-      "label_zh": "显示设备"
+      "label": "Display"
     },
     {
       "id": "input-peripheral",
-      "label": "Input peripheral",
-      "label_zh": "输入设备"
+      "label": "Input peripheral"
     },
     {
       "id": "sports-equipment",
-      "label": "Sports equipment",
-      "label_zh": "运动器材"
+      "label": "Sports equipment"
     }
   ],
   "pages": [

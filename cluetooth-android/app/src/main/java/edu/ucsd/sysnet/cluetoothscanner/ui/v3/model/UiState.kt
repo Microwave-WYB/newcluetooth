@@ -1,5 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.model
 
+import androidx.annotation.StringRes
+import edu.ucsd.sysnet.cluetoothscanner.R
 import java.time.LocalDateTime
 
 // Plain UI state for the v3 screens. Nothing here knows about BLE, GATT or storage:
@@ -14,15 +16,15 @@ fun signalOf(rssi: Int): Signal = when {
     else -> Signal.Weak
 }
 
-enum class AddressType(val label: String) {
-    Unknown("地址类型未知"),
-    Public("公共地址"),
-    RandomStatic("随机静态地址"),
-    ResolvablePrivate("可解析私有地址"),
-    NonResolvablePrivate("不可解析私有地址"),
+enum class AddressType(@StringRes val label: Int) {
+    Unknown(R.string.address_unknown),
+    Public(R.string.address_public),
+    RandomStatic(R.string.address_random_static),
+    ResolvablePrivate(R.string.address_resolvable_private),
+    NonResolvablePrivate(R.string.address_non_resolvable_private),
 }
 
-enum class AdvKind(val label: String) { Legacy("传统"), Extended("扩展") }
+enum class AdvKind(@StringRes val label: Int) { Legacy(R.string.adv_legacy), Extended(R.string.adv_extended) }
 
 enum class RecorderPhase { Idle, Recording, Paused }
 
@@ -32,7 +34,11 @@ data class RecorderUiState(
     val sightings: Int = 0,
 )
 
-enum class AppTab(val label: String) { Scan("扫描"), Nearby("附近"), Recordings("录制") }
+enum class AppTab(@StringRes val label: Int) {
+    Scan(R.string.tab_scan),
+    Nearby(R.string.tab_nearby),
+    History(R.string.tab_history),
+}
 
 // ---- Devices -------------------------------------------------------------------------------
 
@@ -57,7 +63,11 @@ data class ScanUiState(
 
 // ---- Device detail -------------------------------------------------------------------------
 
-enum class ChartWindow(val label: String) { OneMinute("1分钟"), FiveMinutes("5分钟"), FifteenMinutes("15分钟") }
+enum class ChartWindow(@StringRes val label: Int) {
+    OneMinute(R.string.chart_1_min),
+    FiveMinutes(R.string.chart_5_min),
+    FifteenMinutes(R.string.chart_15_min),
+}
 
 data class AdStructureRow(val type: String, val typeName: String, val length: Int, val data: String)
 
@@ -97,7 +107,7 @@ sealed interface GattUiState {
     data class Done(
         val steps: List<GattStepState>,
         val services: List<GattServiceState>,
-        /** Outcome in words when it was not a clean finish, e.g. 部分完成 · 需要认证. */
+        /** Outcome in words when it was not a clean finish, e.g. "Partial · Requires authentication". */
         val summary: String? = null,
     ) : GattUiState
 }
@@ -118,11 +128,19 @@ data class DeviceDetailUiState(
     val chartSamples: List<Int?>,
     val gatt: GattUiState,
     val wiki: WikiUiState?,
-    /** Non-null disables 发现 GATT and says why. */
+    /** Non-null disables "Discover GATT" and says why. */
     val gattDisabledReason: String?,
+    /** Where the device probably is, from its located samples; only on the maps, and only when it can be estimated. */
+    val positionEstimate: PositionEstimateState? = null,
 )
 
-enum class DetailTab(val label: String) { Advertising("广播"), Gatt("GATT"), Wiki("Wiki") }
+data class PositionEstimateState(val at: LatLon, val accuracyMeters: Int?)
+
+enum class DetailTab(@StringRes val label: Int) {
+    Advertising(R.string.detail_tab_advertising),
+    Gatt(R.string.detail_tab_gatt),
+    Wiki(R.string.detail_tab_wiki),
+}
 
 // ---- Nearby --------------------------------------------------------------------------------
 
@@ -152,16 +170,16 @@ data class NearbyUiState(
 
 // ---- Recordings ----------------------------------------------------------------------------
 
-enum class UploadStatus(val label: String) {
-    Uploaded("已上传"),
-    Uploading("上传中"),
-    Failed("失败"),
+enum class UploadStatus(@StringRes val label: Int) {
+    Uploaded(R.string.upload_uploaded),
+    Uploading(R.string.upload_uploading),
+    Failed(R.string.upload_failed),
 
     /** The core has not reported this recording's upload state. */
-    Unknown("未知"),
+    Unknown(R.string.upload_unknown),
 
     /** The recording had no rows to upload. */
-    Empty("无数据"),
+    Empty(R.string.upload_empty),
 }
 
 data class RecordingSummaryState(
@@ -191,7 +209,11 @@ data class SightingPoint(val at: LatLon, val rssi: Int)
 
 enum class MapMode { Recording, Product }
 
-enum class DeviceSort(val label: String) { Signal("按信号"), Recent("按时间"), Name("按名称") }
+enum class DeviceSort(@StringRes val label: Int) {
+    Signal(R.string.map_sort_by_signal),
+    Recent(R.string.map_sort_by_recency),
+    Name(R.string.map_sort_by_name),
+}
 
 /** One line in the map sheet's list: a device (recording map) or a MAC (product map). */
 data class MapListRowState(
@@ -202,6 +224,8 @@ data class MapListRowState(
     val detail: String,
     val rssi: Int?,
     val lastSeenMs: Long = 0,
+    /** No name is known; shown in the muted "Unnamed" style and sorted last by name. */
+    val unnamed: Boolean = false,
     /** Where the strongest sample was heard; used to filter the list to the visible map area. */
     val at: LatLon? = null,
 )

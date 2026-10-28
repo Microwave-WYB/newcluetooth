@@ -126,7 +126,7 @@ even on Android 12, so the once-a-minute scan restart waits while the screen is 
   carries on inside the process without the foreground guarantees.
 - **The process dies mid-recording:** on the next launch the core has finalized the open payload
   and marked the session interrupted, and the app posts one notification per such session
-  ("Recording interrupted: N rows saved", in Chinese "上次录制意外中断，已保存 N 条").
+  ("Recording interrupted: N rows saved").
 - **Rows the core refuses** (an advertisement over 1650 bytes, a malformed address, an
   out-of-range value) are dropped at its input boundary and counted
   (`rejected_observation_count`, `last_rejection`); the scan service also keeps over-long

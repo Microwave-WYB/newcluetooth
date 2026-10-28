@@ -2,4 +2,245 @@
     <string name="app_name" translatable="false">Cluetooth Scanner</string>
     <string name="recording_interrupted_title">Recording interrupted</string>
     <string name="recording_interrupted_text">The last recording was interrupted unexpectedly; %1$d rows were saved.</string>
+
+    <!-- Shared -->
+    <string name="unnamed">Unnamed</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_close">Close</string>
+    <string name="action_view">View</string>
+    <string name="action_add_note">Add note</string>
+    <string name="action_back">Back</string>
+    <string name="action_search">Search</string>
+    <string name="action_close_search">Close search</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_scroll_to_top">Scroll to top</string>
+    <string name="action_view_all">View all</string>
+
+    <plurals name="devices">
+        <item quantity="one">%1$s device</item>
+        <item quantity="other">%1$s devices</item>
+    </plurals>
+    <plurals name="rows">
+        <item quantity="one">%1$s row</item>
+        <item quantity="other">%1$s rows</item>
+    </plurals>
+    <plurals name="devices_in_range">
+        <item quantity="one">%1$s device in range</item>
+        <item quantity="other">%1$s devices in range</item>
+    </plurals>
+    <plurals name="products_in_range">
+        <item quantity="one">%1$s product in range</item>
+        <item quantity="other">%1$s products in range</item>
+    </plurals>
+    <plurals name="macs">
+        <item quantity="one">%1$s MAC</item>
+        <item quantity="other">%1$s MACs</item>
+    </plurals>
+    <plurals name="recordings_count">
+        <item quantity="one">%1$s recording</item>
+        <item quantity="other">%1$s recordings</item>
+    </plurals>
+    <plurals name="minute_rows">
+        <item quantity="one">%1$s minute record</item>
+        <item quantity="other">%1$s minute records</item>
+    </plurals>
+    <plurals name="minutes_heard">
+        <item quantity="one">%1$s minute</item>
+        <item quantity="other">%1$s minutes</item>
+    </plurals>
+    <plurals name="ad_variants">
+        <item quantity="one">%1$s advertising variant</item>
+        <item quantity="other">%1$s advertising variants</item>
+    </plurals>
+    <plurals name="times_heard">
+        <item quantity="one">%1$s time</item>
+        <item quantity="other">%1$s times</item>
+    </plurals>
+    <plurals name="gatt_services">
+        <item quantity="one">%1$s service</item>
+        <item quantity="other">%1$s services</item>
+    </plurals>
+    <plurals name="gatt_characteristics">
+        <item quantity="one">%1$s characteristic</item>
+        <item quantity="other">%1$s characteristics</item>
+    </plurals>
+    <plurals name="bytes">
+        <item quantity="one">%1$s byte</item>
+        <item quantity="other">%1$s bytes</item>
+    </plurals>
+
+    <string name="duration_minutes">%1$d min</string>
+    <string name="duration_seconds">%1$d s</string>
+
+    <!-- Tabs and pages -->
+    <string name="tab_scan">Scan</string>
+    <string name="tab_nearby">Nearby</string>
+    <string name="tab_history">History</string>
+    <string name="search_hint_scan">Search name or MAC</string>
+    <string name="search_hint_map">Search name, MAC or product</string>
+    <string name="nearby_empty">No nearby products identified yet.</string>
+    <string name="history_empty">No recordings yet. Tap the red button to start.</string>
+    <string name="category_in_range_total">%1$s in range · %2$s total</string>
+    <string name="label_in_range">In range</string>
+    <string name="label_seen_before">Seen before</string>
+    <string name="history_in_progress">In progress</string>
+    <string name="last_seen">Last seen %1$s</string>
+    <string name="today_day">Today · %1$s</string>
+    <string name="yesterday_day">Yesterday · %1$s</string>
+
+    <!-- Scan rows and detail -->
+    <string name="connectable">Connectable</string>
+    <string name="not_connectable">Not connectable</string>
+    <string name="signal_strength">Signal strength</string>
+    <string name="adv_legacy">Legacy</string>
+    <string name="adv_extended">Extended</string>
+    <string name="address_unknown">Unknown address type</string>
+    <string name="address_public">Public address</string>
+    <string name="address_random_static">Random static address</string>
+    <string name="address_resolvable_private">Resolvable private address</string>
+    <string name="address_non_resolvable_private">Non-resolvable private address</string>
+    <string name="chart_1_min">1 min</string>
+    <string name="chart_5_min">5 min</string>
+    <string name="chart_15_min">15 min</string>
+    <string name="detail_tab_advertising">Advertising</string>
+    <string name="detail_tab_gatt">GATT</string>
+    <string name="detail_tab_wiki">Wiki</string>
+    <string name="variants_link">%1$s ›</string>
+    <string name="times_range">%1$s · %2$s – %3$s</string>
+    <string name="table_type">Type</string>
+    <string name="table_name">Name</string>
+    <string name="table_length">Length</string>
+    <string name="view_on_map">View on map</string>
+    <string name="gatt_discover">Discover GATT</string>
+    <string name="gatt_discover_again">Discover GATT again</string>
+    <string name="gatt_cancel">Cancel GATT</string>
+    <string name="gatt_not_read_yet">GATT hasn\'t been read for this device yet.</string>
+    <string name="gatt_unknown_service">Unknown service</string>
+    <string name="gatt_unknown_characteristic">Unknown characteristic</string>
+    <string name="gatt_no_value">No value</string>
+    <string name="gatt_reason_in_progress">Discovering GATT</string>
+    <string name="gatt_reason_out_of_range">The device is out of range, so GATT can\'t be discovered</string>
+    <string name="gatt_reason_stale">No advertisement received from this device for a while, so GATT can\'t be discovered</string>
+    <string name="gatt_reason_not_connectable">This device\'s advertisements aren\'t connectable, so GATT can\'t be discovered</string>
+    <string name="gatt_reason_busy">Discovering GATT on another device</string>
+    <string name="wiki_entry">Entry</string>
+    <string name="wiki_categories">Categories</string>
+    <string name="wiki_kind">Kind</string>
+    <string name="wiki_kind_device">Device</string>
+    <string name="wiki_kind_platform">Platform</string>
+    <string name="wiki_kind_identifier">Identifier</string>
+    <string name="wiki_confidence">Candidate, not an authenticated identity</string>
+
+    <!-- GATT progress and results -->
+    <string name="gatt_step_connect">Connect</string>
+    <string name="gatt_step_mtu">Negotiate MTU</string>
+    <string name="gatt_step_discover">Discover services</string>
+    <string name="gatt_step_read">Read characteristics</string>
+    <string name="gatt_step_disconnect">Disconnect</string>
+    <string name="gatt_attempt">Attempt %1$d</string>
+    <string name="gatt_cancelled">Cancelled</string>
+    <string name="gatt_summary_partial">Partial</string>
+    <string name="gatt_summary_failed">Failed</string>
+    <string name="gatt_summary_cancelled">Cancelled. What was already read is kept</string>
+    <string name="gatt_summary_with_error">%1$s · %2$s</string>
+    <string name="gatt_error_authentication">Requires authentication</string>
+    <string name="gatt_error_encryption">Requires encryption</string>
+    <string name="gatt_error_not_permitted">Read not permitted</string>
+    <string name="gatt_error_timeout">Read timed out</string>
+    <string name="gatt_error_code">Error %1$s</string>
+    <string name="gatt_property_broadcast">Broadcast</string>
+    <string name="gatt_property_read">Read</string>
+    <string name="gatt_property_write_no_response">Write without response</string>
+    <string name="gatt_property_write">Write</string>
+    <string name="gatt_property_notify">Notify</string>
+    <string name="gatt_property_indicate">Indicate</string>
+    <string name="gatt_property_signed_write">Signed write</string>
+    <string name="gatt_property_extended">Extended</string>
+    <string name="gatt_value_empty">(empty)</string>
+    <string name="gatt_value_truncated">%1$s … (%2$s)</string>
+    <string name="gatt_toast_busy">A GATT discovery is already running</string>
+    <string name="gatt_toast_permission">Bluetooth connect permission is missing</string>
+    <string name="gatt_toast_bluetooth">Bluetooth is unavailable</string>
+
+    <!-- Notices under a page title -->
+    <string name="notice_bluetooth_off">Bluetooth is off. Turn it on to keep scanning</string>
+    <string name="notice_scanner_unavailable">Bluetooth scanning is unavailable. Retrying</string>
+    <string name="notice_paused_backpressure">Saving data. Scanning resumes automatically</string>
+    <string name="notice_scan_failed">Can\'t start scanning. Check Bluetooth permissions</string>
+    <string name="notice_recording_waits">Waiting for Bluetooth to recover</string>
+    <string name="notice_data_unavailable">Local database unavailable. History isn\'t being recorded</string>
+    <string name="notice_identification_unavailable">Product identification unavailable</string>
+    <string name="notice_no_fix">No location fix yet. The route isn\'t being recorded</string>
+    <string name="notice_stale_fix">No location update for over a minute. The route is paused</string>
+    <string name="notice_offline_map">Offline map unavailable</string>
+
+    <!-- Nearby / structure labels -->
+    <string name="category_other">Other</string>
+    <string name="category_unidentified">Unidentified</string>
+    <string name="structure_company_id">Company 0x%1$04X</string>
+    <string name="structure_company">Company %1$s</string>
+    <string name="structure_service">Service %1$s</string>
+    <string name="structure_name">Name %1$s…</string>
+    <string name="structure_shape">Shape %1$s</string>
+    <string name="structure_none">No advertisement structures</string>
+    <string name="structure_label_count">%1$s ×%2$d</string>
+
+    <!-- Record button, control bar, saved snackbar -->
+    <string name="record_start">Record</string>
+    <string name="record_pause">Pause</string>
+    <string name="record_resume">Resume</string>
+    <string name="record_stop">Stop</string>
+    <string name="record_controls">Recorder controls</string>
+    <string name="record_saved">Saved · %1$s · %2$s</string>
+    <string name="record_problem">This recording wasn\'t saved. The data is still on the phone.</string>
+    <string name="record_toast_finalizing">The last recording hasn\'t been saved yet. Retrying the save; start a new one once it\'s saved</string>
+    <string name="record_toast_error">Recording: %1$s</string>
+    <string name="record_toast_start_failed">Can\'t start recording: local storage isn\'t ready</string>
+    <string name="record_toast_scanner_rejected">Scanning couldn\'t start. Check Bluetooth and permissions</string>
+
+    <!-- Notes -->
+    <string name="note_title">Note</string>
+    <string name="note_hint">Where this recording was made and what for</string>
+    <string name="note_loading">Loading…</string>
+    <string name="note_unavailable">Local database unavailable. Notes can\'t be edited right now</string>
+    <string name="note_toast_not_saved">Note not saved: local database unavailable</string>
+
+    <!-- Recordings -->
+    <string name="upload_uploaded">Uploaded</string>
+    <string name="upload_uploading">Uploading</string>
+    <string name="upload_failed">Failed</string>
+    <string name="upload_unknown">Unknown</string>
+    <string name="upload_empty">No data</string>
+    <string name="recording_summary">%1$s · %2$s</string>
+    <string name="recording_subtitle">%1$s · %2$s · %3$s</string>
+    <string name="map_recording_title">%1$s · %2$s</string>
+    <string name="recording_no_location">This recording has no location data</string>
+    <string name="sightings_no_location">No located records yet</string>
+
+    <!-- Maps -->
+    <string name="map_show_all">Show all</string>
+    <string name="map_this_area">Only this area</string>
+    <string name="map_density">Density layer</string>
+    <string name="map_device_list">Device list</string>
+    <string name="map_estimated_position">Estimated position</string>
+    <string name="map_estimated_position_accuracy">Estimated position ±%1$d m</string>
+    <string name="map_attribution" translatable="false">© OpenMapTiles · © OpenStreetMap contributors · OpenFreeMap</string>
+    <string name="map_product_subtitle">%1$s · from %2$s</string>
+    <string name="map_device_subtitle">From %1$s · %2$s</string>
+    <string name="map_row_detail">%1$s · %2$s</string>
+    <string name="map_sort_by_signal">By signal</string>
+    <string name="map_sort_by_recency">By recency</string>
+    <string name="map_sort_by_name">By name</string>
+
+    <!-- Recording notification and alerts -->
+    <string name="notification_saving">Saving recording</string>
+    <string name="notification_waiting">Recording waiting for Bluetooth</string>
+    <string name="notification_recording">Recording</string>
+    <string name="notification_paused">Recording paused</string>
+    <string name="notification_stopped">Recording stopped</string>
+    <string name="notification_channel_recording">Recording</string>
+    <string name="notification_channel_recording_description">Shown while Cluetooth is recording BLE advertisements</string>
+    <string name="notification_channel_alerts">Recording alerts</string>
 </resources>

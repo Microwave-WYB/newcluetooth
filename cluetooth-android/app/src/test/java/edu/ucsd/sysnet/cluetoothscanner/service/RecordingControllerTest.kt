@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.TestTexts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -215,11 +216,11 @@ class RecordingControllerTest {
 
     @Test
     fun `notification text shows mode, clock and row count`() {
-        assertEquals("Recording", RecordingNotificationText.title(RecordingState(RecordingMode.RECORDING)))
-        assertEquals("Recording paused", RecordingNotificationText.title(RecordingState(RecordingMode.PAUSED)))
-        assertEquals("0:05 · 0 rows", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 5_000, 0)))
-        assertEquals("12:34 · 1,234 rows", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 754_000, 1_234)))
-        assertEquals("1:02:03 · 20 rows", RecordingNotificationText.text(RecordingState(RecordingMode.PAUSED, 3_723_000, 20)))
+        assertEquals("Recording", RecordingNotificationText.title(RecordingState(RecordingMode.RECORDING), TestTexts))
+        assertEquals("Recording paused", RecordingNotificationText.title(RecordingState(RecordingMode.PAUSED), TestTexts))
+        assertEquals("0:05 · 0 rows", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 5_000, 0), TestTexts))
+        assertEquals("12:34 · 1,234 rows", RecordingNotificationText.text(RecordingState(RecordingMode.RECORDING, 754_000, 1_234), TestTexts))
+        assertEquals("1:02:03 · 20 rows", RecordingNotificationText.text(RecordingState(RecordingMode.PAUSED, 3_723_000, 20), TestTexts))
     }
 
     // --- finalization, deferral and errors ----------------------------------------------------
@@ -301,7 +302,7 @@ class RecordingControllerTest {
         assertTrue(waiting.scannerDeferred)
         assertTrue(waiting.serviceNeeded)
         assertFalse(waiting.wakeLockNeeded)
-        assertEquals("Recording waiting for Bluetooth", RecordingNotificationText.title(waiting))
+        assertEquals("Recording waiting for Bluetooth", RecordingNotificationText.title(waiting, TestTexts))
 
         // Bluetooth is back: the coordinator resumes the deferred scan.
         h.startOutcome = ScannerStartOutcome.STARTED
@@ -344,6 +345,6 @@ class RecordingControllerTest {
 
     @Test
     fun `the notification says saving while finalizing`() {
-        assertEquals("Saving recording", RecordingNotificationText.title(RecordingState(RecordingMode.IDLE, finalizing = true)))
+        assertEquals("Saving recording", RecordingNotificationText.title(RecordingState(RecordingMode.IDLE, finalizing = true), TestTexts))
     }
 }

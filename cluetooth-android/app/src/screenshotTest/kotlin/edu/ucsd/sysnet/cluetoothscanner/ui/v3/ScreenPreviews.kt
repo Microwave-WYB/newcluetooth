@@ -19,9 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.android.tools.screenshot.PreviewTest
 import androidx.compose.ui.unit.dp
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordControl
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.BottomRecordControl
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordPill
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordControlBar
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordPlacement
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordSavedSnackbar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecorderCallbacks
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.ScrollToTopButton
@@ -88,14 +89,14 @@ private fun ScanPreview(
     AppShell(
         recorder = state.recorder,
         callbacks = cb,
-        placement = if (detail != null || controlBar) RecordPlacement.Mini else RecordPlacement.Full,
+        placement = recordPlacement(state.recorder.phase, roomForExpanded = detail == null && !controlBar),
         tab = AppTab.Scan,
         showScrollToTop = showTop,
         controlBarOpen = controlBar,
         overlay = { if (detail != null) ScanDeviceSheet(detail, DeviceDetailActions(), {}) },
         snackbar = { if (saved != null) SavedSnackbarHost(saved) },
     ) {
-        ScanPage(state.rows, state.recorder, listState, refreshing = refreshing)
+        ScanPage(state.rows, listState, refreshing = refreshing)
     }
 }
 
@@ -173,7 +174,7 @@ fun DeviceFullNotConnectable() = Frame { FullPreview(FakeData.detailNotConnectab
 private fun NearbyPreview(state: NearbyUiState, controlBar: Boolean = false) = AppShell(
     recorder = state.recorder,
     callbacks = cb,
-    placement = RecordPlacement.Mini,
+    placement = recordPlacement(state.recorder.phase, roomForExpanded = false),
     tab = AppTab.Nearby,
     controlBarOpen = controlBar,
 ) { NearbyPage(state) }
@@ -191,7 +192,7 @@ fun NearbyControlBar() = Frame { NearbyPreview(FakeData.nearbyRecording, control
 
 @PreviewTest @PhonePreview @Composable
 fun NearbyCategoryList() = Frame {
-    AppShell(recorder = FakeData.idle, callbacks = cb, placement = RecordPlacement.Mini, tab = AppTab.Nearby) {
+    AppShell(recorder = FakeData.idle, callbacks = cb, placement = recordPlacement(FakeData.idle.phase, roomForExpanded = false), tab = AppTab.Nearby) {
         CategoryListPage(FakeData.nearbyAudio)
     }
 }
@@ -202,8 +203,8 @@ fun NearbyCategoryList() = Frame {
 private fun RecordingsPreview(state: RecordingsUiState, saved: SavedRecording? = null) = AppShell(
     recorder = state.recorder,
     callbacks = cb,
-    placement = RecordPlacement.Mini,
-    tab = AppTab.Recordings,
+    placement = recordPlacement(state.recorder.phase, roomForExpanded = false),
+    tab = AppTab.History,
     snackbar = { if (saved != null) SavedSnackbarHost(saved) },
 ) { RecordingsPage(state) }
 
@@ -217,11 +218,10 @@ fun RecordingsListIdle() = Frame { RecordingsPreview(FakeData.recordingsIdle) }
 fun RecordingsSavedSnackbar() = Frame { RecordingsPreview(FakeData.recordingsIdle, SavedRecording(23 * 60, 1_400)) }
 
 @Composable
-private fun MapPreview(state: MapUiState) = AppShell(
-    recorder = FakeData.idle,
+private fun MapPreview(state: MapUiState, recorder: RecorderUiState = FakeData.idle) = AppShell(
+    recorder = recorder,
     callbacks = cb,
-    placement = RecordPlacement.Mini,
-    floatingMini = true,
+    placement = recordPlacement(recorder.phase, roomForExpanded = false),
 ) { MapPage(state, MapActions()) { covered -> PlaceholderMapFor(state, covered) } }
 
 @PreviewTest @PhonePreview @Composable
@@ -236,6 +236,16 @@ fun RecordingMapPannedHeatmap() = Frame { MapPreview(FakeData.recordingMapPanned
 @PreviewTest @PhonePreview @Composable
 fun ProductMap() = Frame { MapPreview(FakeData.productMap) }
 
+/** The same floating pill as on every other page, with the map's own controls ending before it. */
+@PreviewTest @PhonePreview @Composable
+fun RecordingMapWithPill() = Frame { MapPreview(FakeData.recordingMap, FakeData.recording) }
+
+@PreviewTest @PhonePreview @Composable
+fun RecordingMapWithPillPaused() = Frame { MapPreview(FakeData.recordingMapSelected, FakeData.paused) }
+
+@PreviewTest @PhonePreview @Composable
+fun ProductMapWithPill() = Frame { MapPreview(FakeData.productMap, FakeData.recording) }
+
 // ---- Record control, every state -----------------------------------------------------------
 
 @Composable
@@ -247,24 +257,26 @@ private fun StateRow(label: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun Control(state: RecorderUiState, placement: RecordPlacement) = RecordControl(state, placement, cb)
+private fun Bottom(state: RecorderUiState) = BottomRecordControl(state, cb)
+
+@Composable
+private fun Pill(state: RecorderUiState) = RecordPill(state, cb)
 
 @PreviewTest @PhonePreview @Composable
 fun RecordControlStates() = Frame {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Top) {
-        StateRow("空闲 · 完整") { Control(FakeData.idle, RecordPlacement.Full) }
-        StateRow("录制中 · 完整") { Control(FakeData.recording, RecordPlacement.Full) }
-        StateRow("已暂停 · 完整") { Control(FakeData.paused, RecordPlacement.Full) }
-        StateRow("空闲 · 迷你") { Control(FakeData.idle, RecordPlacement.Mini) }
-        StateRow("录制中 · 迷你") { Control(FakeData.recording, RecordPlacement.Mini) }
-        StateRow("已暂停 · 迷你") { Control(FakeData.paused, RecordPlacement.Mini) }
-        StateRow("回到顶部（叠在完整按钮上方）") {
+        StateRow("Idle · round button") { Bottom(FakeData.idle) }
+        StateRow("Active · expanded (Scan page)") { Bottom(FakeData.recording) }
+        StateRow("Paused · expanded (Scan page)") { Bottom(FakeData.paused) }
+        StateRow("Active · floating pill") { Pill(FakeData.recording) }
+        StateRow("Paused · floating pill") { Pill(FakeData.paused) }
+        StateRow("Scroll to top, stacked above the round button") {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 ScrollToTopButton({})
-                Control(FakeData.idle, RecordPlacement.Full)
+                Bottom(FakeData.idle)
             }
         }
-        StateRow("停止后的提示") { RecordSavedSnackbar(23 * 60, 1_400, Modifier.width(380.dp)) }
+        StateRow("After stop") { RecordSavedSnackbar(23 * 60, 1_400, Modifier.width(380.dp)) }
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.BottomCenter) {
             RecordControlBar(FakeData.recording, cb)
         }

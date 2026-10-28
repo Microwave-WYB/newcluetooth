@@ -47,6 +47,11 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SheetLayer
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.SignalDot
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.StatusLine
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.V3TopBar
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalContext
+import androidx.annotation.StringRes
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.CategoryIcon
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.NearbyCategoryState
@@ -120,7 +125,7 @@ private fun CategorySection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(category.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "查看全部", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, stringResource(R.string.action_view_all), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(category.items, key = { it.id }) { item -> ProductTile(item, category.icon) { onOpenProduct(item) } }
@@ -132,16 +137,16 @@ private fun CategorySection(
 fun NearbyPage(
     state: NearbyUiState,
     modifier: Modifier = Modifier,
-    notice: String? = null,
+    notice: Int? = null,
     onOpenCategory: (NearbyCategoryState) -> Unit = {},
     onOpenProduct: (ProductItemState) -> Unit = {},
 ) {
     val inRange = (state.categories + state.unrecognized).sumOf { c -> c.items.count { it.strongestRssi != null } }
     Column(modifier.fillMaxSize()) {
         V3TopBar(
-            title = "附近",
+            title = stringResource(R.string.tab_nearby),
             status = {
-                RecorderStatus(state.recorder, "$inRange 个产品在范围内")
+                StatusLine(LocalTexts.current.plural(R.plurals.products_in_range, inRange, inRange))
                 HeaderNotice(notice)
             },
         )
@@ -157,7 +162,7 @@ fun NearbyPage(
             if (state.categories.isEmpty() && state.unrecognized.items.isEmpty()) {
                 item(key = "empty") {
                     Text(
-                        "还没有识别出附近的产品。",
+                        stringResource(R.string.nearby_empty),
                         Modifier.padding(20.dp),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -182,15 +187,15 @@ fun CategoryListPage(
         V3TopBar(
             title = category.title,
             navigation = { BackButton(onBack) },
-            status = { StatusLine("${now.size} 个在范围内 · 共 ${category.items.size} 个") },
+            status = { StatusLine(stringResource(R.string.category_in_range_total, now.size, category.items.size)) },
         )
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
             if (now.isNotEmpty()) {
-                item { ListLabel("在范围内") }
+                item { ListLabel(stringResource(R.string.label_in_range)) }
                 items(now, key = { it.id }) { ProductListRow(it, category.icon) { onOpenProduct(it) } }
             }
             if (before.isNotEmpty()) {
-                item { ListLabel("曾经见过") }
+                item { ListLabel(stringResource(R.string.label_seen_before)) }
                 items(before, key = { it.id }) { ProductListRow(it, category.icon) { onOpenProduct(it) } }
             }
         }

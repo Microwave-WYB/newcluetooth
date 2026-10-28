@@ -32,7 +32,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.AppShell
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordPlacement
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.recordPlacement
+import androidx.compose.ui.res.stringResource
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordProblemSnackbar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecordSavedSnackbar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
@@ -101,7 +103,6 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
         val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
         val onScan = route == Route.Tab(AppTab.Scan)
-        val isMap = route is Route.RecordingMap || route is Route.ProductMap || route is Route.DeviceMap
         val sheetOpen = onScan && selected != null && detail != null
         val tab = when (route) {
             is Route.Tab -> route.tab
@@ -114,7 +115,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
         LaunchedEffect(sortVersion) { if (sortVersion > 0) listState.scrollToItem(0) }
 
         // Back: the control bar (closed in AppShell, composed last), the sheet, the selection, then pages;
-        // on the Nearby and Recordings tabs it goes to the Scan tab before leaving the app.
+        // on the Nearby and History tabs it goes to the Scan tab before leaving the app.
         BackHandler(enabled = stack.size > 1) { vm.back() }
         BackHandler(enabled = stack.size == 1 && tab != null && tab != AppTab.Scan) { vm.selectTab(AppTab.Scan) }
 
@@ -128,12 +129,11 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
         AppShell(
             recorder = recorder,
             callbacks = vm.recorderCallbacks,
-            placement = if (onScan && !sheetOpen && !controlBarOpen) RecordPlacement.Full else RecordPlacement.Mini,
+            placement = recordPlacement(recorder.phase, roomForExpanded = onScan && !sheetOpen && !controlBarOpen),
             tab = tab,
             onTab = vm::selectTab,
             showScrollToTop = showTop,
             onScrollToTop = { scope.launch { listState.animateScrollToItem(0) } },
-            floatingMini = isMap,
             controlBarOpen = controlBarOpen,
             onDismissControlBar = { vm.setControlBar(false) },
             overlay = {
@@ -162,7 +162,6 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                 is Route.Tab -> when (route.tab) {
                     AppTab.Scan -> ScanPage(
                         rows = scan.rows,
-                        recorder = scan.recorder,
                         listState = listState,
                         refreshing = vm.refreshing.collectAsStateWithLifecycle().value,
                         onRefresh = vm::refreshScan,
@@ -179,7 +178,7 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
                             onOpenProduct = { vm.openProduct(it.id) },
                         )
                     }
-                    AppTab.Recordings -> {
+                    AppTab.History -> {
                         val rec by vm.recordings.collectAsStateWithLifecycle()
                         RecordingsPage(rec, notice = notice, onOpenRecording = { vm.open(Route.RecordingMap(it.id)) })
                     }
@@ -228,7 +227,7 @@ private fun MapRoute(state: MapUiState, vm: V3ViewModel, detailActions: DeviceDe
     } else {
         state.route.size >= 2 || state.productPoints.isNotEmpty()
     }
-    MapPage(state, actions, notice = if (offline) "离线地图不可用" else null) { covered ->
+    MapPage(state, actions, notice = if (offline) R.string.notice_offline_map else null) { covered ->
         MapLibreMap(
             overlay = MapOverlay(
                 route = if (state.selected != null) emptyList() else state.route,
@@ -256,16 +255,18 @@ private fun NoteDialog(vm: V3ViewModel) {
     LaunchedEffect(stored) { if (!edited) stored?.let { text = it } }
     AlertDialog(
         onDismissRequest = vm::dismissNote,
-        title = { Text("备注") },
+        title = { Text(stringResource(R.string.note_title)) },
         text = {
             Box {
                 if (text.isEmpty()) {
                     Text(
-                        when {
-                            !editable -> "本地数据库不可用，暂时不能编辑"
-                            stored == null -> "读取中…"
-                            else -> "这次录制是在哪里、做什么"
-                        },
+                        stringResource(
+                            when {
+                                !editable -> R.string.note_unavailable
+                                stored == null -> R.string.note_loading
+                                else -> R.string.note_hint
+                            },
+                        ),
                         color = MaterialTheme.colorScheme.outline,
                     )
                 }
@@ -279,7 +280,7 @@ private fun NoteDialog(vm: V3ViewModel) {
                 )
             }
         },
-        confirmButton = { TextButton({ vm.saveNote(text) }, enabled = canEdit) { Text("保存") } },
-        dismissButton = { TextButton(vm::dismissNote) { Text("取消") } },
+        confirmButton = { TextButton({ vm.saveNote(text) }, enabled = canEdit) { Text(stringResource(R.string.action_save)) } },
+        dismissButton = { TextButton(vm::dismissNote) { Text(stringResource(R.string.action_cancel)) } },
     )
 }

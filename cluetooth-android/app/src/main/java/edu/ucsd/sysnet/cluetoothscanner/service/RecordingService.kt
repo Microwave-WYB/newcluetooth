@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat
 import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
 import edu.ucsd.sysnet.cluetoothscanner.MainActivity
 import edu.ucsd.sysnet.cluetoothscanner.R
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ResourceTexts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -130,10 +131,12 @@ class RecordingService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel = NotificationChannel(CHANNEL_ID, "Recording", NotificationManager.IMPORTANCE_LOW)
-        channel.description = "Shown while Cluetooth is recording BLE advertisements"
+        val channel = NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel_recording), NotificationManager.IMPORTANCE_LOW)
+        channel.description = getString(R.string.notification_channel_recording_description)
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
+
+    private val texts by lazy { ResourceTexts(this) }
 
     private fun notification(state: RecordingState): Notification {
         val open = PendingIntent.getActivity(
@@ -144,8 +147,8 @@ class RecordingService : Service() {
         )
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle(RecordingNotificationText.title(state))
-            .setContentText(RecordingNotificationText.text(state))
+            .setContentTitle(RecordingNotificationText.title(state, texts))
+            .setContentText(RecordingNotificationText.text(state, texts))
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

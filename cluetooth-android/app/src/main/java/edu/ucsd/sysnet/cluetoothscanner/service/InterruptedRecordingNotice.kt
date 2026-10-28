@@ -51,7 +51,7 @@ internal class InterruptedRecordingNotifier(private val context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Recording alerts", NotificationManager.IMPORTANCE_DEFAULT),
+                NotificationChannel(CHANNEL_ID, context.getString(R.string.notification_channel_alerts), NotificationManager.IMPORTANCE_DEFAULT),
             )
         }
         val open = PendingIntent.getActivity(

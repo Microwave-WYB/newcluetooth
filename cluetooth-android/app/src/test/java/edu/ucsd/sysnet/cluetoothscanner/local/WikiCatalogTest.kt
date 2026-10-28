@@ -28,7 +28,7 @@ class WikiCatalogTest {
         // the old snapshot has no categories of its own: the checked-in mapping gives devices theirs
         assertEquals(listOf("audio-device"), catalog.page("product_family--jabra-name-tokens")?.categories)
         assertEquals(PageKind.PLATFORM, catalog.page("protocol--ibeacon")?.kind)
-        assertTrue(catalog.categories.all { it.label.isNotBlank() && it.labelZh.isNotBlank() })
+        assertTrue(catalog.categories.all { it.label.isNotBlank() })
         assertNull(catalog.page("nope"))
     }
 

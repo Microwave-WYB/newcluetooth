@@ -3,6 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.ui.v3.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
+import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
@@ -22,6 +23,8 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingOutcome
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RecorderCallbacks
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDistance
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.formatDuration
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ResourceTexts
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Texts
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveDeviceTracker
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
@@ -95,7 +98,10 @@ data class SavedInfo(val summary: SavedRecording, val recordingId: String?)
  * here touches Compose.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
+class V3ViewModel(
+    private val app: CluetoothApplication,
+    private val texts: Texts = ResourceTexts(app),
+) : ViewModel() {
     private val localData = app.localData
     private val hub = app.localData as? LocalDataHub
     private val recording = app.recordingController
@@ -164,7 +170,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     /** Starting while the last recording could not be sealed does nothing in the core; say why and retry the seal. */
     private fun startRecording() {
         if (coordinator.state.value == ScanTransitionState.FINALIZATION_FAILED) {
-            toasts.trySend("上一次录制还没有保存成功，正在重试保存；保存好后再开始新的录制")
+            toasts.trySend(texts.string(R.string.record_toast_finalizing))
             recording.stop()
             return
         }
@@ -207,7 +213,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 _noteTarget.value = null
             } catch (error: IllegalStateException) {
                 // The store refuses rather than losing the note; keep the editor open.
-                toasts.trySend("备注没有保存：本地数据库不可用")
+                toasts.trySend(texts.string(R.string.note_toast_not_saved))
             }
         }
     }
@@ -249,7 +255,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     fun setUiActive(active: Boolean) { uiActive.value = active }
 
     /** The scan, data and location problems in one line under the page header; null when all is well. */
-    val headerNotice: StateFlow<String?> = combine(
+    val headerNotice: StateFlow<Int?> = combine(
         app.bleScanService.scanStatus,
         recording.state.map { it.scannerDeferred to (it.mode != RecordingMode.IDLE) }.distinctUntilChanged(),
         localData.status,
@@ -293,7 +299,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         }
         viewModelScope.launch {
             recording.state.map { it.error }.distinctUntilChanged().collect { error ->
-                if (error != null) toasts.trySend("录制：$error")
+                if (error != null) toasts.trySend(texts.string(R.string.record_toast_error, error))
             }
         }
         viewModelScope.launch { coordinator.state.collect(::onTransition) }
@@ -301,7 +307,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             gatt.state.collect { g ->
                 if (g is EngineGattState.Finished) {
                     val key = g.result.request.target.addr
-                    gattResults.update { m -> (m - key + (key to GattPresenter.finished(g.result))).let { if (it.size > MAX_GATT_RESULTS) it.entries.drop(1).associate { e -> e.key to e.value } else it } }
+                    gattResults.update { m -> (m - key + (key to GattPresenter.finished(g.result, texts))).let { if (it.size > MAX_GATT_RESULTS) it.entries.drop(1).associate { e -> e.key to e.value } else it } }
                 }
             }
         }
@@ -329,8 +335,8 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 startSeen = false
                 when (RecordingOutcome.atStop(previous, startFailed, summary != null)) {
                     RecordingOutcome.Kind.Saved -> showSaved(summary!!)
-                    RecordingOutcome.Kind.StartFailed -> toasts.trySend("无法开始录制：本地存储还没有准备好")
-                    RecordingOutcome.Kind.ScannerRejected -> toasts.trySend("扫描无法启动，请检查蓝牙和权限")
+                    RecordingOutcome.Kind.StartFailed -> toasts.trySend(texts.string(R.string.record_toast_start_failed))
+                    RecordingOutcome.Kind.ScannerRejected -> toasts.trySend(texts.string(R.string.record_toast_scanner_rejected))
                     RecordingOutcome.Kind.None -> Unit
                 }
             }
@@ -338,7 +344,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 val rec = recording.state.value
                 if (recordingReached) pendingSaved = SavedRecording((rec.elapsedMs / 1000).toInt(), rec.rowCount.toInt())
                 recordingReached = false
-                _problem.value = "这次录制没有保存成功，数据还在手机上。"
+                _problem.value = texts.string(R.string.record_problem)
             }
             ScanTransitionState.STARTING -> startSeen = true
             ScanTransitionState.FINALIZING -> Unit
@@ -395,7 +401,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     fun viewSaved() {
         val id = _saved.value?.recordingId ?: return
         _saved.value = null
-        selectTab(AppTab.Recordings)
+        selectTab(AppTab.History)
         open(Route.RecordingMap(id))
     }
 
@@ -449,11 +455,11 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         val engine = gattFor(addr, g, saved)
         val busyElsewhere = g is EngineGattState.Running && g.request.target.addr != addr
         val reason = when {
-            engine is GattUiState.InProgress -> "正在发现 GATT"
-            live == null -> "设备不在范围内，无法发现 GATT"
-            row.stale -> "这台设备已有一阵子没有收到广播，无法发现 GATT"
-            !row.connectable -> "该设备的广播不可连接，无法发现 GATT"
-            busyElsewhere -> "正在发现另一台设备的 GATT"
+            engine is GattUiState.InProgress -> texts.string(R.string.gatt_reason_in_progress)
+            live == null -> texts.string(R.string.gatt_reason_out_of_range)
+            row.stale -> texts.string(R.string.gatt_reason_stale)
+            !row.connectable -> texts.string(R.string.gatt_reason_not_connectable)
+            busyElsewhere -> texts.string(R.string.gatt_reason_busy)
             else -> null
         }
         return DeviceDetailUiState(
@@ -467,15 +473,15 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                     family = it.title,
                     summary = it.oneLine,
                     facts = buildList {
-                        add("条目" to it.id)
-                        if (it.categories.isNotEmpty()) add("类别" to it.categories.joinToString("、") { c -> catalog?.category(c)?.labelZh ?: c })
-                        add("类型" to when (it.kind) {
-                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.DEVICE -> "设备"
-                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.PLATFORM -> "平台"
-                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.IDENTIFIER -> "标识"
+                        add(texts.string(R.string.wiki_entry) to it.id)
+                        if (it.categories.isNotEmpty()) add(texts.string(R.string.wiki_categories) to it.categories.joinToString(", ") { c -> catalog?.category(c)?.label ?: c })
+                        add(texts.string(R.string.wiki_kind) to when (it.kind) {
+                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.DEVICE -> texts.string(R.string.wiki_kind_device)
+                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.PLATFORM -> texts.string(R.string.wiki_kind_platform)
+                            edu.ucsd.sysnet.cluetoothscanner.local.PageKind.IDENTIFIER -> texts.string(R.string.wiki_kind_identifier)
                         })
                     },
-                    confidence = "候选，不是已认证的身份",
+                    confidence = texts.string(R.string.wiki_confidence),
                 )
             },
             gattDisabledReason = reason,
@@ -503,7 +509,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
 
     /** This device's discovery in flight, else the last result kept for it, else nothing. */
     private fun gattFor(addr: String, g: EngineGattState, saved: Map<String, GattUiState.Done>): GattUiState {
-        if (g is EngineGattState.Running && g.request.target.addr == addr) return GattPresenter.running(g.progress)
+        if (g is EngineGattState.Running && g.request.target.addr == addr) return GattPresenter.running(g.progress, texts)
         return saved[addr] ?: GattUiState.NotStarted
     }
 
@@ -519,9 +525,9 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         )
         when (result) {
             GattStartResult.Started -> Unit
-            GattStartResult.Busy -> toasts.trySend("已有一个 GATT 发现在进行")
-            GattStartResult.PermissionMissing -> toasts.trySend("没有蓝牙连接权限")
-            GattStartResult.BluetoothUnavailable -> toasts.trySend("蓝牙不可用")
+            GattStartResult.Busy -> toasts.trySend(texts.string(R.string.gatt_toast_busy))
+            GattStartResult.PermissionMissing -> toasts.trySend(texts.string(R.string.gatt_toast_permission))
+            GattStartResult.BluetoothUnavailable -> toasts.trySend(texts.string(R.string.gatt_toast_bluetooth))
         }
     }
 
@@ -544,11 +550,11 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         @Suppress("UNCHECKED_CAST")
         NearbyMapper.map(
             products[0] as RecorderUiState, products[1] as InRangeSnapshot, products[2] as List<CategoryProducts>,
-            products[3] as WikiCatalog?, unknownNow = unknownNow, unknownSeen = unknownSeen,
+            products[3] as WikiCatalog?, texts, unknownNow = unknownNow, unknownSeen = unknownSeen,
         )
     }
         .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NearbyMapper.map(RecorderUiState(), null, emptyList(), null))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NearbyMapper.map(RecorderUiState(), null, emptyList(), null, texts))
 
     // ---- recordings -----------------------------------------------------------------------
 
@@ -563,7 +569,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         localData.recordings(),
         app.repository.uiState.map { s -> if (s.coreReady) s.sessions.associate { it.sessionId to it.uploadState } else emptyMap() }.distinctUntilChanged(),
         allNotes,
-    ) { rec, list, uploads, noteMap -> RecordingMapper.state(rec, list, uploads, noteMap) }
+    ) { rec, list, uploads, noteMap -> RecordingMapper.state(rec, list, uploads, noteMap, texts) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecordingsUiState(RecorderUiState(), null, emptyList()))
 
@@ -590,10 +596,8 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    private fun md(ms: Long): String {
-        val d = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate()
-        return "${d.monthValue}月${d.dayOfMonth}日"
-    }
+    private fun md(ms: Long): String =
+        texts.monthDay(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate())
 
     /** [areaAddrs] (when the filter is on and the store answered) replaces the per-row location test. */
     private fun List<MapListRowState>.arranged(local: MapLocal, areaAddrs: Set<String>? = null): List<MapListRowState> {
@@ -607,15 +611,17 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
         return when (local.sort) {
             DeviceSort.Signal -> inArea.sortedByDescending { it.rssi ?: Int.MIN_VALUE }
             DeviceSort.Recent -> inArea.sortedByDescending { it.lastSeenMs }
-            DeviceSort.Name -> inArea.sortedWith(compareBy({ it.title == "未命名" }, { it.title.lowercase() }, { it.mac }))
+            DeviceSort.Name -> inArea.sortedWith(compareBy({ it.unnamed }, { it.title.lowercase() }, { it.mac }))
         }
     }
+
+    private val unnamedText get() = texts.string(R.string.unnamed)
 
     private fun titleFor(addr: String, pageIds: List<String>): String {
         val live = synchronized(lock) { tracker.name(addr) }
         if (live != null) return live
         val catalog = localData.catalog.value
-        return pageIds.firstNotNullOfOrNull { catalog?.page(it)?.title } ?: "未命名"
+        return pageIds.firstNotNullOfOrNull { catalog?.page(it)?.title } ?: unnamedText
     }
 
     private fun recordingMap(id: String): Flow<MapUiState?> {
@@ -636,11 +642,13 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             if (r == null) return@combine null
             val routePts = route.map { LatLon(it.lat, it.lon) }
             val rows = devices.map { dev: RecordedDevice ->
+                val title = titleFor(dev.addr, dev.pageIds)
                 MapListRowState(
                     id = dev.addr,
-                    title = titleFor(dev.addr, dev.pageIds),
+                    title = title,
+                    unnamed = title == unnamedText,
                     mac = dev.addr,
-                    detail = "${dev.minuteCount} 分钟",
+                    detail = texts.plural(R.plurals.minutes_heard, dev.minuteCount, dev.minuteCount),
                     rssi = dev.strongestRssi,
                     lastSeenMs = dev.lastSeenMs,
                     at = dev.bestLocation?.let { LatLon(it.lat, it.lon) },
@@ -652,8 +660,12 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             val start = LocalDateTime.ofInstant(Instant.ofEpochMilli(r.startedAtMs), ZoneId.systemDefault())
             MapUiState(
                 mode = MapMode.Recording,
-                title = "${start.monthValue}月${start.dayOfMonth}日 ${"%02d:%02d".format(start.hour, start.minute)}" + if (r.active) " · 录制中" else "",
-                subtitle = "${formatDuration((r.durationMs / 1000).toInt())} · ${formatDistance(r.distanceMeters.toInt())} · ${r.deviceCount} 台设备",
+                title = texts.string(R.string.map_recording_title, texts.monthDay(start.toLocalDate()), texts.timeOfDay(start)),
+                subtitle = (if (r.active) "${texts.string(R.string.history_in_progress)} · " else "") + texts.string(
+                    R.string.recording_subtitle,
+                    formatDuration((r.durationMs / 1000).toInt(), texts), formatDistance(r.distanceMeters.toInt()),
+                    texts.plural(R.plurals.devices, r.deviceCount, r.deviceCount),
+                ),
                 route = routePts,
                 rows = rows,
                 sort = local.sort, query = local.query, searching = local.searching,
@@ -666,7 +678,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 areaOnly = local.areaOnly,
                 heatmap = local.heat,
                 heat = if (local.heat) heat else emptyList(),
-                emptyNote = if (routePts.isEmpty() && devices.all { it.bestLocation == null }) "这次录制没有位置信息" else null,
+                emptyNote = if (routePts.isEmpty() && devices.all { it.bestLocation == null }) texts.string(R.string.recording_no_location) else null,
             )
         }
     }
@@ -678,11 +690,16 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             fun point(s: Sighting) = SightingPoint(LatLon(s.location!!.lat, s.location.lon), s.bestRssi ?: -90)
             val rows = all.groupBy { it.addr }.map { (addr, list) ->
                 val last = list.maxOf { it.minuteMs }
+                val title = if (productTitle != null) catalog?.page(productTitle)?.title ?: productTitle else titleFor(addr, list.first().pageIds)
                 MapListRowState(
                     id = addr,
-                    title = if (productTitle != null) catalog?.page(productTitle)?.title ?: productTitle else titleFor(addr, list.first().pageIds),
+                    title = title,
+                    unnamed = productTitle == null && title == unnamedText,
                     mac = addr,
-                    detail = "${list.map { it.recordingId }.distinct().size} 次录制 · ${md(last)}",
+                    detail = texts.string(
+                        R.string.map_row_detail,
+                        list.map { it.recordingId }.distinct().size.let { texts.plural(R.plurals.recordings_count, it, it) }, md(last),
+                    ),
                     rssi = list.mapNotNull { it.bestRssi }.maxOrNull(),
                     lastSeenMs = last,
                     at = list.firstOrNull { it.location != null }?.location?.let { LatLon(it.lat, it.lon) },
@@ -697,7 +714,11 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             MapUiState(
                 mode = MapMode.Product,
                 title = title,
-                subtitle = if (productTitle != null) "$macs 个 MAC · 来自 $recordingsCount 次录制" else "来自 $recordingsCount 次录制 · ${all.size} 个分钟记录",
+                subtitle = if (productTitle != null) {
+                    texts.string(R.string.map_product_subtitle, texts.plural(R.plurals.macs, macs, macs), texts.plural(R.plurals.recordings_count, recordingsCount, recordingsCount))
+                } else {
+                    texts.string(R.string.map_device_subtitle, texts.plural(R.plurals.recordings_count, recordingsCount, recordingsCount), texts.plural(R.plurals.minute_rows, all.size, all.size))
+                },
                 route = emptyList(),
                 rows = rows,
                 sort = local.sort, query = local.query, searching = local.searching,
@@ -710,7 +731,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
                 areaOnly = local.areaOnly,
                 heatmap = local.heat,
                 heat = if (local.heat) all2.map { it.at } else emptyList(),
-                emptyNote = if (located.isEmpty()) "还没有带位置的记录" else null,
+                emptyNote = if (located.isEmpty()) texts.string(R.string.sightings_no_location) else null,
             )
         }
 
