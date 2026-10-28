@@ -85,6 +85,10 @@ fun V3App(vm: V3ViewModel, legacyContent: @Composable (onBack: () -> Unit) -> Un
             else -> null
         }
 
+        val sortVersion by vm.sortVersion.collectAsState()
+        // A re-sort moves the rows under a keyed list; start again from the top.
+        LaunchedEffect(sortVersion) { if (sortVersion > 0) listState.scrollToItem(0) }
+
         BackHandler(enabled = stack.size > 1) { vm.back() }
         BackHandler(enabled = controlBarOpen) { vm.setControlBar(false) }
 

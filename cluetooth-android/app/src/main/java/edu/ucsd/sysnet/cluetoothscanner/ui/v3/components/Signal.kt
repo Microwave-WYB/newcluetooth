@@ -71,17 +71,19 @@ fun Sparkline(history: List<Int>, modifier: Modifier = Modifier) {
     val last = history.lastOrNull()
     val lastColor = if (last != null) signalColor(last) else line
     Canvas(modifier.size(width = 56.dp, height = 20.dp)) {
-        if (history.size < 2) return@Canvas
+        if (history.isEmpty()) return@Canvas
         val pad = 3.dp.toPx()
         val lo = -100f
         val hi = -35f
         fun pt(i: Int, v: Int) = Offset(
-            pad + (size.width - 2 * pad) * i / (history.size - 1),
+            pad + (size.width - 2 * pad) * (if (history.size == 1) 1f else i.toFloat() / (history.size - 1)),
             pad + (size.height - 2 * pad) * (1f - (v.coerceIn(-100, -35) - lo) / (hi - lo)),
         )
-        val path = Path()
-        history.forEachIndexed { i, v -> pt(i, v).let { if (i == 0) path.moveTo(it.x, it.y) else path.lineTo(it.x, it.y) } }
-        drawPath(path, line, style = Stroke(1.25.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        if (history.size >= 2) {
+            val path = Path()
+            history.forEachIndexed { i, v -> pt(i, v).let { if (i == 0) path.moveTo(it.x, it.y) else path.lineTo(it.x, it.y) } }
+            drawPath(path, line, style = Stroke(1.25.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
         drawCircle(lastColor, 2.5.dp.toPx(), pt(history.lastIndex, history.last()))
     }
 }

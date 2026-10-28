@@ -26,10 +26,12 @@ class ScanOrder(private val initialSortDelayMs: Long = INITIAL_SORT_DELAY_MS) {
         members.removeAll(addrs.toSet())
     }
 
-    /** Applies the one-time initial sort when its time has come. */
-    fun tick(nowMs: Long, rssiOf: (String) -> Int?) {
-        val first = firstArrivalMs ?: return
-        if (!initialSortDone && nowMs - first >= initialSortDelayMs) resort(rssiOf)
+    /** Applies the one-time initial sort when its time has come; true when it sorted now. */
+    fun tick(nowMs: Long, rssiOf: (String) -> Int?): Boolean {
+        val first = firstArrivalMs ?: return false
+        if (initialSortDone || nowMs - first < initialSortDelayMs) return false
+        resort(rssiOf)
+        return true
     }
 
     fun resort(rssiOf: (String) -> Int?) {

@@ -173,6 +173,10 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     private val _scanRows = MutableStateFlow<List<DeviceRowState>>(emptyList())
     private val _tick = MutableStateFlow(System.currentTimeMillis())
     private val _refreshing = MutableStateFlow(false)
+
+    /** Bumped whenever the list was re-sorted, so the page can scroll back to the top. */
+    private val _sortVersion = MutableStateFlow(0)
+    val sortVersion: StateFlow<Int> = _sortVersion
     val refreshing: StateFlow<Boolean> = _refreshing
 
     val scanState: StateFlow<ScanUiState> = combine(_scanRows, recorder) { rows, rec -> ScanUiState(rows, rec) }
@@ -232,11 +236,13 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
 
     private fun publish() {
         val now = System.currentTimeMillis()
+        var sorted = false
         val rows = synchronized(lock) {
             order.remove(tracker.prune(now))
-            order.tick(now, tracker::rssi)
+            sorted = order.tick(now, tracker::rssi)
             order.addrs.mapNotNull { tracker.row(it, now) }
         }
+        if (sorted) _sortVersion.update { it + 1 }
         _scanRows.value = rows
         _tick.value = now
     }
@@ -247,6 +253,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
             _refreshing.value = true
             withContextDefault { synchronized(lock) { order.resort(tracker::rssi) } }
             publish()
+            _sortVersion.update { it + 1 }
             delay(500)
             _refreshing.value = false
         }

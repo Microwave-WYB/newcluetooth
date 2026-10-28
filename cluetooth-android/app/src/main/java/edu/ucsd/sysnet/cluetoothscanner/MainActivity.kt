@@ -97,7 +97,10 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setContent {
-            V3Theme { CluetoothApp() }
+            V3Theme {
+                // Gives every Text its content color; without it the screens render black on dark.
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { CluetoothApp() }
+            }
         }
     }
 

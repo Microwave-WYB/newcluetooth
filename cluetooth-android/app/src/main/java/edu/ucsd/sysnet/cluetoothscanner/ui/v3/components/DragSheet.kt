@@ -119,19 +119,24 @@ fun BoxScope.DragSheet(
             shadowElevation = 8.dp,
             border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            Column(Modifier.fillMaxSize().then(if (expanded) Modifier.statusBarsPadding() else Modifier)) {
+            val handle = @Composable { modifier: Modifier ->
                 Box(
-                    Modifier.fillMaxWidth()
-                        .draggable(drag, Orientation.Vertical, onDragStopped = { onStopped(it) })
-                        .padding(top = 10.dp, bottom = 6.dp),
+                    modifier.fillMaxWidth().draggable(drag, Orientation.Vertical, onDragStopped = { onStopped(it) }),
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(
-                        Modifier.size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(2.dp))
+                        Modifier.padding(vertical = 8.dp).size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(2.dp))
                             .background(MaterialTheme.colorScheme.outlineVariant),
                     )
                 }
-                content(expanded)
+            }
+            Box(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize().then(if (expanded) Modifier.statusBarsPadding() else Modifier)) {
+                    // Low sheets reserve room for the handle; the full-height one overlays it on the top bar.
+                    if (!expanded) handle(Modifier)
+                    content(expanded)
+                }
+                if (expanded) handle(Modifier.align(Alignment.TopCenter).statusBarsPadding())
             }
         }
     }
