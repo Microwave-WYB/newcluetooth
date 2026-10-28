@@ -5,14 +5,19 @@ import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionUploadState
 import edu.ucsd.sysnet.cluetoothscanner.local.CategoryProducts
 import edu.ucsd.sysnet.cluetoothscanner.local.InRangeSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.local.Recording
-import edu.ucsd.sysnet.cluetoothscanner.local.ProductInRange
+import edu.ucsd.sysnet.cluetoothscanner.local.SeenUnknown
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKey
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKind
+import edu.ucsd.sysnet.cluetoothscanner.local.UnknownInRange
+import edu.ucsd.sysnet.cluetoothscanner.local.WikiCatalog
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiPage
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingMode
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.CategoryIcon
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.NearbyCategoryState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.NearbyUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductHeaderState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductRowState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductItemState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderPhase
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingDayState
@@ -33,6 +38,101 @@ fun RecordingState.toRecorderUi() = RecorderUiState(
     sightings = rowCount.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
 )
 
+object NearbyMapper {
+    const val OTHER = "other"
+    const val UNIDENTIFIED = "unknown"
+
+    /** Item ids of unidentified structures; they have no map. */
+    const val UNKNOWN_PREFIX = "unknown:"
+
+    private fun iconOf(categoryId: String) = when (categoryId) {
+        "asset-tracker" -> CategoryIcon.Tracker
+        "fleet-telematics", "vehicle-equipment" -> CategoryIcon.Car
+        "wearable", "sports-equipment", "personal-care" -> CategoryIcon.Watch
+        "audio-device" -> CategoryIcon.Headphones
+        "lighting-control", "smart-appliance", "environmental-monitor", "power-energy" -> CategoryIcon.Home
+        "medical-device" -> CategoryIcon.Medical
+        "security-and-access" -> CategoryIcon.Beacon
+        else -> CategoryIcon.Unknown
+    }
+
+    /** The product's one line: its page's summary up to the first sentence end. */
+    private fun subtitle(page: WikiPage): String = page.oneLine.substringBefore(". ").trimEnd('.')
+
+    /** "Company 0x004C", "Service FEED", "Name ELK…", "Shape 01/1,FF/7". */
+    fun structureLabel(key: StructureKey, texts: Texts): String = when (key.kind) {
+        StructureKind.COMPANY ->
+            key.companyId?.let { texts.string(R.string.structure_company_id, it) } ?: texts.string(R.string.structure_company, key.value)
+        StructureKind.SERVICE_UUID -> texts.string(R.string.structure_service, key.value)
+        StructureKind.LOCAL_NAME -> texts.string(R.string.structure_name, key.value)
+        StructureKind.AD_SHAPE -> if (key.value == "-") texts.string(R.string.structure_none) else texts.string(R.string.structure_shape, key.value)
+    }
+
+    fun map(
+        recorder: RecorderUiState,
+        inRange: InRangeSnapshot?,
+        seen: List<CategoryProducts>,
+        catalog: WikiCatalog?,
+        texts: Texts,
+        zone: ZoneId = ZoneId.systemDefault(),
+        unknownNow: List<UnknownInRange> = emptyList(),
+        unknownSeen: List<SeenUnknown> = emptyList(),
+    ): NearbyUiState {
+        class Cat(val id: String, val title: String) {
+            val items = LinkedHashMap<String, ProductItemState>()
+        }
+        val cats = LinkedHashMap<String, Cat>()
+        catalog?.categories?.forEach { cats[it.id] = Cat(it.id, it.label) }
+        cats[OTHER] = Cat(OTHER, texts.string(R.string.category_other))
+
+        fun keysOf(page: WikiPage) = page.categories.ifEmpty { listOf(OTHER) }
+        fun cat(key: String) = cats.getOrPut(key) { Cat(key, catalog?.category(key)?.label ?: key) }
+
+        // Products in range first, strongest first.
+        inRange?.products.orEmpty().sortedByDescending { it.strongestRssi ?: Int.MIN_VALUE }.forEach { p ->
+            keysOf(p.page).forEach { k ->
+                cat(k).items[p.page.id] = ProductItemState(p.page.id, p.page.title, subtitle(p.page), p.strongestRssi)
+            }
+        }
+        // Then what was seen before, newest first, without a signal dot.
+        seen.forEach { group ->
+            val key = group.category?.id ?: OTHER
+            group.products.forEach { sp ->
+                val c = cat(key)
+                if (sp.page.id !in c.items) {
+                    val day = Instant.ofEpochMilli(sp.lastSeenMs).atZone(zone).toLocalDate()
+                    c.items[sp.page.id] = ProductItemState(sp.page.id, sp.page.title, texts.string(R.string.last_seen, texts.monthDay(day)), null)
+                }
+            }
+        }
+        // Unidentified advertisements by coarse structure: those heard now first (strongest first), then the rest.
+        val unknown = LinkedHashMap<String, ProductItemState>()
+        unknownNow.sortedByDescending { it.strongestRssi ?: Int.MIN_VALUE }.forEach { u ->
+            unknown[u.structure.key] = ProductItemState(
+                "$UNKNOWN_PREFIX${u.structure.key}", texts.string(R.string.structure_label_count, structureLabel(u.structure, texts), u.deviceCount),
+                texts.plural(R.plurals.devices_in_range, u.deviceCount, u.deviceCount), u.strongestRssi,
+            )
+        }
+        unknownSeen.forEach { u ->
+            if (u.structure.key !in unknown) {
+                val day = Instant.ofEpochMilli(u.lastSeenMs).atZone(zone).toLocalDate()
+                unknown[u.structure.key] = ProductItemState(
+                    "$UNKNOWN_PREFIX${u.structure.key}", texts.string(R.string.structure_label_count, structureLabel(u.structure, texts), u.payloadCount),
+                    texts.string(R.string.last_seen, texts.monthDay(day)), null,
+                )
+            }
+        }
+        return NearbyUiState(
+            recorder = recorder,
+            categories = cats.values.filter { it.items.isNotEmpty() }.map {
+                NearbyCategoryState(it.id, it.title, iconOf(it.id), it.items.values.toList())
+            },
+            unrecognized = NearbyCategoryState(UNIDENTIFIED, texts.string(R.string.category_unidentified), CategoryIcon.Unknown, unknown.values.toList()),
+        )
+    }
+}
+
+/** The product page's helpers (Discover). */
 object DiscoverMapper {
     fun iconOf(categoryId: String?) = when (categoryId) {
         "asset-tracker" -> CategoryIcon.Tracker
@@ -61,41 +161,6 @@ object DiscoverMapper {
     }
 
     fun header(page: WikiPage) = ProductHeaderState(page.id, page.title, page.oneLine, iconOf(page.categories.firstOrNull()))
-
-    /**
-     * Each product once (its first category only gives the icon): in range now, strongest first; and
-     * every product seen, most recently seen first, the ones in range saying so.
-     */
-    fun map(
-        recorder: RecorderUiState,
-        inRange: InRangeSnapshot?,
-        seen: List<CategoryProducts>,
-        texts: Texts,
-        nowMs: Long,
-        zone: ZoneId = ZoneId.systemDefault(),
-    ): DiscoverUiState {
-        val live = inRange?.products.orEmpty().distinctBy { it.page.id }
-        val liveById = live.associateBy { it.page.id }
-        fun inRangeRow(p: ProductInRange) = ProductRowState(
-            p.page.id, p.page.title, iconOf(p.page.categories.firstOrNull()),
-            texts.string(R.string.product_in_range, texts.plural(R.plurals.devices, p.deviceCount, p.deviceCount)), p.strongestRssi,
-        )
-        val nearby = live.sortedByDescending { it.strongestRssi ?: Int.MIN_VALUE }.map(::inRangeRow)
-        val lastSeen = HashMap<String, Pair<WikiPage, Long>>()
-        fun note(page: WikiPage, ms: Long) {
-            val old = lastSeen[page.id]
-            if (old == null || ms > old.second) lastSeen[page.id] = page to ms
-        }
-        live.forEach { note(it.page, it.lastSeenMs) }
-        seen.forEach { group -> group.products.forEach { note(it.page, it.lastSeenMs) } }
-        val all = lastSeen.values.sortedByDescending { it.second }.map { (page, ms) ->
-            liveById[page.id]?.let(::inRangeRow) ?: ProductRowState(
-                page.id, page.title, iconOf(page.categories.firstOrNull()),
-                texts.string(R.string.product_last_seen, ago(ms, nowMs, texts, zone)), null,
-            )
-        }
-        return DiscoverUiState(recorder, nearby, all)
-    }
 }
 
 object RecordingMapper {

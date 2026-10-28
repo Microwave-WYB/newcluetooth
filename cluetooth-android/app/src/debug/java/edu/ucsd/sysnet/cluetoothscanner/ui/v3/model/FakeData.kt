@@ -180,32 +180,75 @@ object FakeData {
         gattDisabledReason = "This device's advertisements aren't connectable, so GATT can't be discovered",
     )
 
-    // ---- Discover ----
+    // ---- Nearby ----
 
-    private fun product(id: String, name: String, icon: CategoryIcon, supporting: String, rssi: Int? = null) =
-        ProductRowState(id, name, icon, supporting, rssi)
+    private fun product(id: String, name: String, subtitle: String, rssi: Int?) =
+        ProductItemState(id, name, subtitle, rssi)
 
-    private val inRange = listOf(
-        product("p-sony", "Sony WH-1000XM noise-cancelling headphones (WH-1000XM4, WH-1000XM5)", CategoryIcon.Headphones, "In range · 2 devices", -53),
-        product("p-band", "Xiaomi Mi Smart Band", CategoryIcon.Watch, "In range · 1 device", -58),
-        product("p-tile", "Tile tracker", CategoryIcon.Tracker, "In range · 3 devices", -61),
-        product("p-govee", "Govee lighting, plugs and environmental sensors", CategoryIcon.Light, "In range · 12 devices", -66),
-        product("p-acuity", "Acuity SensorSwitch and nLight AIR controls", CategoryIcon.Light, "In range · 4 devices", -74),
-        product("p-tv", "Samsung Smart TV", CategoryIcon.Home, "In range · 1 device", -79),
-    )
+    private const val LAST_SEEN = "Last seen Oct 21"
 
-    val discover = DiscoverUiState(
+    val nearby = NearbyUiState(
         recorder = idle,
-        nearby = inRange,
-        all = inRange.take(3) + listOf(
-            product("p-airpods", "Apple AirPods and Beats (proximity pairing)", CategoryIcon.Headphones, "Last seen 12 min ago"),
-        ) + inRange.drop(3) + listOf(
-            product("p-hue", "Philips Hue lights", CategoryIcon.Light, "Last seen 2 h ago"),
-            product("p-garmin", "Garmin Forerunner watches", CategoryIcon.Watch, "Last seen 3 d ago"),
-            product("p-thermo", "Govee H5075 thermometer hygrometer", CategoryIcon.Sensor, "Last seen Oct 19"),
+        categories = listOf(
+            NearbyCategoryState(
+                "audio", "Audio device", CategoryIcon.Headphones,
+                listOf(
+                    product("a1", "WH-1000XM5", "Sony", -53),
+                    product("a2", "Galaxy Buds2 Pro", "Samsung", -72),
+                    product("a3", "JBL Flip 6", "JBL · Portable speaker", -66),
+                    product("a4", "AirPods Pro", "Apple", null).copy(subtitle = LAST_SEEN),
+                    product("a5", "QC45", "Bose", null).copy(subtitle = LAST_SEEN),
+                    product("a6", "Beats Flex", "Apple · Beats", null).copy(subtitle = LAST_SEEN),
+                ),
+            ),
+            NearbyCategoryState(
+                "wear", "Wearable", CategoryIcon.Watch,
+                listOf(
+                    product("w1", "Mi Smart Band 8", "Xiaomi · Band", -48),
+                    product("w2", "Charge 5", "Fitbit · Band", -58),
+                    product("w3", "Watch 4", "Samsung · Watch", null).copy(subtitle = LAST_SEEN),
+                    product("w4", "Forerunner 255", "Garmin", null).copy(subtitle = LAST_SEEN),
+                ),
+            ),
+            NearbyCategoryState(
+                "track", "Asset tracker", CategoryIcon.Tracker,
+                listOf(
+                    product("t1", "Tile Mate", "Tile", -61),
+                    product("t2", "AirTag", "Apple", -84),
+                    product("t3", "SmartTag2", "Samsung", null).copy(subtitle = LAST_SEEN),
+                ),
+            ),
+            NearbyCategoryState(
+                "home", "Smart appliance", CategoryIcon.Home,
+                listOf(
+                    product("h1", "H6159 light strip", "Govee", -74),
+                    product("h2", "Samsung 7 Series TV", "Samsung · TV", -79),
+                    product("h3", "Hue Bridge", "Philips", null).copy(subtitle = LAST_SEEN),
+                ),
+            ),
+            NearbyCategoryState("car", "Vehicle equipment", CategoryIcon.Car, emptyList()),
+        ).filter { it.items.isNotEmpty() },
+        unrecognized = NearbyCategoryState(
+            "unknown", "Unidentified", CategoryIcon.Unknown,
+            listOf(
+                product("unknown:company:76", "Company 0x004C ×6", "6 devices in range", -69),
+                product("unknown:uuid:FEED", "Service FEED ×4", "4 devices in range", -82),
+                product("unknown:name:ELK", "Name ELK… ×2", "Last seen Oct 24", null),
+                product("unknown:shape:01/1,FF/7", "Shape 01/1,FF/7 ×1", "Last seen Oct 19", null),
+            ),
         ),
     )
-    val discoverRecording = discover.copy(recorder = recording)
+
+    /** What Discover's Nearby mode shows: only what is in range now. */
+    val nearbyInRange = nearby.copy(
+        categories = nearby.categories.map { c -> c.copy(items = c.items.filter { it.strongestRssi != null }) }.filter { it.items.isNotEmpty() },
+        unrecognized = nearby.unrecognized.copy(items = nearby.unrecognized.items.filter { it.strongestRssi != null }),
+    )
+    val nearbyRecording = nearbyInRange.copy(recorder = recording)
+    val nearbyPaused = nearby.copy(recorder = paused)
+    val nearbyAudio: NearbyCategoryState = nearby.categories.first()
+
+    // ---- Product page ----
 
     val productHeader = ProductHeaderState(
         id = "product--sony-wh-1000xm",

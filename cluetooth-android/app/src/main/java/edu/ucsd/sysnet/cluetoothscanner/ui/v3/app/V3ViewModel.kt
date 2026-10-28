@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import edu.ucsd.sysnet.cluetoothscanner.BuildConfig
 import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
 import edu.ucsd.sysnet.cluetoothscanner.R
+import edu.ucsd.sysnet.cluetoothscanner.ble.AdTraits
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayDeleteResult
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayPreparedExport
@@ -13,12 +14,15 @@ import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionUploadState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
+import edu.ucsd.sysnet.cluetoothscanner.local.CategoryProducts
 import edu.ucsd.sysnet.cluetoothscanner.local.GeoBounds as LocalBounds
 import edu.ucsd.sysnet.cluetoothscanner.local.InRangeSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataHub
 import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
 import edu.ucsd.sysnet.cluetoothscanner.local.RecordedDevice
 import edu.ucsd.sysnet.cluetoothscanner.local.Sighting
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKey
+import edu.ucsd.sysnet.cluetoothscanner.local.WikiCatalog
 import edu.ucsd.sysnet.cluetoothscanner.service.LiveScan
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingMode
 import edu.ucsd.sysnet.cluetoothscanner.service.UploadService
@@ -35,12 +39,14 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSample
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveScanList
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LiveSpot
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.LocationFix
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingOutcome
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.ResourceTexts
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RssiSeries
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.SigNumbers
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.StableOrder
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Texts
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.estimatePosition
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.scanLocationOf
@@ -51,13 +57,14 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceSort
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverMode
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.LatLon
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapListRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapMode
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.NearbyUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductHeaderState
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductItemState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderPhase
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecordingSummaryState
@@ -159,6 +166,7 @@ class V3ViewModel(
     }
 
     fun selectTab(tab: AppTab) {
+        if (tab == AppTab.Discover && _stack.value.firstOrNull() != Route.Tab(AppTab.Discover)) nearbyOrder.reset(System.currentTimeMillis())
         resetPageState()
         _stack.value = listOf(Route.Tab(tab))
     }
@@ -596,27 +604,64 @@ class V3ViewModel(
 
     private val _discoverMode = MutableStateFlow(DiscoverMode.Nearby)
     val discoverMode: StateFlow<DiscoverMode> = _discoverMode
-    fun setDiscoverMode(mode: DiscoverMode) { _discoverMode.value = mode }
+    fun setDiscoverMode(mode: DiscoverMode) {
+        if (mode != _discoverMode.value) nearbyOrder.reset(System.currentTimeMillis())
+        _discoverMode.value = mode
+    }
 
-    /** Re-read once a minute for the "Last seen 5 min ago" lines. */
-    private val minute: Flow<Long> = _tick.map { it / 60_000 }.distinctUntilChanged()
+    /** The Discover lists hold their order while on screen (as Scan): set when the tab opens or the mode changes. */
+    private val nearbyOrder = StableOrder()
 
-    val discover: StateFlow<DiscoverUiState> =
-        combine(
-            combine(recorder, localData.productsInRange(), localData.previouslySeenProducts(), minute) { rec, inRange, seen, _ -> Triple(rec, inRange, seen) },
-            hideApple,
-            localData.pagesOnlyFromUnnamedApple(),
-        ) { (rec, inRange, seen), hide, applePages ->
-            if (!hide) return@combine DiscoverMapper.map(rec, inRange, seen, texts, System.currentTimeMillis())
-            // In range: counted again over the devices still shown. Seen before: a product only ever heard
-            // from unnamed Apple devices is left out.
-            val visible = visibleInRange(inRange)
-            val live = visible.products.mapTo(HashSet()) { it.page.id }
-            val seenShown = seen.map { g -> g.copy(products = g.products.filter { it.page.id !in applePages || it.page.id in live }) }
-            DiscoverMapper.map(rec, visible, seenShown, texts, System.currentTimeMillis())
-        }
-            .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DiscoverUiState(RecorderUiState(), emptyList(), emptyList()))
+    /**
+     * The category layout, with the display filter applied, in the order [nearbyOrder] holds: [first] for the
+     * Discover page in its mode (Nearby: in range now; All: also what was seen before), [second] everything,
+     * for the category pages.
+     */
+    private val nearbyViews: StateFlow<Pair<NearbyUiState, NearbyUiState>> = combine(
+        combine(recorder, localData.productsInRange(), localData.previouslySeenProducts(), localData.catalog) { rec, inRange, seen, catalog ->
+            listOf(rec, inRange, seen, catalog)
+        },
+        combine(localData.unknownStructuresInRange(), localData.previouslySeenUnknownStructures()) { now, seen -> now to seen },
+        combine(hideApple, localData.pagesOnlyFromUnnamedApple()) { hide, pages -> hide to pages },
+        _discoverMode,
+    ) { products, (unknownNow, unknownSeen), (hide, applePages), mode ->
+        @Suppress("UNCHECKED_CAST")
+        val inRange = products[1] as InRangeSnapshot
+        @Suppress("UNCHECKED_CAST")
+        val seen = products[2] as List<CategoryProducts>
+        // Display filter: in range recounted over the devices still shown; seen before, a product only ever heard
+        // from unnamed Apple devices is left out, and so are Apple's company-id groups of the unidentified.
+        val shownInRange = if (hide) visibleInRange(inRange) else inRange
+        val live = shownInRange.products.mapTo(HashSet()) { it.page.id }
+        val shownSeen = if (hide) seen.map { g -> g.copy(products = g.products.filter { it.page.id !in applePages || it.page.id in live }) } else seen
+        fun apple(key: StructureKey) = key.companyId == AdTraits.APPLE_COMPANY_ID
+        val state = NearbyMapper.map(
+            products[0] as RecorderUiState, shownInRange, shownSeen, products[3] as WikiCatalog?, texts,
+            unknownNow = if (hide) unknownNow.filterNot { apple(it.structure) } else unknownNow,
+            unknownSeen = if (hide) unknownSeen.filterNot { apple(it.structure) } else unknownSeen,
+        )
+        val now = System.currentTimeMillis()
+        arrangeNearby(state, mode, now) to arrangeNearby(state, DiscoverMode.All, now, keyPrefix = "category")
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NearbyMapper.map(RecorderUiState(), null, emptyList(), null, texts).let { it to it })
+
+    val nearby: StateFlow<NearbyUiState> = nearbyViews.map { it.first }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), nearbyViews.value.first)
+
+    /** Every product by category (in range and seen before), for the category pages. */
+    val nearbyAll: StateFlow<NearbyUiState> = nearbyViews.map { it.second }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), nearbyViews.value.second)
+
+    /** Nearby keeps what is in range now; then every list holds its order (categories, their items, the unidentified). */
+    private fun arrangeNearby(state: NearbyUiState, mode: DiscoverMode, nowMs: Long, keyPrefix: String = mode.name): NearbyUiState {
+        val nearbyOnly = mode == DiscoverMode.Nearby
+        fun keep(items: List<ProductItemState>) = if (nearbyOnly) items.filter { it.strongestRssi != null } else items
+        val categories = state.categories.map { it.copy(items = keep(it.items)) }.filter { it.items.isNotEmpty() }
+            .map { c -> c.copy(items = nearbyOrder.arrange("$keyPrefix:${c.id}", c.items, nowMs) { it.id }) }
+        return state.copy(
+            categories = nearbyOrder.arrange("$keyPrefix:categories", categories, nowMs) { it.id },
+            unrecognized = state.unrecognized.copy(items = nearbyOrder.arrange("$keyPrefix:unknown", keep(state.unrecognized.items), nowMs) { it.id }),
+        )
+    }
 
     /** The in-range products recounted over the live devices the display filter keeps (strongest RSSI too). */
     private fun visibleInRange(snapshot: InRangeSnapshot): InRangeSnapshot {
@@ -900,8 +945,11 @@ class V3ViewModel(
         _stack.value = listOf(Route.Tab(AppTab.Scan), Route.ProductMap(DEMO_PREFIX + variant))
     }
 
-    /** Opens a product's page from Discover. */
-    fun openProduct(pageId: String) = open(Route.Product(pageId))
+    /** Opens a product's page from a Discover card or a category page; the unidentified groups have none. */
+    fun openProduct(pageId: String) {
+        if (pageId.startsWith(NearbyMapper.UNKNOWN_PREFIX)) return
+        open(Route.Product(pageId))
+    }
 
     /** From the product page's map preview: the full product map. */
     fun openProductMap(pageId: String) = open(Route.ProductMap(pageId))

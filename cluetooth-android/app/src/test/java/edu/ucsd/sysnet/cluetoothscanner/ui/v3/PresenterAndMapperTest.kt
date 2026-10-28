@@ -1,5 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3
 
+import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionUploadState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.DisconnectInitiator
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattCharacteristicResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattDisconnect
@@ -15,25 +16,29 @@ import edu.ucsd.sysnet.cluetoothscanner.gatt.GattTarget
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattTimings
 import edu.ucsd.sysnet.cluetoothscanner.local.CategoryProducts
 import edu.ucsd.sysnet.cluetoothscanner.local.InRangeSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
 import edu.ucsd.sysnet.cluetoothscanner.local.PageKind
 import edu.ucsd.sysnet.cluetoothscanner.local.ProductInRange
 import edu.ucsd.sysnet.cluetoothscanner.local.Recording
 import edu.ucsd.sysnet.cluetoothscanner.local.SeenProduct
+import edu.ucsd.sysnet.cluetoothscanner.local.SeenUnknown
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKey
+import edu.ucsd.sysnet.cluetoothscanner.local.StructureKind
+import edu.ucsd.sysnet.cluetoothscanner.local.UnknownInRange
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiCatalog
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiCategory
 import edu.ucsd.sysnet.cluetoothscanner.local.WikiPage
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingMode
 import edu.ucsd.sysnet.cluetoothscanner.service.RecordingState
-import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionUploadState
-import edu.ucsd.sysnet.cluetoothscanner.local.LocalDataStatus
 import edu.ucsd.sysnet.cluetoothscanner.service.ScanOperatingState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattNames
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
 import edu.ucsd.sysnet.cluetoothscanner.ui.ScanTransitionState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.DiscoverMapper
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingOutcome
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattNames
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.GattPresenter
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.NearbyMapper
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.Notices
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingMapper
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.RecordingOutcome
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.estimatePosition
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.toRecorderUi
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.GattUiState
@@ -163,30 +168,62 @@ class MapperTest {
     }
 
     @Test
-    fun discoverListsEachProductOnceNearbyByStrengthAllByRecency() {
+    fun nearbyPutsProductsInRangeFirstThenWhatWasSeenBeforeAndHidesEmptyCategories() {
         val a = catalog.pages[0]
         val b = catalog.pages[1]
-        val c = catalog.pages[2]
-        val now = 1_761_000_000_000L
-        val state = DiscoverMapper.map(
+        val day = 1_761_000_000_000L // 2025-10-20
+        val state = NearbyMapper.map(
             RecorderUiState(),
-            InRangeSnapshot(now, 30_000, listOf(ProductInRange(b, 1, -80, now - 5_000), ProductInRange(a, 2, -60, now)), unidentifiedDeviceCount = 4, totalDeviceCount = 6),
+            InRangeSnapshot(0, 30_000, listOf(ProductInRange(a, 2, -60, 0)), unidentifiedDeviceCount = 4, totalDeviceCount = 6),
             listOf(
-                // A product in two categories comes twice from the store; it is listed once.
-                CategoryProducts(catalog.category("audio-device"), listOf(SeenProduct(a, 0, now - 60_000, 1, 5), SeenProduct(c, 0, now - 2 * 3_600_000, 1, 5))),
-                CategoryProducts(catalog.category("wearable"), listOf(SeenProduct(c, 0, now - 2 * 3_600_000, 1, 5))),
+                CategoryProducts(catalog.category("audio-device"), listOf(SeenProduct(a, 0, day, 1, 5))),
+                CategoryProducts(catalog.category("wearable"), listOf(SeenProduct(b, 0, day, 1, 5))),
+                CategoryProducts(null, listOf(SeenProduct(catalog.pages[2], 0, day, 1, 5))),
             ),
+            catalog,
             TestTexts,
-            now,
             ZoneOffset.UTC,
         )
-        assertEquals(listOf(a.id, b.id), state.nearby.map { it.id })
-        assertEquals("In range · 2 devices", state.nearby[0].supporting)
-        assertEquals(-60, state.nearby[0].strongestRssi)
-        assertEquals(listOf(a.id, b.id, c.id), state.all.map { it.id })
-        assertEquals("Last seen 2 h ago", state.all[2].supporting)
-        assertNull(state.all[2].strongestRssi)
-        assertEquals(state.all.map { it.id }.distinct(), state.all.map { it.id })
+        assertEquals(listOf("audio-device", "wearable", "other"), state.categories.map { it.id })
+        assertEquals("Audio device", state.categories[0].title)
+        assertEquals(-60, state.categories[0].items.single().strongestRssi)
+        assertEquals("A headset", state.categories[0].items.single().subtitle)
+        val band = state.categories[1].items.single()
+        assertNull(band.strongestRssi)
+        assertEquals("Last seen Oct 20", band.subtitle)
+        assertEquals("Unidentified", state.unrecognized.title)
+        assertTrue(state.unrecognized.items.isEmpty())
+    }
+
+    @Test
+    fun unidentifiedStructuresAreGroupedAndLabelledInRangeFirstThenSeenBefore() {
+        val day = 1_761_000_000_000L // 2025-10-20
+        val state = NearbyMapper.map(
+            RecorderUiState(), null, emptyList(), catalog, TestTexts, ZoneOffset.UTC,
+            unknownNow = listOf(
+                UnknownInRange(StructureKey(StructureKind.SERVICE_UUID, "FEED"), 4, -70, 0),
+                UnknownInRange(StructureKey(StructureKind.COMPANY, "76"), 6, -55, 0),
+            ),
+            unknownSeen = listOf(
+                SeenUnknown(StructureKey(StructureKind.COMPANY, "76"), 9, 100, 0, day),
+                SeenUnknown(StructureKey(StructureKind.LOCAL_NAME, "ELK"), 2, 10, 0, day),
+            ),
+        )
+        val items = state.unrecognized.items
+        assertEquals(listOf("Company 0x004C ×6", "Service FEED ×4", "Name ELK… ×2"), items.map { it.name })
+        assertEquals(-55, items[0].strongestRssi)
+        assertEquals("6 devices in range", items[0].subtitle)
+        assertNull(items[2].strongestRssi)
+        assertEquals("Last seen Oct 20", items[2].subtitle)
+        assertEquals("unknown:company:76", items[0].id)
+        assertEquals("Shape 01/1,FF/7", NearbyMapper.structureLabel(StructureKey(StructureKind.AD_SHAPE, "01/1,FF/7"), TestTexts))
+    }
+
+    @Test
+    fun nearbyWithoutDataHasNoCategories() {
+        val state = NearbyMapper.map(RecorderUiState(), null, emptyList(), null, TestTexts)
+        assertTrue(state.categories.isEmpty())
+        assertTrue(state.unrecognized.items.isEmpty())
     }
 
     @Test
@@ -197,13 +234,6 @@ class MapperTest {
         assertEquals("3 h ago", DiscoverMapper.ago(now - 3 * 3_600_000, now, TestTexts, ZoneOffset.UTC))
         assertEquals("2 d ago", DiscoverMapper.ago(now - 2 * 86_400_000, now, TestTexts, ZoneOffset.UTC))
         assertEquals("Oct 10", DiscoverMapper.ago(now - 10 * 86_400_000, now, TestTexts, ZoneOffset.UTC))
-    }
-
-    @Test
-    fun discoverWithoutDataIsEmpty() {
-        val state = DiscoverMapper.map(RecorderUiState(), null, emptyList(), TestTexts, 0)
-        assertTrue(state.nearby.isEmpty())
-        assertTrue(state.all.isEmpty())
     }
 
     private fun rec(id: String, start: Long, active: Boolean = false) = Recording(id, start, if (active) null else start + 60_000, 60_000, 1_840.0, 12, active)

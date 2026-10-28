@@ -41,17 +41,16 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DetailTab
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DeviceDetailUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverMode
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.FakeData
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.RecorderUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanLocation
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ScanUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.BluetoothOffBanner
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.CategoryTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DeviceDetailContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverContent
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.DiscoverTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.HistoryTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.LocalWindowHeight
@@ -59,6 +58,8 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapContent
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MapTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.MissingPermissionsScreen
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyContent
+import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.NearbyTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.OnboardingActions
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.OnboardingScreen
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen.OnboardingStep
@@ -207,20 +208,33 @@ fun ScanControlSheet() = Frame { ScanPreview(FakeData.scan.copy(recorder = FakeD
 
 // ---- Discover and History ------------------------------------------------------------------
 
-@Composable
-private fun DiscoverPreview(state: DiscoverUiState, mode: DiscoverMode) =
-    AppShell(state.recorder, cb, recordPlacement(state.recorder.phase, false), tab = AppTab.Discover, startAllowed = false, topBar = { DiscoverTopBar(state, mode, null) }) {
-        DiscoverContent(state, mode, it)
+@PreviewTest @PhonePreview @Composable
+fun NearbyHome() = Frame {
+    AppShell(FakeData.nearby.recorder, cb, recordPlacement(FakeData.nearby.recorder.phase, false), tab = AppTab.Discover, startAllowed = false, topBar = { NearbyTopBar(FakeData.nearbyInRange, null) }) {
+        NearbyContent(FakeData.nearbyInRange, it)
     }
+}
 
 @PreviewTest @PhonePreview @Composable
-fun DiscoverNearby() = Frame { DiscoverPreview(FakeData.discover, DiscoverMode.Nearby) }
+fun NearbyAll() = Frame {
+    AppShell(FakeData.nearby.recorder, cb, recordPlacement(FakeData.nearby.recorder.phase, false), tab = AppTab.Discover, startAllowed = false, topBar = { NearbyTopBar(FakeData.nearby, null, DiscoverMode.All) }) {
+        NearbyContent(FakeData.nearby, it, mode = DiscoverMode.All)
+    }
+}
 
 @PreviewTest @PhonePreview @Composable
-fun DiscoverAll() = Frame { DiscoverPreview(FakeData.discover, DiscoverMode.All) }
+fun NearbyRecording() = Frame {
+    AppShell(FakeData.recording, cb, recordPlacement(FakeData.recording.phase, false), tab = AppTab.Discover, startAllowed = false, topBar = { NearbyTopBar(FakeData.nearbyRecording, null) }) {
+        NearbyContent(FakeData.nearbyRecording, it)
+    }
+}
 
 @PreviewTest @PhonePreview @Composable
-fun DiscoverRecording() = Frame { DiscoverPreview(FakeData.discoverRecording, DiscoverMode.Nearby) }
+fun NearbyCategoryList() = Frame {
+    AppShell(FakeData.idle, cb, recordPlacement(FakeData.idle.phase, false), tab = AppTab.Discover, startAllowed = false, topBar = { CategoryTopBar(FakeData.nearbyAudio) {} }) {
+        CategoryContent(FakeData.nearbyAudio, it)
+    }
+}
 
 @Composable
 private fun ProductPreview(state: MapUiState) =

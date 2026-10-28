@@ -70,6 +70,26 @@
     <!-- Tabs and pages -->
     <string name="tab_scan">Scan</string>
     <string name="tab_discover">Discover</string>
+    <!-- Discover: the category layout (Nearby / All) -->
+    <string name="action_view_all">View all</string>
+    <string name="nearby_empty">No nearby products identified yet.</string>
+    <string name="category_in_range_total">%1$s in range · %2$s total</string>
+    <string name="label_in_range">In range</string>
+    <string name="label_seen_before">Seen before</string>
+    <string name="last_seen">Last seen %1$s</string>
+    <string name="category_other">Other</string>
+    <string name="category_unidentified">Unidentified</string>
+    <string name="structure_company_id">Company 0x%1$04X</string>
+    <string name="structure_company">Company %1$s</string>
+    <string name="structure_service">Service %1$s</string>
+    <string name="structure_name">Name %1$s…</string>
+    <string name="structure_shape">Shape %1$s</string>
+    <string name="structure_none">No advertisement structures</string>
+    <string name="structure_label_count">%1$s ×%2$d</string>
+    <plurals name="devices_in_range">
+        <item quantity="one">%1$s device in range</item>
+        <item quantity="other">%1$s devices in range</item>
+    </plurals>
     <string name="recording_devices_pending">Devices appear here as minutes are saved (about every minute)</string>
     <string name="map_route_start">Start</string>
     <string name="map_route_end">End</string>
@@ -133,10 +153,6 @@
     <string name="export_failed">Export failed: %1$s</string>
     <string name="discover_mode_nearby">Nearby</string>
     <string name="discover_mode_all">All</string>
-    <string name="discover_empty_nearby">No known products in range right now.</string>
-    <string name="discover_empty_all">No known products seen yet.</string>
-    <string name="product_in_range">In range · %1$s</string>
-    <string name="product_last_seen">Last seen %1$s</string>
     <string name="time_just_now">just now</string>
     <string name="time_minutes_ago">%1$d min ago</string>
     <string name="time_hours_ago">%1$d h ago</string>

@@ -1,6 +1,5 @@
 package edu.ucsd.sysnet.cluetoothscanner.ui.v3.screen
 
-import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,14 +28,10 @@ import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -52,12 +47,9 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.PageTopBar
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.components.RssiText
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.data.DiscoverMapper
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.CategoryIcon
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverMode
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.DiscoverUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapListRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.MapUiState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductHeaderState
-import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.ProductRowState
 import edu.ucsd.sysnet.cluetoothscanner.ui.v3.theme.LocalTexts
 import kotlin.math.roundToLong
 
@@ -73,77 +65,6 @@ fun CategoryIcon.vector(): ImageVector = when (this) {
     CategoryIcon.Medical -> Icons.Filled.MonitorHeart
     CategoryIcon.Tracker -> Icons.Filled.LocationSearching
     CategoryIcon.Unknown -> Icons.Filled.QuestionMark
-}
-
-// ---- Discover ------------------------------------------------------------------------------------
-
-@Composable
-fun DiscoverTopBar(state: DiscoverUiState, mode: DiscoverMode, @StringRes notice: Int?) {
-    val texts = LocalTexts.current
-    PageTopBar(
-        title = stringResource(R.string.tab_discover),
-        subtitle = when (mode) {
-            DiscoverMode.Nearby -> texts.plural(R.plurals.products_in_range, state.nearby.size, state.nearby.size)
-            DiscoverMode.All -> texts.plural(R.plurals.products_seen, state.all.size, state.all.size)
-        },
-        notice = notice?.let { stringResource(it) },
-    )
-}
-
-/** The Nearby / All switch under the top app bar, then one stock [ListItem] per product. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DiscoverContent(
-    state: DiscoverUiState,
-    mode: DiscoverMode,
-    padding: PaddingValues,
-    modifier: Modifier = Modifier,
-    onMode: (DiscoverMode) -> Unit = {},
-    onOpenProduct: (ProductRowState) -> Unit = {},
-) {
-    val rows = if (mode == DiscoverMode.Nearby) state.nearby else state.all
-    LazyColumn(modifier.fillMaxSize(), contentPadding = padding) {
-        item(key = "mode") {
-            val modes = DiscoverMode.entries
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                modes.forEachIndexed { i, m ->
-                    SegmentedButton(
-                        selected = m == mode,
-                        onClick = { onMode(m) },
-                        shape = SegmentedButtonDefaults.itemShape(i, modes.size),
-                    ) { Text(stringResource(m.label)) }
-                }
-            }
-        }
-        items(rows, key = { it.id }) { row -> ProductRow(row) { onOpenProduct(row) } }
-        if (rows.isEmpty()) {
-            item(key = "empty") {
-                Text(
-                    stringResource(if (mode == DiscoverMode.Nearby) R.string.discover_empty_nearby else R.string.discover_empty_all),
-                    Modifier.padding(24.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-/** A 40 dp category icon, the product's name (one line here; the product page shows it whole) and where it stands. */
-@Composable
-private fun ProductRow(row: ProductRowState, onClick: () -> Unit) {
-    ListItem(
-        leadingContent = { Icon(row.icon.vector(), null, Modifier.size(40.dp)) },
-        headlineContent = { Text(row.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = { Text(row.supporting, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        trailingContent = row.strongestRssi?.let { { RssiText(it) } },
-        modifier = Modifier.clickable(onClick = onClick),
-    )
-}
-
-@Composable
-fun SectionLabel(text: String) {
-    Text(text, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
 }
 
 // ---- Product page --------------------------------------------------------------------------------

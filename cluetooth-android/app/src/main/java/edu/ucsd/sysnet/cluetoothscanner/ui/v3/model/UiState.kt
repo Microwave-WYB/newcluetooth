@@ -149,30 +149,32 @@ enum class DetailTab(@StringRes val label: Int) {
 /** One Material icon per wiki category (the product's first); the stand-in until the wiki has images. */
 enum class CategoryIcon { Headphones, Watch, Beacon, Home, Light, Sensor, Power, Car, Medical, Tracker, Unknown }
 
-/** The Discover page's two lists. */
+/** Discover's switch: what is in range now, or everything seen (the same category layout). */
 enum class DiscoverMode(@StringRes val label: Int) {
     Nearby(R.string.discover_mode_nearby),
     All(R.string.discover_mode_all),
 }
 
-/** One product, once, whatever its categories. */
-data class ProductRowState(
-    /** The wiki page id. */
+data class ProductItemState(
     val id: String,
     val name: String,
-    val icon: CategoryIcon,
-    /** "In range · 3 devices" or "Last seen 2 h ago". */
-    val supporting: String,
-    /** Strongest RSSI right now, or null when not in range. */
+    val subtitle: String,
+    /** Strongest RSSI right now, or null for a product seen earlier but not in range. */
     val strongestRssi: Int?,
 )
 
-data class DiscoverUiState(
+data class NearbyCategoryState(
+    val id: String,
+    val title: String,
+    val icon: CategoryIcon,
+    val items: List<ProductItemState>,
+)
+
+data class NearbyUiState(
     val recorder: RecorderUiState,
-    /** In range now, strongest first. */
-    val nearby: List<ProductRowState>,
-    /** Everything seen, most recent first. */
-    val all: List<ProductRowState>,
+    val categories: List<NearbyCategoryState>,
+    /** Last row, unknown structures. */
+    val unrecognized: NearbyCategoryState,
 )
 
 /** The product page's header: what the wiki says about it. */

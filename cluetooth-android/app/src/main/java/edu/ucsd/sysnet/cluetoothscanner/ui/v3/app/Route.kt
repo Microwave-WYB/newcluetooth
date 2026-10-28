@@ -4,6 +4,8 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.v3.model.AppTab
 
 sealed interface Route {
     data class Tab(val tab: AppTab) : Route
+    data class Category(val id: String) : Route
+
     /** A product (wiki page) from Discover: its image, description, map preview and devices. */
     data class Product(val pageId: String) : Route
     data class ProductMap(val pageId: String) : Route
