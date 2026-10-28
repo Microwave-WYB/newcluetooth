@@ -3,17 +3,21 @@ from __future__ import annotations
 import csv
 import io
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import polars as pl
 import pytest
+from nacl.public import PrivateKey, SealedBox
 from typer.testing import CliRunner
 
 import cluetooth_sync.cli as cli
 import cluetooth_sync.pipeline.db as db
 from cluetooth_sync.pipeline import insert_prepared_scans, prepare_scan_jsonl_bytes
+from cluetooth_sync.pipeline.orchestrate import BlobBytes, _ingest_blob
+from cluetooth_sync.pipeline.payload_v3 import PAYLOAD_V3_POLARS_SCHEMA
 from cluetooth_sync.wigle import (
     WIGLE_CSV_HEADER,
     build_wigle_auth_header,
@@ -377,3 +381,235 @@ def test_wigle_upload_command_drains_pending_batches(
         {"status": "uploaded", "row_count": 1, "wigle_transids": '["tx-2"]'},
         {"status": "uploaded", "row_count": 1, "wigle_transids": '["tx-1"]'},
     ]
+
+
+# --- one row per address per minute -------------------------------------------------
+
+_FLAGS = bytes.fromhex("020106")
+_MFG_APPLE = bytes.fromhex("05ff4c000102")
+
+
+def _name(name: str) -> bytes:
+    return bytes([len(name) + 1, 0x09]) + name.encode()
+
+
+def _ingest_v3(database_url: str, suffix: str, rows: list[dict[str, Any]]) -> None:
+    """Ingest one synthetic scans/v3 file (the rows override the defaults)."""
+
+
+
+    defaults: dict[str, Any] = {
+        "rssi": -60,
+        "local_name": None,
+        "tx_power": None,
+        "is_connectable": True,
+        "lat": None,
+        "lon": None,
+        "accuracy": None,
+        **{
+            name: None
+            for name in (
+                "is_legacy",
+                "primary_phy",
+                "secondary_phy",
+                "adv_sid",
+                "adv_tx_power",
+                "periodic_interval",
+                "data_status",
+                "addr_type",
+            )
+        },
+    }
+    payload_id = f"0195c920-7c00-7abc-8def-01234567{suffix}"
+    uri = f"gs://test-bucket/scans/v3/2025/03/24/{payload_id}.parquet.encrypted"
+    frame = pl.DataFrame(
+        [{**defaults, **row} for row in rows], schema=PAYLOAD_V3_POLARS_SCHEMA
+    )
+    buffer = io.BytesIO()
+    frame.write_parquet(
+        buffer,
+        metadata={
+            "cluetooth.payload_schema": "v3",
+            "cluetooth.payload_id": payload_id,
+        },
+    )
+    key = PrivateKey(bytes(range(32)))
+    ciphertext = SealedBox(key.public_key).encrypt(buffer.getvalue())
+    assert (
+        _ingest_blob(database_url, bytes(key), BlobBytes(uri, ciphertext)) is not None
+    )
+
+
+def _seen(second: int) -> datetime:
+    return datetime(2031, 6, 1, 12, 0, second, tzinfo=UTC)
+
+
+def _minute_rows(database_url: str, addr: str) -> int:
+    return int(
+        pl.read_database_uri(
+            "select count(*) from sighting_minutes where addr = cast($1 as macaddr)",
+            database_url,
+            engine="adbc",
+            execute_options={"parameters": [addr]},
+        ).item()
+    )
+
+
+def test_one_row_per_address_minute_across_payloads_and_pdu_kinds(
+    database_url: str, tmp_path: Path
+) -> None:
+    _claim_pending_minutes(database_url)
+    addr = "AA:BB:CC:00:30:01"
+    legacy = {"is_legacy": True, "primary_phy": 1, "secondary_phy": 0}
+    ext_2m = {"is_legacy": False, "primary_phy": 1, "secondary_phy": 2, "adv_sid": 1}
+    coded = {"is_legacy": False, "primary_phy": 3, "secondary_phy": 3, "adv_sid": 1}
+    old = _FLAGS + _name("Old")
+    newer = _FLAGS + _name("Newer") + _MFG_APPLE
+    unnamed = _FLAGS + bytes.fromhex("0302f0fe")
+    latest = _FLAGS + _name("Latest")
+    _ingest_v3(
+        database_url,
+        "0301",
+        [
+            # Four payloads and four PDU kinds of one address in one minute.
+            # Worst fix (rssi -80, accuracy 20 m).
+            {
+                "addr": addr,
+                "raw": old,
+                "scanned_at": _seen(10),
+                "rssi": -80,
+                "lat": 10.0,
+                "lon": 20.0,
+                "accuracy": 20.0,
+                **legacy,
+            },
+            # Best fix (rssi -50, accuracy 5 m), and the only manufacturer id.
+            {
+                "addr": addr,
+                "raw": newer,
+                "scanned_at": _seen(20),
+                "rssi": -50,
+                "lat": 32.8801,
+                "lon": -117.234,
+                "accuracy": 5.0,
+                **ext_2m,
+            },
+            {
+                "addr": addr,
+                "raw": unnamed,
+                "scanned_at": _seen(40),
+                "rssi": -60,
+                "lat": 11.0,
+                "lon": 21.0,
+                "accuracy": 5.0,
+                **coded,
+            },
+            {
+                "addr": addr,
+                "raw": newer,
+                "scanned_at": _seen(45),
+                "rssi": -90,
+                "lat": 12.0,
+                "lon": 22.0,
+                "accuracy": 50.0,
+                **ext_2m,
+                "adv_sid": 2,
+            },
+            # Newest name, but no position: it still names the row.
+            {
+                "addr": addr,
+                "raw": latest,
+                "scanned_at": _seen(55),
+                "rssi": -70,
+                **legacy,
+                "primary_phy": 3,
+            },
+        ],
+    )
+    assert _minute_rows(database_url, addr) == 5
+
+    assert count_pending_wigle_rows(database_url) == 1
+    output = io.StringIO()
+    assert write_wigle_csv(database_url, output) == 1
+    rows = list(csv.reader(io.StringIO(output.getvalue())))
+    assert len(rows) == 3  # pre-header, header, one row
+    assert dict(zip(rows[1], rows[2], strict=True)) == {
+        "MAC": addr.lower(),
+        "SSID": "Latest",
+        "AuthMode": "Misc [LE]",
+        "FirstSeen": "2031-06-01 12:00:20",
+        "Channel": "0",
+        "Frequency": "",
+        "RSSI": "-50",
+        "CurrentLatitude": "32.8801",
+        "CurrentLongitude": "-117.234",
+        "AltitudeMeters": "",
+        "AccuracyMeters": "5",
+        "RCOIs": "",
+        "MfgrId": "76",
+        "Type": "BLE",
+    }
+
+    # The batch claims the address-minute: one CSV row, every minute row a member.
+    batch = create_wigle_upload_batch(database_url, batch_size=10, filename="g.csv")
+    assert batch is not None
+    assert batch.row_count == 1
+    members = pl.read_database_uri(
+        "select count(*) from wigle_upload_batch_minutes where batch_id = $1",
+        database_url,
+        engine="adbc",
+        execute_options={"parameters": [batch.id]},
+    ).item()
+    assert members == 5
+    result = export_wigle_batch_csv(
+        database_url, batch_id=batch.id, output_path=tmp_path / "g.csv"
+    )
+    assert result.row_count == 1
+    exported = list(csv.reader((tmp_path / "g.csv").read_text().splitlines()))
+    assert exported[2][:2] == [addr.lower(), "Latest"]
+    assert exported[2][6:11] == ["-50", "32.8801", "-117.234", "", "5"]
+    assert count_pending_wigle_rows(database_url) == 0
+
+    # Nothing is uploaded twice: a row of the same address-minute that arrives
+    # later (another payload, another PDU kind, even a better fix) is already
+    # covered, while the next minute of the address is pending.
+    _ingest_v3(
+        database_url,
+        "0302",
+        [
+            {
+                "addr": addr,
+                "raw": _FLAGS + _name("Late"),
+                "scanned_at": _seen(58),
+                "rssi": -30,
+                "lat": 1.0,
+                "lon": 2.0,
+                "accuracy": 1.0,
+                **coded,
+                "adv_sid": 9,
+            },
+        ],
+    )
+    assert _minute_rows(database_url, addr) == 6
+    assert count_pending_wigle_rows(database_url) == 0
+    assert (
+        create_wigle_upload_batch(database_url, batch_size=10, filename="h.csv") is None
+    )
+
+    _ingest_v3(
+        database_url,
+        "0303",
+        [
+            {
+                "addr": addr,
+                "raw": newer,
+                "scanned_at": datetime(2031, 6, 1, 12, 1, 5, tzinfo=UTC),
+                "rssi": -55,
+                "lat": 3.0,
+                "lon": 4.0,
+                "accuracy": 3.0,
+                **ext_2m,
+            },
+        ],
+    )
+    assert count_pending_wigle_rows(database_url) == 1

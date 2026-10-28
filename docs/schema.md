@@ -114,8 +114,8 @@ a whole-database analysis ever needs that.
   Built-in AD structure parsing is no longer stored here: it lives in
   `ad_structures`.
 - `wigle_upload_batch_minutes` — WiGLE membership by minute row (`batch_id`,
-  `minute_id`, `minute`), so one CSV row is one minute and nothing is uploaded
-  twice.
+  `minute_id`, `minute`). The export unit is one **address-minute**: see "WiGLE
+  export" below.
 - `backfill_progress` — resumability ledger for `cluetooth backfill`; dropped
   together with the `*_old` tables.
 
@@ -198,11 +198,8 @@ uri = ...`.
   as equal, so their keys are unchanged. A producer that does not report a
   field (null) stays apart from one that does.
 - Cost: a device that changes PDU kind within a minute gets one row per kind.
-  The WiGLE export keeps one CSV row per minute row, so it can now emit several
-  rows for an address-minute (one per PDU kind); this already happened for
-  several payloads or sessions per address-minute, the rows are identical in
-  MAC and nearly in position, and WiGLE keys on the MAC, so the export is not
-  changed. `adv_shapes.minutes` counts distinct minutes.
+  The WiGLE export collapses them (see "WiGLE export"). `adv_shapes.minutes`
+  counts distinct minutes.
 - `adv_length` stays unused (it equals the payload's raw length).
 - The merge joins use plain equality on `minute`, `addr` and `payload_id` and
   `is not distinct from` on the nullable key columns. A single row-wise
@@ -244,6 +241,33 @@ UUIDs normalized as above. Values, read statuses, instance ids, `primary`, MTU
 and outcome are not part of it, so a partial and a complete discovery of the
 same device, or two devices with the same GATT database, hash equally. It is
 null when no service was discovered.
+
+### WiGLE export
+
+WiGLE stores little per observation, so the export is one CSV row per address
+per minute, whatever the payloads, sessions, uploaders or PDU kinds behind it
+(each is its own `sighting_minutes` row).
+
+- **Row content.** Position, accuracy, RSSI and time come from the best located
+  minute row of the address-minute, ranked as the minute table ranks its best
+  samples (`best_score` descending, then smaller accuracy, then earlier time).
+  The name is the most recent non-empty `local_name` among all of its rows
+  (latest `last_seen`), even from a row without a position. `MfgrId` is the first
+  manufacturer id of the chosen row's payload. `AuthMode` (the capabilities
+  string, `Misc [LE]` by default) and `Type` (`BLE`) are unchanged.
+- **Nothing uploaded twice.** A batch claims the address-minute: it records
+  *every* minute row of it in `wigle_upload_batch_minutes`, and an address-minute
+  is pending only while none of its rows belongs to an active batch (`created`,
+  `exported`, `uploading`, `uploaded`, `completed`). A row merged in later (another
+  payload, another PDU kind, even a better fix) therefore does not bring the
+  address-minute back, the same as a late sighting merged into an uploaded minute
+  row did before. A `failed` batch releases its address-minutes. Batch
+  `row_count` is the number of CSV rows (address-minutes); `min_item_id` and
+  `max_item_id` are over member minute-row ids. Membership written for the older
+  minute-row model stays valid: any claimed row claims its address-minute, so a
+  sibling row that was still pending at the switch is not exported separately.
+- **Creation is serialized.** Row locks cannot guard a group, so batch creation
+  takes a transaction-level advisory lock (4381022502).
 
 ### Concurrency
 

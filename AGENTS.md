@@ -82,8 +82,9 @@ one aggregate row per sighting minute:
   - Passive enrichment per `(addr, payload_id, kind, id, revision)`; built-in
     AD structure parsing lives in `ad_structures` instead.
 - `wigle_upload_batch_minutes`
-  - WiGLE membership by minute row, so one CSV row is one minute and nothing is
-    uploaded twice.
+  - WiGLE membership by minute row. The export is one CSV row per address per
+    minute (best located row, latest non-empty name); a batch claims every row
+    of the address-minute, so nothing is uploaded twice.
 - `backfill_progress`
   - Resumability ledger for `cluetooth backfill`.
 
