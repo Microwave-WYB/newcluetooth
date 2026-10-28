@@ -281,11 +281,12 @@
     liftRecorder();
   }
 
-  /** The recorder sits above the Discover sheet's peek (also while the sheet is expanded, floating over it). */
+  /** The recorder sits above the Discover sheet's peek; while the sheet is expanded it moves to the top center. */
   function liftRecorder() {
     const sheet = $(".disc-sheet", phone);
     let lift = 0;
     if (sheet.classList.contains("open")) lift = parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 0;
+    placeRecorder(sheet.classList.contains("open") && sheet.classList.contains("expanded"));
     phone.style.setProperty("--rec-lift", `${lift}px`);
   }
 
@@ -616,12 +617,14 @@
   function setRecorder(state) {
     S.recorder = state;
     const r = $(".recorder", phone), row = $(".rec-row", r);
-    if (state === "capsule") r.style.setProperty("--capsule-w", `${row.scrollWidth}px`);
+    // the row is max-content wide, so this is the content width even when measured from the open panel
+    if (state === "capsule") r.style.setProperty("--capsule-w", `${row.offsetWidth}px`);
     if (state === "panel") r.style.setProperty("--panel-h", `${[...r.children].reduce((h, c) => h + c.offsetHeight + parseFloat(getComputedStyle(c).marginTop) + parseFloat(getComputedStyle(c).marginBottom), 0) + 2}px`);
     r.classList.remove("idle", "capsule", "panel");
     r.classList.add(state);
     r.setAttribute("aria-label", state === "idle" ? "Record" : "Recording");
     $(".recorder-catch", phone).classList.toggle("on", state === "panel");
+    phone.classList.toggle("rec-top-open", state === "panel" && r.classList.contains("top"));
     if (state === "panel" && !S.recMap) {
       r.addEventListener("transitionend", function once(e) {
         if (e.propertyName !== "height") return;
@@ -630,6 +633,18 @@
       });
     }
   }
+  /** Moves the one recorder element between bottom-right and top-center, animating the jump (FLIP). */
+  function placeRecorder(top) {
+    const r = $(".recorder", phone);
+    if (r.classList.contains("top") === top) return;
+    if (S.recorder === "panel") setRecorder("capsule");
+    const a = r.getBoundingClientRect();
+    r.classList.toggle("top", top);
+    const b = r.getBoundingClientRect();
+    r.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)` }, { transform: "none" }],
+      { duration: parseFloat(tok("--t-morph")) * 1000, easing: tok("--ease") });
+  }
+
   function startRecording() {
     S.paused = false;
     const id = D.startRecording();

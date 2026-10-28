@@ -75,7 +75,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .recorder.capsule { width: var(--capsule-w, var(--recorder-capsule-w)); }
 .recorder.panel { width: calc(100% - 2 * var(--edge)); height: var(--panel-h, var(--recorder-panel-h)); border-radius: var(--r-pop); box-shadow: var(--shadow-raised); }
 .recorder.static { position: relative; right: auto; bottom: auto; }
-.rec-row { flex: none; height: var(--fab); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 var(--recorder-pad); white-space: nowrap; opacity: 0; transition: opacity var(--t-fast); }
+.rec-row { flex: none; align-self: flex-start; width: max-content; height: var(--fab); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 var(--recorder-pad); white-space: nowrap; opacity: 0; transition: opacity var(--t-fast); }
 .rec-open { display: flex; align-items: center; gap: 8px; height: 100%; padding-right: 4px; cursor: pointer; }
 .rec-time { font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
 .rec-meta { flex: none; padding: 14px var(--gutter) 0; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity var(--t-fast); }
@@ -83,6 +83,16 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .recorder.capsule .rec-row, .recorder.panel .rec-row { opacity: 1; transition-delay: var(--t-fast); }
 .recorder.panel .rec-meta, .recorder.panel .rec-map { opacity: 1; transition-delay: var(--t-fast); }
 .recorder-catch { position: absolute; inset: 0; z-index: 14; display: none; }
+/* Top placement, while the Discover sheet is expanded: the same element at the top center, between ☰ and
+   the scan button; its panel grows downward (capsule row first). JS animates the move (FLIP). */
+.recorder.top { top: calc(var(--edge) + (var(--rb) - var(--fab)) / 2); bottom: auto; right: auto; left: calc(50% - var(--fab) / 2); justify-content: flex-start; }
+.recorder.top.capsule { left: calc(50% - var(--capsule-w, var(--recorder-capsule-w)) / 2); }
+.recorder.top.panel { left: var(--edge); }
+.recorder.top .rec-row { order: -1; }
+.recorder.top .rec-meta { padding-top: 0; }
+.recorder.top .rec-map { margin-bottom: var(--edge); }
+/* the open top panel covers the float-button row: those buttons step aside until it closes */
+.phone.rec-top-open .menu-btn, .phone.rec-top-open .morph { opacity: 0; pointer-events: none; }
 .recorder-catch.on { display: block; }
 
 /* ---------- IconButton: round, neutral (--fill2) or record red ---------- */
@@ -222,7 +232,7 @@ button.item:active { background: var(--fill2); }
 .scrim.on { opacity: 1; pointer-events: auto; }
 
 /* ---------- Sidebar: a full-height panel that pushes the map ---------- */
-.main { position: absolute; inset: 0; overflow: hidden; transition: transform var(--t-std) var(--ease); }
+.main { position: absolute; inset: 0; z-index: 0; overflow: hidden; transition: transform var(--t-std) var(--ease); }
 .phone.side-open .main { transform: translateX(var(--side-w)); }
 .main-dim { position: absolute; inset: 0; z-index: 40; background: var(--dim-strip); opacity: 0; pointer-events: none; transition: opacity var(--t-std); }
 .phone.side-open .main-dim { opacity: 1; pointer-events: auto; }
@@ -325,7 +335,7 @@ button.item:active { background: var(--fill2); }
 .map { position: absolute; inset: 0; background: var(--fill2); }
 
 /* ---------- Main map screen ---------- */
-.disc-sheet { z-index: 12; }
+.disc-sheet { z-index: 12; height: var(--discover-sheet-h); }
 .disc-head { flex: none; display: grid; grid-template-columns: var(--icon-btn) 1fr var(--icon-btn); align-items: center; gap: 8px; padding: 0 var(--edge) 10px; touch-action: none; cursor: grab; }
 .disc-center { justify-self: center; }
 .disc-center .seg { width: 184px; }
