@@ -10,7 +10,7 @@ import androidx.compose.ui.unit.dp
  * :designsystem (lane C) merges; then the host passes the generated tokens instead (G-1), and this is the one place
  * that changes.
  */
-internal data class SheetMetrics(
+data class SheetMetrics(
     val slop: Dp = 8.dp,                   // --drag-slop (G-13)
     val flickDpPerMs: Float = 0.4f,        // S-14
     val velocitySamples: Int = 5,          // S-14

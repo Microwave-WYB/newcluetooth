@@ -155,7 +155,7 @@ internal class ScrollableContent(private val state: ScrollableState, private val
  * composition saves its position under its own key only, so a second list never overwrites the main one's.
  */
 @Composable
-internal fun rememberSheetListState(entry: SheetEntry, key: Any = SheetEntry.MAIN_LIST): LazyListState {
+fun rememberSheetListState(entry: SheetEntry, key: Any = SheetEntry.MAIN_LIST): LazyListState {
     val state = remember(entry.id, key) { entry.scrollOf(key).let { LazyListState(it.index, it.offset) } }
     val fling = ScrollableDefaults.flingBehavior()
     DisposableEffect(entry, key, state, fling) {
@@ -170,7 +170,7 @@ internal fun rememberSheetListState(entry: SheetEntry, key: Any = SheetEntry.MAI
 
 /** The same for a plain vertically scrolling column. */
 @Composable
-internal fun rememberSheetScrollState(entry: SheetEntry, key: Any = SheetEntry.MAIN_LIST): ScrollState {
+fun rememberSheetScrollState(entry: SheetEntry, key: Any = SheetEntry.MAIN_LIST): ScrollState {
     val state = remember(entry.id, key) { ScrollState(entry.scrollOf(key).offset) }
     val fling = ScrollableDefaults.flingBehavior()
     DisposableEffect(entry, key, state, fling) {

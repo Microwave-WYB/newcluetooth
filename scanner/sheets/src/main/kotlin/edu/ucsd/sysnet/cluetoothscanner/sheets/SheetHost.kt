@@ -43,13 +43,18 @@ import androidx.compose.ui.unit.max
 import androidx.compose.ui.unit.min
 
 /** The colors the engine draws itself; from :designsystem tokens once it merges. */
-internal data class SheetColors(
+data class SheetColors(
     val panel: Color,     // --panel
     val scrim: Color,     // --scrim
     val chevron: Color,   // --t2 (T-2)
-)
+) {
+    companion object {
+        /** Until the screens (#58) take the :designsystem theme's `--panel`, `--scrim` and `--t2`. */
+        val Placeholder = SheetColors(panel = Color.White, scrim = Color.Black.copy(alpha = 0.32f), chevron = Color.Gray)
+    }
+}
 
-internal object SheetTags {
+object SheetTags {
     fun sheet(entry: SheetEntry) = "sheet-${entry.id}"
     const val SCRIM = "sheet-scrim"
     const val PANEL = "sheet-panel"
@@ -62,7 +67,7 @@ internal object SheetTags {
  * under it stays usable (S-9 at Half and Collapsed).
  */
 @Composable
-internal fun PhoneSheetHost(
+fun PhoneSheetHost(
     controller: SheetStackController,
     colors: SheetColors,
     modifier: Modifier = Modifier,
@@ -134,7 +139,7 @@ private fun Scrim(color: Color, alpha: Float, onTap: () -> Unit) {
  * chevron that opens it again. A header tap toggles; there is no drag, no Half and no scrim.
  */
 @Composable
-internal fun TabletPanelHost(
+fun TabletPanelHost(
     controller: SheetStackController,
     colors: SheetColors,
     modifier: Modifier = Modifier,
@@ -202,7 +207,7 @@ private fun Chevron(color: Color) {
  * bottom is the sheet's peek (S-5) and the boundary between header drags and content gestures (S-10, S-13).
  */
 @Composable
-internal fun SheetFrame(
+fun SheetFrame(
     controller: SheetStackController,
     entry: SheetEntry,
     metrics: SheetMetrics = SheetMetrics(),
@@ -220,7 +225,7 @@ internal fun SheetFrame(
 
 /** The stack for one session view, animating in the composition's frame clock. */
 @Composable
-internal fun rememberSheetStackController(
+fun rememberSheetStackController(
     metrics: SheetMetrics = SheetMetrics(),
     hooks: SheetStackHooks = SheetStackHooks(),
     root: SheetKind = SheetKind.Discover,
