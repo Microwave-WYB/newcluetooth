@@ -122,7 +122,7 @@ fun MainScreen(vm: MainViewModel) {
             val recH = if (form == RecorderUi.Form.Panel) RecorderGeometry.panelHeight(true) else Tokens.fab
             LocateControl(
                 mapUi, if (tablet) LocatePlacement.Tablet(recH) else LocatePlacement.Phone(sheetCover),
-                onLocate = r.map::locate, onWarning = { vm.setLocationPopover(!ui.locationPopoverOpen) }, dark = CluetoothTheme.isDark,
+                onLocate = r.map::locate, onWarning = { vm.setLocationPopover(!ui.locationPopoverOpen) },
             )
             if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, miniMap = miniMap)
             // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
