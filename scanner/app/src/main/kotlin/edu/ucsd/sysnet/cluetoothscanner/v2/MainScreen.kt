@@ -47,6 +47,8 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsList
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsPage
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsUi
+import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageFullActions
+import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageFullDialog
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TabletTopChrome
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeState
@@ -86,7 +88,7 @@ fun MainScreen(vm: MainViewModel) {
     val status = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
 
     // read `ui` here, in this scope, so the handler's enabled state recomposes with it (G-14)
-    BackHandler(enabled = backTarget(vm.backLayers(ui)) != BackTarget.Leave) { vm.onBack() }
+    BackHandler(enabled = ui.storageFull != null || backTarget(vm.backLayers(ui)) != BackTarget.Leave) { vm.onBack() }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CluetoothTheme.colors.bg)) {
         val layout = LayoutMode.of(maxWidth.value)
@@ -203,6 +205,8 @@ fun MainScreen(vm: MainViewModel) {
                     onDeleteRequest = { dispatch(MainEvent.EditStorage { it.copy(deleteConfirm = edu.ucsd.sysnet.cluetoothscanner.chrome.DeleteConfirm.Confirm) }) },
                     onDeleteConfirm = { dispatch(MainEvent.DeleteConfirmed) }, onDelete = { dispatch(MainEvent.Delete(it)) },
                     onDeleteCancel = { dispatch(MainEvent.EditStorage { it.copy(deleteConfirm = null) }) },
+                    onCleanupRequest = { c -> dispatch(MainEvent.CleanupRequested(c)) },
+                    onCleanupConfirm = { dispatch(MainEvent.CleanupConfirmed) }, onCleanupCancel = { dispatch(MainEvent.CleanupCancelled) },
                 ),
                 sessionLabel = label, sessionScope = if (label != null) shown else null, statusInset = status, bottomInset = nav,
             )
@@ -224,6 +228,17 @@ fun MainScreen(vm: MainViewModel) {
                     onDone = { dispatch(MainEvent.FinishOnboarding) },
                 ),
                 statusInset = status, bottomInset = nav,
+            )
+        }
+
+        // R-10: over everything; the recording is paused (B) until Resume
+        ui.storageFull?.let { d ->
+            StorageFullDialog(
+                storageFullUi(d),
+                StorageFullActions(
+                    onChoose = { c, on -> dispatch(MainEvent.ChooseCleanup(c, on)) }, onFreeUp = { dispatch(MainEvent.FreeUpSpace) },
+                    onNotNow = { dispatch(MainEvent.StorageFullNotNow) }, onResume = { dispatch(MainEvent.StorageFullResume) },
+                ),
             )
         }
     }

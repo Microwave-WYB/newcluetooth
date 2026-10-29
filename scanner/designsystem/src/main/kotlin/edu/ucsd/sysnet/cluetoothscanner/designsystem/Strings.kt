@@ -232,6 +232,26 @@ object Strings {
     const val RecordAutomaticallySub = "You can turn this off in Settings."
     const val MissingTitle = "Cluetooth needs one more thing"
 
+    // ---- R-10 Storage full (and O-1 item 11) ----
+    const val StorageFullTitle = "Storage is full"
+    const val StorageFullBody = "Recording is paused because the phone is almost out of space. Free up some space to continue."
+    /** "1.3 GB free". */
+    fun freeSpace(bytes: Long) = "${Format.bytes(bytes)} free"
+    const val DeleteUploadedRaw = "Delete uploaded raw files"
+    const val ClearLocalDatabase = "Clear local database"
+    /** What a cleanup frees: "Frees 340 MB", or "Checking…" until the core has said. */
+    fun frees(bytes: Long?) = if (bytes == null) "Checking…" else "Frees ${Format.bytes(bytes)}"
+    const val FreeUpSpace = "Free up space"
+    const val NotNow = "Not now"
+    const val Freeing = "Freeing up space…"
+    /** After a cleanup: "Freed 340 MB". */
+    fun freed(bytes: Long) = "Freed ${Format.bytes(bytes)}"
+    const val DeleteUploadedRawConfirmTitle = "Delete uploaded raw files?"
+    const val DeleteUploadedRawConfirmBody = "Raw files that have already uploaded are deleted. Files not yet uploaded are never touched."
+    const val ClearLocalDatabaseConfirmTitle = "Clear local database?"
+    const val ClearLocalDatabaseConfirmBody =
+        "The stored history of every session except the current one is deleted. Raw files not yet uploaded are kept, so they still upload."
+
     // ---- App (integration) ----
     /** §1.2.2: the core could not open its data (the error class and message follow, then Try again). */
     const val CoreOpenFailed = "Cluetooth could not open its data"

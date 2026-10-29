@@ -65,6 +65,8 @@ class AppGraph(private val app: Application) {
     val uploads get() = placeholders.uploads
     val exportShare get() = placeholders.exportShare
     val gattRunner get() = placeholders.gattRunner
+    /** R-10: lane A's storage-full event and cleanups (placeholder until they land). */
+    val storageCleanup: StorageCleanup get() = placeholders.storageCleanup
 
     private val locationClient by lazy { LocationClient(app, ingest, scope, LocationClient.processStarted(scope)) }
     val location: LocationStatusSource get() = locationClient

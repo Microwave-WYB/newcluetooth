@@ -20,6 +20,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
+import edu.ucsd.sysnet.cluetoothscanner.chrome.Cleanup
 import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
@@ -176,6 +177,8 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             }
             launch { graph.recorder.state.map { it.phase }.distinctUntilChanged().collect { dispatch(MainEvent.RecorderChanged(it)) } }
             launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
+            // R-10: the core stopped writing for lack of space
+            launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFull.collect { dispatch(MainEvent.StorageFull(it)) } } }
             launch { viewWork(q) }
         }
     }
@@ -287,7 +290,29 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             MainEffect.TurnOnLocation -> _requests.emit(ActivityRequest.TurnOnLocation)
             MainEffect.OpenAppSettings -> graph.permissions.openAppSettings()
             MainEffect.UploadNow -> graph.uploads.uploadNow()
+            MainEffect.LoadReclaimable -> dispatch(MainEvent.ReclaimableRead(readReclaim()))
+            is MainEffect.FreeUpSpace -> {
+                var freed = Bytes(0)
+                // raw files first (they never include un-uploaded ones), then the history; an Err frees nothing
+                for (c in Cleanup.entries.filter { it in effect.cleanups }) {
+                    val result = when (c) {
+                        Cleanup.UploadedRaw -> graph.storageCleanup.deleteUploadedRaw()
+                        Cleanup.LocalDatabase -> graph.storageCleanup.clearLocalDatabase()
+                    }
+                    when (result) {
+                        is CleanupResult.Ok -> freed += result.value
+                        is CleanupResult.Err -> Log.w(TAG, "$c: ${result.reason}")
+                    }
+                }
+                dispatch(MainEvent.SpaceFreed(effect.cleanups, freed, readReclaim()))
+            }
         }
+    }
+
+    /** R-10: the free space and what each cleanup frees, or null when the core cannot say. */
+    private suspend fun readReclaim(): Reclaim? = when (val r = graph.storageCleanup.reclaimable()) {
+        is CleanupResult.Ok -> r.value
+        is CleanupResult.Err -> null.also { Log.w(TAG, "reclaimable: ${r.reason}") }
     }
 
     /** V-6's facts: a recording the recorder restored, the stored setting and how many sessions exist. */

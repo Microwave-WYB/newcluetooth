@@ -61,6 +61,14 @@ data class StorageUi(
     val deleteConfirm: DeleteConfirm?,
     /** O-1 item 11's own scope, independent of Export's; it starts like [exportScope]. */
     val deleteScope: Scope = exportScope,
+    /** R-10 in O-1 item 11: what each cleanup frees (null while the core is asked, or when it cannot say). */
+    val reclaimable: Reclaimable? = null,
+    /** The cleanup waiting for its confirmation. */
+    val cleanupConfirm: Cleanup? = null,
+    /** A cleanup is running. */
+    val cleaning: Boolean = false,
+    /** What the last cleanup freed. */
+    val cleanupFreed: Long? = null,
 )
 
 /** Confirm: the scope's deletion, keeping un-uploaded data; LoseUnuploaded: the explicit second step. */
@@ -84,6 +92,10 @@ class SettingsActions(
     /** Second step: false keeps un-uploaded data until it has uploaded (the default, §2.8), true loses it. */
     val onDelete: (includeUnuploaded: Boolean) -> Unit,
     val onDeleteCancel: () -> Unit,
+    /** R-10: the user tapped a cleanup's button (→ its confirmation). */
+    val onCleanupRequest: (Cleanup) -> Unit = {},
+    val onCleanupConfirm: () -> Unit = {},
+    val onCleanupCancel: () -> Unit = {},
 )
 
 /**
@@ -226,6 +238,40 @@ private fun DeleteBlock(st: StorageUi, a: SettingsActions, sessionLabel: String?
             secondary = Strings.DeleteNow to { a.onDelete(true) }, primary = Strings.KeepUntilUploaded to { a.onDelete(false) },
         )
     }
+    CleanupBlock(st, a)
+}
+
+/**
+ * O-1 item 11 with R-10: "Delete uploaded raw files" and "Clear local database", each with the space it frees, a
+ * confirmation, and what it freed.
+ */
+@Composable
+private fun CleanupBlock(st: StorageUi, a: SettingsActions) {
+    for (cleanup in Cleanup.entries) {
+        ListItem(
+            cleanupTitle(cleanup), sub = Strings.frees(st.reclaimable?.of(cleanup)),
+            trailing = {
+                Button(
+                    cleanupAction(cleanup), { a.onCleanupRequest(cleanup) }, Modifier.testTag("cleanup:$cleanup"), kind = ButtonKind.Tonal,
+                    small = true, enabled = st.cleanupConfirm == null && !st.cleaning,
+                )
+            },
+        )
+    }
+    st.cleanupConfirm?.let { cleanup ->
+        val (title, body) = when (cleanup) {
+            Cleanup.UploadedRaw -> Strings.DeleteUploadedRawConfirmTitle to Strings.DeleteUploadedRawConfirmBody
+            Cleanup.LocalDatabase -> Strings.ClearLocalDatabaseConfirmTitle to Strings.ClearLocalDatabaseConfirmBody
+        }
+        ConfirmCard(title, body, secondary = Strings.Cancel to a.onCleanupCancel, primary = cleanupAction(cleanup) to a.onCleanupConfirm, tag = "cleanupConfirm")
+    }
+    if (st.cleaning) ListItem(Strings.Freeing)
+    st.cleanupFreed?.takeIf { !st.cleaning }?.let { ListItem(Strings.freed(it), modifier = Modifier.testTag("cleanupFreed")) }
+}
+
+private fun cleanupAction(c: Cleanup): String = when (c) {
+    Cleanup.UploadedRaw -> Strings.Delete
+    Cleanup.LocalDatabase -> Strings.Clear
 }
 
 /** An inline confirmation on `--fill2` (no dialog, no shadow inside the page, G-5). */
@@ -235,11 +281,12 @@ private fun ConfirmCard(
     body: String,
     secondary: Pair<String, () -> Unit>,
     primary: Pair<String, () -> Unit>,
+    tag: String = "deleteConfirm",
 ) {
     val c = CluetoothTheme.colors
     Column(
         Modifier.padding(horizontal = Tokens.gutter, vertical = Css.Item.padding.top).fillMaxWidth()
-            .clip(RoundedCornerShape(Tokens.rItem)).background(c.fill2).padding(Tokens.gutter).testTag("deleteConfirm"),
+            .clip(RoundedCornerShape(Tokens.rItem)).background(c.fill2).padding(Tokens.gutter).testTag(tag),
         verticalArrangement = Arrangement.spacedBy(Css.Btn.gap),
     ) {
         Text(title, style = CluetoothTheme.type.title)

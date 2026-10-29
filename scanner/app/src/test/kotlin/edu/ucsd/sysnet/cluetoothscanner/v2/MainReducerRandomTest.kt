@@ -6,6 +6,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.ExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
+import edu.ucsd.sysnet.cluetoothscanner.chrome.Cleanup
 import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
@@ -27,7 +28,7 @@ class MainReducerRandomTest {
         MainEffect.Export(Scope.All, ExportFormat.Csv, false), MainEffect.SaveOnboarding("ab1", true), MainEffect.Delete(Scope.All, true),
         MainEffect.StartRecording, MainEffect.SheetsBack, MainEffect.UploadNow)
 
-    private fun Random.event(): MainEvent = when (nextInt(43)) {
+    private fun Random.event(): MainEvent = when (nextInt(50)) {
         0 -> MainEvent.SettingsLoaded(settings(done = nextBoolean(), userId = listOf(null, "ab1", "BAD").random(this)), perms)
         1 -> MainEvent.PermissionsChanged(perms.copy(bluetoothOn = nextBoolean()))
         2 -> MainEvent.LaunchFactsRead(LaunchFacts(listOf(null, "a", "b").random(this), nextBoolean(), nextInt(3)))
@@ -65,6 +66,15 @@ class MainReducerRandomTest {
         )
         40 -> MainEvent.RetryLink
         41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate).random(this)
+        42 -> MainEvent.StorageFull(Bytes(nextLong(0, 400_000_000)))
+        43 -> MainEvent.ReclaimableRead(if (nextBoolean()) null else Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(nextLong(1_000)), Bytes(nextLong(1_000))))
+        44, 45 -> MainEvent.ChooseCleanup(Cleanup.entries.random(this), nextBoolean())
+        46 -> MainEvent.FreeUpSpace
+        47 -> Cleanup.entries.filter { nextBoolean() }.toSet().let { ran ->
+            MainEvent.SpaceFreed(ran, Bytes(nextLong(1_000)), Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(0), Bytes(0)))
+        }
+        48 -> listOf(MainEvent.StorageFullNotNow, MainEvent.StorageFullResume).random(this)
+        49 -> listOf(MainEvent.CleanupRequested(Cleanup.entries.random(this)), MainEvent.CleanupConfirmed, MainEvent.CleanupCancelled).random(this)
         else -> listOf(MainEvent.RequestPermission(OnboardingPermission.entries.random(this)), MainEvent.EnableBluetooth, MainEvent.FinishOnboarding).random(this)
     }
 
@@ -110,6 +120,14 @@ class MainReducerRandomTest {
                 // a failure never leaves the export running; the link fails only while waiting
                 if (e is MainEvent.Failed && (e.task as? MainTask.Effect)?.effect is MainEffect.Export) check("export kept running", n.storage?.exporting != true)
                 if (n.core is CoreLink.Failed && s.core !is CoreLink.Failed) check("link failed from ${s.core}", s.core !is CoreLink.Failed && e is MainEvent.Failed)
+                // R-10: cleanups run only with a switch on (dialog) or a confirmation (Settings); Resume only above the floor
+                step.effects.filterIsInstance<MainEffect.FreeUpSpace>().forEach { fx ->
+                    val fromDialog = e is MainEvent.FreeUpSpace && s.storageFull?.chosen == fx.cleanups && s.storageFull?.step is CleanupStep.Choosing
+                    val fromSettings = e is MainEvent.CleanupConfirmed && s.storage?.cleanupConfirm?.let(::setOf) == fx.cleanups
+                    check("cleanup without a choice", fx.cleanups.isNotEmpty() && (fromDialog || fromSettings))
+                }
+                if (e is MainEvent.StorageFullResume && MainEffect.ResumeRecording in step.effects) check("resume below the floor", (s.storageFull?.free ?: Bytes(0)) > STORAGE_FLOOR)
+                n.storageFull?.let { d -> if (s.storageFull == null) check("opened with a switch on", d.chosen.isEmpty()) }
                 // storage: an export runs only with a format
                 n.storage?.let { if (it.exporting) check("export without a format", it.exportFormat != null) }
                 if (e is MainEvent.Back) checkBack(s, e, step, ::check)
@@ -120,8 +138,13 @@ class MainReducerRandomTest {
 
     /** G-14: Back closes exactly the topmost open layer, which really was open; Leave changes nothing. */
     private fun checkBack(s: MainUiState, e: MainEvent.Back, step: Step, check: (String, Boolean) -> Unit) {
-        val before = backLayers(s, e.pushedSheet, e.sheetSearching)
         val n = step.state
+        // R-10's dialog is over everything: Back is "Not now" and nothing else changes
+        if (s.storageFull != null) {
+            check("back with the dialog open", n == s.copy(storageFull = null) && step.effects.isEmpty())
+            return
+        }
+        val before = backLayers(s, e.pushedSheet, e.sheetSearching)
         val target = backTarget(before)
         val wasOpen = when (target) {
             BackTarget.LocationPopover -> before.locationPopover
