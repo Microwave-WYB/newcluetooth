@@ -828,3 +828,261 @@ fn live_deltas_per_commit() {
     let rows = block(core.device_rows(live, vec![0xAA0000000001])).unwrap();
     assert_eq!(rows[0].rssi, Some(-40));
 }
+
+fn gatt_json(id: &str, addr: &str, outcome: &str, session: Option<&str>) -> String {
+    let (stage, error, disconnect, timings) = match outcome {
+        "complete" => (
+            "disconnect",
+            Json::Null,
+            serde_json::json!({"initiator": "local", "status": 0}),
+            serde_json::json!({"connect": 800, "mtu": 120, "discover": 1500, "read": 4000}),
+        ),
+        "failed" => (
+            "connect",
+            serde_json::json!({"stage": "connect", "status": -1, "name": "TIMEOUT"}),
+            serde_json::json!({"initiator": "timeout", "status": null}),
+            serde_json::json!({"connect": null, "mtu": null, "discover": null, "read": null}),
+        ),
+        _ => (
+            "read",
+            serde_json::json!({"stage": "read", "status": 19, "name": "GATT_CONN_TERMINATE_PEER_USER"}),
+            serde_json::json!({"initiator": "remote", "status": 19}),
+            serde_json::json!({"connect": 800, "mtu": 120, "discover": 1500, "read": 4000}),
+        ),
+    };
+    serde_json::json!({
+        "schema": "gatt/v1", "id": id, "session_id": session, "app_version": "0.1.0",
+        "device": {"model": "Pixel 8", "android": "15"},
+        "target": {"addr": addr, "addr_type": "random", "name": "JBL Flip 6", "trigger_adv": null},
+        "started_at": "2026-10-28T19:00:01.000Z", "ended_at": "2026-10-28T19:00:09.500Z",
+        "location": {"lat": 32.88, "lon": -117.23, "accuracy": 4.5},
+        "outcome": outcome, "stage_reached": stage, "error": error, "disconnect": disconnect,
+        "mtu": if outcome == "failed" { Json::Null } else { serde_json::json!(247) },
+        "phy": if outcome == "failed" { Json::Null } else { serde_json::json!({"tx": 2, "rx": 2}) },
+        "timings_ms": timings,
+        "services": if outcome == "failed" { serde_json::json!([]) } else { serde_json::json!([
+            {"uuid": "180F", "primary": true, "instance": 12, "characteristics": [
+                {"uuid": "2A19", "instance": 14, "properties": ["read", "notify"],
+                 "value": {"hex": "4e", "status": "ok"}, "descriptors": []}]},
+            {"uuid": "180A", "primary": true, "instance": 20, "characteristics": [
+                {"uuid": "2A29", "instance": 22, "properties": ["read"],
+                 "value": {"hex": "4861726d616e", "status": "ok"},
+                 "descriptors": [{"uuid": "2901", "instance": null, "value": {"hex": "", "status": "ok"}}]},
+                {"uuid": "2A25", "instance": 24, "properties": ["read"],
+                 "value": {"hex": null, "status": "insufficient_authentication"}, "descriptors": []}]}
+        ]) },
+    })
+    .to_string()
+}
+
+/// §2.4 `gatt_target`: the device's latest sighting gives the address, its type and the trigger advertisement;
+/// uncommitted sightings of the current recording count; an unknown device has none.
+#[test]
+fn gatt_target_comes_from_the_latest_sighting() {
+    let w = world();
+    let (key, d) = w
+        .devices
+        .iter()
+        .find(|(_, d)| d.name.as_deref() == Some("JBL Flip 6"))
+        .unwrap();
+    let t = block(w.core.gatt_target(*key)).unwrap();
+    assert_eq!(t.addr, addr_of(*key));
+    assert_eq!(t.addr_type.as_deref(), Some("random"));
+    assert_eq!(t.name.as_deref(), Some("JBL Flip 6"));
+    assert_eq!(t.trigger_raw, d.raw);
+    assert_eq!(t.trigger_is_legacy, Some(d.legacy));
+    assert_eq!(
+        (
+            t.trigger_primary_phy,
+            t.trigger_secondary_phy,
+            t.trigger_adv_sid
+        ),
+        (Some(1), Some(0), None)
+    );
+    assert!(t.trigger_rssi.is_some());
+    assert!(t.session_id.is_none());
+    assert!(block(w.core.gatt_target(0x0102_0304_0506)).is_none());
+    // a device seen only in the current recording's uncommitted batch
+    let id = w.core.start_recording_at(env(), 1_800_000_000_000).unwrap();
+    let raw = vec![2, 1, 6, 4, 9, b'N', b'e', b'w'];
+    w.core
+        .ingest_scans_at(
+            vec![ScanObservationInput {
+                addr: "C0:FF:EE:00:00:09".into(),
+                rssi: Some(-44),
+                scanned_at_ms: 1_800_000_000_100,
+                elapsed_realtime_nanos: u64::MAX / 2,
+                raw: raw.clone(),
+                local_name: Some("New".into()),
+                tx_power: None,
+                is_connectable: Some(true),
+                is_legacy: Some(false),
+                primary_phy: Some(1),
+                secondary_phy: Some(2),
+                adv_sid: Some(3),
+                adv_tx_power: None,
+                periodic_interval: None,
+                data_status: Some(0),
+                addr_type: Some(0),
+            }],
+            1_800_000_000_100,
+        )
+        .unwrap();
+    let t = block(w.core.gatt_target(0xC0FFEE000009)).unwrap();
+    assert_eq!(t.addr, "C0:FF:EE:00:00:09");
+    assert_eq!(t.addr_type.as_deref(), Some("public"));
+    assert_eq!(t.name.as_deref(), Some("New"));
+    assert_eq!(t.trigger_raw, raw);
+    assert_eq!(
+        (
+            t.trigger_rssi,
+            t.trigger_is_legacy,
+            t.trigger_secondary_phy,
+            t.trigger_adv_sid
+        ),
+        (Some(-44), Some(false), Some(2), Some(3))
+    );
+    assert_eq!(t.session_id.as_deref(), Some(id.as_str()));
+}
+
+/// §2.4/§2.7 `ingest_gatt` and D-13.7: the run is validated, kept as pending plaintext, stored with its
+/// attributes, returned as a view, and the device opens on its last result; a cancelled run never shows.
+#[test]
+fn ingest_gatt_stores_the_run_and_the_device_opens_on_it() {
+    let w = world();
+    let (key, _) = w
+        .devices
+        .iter()
+        .find(|(_, d)| d.name.as_deref() == Some("JBL Flip 6"))
+        .unwrap();
+    let addr = addr_of(*key);
+    let session = w.sessions["r1"].0.clone();
+    let id = w.core.new_gatt_discovery_id().unwrap();
+    let json = gatt_json(&id, &addr, "complete", Some(&session));
+    let v = w.core.ingest_gatt(json.clone()).unwrap();
+    assert!(v.ok);
+    assert_eq!(v.key, *key);
+    assert_eq!(v.discovery_id, id);
+    assert_eq!(
+        v.started_ms,
+        super::gatt_view::parse_ms("2026-10-28T19:00:01.000Z").unwrap()
+    );
+    let kinds: Vec<_> = v.steps.iter().map(|s| (s.kind, s.state)).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (GattStepKind::Connecting, GattStepState::Done),
+            (GattStepKind::DiscoveringServices, GattStepState::Done),
+            (GattStepKind::ReadingCharacteristics, GattStepState::Done),
+            (GattStepKind::Disconnected, GattStepState::Done),
+        ]
+    );
+    assert_eq!(v.steps[0].duration_ms, Some(920)); // MTU folded into Connecting
+    assert_eq!(v.steps[1].services, Some(2));
+    assert_eq!((v.steps[2].read, v.steps[2].readable), (Some(2), Some(3)));
+    assert_eq!(
+        v.services[0].characteristics[0].value_text.as_deref(),
+        Some("78 %")
+    );
+    assert_eq!(
+        v.services[0].characteristics[0].name.as_deref(),
+        Some("Battery Level")
+    );
+    assert_eq!(
+        v.services[1].characteristics[0].value_text.as_deref(),
+        Some("Harman")
+    );
+    assert_eq!(v.services[1].characteristics[1].value_text, None);
+    // plaintext kept under pending/gatt/v1
+    let found = walk(w._dir.path().join("pending/gatt/v1").as_path());
+    assert!(
+        found.iter().any(|p| p.ends_with(format!("{id}.json"))),
+        "{found:?}"
+    );
+    // rows
+    w.core.with_writer_conn(|c| {
+        let (n, linked): (i64, Option<i64>) = c
+            .query_row(
+                "SELECT count(*), max(session_id) FROM gatt_discoveries",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        assert!(linked.is_some());
+        let attrs: i64 = c
+            .query_row("SELECT count(*) FROM gatt_attributes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(attrs, 6); // 2 services, 3 characteristics, 1 descriptor
+    });
+    // idempotent
+    assert_eq!(w.core.ingest_gatt(json).unwrap(), v);
+    assert_eq!(block(w.core.device_gatt(*key)).unwrap(), Some(v.clone()));
+    // a cancelled run is never shown; a later failed one is the last result
+    let cancelled = w.core.new_gatt_discovery_id().unwrap();
+    w.core
+        .ingest_gatt(gatt_json(&cancelled, &addr, "cancelled", None))
+        .unwrap();
+    assert_eq!(block(w.core.device_gatt(*key)).unwrap(), Some(v.clone()));
+    let failed = w.core.new_gatt_discovery_id().unwrap();
+    let f = w
+        .core
+        .ingest_gatt(gatt_json(&failed, &addr, "failed", None).replace("T19:00:", "T19:05:"))
+        .unwrap();
+    assert!(!f.ok);
+    assert_eq!(f.steps.len(), 1);
+    assert_eq!(f.steps[0].failure, Some(GattFailure::TimedOut));
+    assert!(f.services.is_empty());
+    assert_eq!(
+        block(w.core.device_gatt(*key))
+            .unwrap()
+            .unwrap()
+            .discovery_id,
+        failed
+    );
+    assert!(
+        block(w.core.device_gatt(0x0102_0304_0506))
+            .unwrap()
+            .is_none()
+    );
+    // invalid objects are refused and leave nothing behind
+    assert!(matches!(
+        w.core.ingest_gatt("{}".into()),
+        Err(super::CoreError::InvalidPayload { .. })
+    ));
+}
+
+/// §2.7 failure mapping: a remote disconnect after connecting stops at the failed step.
+#[test]
+fn gatt_partial_stops_at_the_failed_step() {
+    let w = world();
+    let id = w.core.new_gatt_discovery_id().unwrap();
+    let v = w
+        .core
+        .ingest_gatt(gatt_json(&id, "AA:BB:CC:DD:EE:FF", "partial", None))
+        .unwrap();
+    assert!(!v.ok);
+    assert_eq!(v.steps.len(), 3);
+    assert_eq!(v.steps[2].kind, GattStepKind::ReadingCharacteristics);
+    assert_eq!(v.steps[2].state, GattStepState::Failed);
+    assert_eq!(
+        v.steps[2].failure,
+        Some(GattFailure::DisconnectedUnexpectedly)
+    );
+    assert_eq!(v.services.len(), 2);
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
+}

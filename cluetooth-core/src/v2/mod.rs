@@ -5,6 +5,7 @@ mod catalog;
 mod core;
 mod db;
 mod error;
+mod gatt_view;
 mod keys;
 mod live;
 mod query;

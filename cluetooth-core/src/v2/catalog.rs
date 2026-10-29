@@ -124,6 +124,8 @@ pub(crate) struct Catalog {
     pub version: String,
     pub wiki_commit: Option<String>,
     company_names: HashMap<u16, String>,
+    uuid16_names: HashMap<u16, String>,
+    appearance_names: HashMap<u16, String>,
 }
 
 fn invalid(detail: impl Into<String>) -> CoreError {
@@ -213,7 +215,9 @@ impl Catalog {
             rules_key: format!("{}+m{MATCHER_ENGINE_VERSION}", bundle.rules_version),
             version: bundle.version,
             wiki_commit: bundle.wiki_commit,
-            company_names: parse_company_names(sig_numbers_tsv),
+            company_names: parse_sig(sig_numbers_tsv, "company"),
+            uuid16_names: parse_sig(sig_numbers_tsv, "uuid16"),
+            appearance_names: parse_sig(sig_numbers_tsv, "appearance"),
         })
     }
 
@@ -242,6 +246,19 @@ impl Catalog {
 
     pub fn company_name(&self, id: u16) -> Option<String> {
         self.company_names.get(&id).cloned()
+    }
+
+    /// The SIG name of a 16-bit UUID (services and member UUIDs).
+    pub fn uuid16_name(&self, uuid: u16) -> Option<String> {
+        self.uuid16_names.get(&uuid).cloned()
+    }
+
+    /// The SIG appearance name: the exact value, else its category (`value & 0xFFC0`).
+    pub fn appearance_name(&self, value: u16) -> Option<String> {
+        self.appearance_names
+            .get(&value)
+            .or_else(|| self.appearance_names.get(&(value & 0xFFC0)))
+            .cloned()
     }
 
     /// §3.5 step 1: the first match of kind device, else platform, else identifier.
@@ -324,12 +341,12 @@ impl Catalog {
     }
 }
 
-/// `sig-numbers.tsv`: `company<TAB>004C<TAB>Apple, Inc.` lines (others are ignored).
-fn parse_company_names(tsv: &str) -> HashMap<u16, String> {
+/// `sig-numbers.tsv`: `<table><TAB>004C<TAB>Name` lines of one table (`company`, `uuid16`, `appearance`).
+fn parse_sig(tsv: &str, table: &str) -> HashMap<u16, String> {
     tsv.lines()
         .filter_map(|line| {
             let mut cols = line.split('\t');
-            (cols.next()? == "company").then_some(())?;
+            (cols.next()? == table).then_some(())?;
             let id = u16::from_str_radix(cols.next()?, 16).ok()?;
             Some((id, cols.next()?.to_owned()))
         })

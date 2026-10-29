@@ -440,7 +440,6 @@ fn insert_payload(
 }
 
 /// `payload_raw(id)`: the exact bytes back from the DB.
-#[cfg(test)]
 pub(crate) fn payload_raw(conn: &Connection, id: i64) -> Result<Vec<u8>, CoreError> {
     let (zero_padding, tail): (u32, Option<Vec<u8>>) = conn.query_row(
         "SELECT zero_padding, tail FROM payloads WHERE id = ?1",

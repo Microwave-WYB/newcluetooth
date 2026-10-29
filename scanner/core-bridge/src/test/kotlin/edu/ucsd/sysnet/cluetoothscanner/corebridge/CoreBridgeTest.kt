@@ -176,4 +176,31 @@ class CoreBridgeTest {
         try { core.stopRecording(); fail() } catch (_: CoreException.NotRecording) {}
         assertTrue(core.matchDevice("4b4b", null, "72:CD:4C:4B:4B:6F"))
     }
+
+    /** D-13 through the bindings: a target for a seen device, the stored run, and the device's last result. */
+    @Test
+    fun gattThroughTheBindings() = runBlocking {
+        val jbl = core.search(Scope.All, "JBL Flip 6", null)!!.keys.first()
+        val target = core.gattTarget(jbl)!!
+        assertTrue(target.addr.matches(Regex("([0-9A-F]{2}:){5}[0-9A-F]{2}")))
+        assertEquals("random", target.addrType)
+        assertTrue(target.triggerRaw.isNotEmpty())
+        assertNull(core.gattTarget(0x010203040506L))
+        val id = core.newGattDiscoveryId()
+        val json = """{"schema":"gatt/v1","id":"$id","session_id":null,"app_version":"0.1.0",
+            "device":{"model":"Pixel 8","android":"15"},
+            "target":{"addr":"${target.addr}","addr_type":"random","name":"JBL Flip 6","trigger_adv":null},
+            "started_at":"2026-10-28T19:00:01.000Z","ended_at":"2026-10-28T19:00:09.500Z","location":null,
+            "outcome":"complete","stage_reached":"disconnect","error":null,
+            "disconnect":{"initiator":"local","status":0},"mtu":247,"phy":{"tx":2,"rx":2},
+            "timings_ms":{"connect":800,"mtu":120,"discover":1500,"read":4000},
+            "services":[{"uuid":"180F","primary":true,"instance":12,"characteristics":[
+              {"uuid":"2A19","instance":14,"properties":["read"],"value":{"hex":"4e","status":"ok"},"descriptors":[]}]}]}"""
+        val view = core.ingestGatt(json)
+        assertTrue(view.ok)
+        assertEquals(jbl, view.key)
+        assertEquals("78 %", view.services.single().characteristics.single().valueText)
+        assertEquals(view, core.deviceGatt(jbl))
+        try { core.ingestGatt("{}"); fail() } catch (_: CoreException.InvalidPayload) {}
+    }
 }
