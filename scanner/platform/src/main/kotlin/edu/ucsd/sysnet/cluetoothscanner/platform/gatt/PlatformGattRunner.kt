@@ -60,13 +60,23 @@ class PlatformGattRunner(
 
     override fun discover(key: DeviceKey): Flow<GattView> = channelFlow {
         // One discovery at a time: a new collection cancels the previous run's own job, never its collector.
-        val run = launch(start = CoroutineStart.LAZY) { oneAtATime.withLock { run(key) { send(it) } } }
+        var last: GattView? = null
+        val run = launch(start = CoroutineStart.LAZY) {
+            oneAtATime.withLock {
+                run(key) {
+                    last = it
+                    send(it)
+                }
+            }
+        }
         synchronized(this@PlatformGattRunner) {
             current?.cancel()
             current = run
         }
         run.start()
         run.join()
+        // Superseded by a newer discovery: the last view is final, so this collector never spins (§4.3).
+        if (run.isCancelled) supersededView(last, key, nowMs())?.let { send(it) }
     }
 
     private suspend fun run(key: DeviceKey, emit: suspend (GattView) -> Unit) {

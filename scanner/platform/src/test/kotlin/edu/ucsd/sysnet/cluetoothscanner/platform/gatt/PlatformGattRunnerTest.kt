@@ -141,13 +141,19 @@ class PlatformGattRunnerTest {
         val gatt = runner(behavior = object : FakeLink.Behavior {
             override fun onDiscover(link: FakeLink) = true
         })
-        val first = launch { gatt.discover(7).collect { } }
+        val firstViews = mutableListOf<GattView>()
+        val first = launch { gatt.discover(7).collect { firstViews += it } }
         runCurrent()
-        val second = launch { gatt.discover(7).collect { } }
+        assertEquals("device X's tab is spinning", GattStepState.Running, firstViews.last().steps.last().state)
+        val second = launch { gatt.discover(8).collect { } }
         first.join()
         second.join()
         assertTrue(first.isCompleted)
         assertFalse("the earlier collector is not cancelled", first.isCancelled)
+        val final = firstViews.last()
+        assertTrue("the last view is final: nothing spins", final.steps.none { it.state == GattStepState.Running })
+        assertEquals(GattFailure.Cancelled, final.steps.last().failure)
+        assertFalse(final.ok)
         assertEquals("the first run was stored as cancelled", "cancelled", json(0)["outcome"]!!.jsonPrimitive.content)
         assertTrue(second.isCompleted)
     }

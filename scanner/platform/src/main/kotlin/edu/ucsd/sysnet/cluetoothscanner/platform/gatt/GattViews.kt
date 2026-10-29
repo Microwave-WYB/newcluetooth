@@ -46,6 +46,20 @@ internal fun failedBeforeConnect(discoveryId: String, key: DeviceKey, startedMs:
     progressView(discoveryId, key, startedMs, listOf(GattStep(GattStepKind.Connecting, GattStepState.Failed, null, null, null, null, failure)))
 
 /**
+ * The final view of a run a newer discovery superseded: the running step fails as `Cancelled`, or a cancelled
+ * Connecting step when nothing was shown yet; null when the last view already was final.
+ */
+internal fun supersededView(last: GattView?, key: DeviceKey, nowMs: Long): GattView? {
+    if (last == null) return failedBeforeConnect("", key, nowMs, GattFailure.Cancelled)
+    if (last.steps.none { it.state == GattStepState.Running }) return null
+    return last.copy(
+        ok = false,
+        steps = last.steps.map { if (it.state == GattStepState.Running) it.copy(state = GattStepState.Failed, failure = GattFailure.Cancelled) else it },
+        services = emptyList(),
+    )
+}
+
+/**
  * §2.7 for a finished result: `complete` is `ok` with every step done; `partial` and `failed` stop at the failed step.
  * MTU is folded into Connecting.
  */
