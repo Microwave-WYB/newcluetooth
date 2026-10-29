@@ -129,7 +129,9 @@ class FakeCore(
         val apple get() = company == 76
     }
 
-    private class SPoint(val key: Long, val best: GeoPoint?, val rssi: Int?, val lastSeenMs: Long)
+    /** A device in one session: its strongest located point (with that sighting's RSSI) and, separately, its
+     *  strongest RSSI, which may come from an unlocated sighting (§2.1). */
+    private class SPoint(val key: Long, val best: GeoPoint?, val bestRssi: Int?, val rssi: Int?, val lastSeenMs: Long)
 
     private class Sess(
         val id: String, val startedMs: Long, val endedMs: Long?, val activeMs: Long, val distanceM: Double,
@@ -141,6 +143,8 @@ class FakeCore(
         var lastHeardMs: Long = Long.MIN_VALUE / 2
         var best: GeoPoint? = null
         var bestRssi: Int? = null
+        /** The strongest RSSI heard, located or not. */
+        var maxRssi: Int? = null
         /** Epoch second → max RSSI that second, last 60 s. */
         val seconds = HashMap<Long, Int>()
         var sentRssi: Int? = null
@@ -152,6 +156,7 @@ class FakeCore(
 
         fun hear(rssi: Int, atMs: Long, position: GeoPoint?) {
             this.rssi = rssi
+            maxRssi = maxOf(maxRssi ?: Int.MIN_VALUE, rssi)
             lastHeardMs = atMs
             val sec = Math.floorDiv(atMs, 1000L)
             seconds[sec] = maxOf(seconds[sec] ?: Int.MIN_VALUE, rssi)
@@ -252,7 +257,7 @@ class FakeCore(
         for (p in points) {
             val key = DeviceKeyCodec.key(p.addr)
             val prev = pts[key]
-            if (prev == null || (p.rssi > (prev.rssi ?: Int.MIN_VALUE))) pts[key] = SPoint(key, GeoPoint(p.lon, p.lat), p.rssi, ended)
+            if (prev == null || (p.rssi > (prev.rssi ?: Int.MIN_VALUE))) pts[key] = SPoint(key, GeoPoint(p.lon, p.lat), p.rssi, p.rssi, ended)
         }
         return Sess(id, startedMs, ended, minutes * 60_000L, meters.toDouble(), route.map { GeoPoint(it[0], it[1]) }, pts,
             SessionStatus.Completed)
@@ -268,7 +273,8 @@ class FakeCore(
             devs[d.key] = d
             val p = GeoPoint(FakeData.fixed6(FakeData.CENTER_LON + (rnd.next() - 0.5) * 0.6),
                 FakeData.fixed6(FakeData.CENTER_LAT + (rnd.next() - 0.5) * 0.4))
-            pts[d.key] = SPoint(d.key, p, -50 - (rnd.next() * 45).toInt(), started + 3_600_000)
+            val rssi = -50 - (rnd.next() * 45).toInt()
+            pts[d.key] = SPoint(d.key, p, rssi, rssi, started + 3_600_000)
         }
         return Sess("bulk", started, started + 3_600_000, 3_600_000, 25_000.0,
             listOf(GeoPoint(FakeData.CENTER_LON - 0.2, FakeData.CENTER_LAT - 0.1), GeoPoint(FakeData.CENTER_LON + 0.2, FakeData.CENTER_LAT + 0.1)),
@@ -288,16 +294,20 @@ class FakeCore(
 
     private fun currentAsSess(l: Live, now: Long): Sess {
         val pts = LinkedHashMap<Long, SPoint>()
-        for (d in l.devices.values) if (d.rssi != null) pts[d.dev.key] = SPoint(d.dev.key, d.best, d.bestRssi ?: d.rssi, d.lastHeardMs)
+        for (d in l.devices.values) if (d.rssi != null) pts[d.dev.key] = SPoint(d.dev.key, d.best, d.bestRssi, d.maxRssi, d.lastHeardMs)
         return Sess(l.id, l.startedMs, null, activeMs(l, now), l.distanceM, l.route.toList(), pts,
             if (l.phase == RecordingPhase.Paused) SessionStatus.Paused else SessionStatus.Recording)
     }
 
     private fun activeMs(l: Live, now: Long) = l.activeBeforeMs + (l.runningSinceMs?.let { now - it } ?: 0)
 
-    /** The resolved sessions of [scope] (`sessions ∩ filter`, no empty sessions), current one included. */
+    /**
+     * The resolved sessions of [scope] (`sessions ∩ filter`), the current one included. Empty sessions never take
+     * part (§2.1), except the live scope itself, which is the current session even before its first device.
+     */
     private fun resolve(scope: Scope, now: Long): List<Sess> {
         val l = rec
+        if (l != null && isLive(scope)) return listOf(currentAsSess(l, now))
         val all = (if (l != null) listOf(currentAsSess(l, now)) else emptyList()) + sessions
         val picked = when (val s = scope.sessions) {
             SessionScope.All -> all
@@ -306,7 +316,7 @@ class FakeCore(
         val f = scope.filter
         val from = f?.startedFromMs
         val to = f?.startedToMs
-        return picked.filter { hasData(it) || it.id == l?.id }.filter { s ->
+        return picked.filter(::hasData).filter { s ->
             (from == null || s.startedMs >= from) && (to == null || s.startedMs <= to)
         }
     }
@@ -328,18 +338,21 @@ class FakeCore(
             return Relation(rows, true, l.seq, listOf(l.id))
         }
         val resolved = resolve(scope, now)
-        val best = LinkedHashMap<Long, SPoint>()
+        // §2.1 union: the strongest RSSI and the strongest located point are kept apart (first session wins ties).
+        val rssi = LinkedHashMap<Long, Int?>()
+        val best = HashMap<Long, SPoint>()
         val last = HashMap<Long, Long>()
         for (s in resolved) for (p in s.points.values) {
+            if (p.key !in rssi || (p.rssi ?: Int.MIN_VALUE) > (rssi[p.key] ?: Int.MIN_VALUE)) rssi[p.key] = p.rssi
             val prev = best[p.key]
-            if (prev == null || (p.rssi ?: Int.MIN_VALUE) > (prev.rssi ?: Int.MIN_VALUE) || (prev.best == null && p.best != null)) {
+            if (p.best != null && (prev == null || (p.bestRssi ?: Int.MIN_VALUE) > (prev.bestRssi ?: Int.MIN_VALUE))) {
                 best[p.key] = p
             }
             last[p.key] = maxOf(last[p.key] ?: Long.MIN_VALUE, p.lastSeenMs)
         }
-        val rows = best.values.mapNotNull { p ->
-            val d = devs.getValue(p.key)
-            if (!shown(d)) null else Row(d, p.rssi, true, null, p.best, last.getValue(p.key))
+        val rows = rssi.mapNotNull { (key, max) ->
+            val d = devs.getValue(key)
+            if (!shown(d)) null else Row(d, max, true, null, best[key]?.best, last.getValue(key))
         }
         return Relation(rows, false, 0, resolved.map { it.id })
     }
@@ -593,6 +606,7 @@ class FakeCore(
             d.lastHeardMs = if (src.stale) now - 20_000 else now
             d.best = GeoPoint(p.lon, p.lat)
             d.bestRssi = p.rssi
+            d.maxRssi = src.rssi  // data.js's point RSSI, so the frozen demo (state 3) matches the prototype
             l.devices[d.dev.key] = d
         }
         l.nextPool = rec.points.size
