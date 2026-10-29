@@ -1332,7 +1332,9 @@ interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLo
   - `share()` cannot know when the receiving app has finished reading. It acknowledges the previous shared export at
     the next export, or at the next app start.
   - `saveToDownloads()` acknowledges right after the copy. That copy goes through MediaStore Downloads on API 29+ and
-    the public Downloads directory on API 24–28.
+    the public Downloads directory on API 24–28. A failed copy is `Err(Io)` and the export stays pending.
+  - An acknowledgement the core fails stays pending and is retried at the next export or app start (`ExportLedger`,
+    a pure reducer; `AndroidExportShare` is its runner).
 - `hideUnnamedApple` changes call `core.setDisplayFilter`.
 - `wifiOnlyUpload` changes re-enqueue the work as `UNMETERED`/`CONNECTED`.
 - The upload transport is the v3 one.
