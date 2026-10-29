@@ -268,6 +268,29 @@
   const session = (id) => (id === "all" ? allSessions()
     : current && current.id === id ? current : finished.find((r) => r.id === id) || RECORDINGS.find((r) => r.id === id));
 
+  // ---- search: one pure rule, mirrored by the Rust core ----
+  /**
+   * Does a device match the query? query is trimmed; empty matches nothing (the caller clears the search).
+   * Name: case-insensitive substring. MAC: only when the query has a digit; both sides lose ":" and "-" and are
+   * lowercased, then substring. Either rule matching is a match.
+   */
+  function matchDevice(query, name, addr) {
+    const q = String(query || "").trim();
+    if (!q) return false;
+    if ((name || "").toLowerCase().includes(q.toLowerCase())) return true;
+    if (!/[0-9]/.test(q)) return false;
+    const norm = (x) => String(x).replace(/[:-]/g, "").toLowerCase();
+    return norm(addr || "").includes(norm(q));
+  }
+  /** The addresses of a session's devices (scope: a session id, "all" for All sessions) that match the query, in
+   *  the session's order; null for an empty query (no search). */
+  function searchDevices(query, scope) {
+    if (!String(query || "").trim()) return null;
+    const r = session(scope);
+    if (!r) return [];
+    return r.points.map((p) => DEVICE[p.addr]).filter((d) => matchDevice(query, d.name, d.addr)).map((d) => d.addr);
+  }
+
   // ---- the boundary ----
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const WIKI = "https://wirelesswiki.org/p/"; // the wiki's family page route (wiki-site src/pages/p/[id])
@@ -364,5 +387,8 @@
       return clone({ ...p, identified: !isUnknown, devices });
     },
     getSettings: () => clone(SETTINGS),
+    /** Search (see matchDevice): matching addresses within a session view, or null for an empty query. */
+    searchDevices,
+    matchDevice,
   };
 })();

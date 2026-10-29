@@ -307,7 +307,6 @@
     sheet.classList.toggle("open", !!sess);
     if (!sess) return liftRecorder();
     const mode = S.live ? S.discoverMode : "all";
-    const q = S.query.trim().toLowerCase();
     const head = $("#disc-head"), chips = $("#disc-chips"), body = $("#disc-body");
     head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, hist: S.histMode });
     if (S.discView === "list") {
@@ -317,7 +316,7 @@
       chips.innerHTML = "";
       const area = areaCounts();
       const groups = D.getProducts(mode, S.session)
-        .map((g) => ({ ...g, products: g.products.filter((p) => nameMatch(p.name, q) && (!area || area.count[p.id]))
+        .map((g) => ({ ...g, products: g.products.filter((p) => (!S.found || S.foundProducts.has(p.id)) && (!area || area.count[p.id]))
           .map((p) => (area ? { ...p, count: area.count[p.id], inRange: Math.min(p.inRange, area.live[p.id] || 0) } : p)) }))
         .filter((g) => g.products.length);
       body.innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
@@ -326,7 +325,8 @@
     if (!sheetState(sheet)) setSheetState(sheet, "collapsed");
     liftRecorder();
   }
-  const nameMatch = (name, q) => !q || (name || "").toLowerCase().includes(q);
+  /** Is a device in the current search's results (or is there no search)? */
+  const found = (addr) => !S.found || S.found.has(addr);
 
   /** The record FAB stays anchored just above the Discover sheet's collapsed peek. It lives below the sheets, so a
    *  rising sheet slides over it and a collapsing one uncovers it: no hiding. */
@@ -351,9 +351,8 @@
   // ---- List view: the session's devices (the old Scan list), in the order sorted once ----
   function sessionRows(mode) {
     const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
-    const q = S.query.trim().toLowerCase();
     return (S.area ? S.areaOrder : S.order).map((a) => byAddr[a])
-      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat) && nameMatch(d.name, q))
+      .filter((d) => d && inArea(d.addr) && found(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat))
       .map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
   }
   // ---- "This area" (history and All sessions): the sheets list only devices whose point is in the viewport ----
@@ -581,7 +580,7 @@
     session: null, live: false, order: [],
     recorder: "idle", paused: false, recMap: null,
     discoverMode: "nearby", discView: "categories",
-    devCat: "all", query: "", histMode: "all", area: null, areaOrder: [], // area: the devices in view while "This area" is on
+    devCat: "all", query: "", found: null, foundProducts: null, viewBeforeSearch: null, histMode: "all", area: null, areaOrder: [], // area: the devices in view while "This area" is on
     settings: { ...SETTINGS }, stack: [], map: null,
     ob: 0, obAuto: true, obAllowed: [false, false, false],
   };
@@ -625,6 +624,7 @@
     S.live = !!(id && live);
     Stack.reset();
     S.histMode = "all"; S.area = null; S.areaOrder = []; // per session view
+    runSearch(S.query, false); // an open search applies to the new view
     S.order = id ? D.getSessionDevices(id).sort((a, b) => b.rssi - a.rssi).map((d) => d.addr) : []; // sorted once
     const sess = id && D.getRecording(id);
     S.map.setSession(sess, id ? sessionPoints() : []);
@@ -792,9 +792,9 @@
       body.innerHTML = UI.deviceBody(d, { tab: entry.props.tab, gatt: null, chartW: phone.clientWidth - 32 });
       $("#dev-tab", body).innerHTML = entry.props.tab === "adv" ? UI.advertising(d) : gattTabNow(d.addr);
     } else {
-      const p = D.getProduct(entry.props.id), q = S.query.trim().toLowerCase();
+      const p = D.getProduct(entry.props.id);
       top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">${esc((CATS.find((c) => c.id === p.category) || { label: "Unidentified" }).label)}</span>`);
-      const rows = productDevices(p).filter((d) => nameMatch(d.name, q) && inArea(d.addr)).map((d) => UI.deviceRow(d, { spark: S.live })).join("");
+      const rows = productDevices(p).filter((d) => (!S.query.trim() || D.matchDevice(S.query, d.name, d.addr)) && inArea(d.addr)).map((d) => UI.deviceRow(d, { spark: S.live })).join("");
       body.innerHTML = UI.productView(p, rows || `<div class="empty">No matching devices</div>`);
     }
     el.style.setProperty("--peek", `${$(".handle", el).offsetHeight + top.offsetHeight}px`);
@@ -1002,6 +1002,18 @@
   }
   function stopGatt() { if (S.gattRun) S.gattRun.timers.forEach(clearTimeout); S.gattRun = null; }
 
+  /** Search: D.searchDevices gives the matching devices of the session view; rows keep their fixed order. Typing in
+   *  categories view switches the sheet to the list until the search closes. */
+  function runSearch(text, render = true) {
+    S.query = text;
+    S.found = S.session ? (D.searchDevices(text, S.session) || null) : null;
+    if (S.found) {
+      S.found = new Set(S.found);
+      S.foundProducts = new Set(D.getSessionDevices(S.session).filter((d) => S.found.has(d.addr)).map((d) => d.product || "unidentified"));
+      if (S.discView !== "list") { S.viewBeforeSearch = S.discView; S.discView = "list"; }
+    }
+    if (render) refreshSheets();
+  }
   /** The top-right search: the button opens the field across the top row; an empty field closes again. */
   function setSearch(open) {
     const el = $(".top-search", phone), input = $("#top-q");
@@ -1009,7 +1021,11 @@
     $(".ts-toggle", el).setAttribute("aria-expanded", open);
     input.tabIndex = open ? 0 : -1;
     if (open) input.focus();
-    else if (S.query) { input.value = ""; S.query = ""; refreshSheets(); }
+    else {
+      if (S.query) { input.value = ""; runSearch(""); }
+      // the view the user had before searching comes back when the search closes
+      if (S.viewBeforeSearch) { S.discView = S.viewBeforeSearch; S.viewBeforeSearch = null; refreshSheets(); }
+    }
   }
 
   const ACTIONS = {
@@ -1127,7 +1143,7 @@
     else if (S.stack.length) pop();
   });
   phone.addEventListener("input", (e) => {
-    if (e.target.id === "top-q") { S.query = e.target.value; refreshSheets(); }
+    if (e.target.id === "top-q") runSearch(e.target.value);
   });
 
   /** Launch. Recording when "Record when the app opens" is on; otherwise All sessions, or only the location for a
@@ -1201,6 +1217,17 @@
         ${cell("Resume", UI.iconButton({ name: "play", label: "Resume", action: "" }))}
         ${cell("Stop", UI.iconButton({ name: "stop", label: "Stop", action: "", kind: "rec" }))}
       </div>
+      ${sect("Search rule (data.js matchDevice / searchDevices)", "deterministic checks; the Rust core mirrors this rule")}
+      <div class="g-row">${(() => {
+        const cases = [
+          ["qt", "QT-Sensor", "AA:BB:CC:00:11:22", true], ["qt", "SmartQt", "AA:BB:CC:00:11:22", true], ["qt", "aqtb", "AA:BB:CC:00:11:22", true],
+          ["qt", "Other", "AA:BB:CC:00:11:22", false], ["4b4b", "No name", "72:CD:4C:4B:4B:6F", true], ["4B:4B", "No name", "72:CD:4C:4B:4B:6F", true],
+          ["4b-4b", "No name", "72:CD:4C:4B:4B:6F", true], ["7d3f", "No name", "40:E7:7D:3F:7A:CD", true], ["ab", "Sensor", "AB:CD:EF:01:02:03", false],
+          ["ab", "Abbey Road", "11:22:33:44:55:66", true], ["  ", "QT-Sensor", "AA:BB:CC:00:11:22", false]];
+        const rowsHtml = cases.map(([q, n, a, want]) => { const got = D.matchDevice(q, n, a); return `<tr><td>${esc(JSON.stringify(q))}</td><td>${esc(n)}</td><td>${a}</td><td>${want}</td><td>${got === want ? "PASS" : "FAIL"}</td></tr>`; }).join("");
+        const pass = cases.filter(([q, n, a, want]) => D.matchDevice(q, n, a) === want).length;
+        return cell(`${pass}/${cases.length} pass`, `<table class="raw g-tests"><tr><th>Query</th><th>Name</th><th>MAC</th><th>Match</th><th>Result</th></tr>${rowsHtml}</table>`, "width: 640px");
+      })()}</div>
       ${sect("Recorder (main map only: idle FAB bottom-right, recording = top-center island)", ".recorder · --fab, --fab-dot, --rec, --on-rec, --recorder-pad, --recorder-map-h, --shadow-float → --shadow-raised, --t-morph; BlinkingDot .rec-dot · --rec-dot, --t-blink")}
       <div class="g-row">
         ${cell("idle", UI.recorder({ state: "idle", paused: false, time: "12:34", meta: "", cls: "static" }), "width: 120px; height: 90px")}
