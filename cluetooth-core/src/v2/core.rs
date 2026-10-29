@@ -380,9 +380,16 @@ impl Core {
         r.last_commit_ms = now;
         let recording = r.phase == RecordingPhase::Recording;
         match &result {
-            Err(e) => self.emit(CoreEvent::StorageWarning {
-                message: e.to_string(),
-            }),
+            Err(e) => {
+                // Nothing is lost: the batch goes back in front of whatever arrives next, for the next commit.
+                let later = std::mem::replace(&mut r.pending, obs);
+                r.pending.extend(later);
+                let later = std::mem::replace(&mut r.route, route);
+                r.route.extend(later);
+                self.emit(CoreEvent::StorageWarning {
+                    message: e.to_string(),
+                });
+            }
             Ok(()) if recording => self.emit_delta(w, &route, now, false),
             Ok(()) => {}
         }
@@ -475,6 +482,11 @@ impl Core {
     }
 
     #[cfg(test)]
+    pub(crate) fn fail_next_commit(&self) {
+        lock(&self.writer).store.fail_next_commit = true;
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_writer_conn<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
         f(&lock(&self.writer).store.conn)
     }
@@ -555,7 +567,9 @@ impl Core {
             now - r.last_commit_ms >= self.config.durability_interval_ms as i64
         };
         if due {
-            self.commit(&mut w, now)?;
+            // The batch is accepted either way: a failed commit keeps it pending for the next one and reports a
+            // StorageWarning; returning the error would make the caller send it again.
+            let _ = self.commit(&mut w, now);
         }
         Ok(ack)
     }

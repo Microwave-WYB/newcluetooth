@@ -1086,3 +1086,148 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+/// A failed commit loses nothing and misattributes nothing: the batch and route go back to pending, and the
+/// payload ids the rolled-back transaction handed out are forgotten, so the retry re-inserts the payload instead
+/// of pointing its rows at whichever payload SQLite gives the freed id to next.
+#[test]
+fn failed_commit_is_retried_without_loss_or_misattribution() {
+    let dir = tempfile::tempdir().unwrap();
+    let t0 = 1_761_000_000_000i64;
+    let core = Core::open_at(
+        config(dir.path()),
+        CoreAssets {
+            wiki_bundle_json: resource("fake-bundle.json"),
+            sig_numbers_tsv: String::new(),
+        },
+        t0,
+    )
+    .unwrap();
+    let c = Arc::new(Collect::default());
+    core.set_listener(Some(c.clone()));
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_location_at(LocationFix {
+        lat: 32.88,
+        lon: -117.234,
+        accuracy_meters: 5.0,
+        observed_at_ms: t0 + 1_000,
+        elapsed_realtime_nanos: 1_000_000_000,
+    });
+    core.ingest_scans_at(
+        vec![obs(
+            "AA:00:00:00:00:01",
+            -70,
+            t0 + 1_000,
+            1_000_000_000,
+            "Alpha",
+        )],
+        t0 + 1_000,
+    )
+    .unwrap();
+    // the commit at +5 s fails after writing everything
+    core.fail_next_commit();
+    let ack = core
+        .ingest_scans_at(
+            vec![obs(
+                "AA:00:00:00:00:01",
+                -60,
+                t0 + 5_000,
+                5_000_000_000,
+                "Alpha",
+            )],
+            t0 + 5_000,
+        )
+        .unwrap();
+    assert_eq!(ack.accepted, 1, "a failed commit still accepts the batch");
+    for _ in 0..200 {
+        if c.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, CoreEvent::StorageWarning { .. }))
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        c.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, CoreEvent::StorageWarning { .. }))
+    );
+    core.with_writer_conn(|conn| {
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM payloads", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "the failed transaction rolled back");
+    });
+    // a new payload arrives before the retry: it must not take over Alpha's freed id
+    core.ingest_scans_at(
+        vec![obs(
+            "AA:00:00:00:00:02",
+            -50,
+            t0 + 10_000,
+            10_000_000_000,
+            "Bravo",
+        )],
+        t0 + 10_000,
+    )
+    .unwrap();
+    core.stop_recording_at(t0 + 11_000).unwrap();
+    core.with_writer_conn(|conn| {
+        let rows: Vec<(i64, i64, i64)> = conn
+            .prepare(
+                "SELECT addr, payload_id, sightings FROM sighting_minutes ORDER BY addr, minute",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let mut by_addr: HashMap<i64, i64> = HashMap::new();
+        for (addr, payload, sightings) in &rows {
+            let raw = super::store::payload_raw(conn, *payload).unwrap();
+            let name = if *addr == 0xAA0000000001 {
+                "Alpha"
+            } else {
+                "Bravo"
+            };
+            assert!(
+                raw.ends_with(name.as_bytes()),
+                "{addr:x} points at a payload of the other device"
+            );
+            *by_addr.entry(*addr).or_default() += sightings;
+        }
+        assert_eq!(
+            by_addr[&0xAA0000000001], 2,
+            "both sightings of the failed batch were kept"
+        );
+        assert_eq!(by_addr[&0xAA0000000002], 1);
+        let route: i64 = conn
+            .query_row("SELECT count(*) FROM route_points", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(route, 1, "the route point of the failed commit was kept");
+        let names: Vec<Option<String>> = conn
+            .prepare("SELECT name FROM session_devices ORDER BY addr")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(names, vec![Some("Alpha".into()), Some("Bravo".into())]);
+    });
+    let rows = block(core.device_rows(
+        Scope {
+            sessions: SessionScope::Sessions { ids: vec![id] },
+            filter: None,
+        },
+        vec![0xAA0000000001, 0xAA0000000002],
+    ))
+    .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.rssi).collect::<Vec<_>>(),
+        vec![Some(-60), Some(-50)]
+    );
+}

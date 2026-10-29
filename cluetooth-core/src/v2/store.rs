@@ -235,6 +235,9 @@ pub(crate) struct Store {
     pub conn: Connection,
     payloads: HashMap<[u8; 32], i64>,
     info: HashMap<i64, PayloadInfo>,
+    /// Test hook: the next commit fails after writing everything, before `COMMIT`.
+    #[cfg(test)]
+    pub fail_next_commit: bool,
 }
 
 /// Bound of the in-memory sha256 → payload id map (§2.4: an LRU of 50k hashes, then the DB).
@@ -246,6 +249,8 @@ impl Store {
             conn,
             payloads: HashMap::new(),
             info: HashMap::new(),
+            #[cfg(test)]
+            fail_next_commit: false,
         }
     }
 
@@ -307,8 +312,41 @@ impl Store {
         if obs.is_empty() && route.is_empty() {
             return Ok(());
         }
+        // A rolled-back transaction frees the ids of the payloads it inserted, and SQLite hands them out again, so
+        // every cache entry this commit added is dropped on failure; otherwise a later payload would inherit the id
+        // and the earlier payload's rows would be attributed to it.
+        let mut added_payloads = Vec::new();
+        let mut added_info = Vec::new();
+        let result = self.commit_tx(
+            session,
+            obs,
+            route,
+            catalog,
+            &mut added_payloads,
+            &mut added_info,
+        );
+        if result.is_err() {
+            for sha in &added_payloads {
+                self.payloads.remove(sha);
+            }
+            for id in &added_info {
+                self.info.remove(id);
+            }
+        }
+        result
+    }
+
+    fn commit_tx(
+        &mut self,
+        session: i64,
+        obs: &[Obs],
+        route: &[RoutePoint],
+        catalog: &Catalog,
+        added_payloads: &mut Vec<[u8; 32]>,
+        added_info: &mut Vec<i64>,
+    ) -> Result<(), CoreError> {
         let tx = self.conn.transaction()?;
-        let payload_ids = resolve_payloads(&tx, &mut self.payloads, obs, catalog)?;
+        let payload_ids = resolve_payloads(&tx, &mut self.payloads, obs, catalog, added_payloads)?;
         for id in &payload_ids {
             if !self.info.contains_key(id) {
                 let info = tx.query_row(
@@ -323,6 +361,7 @@ impl Store {
                     },
                 )?;
                 self.info.insert(*id, info);
+                added_info.push(*id);
             }
         }
         merge_minutes(&tx, session, obs, &payload_ids)?;
@@ -333,6 +372,12 @@ impl Store {
         }
         insert_route(&tx, session, route)?;
         refresh_session(&tx, session, obs.len() as i64)?;
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_commit) {
+            return Err(CoreError::Db {
+                detail: "injected commit failure".into(),
+            });
+        }
         tx.commit()?;
         if self.info.len() > PAYLOAD_CACHE {
             self.info.clear();
@@ -346,6 +391,7 @@ fn resolve_payloads(
     cache: &mut HashMap<[u8; 32], i64>,
     obs: &[Obs],
     catalog: &Catalog,
+    added: &mut Vec<[u8; 32]>,
 ) -> Result<Vec<i64>, CoreError> {
     let mut out = Vec::with_capacity(obs.len());
     for o in obs {
@@ -369,6 +415,7 @@ fn resolve_payloads(
             cache.clear();
         }
         cache.insert(sha, id);
+        added.push(sha);
         out.push(id);
     }
     Ok(out)
