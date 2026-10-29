@@ -147,12 +147,13 @@ The order is the owner's decision:
 
 The pre-0.0.5 JSONL uploader (`*.jsonl.zst` in `filesDir`) is ported unchanged into the same worker.
 
-## 9. Interface points to confirm with the coordinator
+## 9. Decisions (coordinator, 2026-10-28)
 
-- **Onboarding completion.** `Settings` has no "onboarding done" field, so SPEC O-2's "on first launch" cannot be
-  decided. A v3 user already has a `user_id` but has never seen the v2 permissions and auto-record steps.
-- **No GATT target.** §4.3 requires `core.gattTarget(key)` to exist, but does not say what to emit when it does
-  not.
-- **Acknowledging a shared export.** `ExportShare.share` "acknowledges after", but the share sheet gives no
-  completion signal. Acknowledging right away deletes `export-temp/<id>` while the receiving app may still read the
-  `content://` URI.
+- §2 step 5 (wait for the foreground confirmation; no session on refusal) and the flush before pause and stop are
+  approved. `docs/v2-api.md` §4.4 now states both.
+- `Settings.onboardingDone: Boolean = false` is set by Done in O-2 and not migrated, so v3 upgraders see the v2
+  onboarding once (§4.5).
+- No GATT target gives a failed Connecting step with `Other(GATT_NO_TARGET)` (−5), next to `GATT_UNAVAILABLE` (−4).
+  Both are named constants in `:platform-api` (§4.3).
+- `ExportShare.share()` acknowledges the previous shared export at the next export or the next app start;
+  `saveToDownloads()` acknowledges right after the copy (§4.5).

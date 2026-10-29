@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 rootProject.name = "Cluetooth Scanner"
 include(":app")
 include(":core-api")
+include(":platform")

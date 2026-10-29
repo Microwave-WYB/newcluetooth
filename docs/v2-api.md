@@ -1231,8 +1231,10 @@ interface GattRunner {
 Before a run:
 
 - Check `BLUETOOTH_CONNECT` and that Bluetooth is on. If either is missing, emit a failed Connecting step with
-  `Other(-4)`; the UI shows the onboarding piece.
-- `core.gattTarget(key)` must exist.
+  `Other(GATT_UNAVAILABLE)` (−4); the UI shows the onboarding piece.
+- `core.gattTarget(key)` must exist. If it doesn't, emit a failed Connecting step with `Other(GATT_NO_TARGET)` (−5).
+- Both codes are named constants in `:platform-api`, next to `GattRunner`. Neither precondition failure connects or
+  writes a gatt/v1 object, so the codes never collide with the engine's status values in stored results.
 
 During and after:
 
@@ -1265,12 +1267,22 @@ data class RecorderState(
 
 After a process restart, `Recorder` reads `core.recordingState()`.
 
+Ordering (`scanner/platform/FOREGROUND_SERVICE.md` has the details):
+
+- **Start.** `start()` waits up to 5 s for `RecordingService` to confirm `startForeground`, and only then calls
+  `core.startRecording`. If Android refuses, or the confirmation times out, no session is created, and the state is
+  `Idle` with `error`.
+- **Pause and stop.** Before `core.pauseRecording()` or `core.stopRecording()`, the scanner stops, the queued scan
+  callbacks drain (a main-looper fence), and the batcher flushes into `ingestScans`. So no observation of the
+  running session is ignored as not recording.
+
 ### 4.5 Settings, upload, permissions
 
 ```kotlin
 // :platform-api
 data class Settings(val userId: String?, val recordOnOpen: Boolean, val wifiOnlyUpload: Boolean,
-                    val scanCodedPhy: Boolean, val hideUnnamedApple: Boolean, val appVersion: String)
+                    val scanCodedPhy: Boolean, val hideUnnamedApple: Boolean, val appVersion: String,
+                    val onboardingDone: Boolean = false)   // set by Done in O-2
 interface SettingsStore {       // DataStore "cluetooth_settings"; one-time SharedPreferencesMigration from cluetooth_prefs
     val settings: StateFlow<Settings>
     suspend fun update(transform: (Settings) -> Settings)
@@ -1285,6 +1297,13 @@ interface Permissions {
 interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLocation: StateFlow<MyLocation?> }
 ```
 
+- `onboardingDone` is not migrated from `cluetooth_prefs`. An upgrader from v3 therefore sees the v2 onboarding (O-2)
+  once.
+- `ExportShare` acknowledgement:
+  - `share()` cannot know when the receiving app has finished reading. It acknowledges the previous shared export at
+    the next export, or at the next app start.
+  - `saveToDownloads()` acknowledges right after the copy. That copy goes through MediaStore Downloads on API 29+ and
+    the public Downloads directory on API 24–28.
 - `hideUnnamedApple` changes call `core.setDisplayFilter`.
 - `wifiOnlyUpload` changes re-enqueue the work as `UNMETERED`/`CONNECTED`.
 - The upload transport is the v3 one.
