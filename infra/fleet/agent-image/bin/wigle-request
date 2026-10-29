@@ -1,0 +1,75 @@
+#!/usr/bin/env node
+// Ask root to run a WiGLE API query; workers never call `wigle` themselves.
+//
+//   wigle-request --task 77 --reason "nationwide name search" [--max-pages 1] bluetooth/search name=DT-TAG% [k=v ...]
+//   wigle-request --status <request_id>
+//
+// Appends one JSON line to requests.jsonl and prints the request id. Root decides, runs the
+// query as caller root:task-<n>, appends the outcome (approved/declined/failed, wigle.responses
+// ids, note) to responses.jsonl and messages the requesting agent.
+import { appendFileSync, readFileSync, existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { parseArgs } from "node:util";
+
+const dir = process.env.WIGLE_REQUESTS_DIR ?? "/workspace/sources/wigle-requests";
+const usage = 'usage: wigle-request --task <n> --reason "<why>" [--max-pages N] <endpoint> [k=v ...]\n       wigle-request --status <request_id>';
+
+let parsed;
+try {
+  parsed = parseArgs({
+    allowPositionals: true,
+    options: {
+      task: { type: "string" },
+      reason: { type: "string" },
+      "max-pages": { type: "string", default: "1" },
+      status: { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+} catch (err) {
+  console.error(`${err.message}\n${usage}`);
+  process.exit(2);
+}
+const { values: o, positionals } = parsed;
+
+if (o.help) {
+  console.log(usage);
+  process.exit(0);
+}
+
+if (o.status) {
+  const file = `${dir}/responses.jsonl`;
+  const hits = existsSync(file)
+    ? readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.request_id === o.status)
+    : [];
+  console.log(JSON.stringify(hits.at(-1) ?? { request_id: o.status, status: "pending" }));
+  process.exit(0);
+}
+
+const [endpoint, ...pairs] = positionals;
+if (!o.task || !o.reason || !endpoint) {
+  console.error(`--task, --reason and an endpoint are required\n${usage}`);
+  process.exit(2);
+}
+const params = {};
+for (const p of pairs) {
+  const i = p.indexOf("=");
+  if (i < 1) {
+    console.error(`parameter "${p}" is not k=v\n${usage}`);
+    process.exit(2);
+  }
+  params[p.slice(0, i)] = p.slice(i + 1);
+}
+const maxPages = Math.max(1, Math.min(Number.parseInt(o["max-pages"], 10) || 1, 5));
+const req = {
+  request_id: randomUUID().replaceAll("-", "").slice(0, 12),
+  task: o.task,
+  agent_id: process.env.PASEO_AGENT_ID ?? null,
+  endpoint,
+  params,
+  max_pages: maxPages,
+  reason: o.reason,
+  created: new Date().toISOString().replace(/\.\d{3}Z$/, "+00:00"),
+};
+appendFileSync(`${dir}/requests.jsonl`, `${JSON.stringify(req)}\n`);
+console.log(JSON.stringify({ request_id: req.request_id, status: "submitted" }));

@@ -1,0 +1,8 @@
+{
+  "packages": [
+    "~/.local/share/research-agent/tools/node_modules/pi-web-access",
+    "~/.local/share/research-agent/tools/node_modules/pi-hashline-readmap",
+    "~/.local/share/research-agent/tools/node_modules/@aliou/pi-processes",
+    "~/.local/share/research-agent/tools/node_modules/@sting8k/pi-vcc"
+  ]
+}

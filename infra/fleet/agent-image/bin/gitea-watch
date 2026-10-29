@@ -1,0 +1,4 @@
+#!/bin/sh
+# Watches Gitea repo activity (tools/gitea-watch); a single Node ES module, built-ins only.
+dir=$(dirname "$(readlink -f "$0")")
+exec node "$dir/../tools/gitea-watch/gitea-watch.mjs" "$@"

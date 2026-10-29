@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "playwright-mcp-headless",
+      "args": [],
+      "description": "Headless Chromium browser: open pages, read their text, take snapshots"
+    }
+  }
+}

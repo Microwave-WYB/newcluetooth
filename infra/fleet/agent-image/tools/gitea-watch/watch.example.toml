@@ -1,0 +1,13 @@
+gitea_url   = "http://gitea:3000"
+token_env   = "GITEA_TOKEN"          # the token is read from an environment variable, never from this file
+repos       = ["y2wei/wirelesswiki"]
+bots        = ["wiki-bot"]           # accounts treated as bots; may list several
+interval    = 60                     # seconds, minimum 30
+state_dir   = "~/.local/state/gitea-watch"
+protected_refs = ["main"]            # commits pushed to these branches are reported whoever pushed them
+# page_size = 50                     # feed page size (Gitea caps it by [api] MAX_RESPONSE_ITEMS)
+
+[ack]
+enabled  = true
+reaction = "eyes"                    # must be in the list Gitea's [ui] REACTIONS allows
+on       = ["comment_issue", "comment_pull"]   # optionally add create_issue, create_pull_request

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Playwright MCP, headless Chromium. MCP clients start servers with a trimmed environment, so
+# locate the browsers here (setup:playwright installs them into $RESEARCH_AGENT_HOME/browsers,
+# which ~/.local/share/research-agent points to).
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.local/share/research-agent/browsers}"
+exec playwright-mcp --headless --browser chromium --no-sandbox --isolated "$@"

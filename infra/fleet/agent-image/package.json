@@ -1,0 +1,18 @@
+{
+  "name": "research-agent-tools",
+  "private": true,
+  "description": "Exact versions of every npm tool of the research agent. Installed with npm ci by mise run setup:tools.",
+  "dependencies": {
+    "@aliou/pi-processes": "0.13.3",
+    "@anthropic-ai/claude-code": "2.1.310",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@getpaseo/cli": "0.11.4",
+    "@playwright/mcp": "0.0.83",
+    "@sting8k/pi-vcc": "0.11.1",
+    "js-beautify": "2.0.3",
+    "pg": "8.16.3",
+    "pi-hashline-readmap": "0.16.1",
+    "pi-web-access": "0.45.0",
+    "prettier": "3.9.10"
+  }
+}
