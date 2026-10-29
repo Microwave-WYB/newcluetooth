@@ -53,9 +53,26 @@ class InterruptedRecordingNoticeTest {
     }
 
     @Test
-    fun `without the notification permission nothing is posted`() = runBlocking {
+    fun `without the notification permission nothing is posted and the sessions stay unseen`() = runBlocking {
         shadowOf(context).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
-        InterruptedRecordingNotice(context).check { sessions }
+        assertTrue(InterruptedRecordingNotice(context).check { sessions }.isEmpty())
         assertTrue(shadowOf(manager).allNotifications.isEmpty())
+
+        // The user allows notifications later: the notice comes at the next start.
+        shadowOf(context).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        assertEquals(listOf("old", "new"), InterruptedRecordingNotice(context).check { sessions }.map { it.id })
+        assertEquals(1, shadowOf(manager).allNotifications.size)
+    }
+
+    @Test
+    fun `with notifications disabled nothing is posted and the sessions stay unseen`() = runBlocking {
+        shadowOf(context).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        shadowOf(manager).setNotificationsEnabled(false)
+        assertTrue(InterruptedRecordingNotice(context).check { sessions }.isEmpty())
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+
+        shadowOf(manager).setNotificationsEnabled(true)
+        assertEquals(listOf("old", "new"), InterruptedRecordingNotice(context).check { sessions }.map { it.id })
+        assertEquals(1, shadowOf(manager).allNotifications.size)
     }
 }
