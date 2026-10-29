@@ -44,7 +44,8 @@ class AndroidPermissions(
     private var lastActivity = WeakReference<Activity>(null)
 
     init {
-        ContextCompat.registerReceiver(
+        runCatching {
+            ContextCompat.registerReceiver(
             context,
             object : BroadcastReceiver() {
                 override fun onReceive(receiverContext: Context?, intent: Intent?) = refresh()
@@ -52,12 +53,14 @@ class AndroidPermissions(
             IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        }
     }
 
     /** Re-reads every grant and Bluetooth; [activity] enables the permanently-denied check. */
     fun refresh(activity: Activity? = lastActivity.get()) {
         activity?.let { lastActivity = WeakReference(it) }
-        _state.value = compute(activity)
+        // A failing grant read keeps the last known state rather than crashing the caller.
+        runCatching { compute(activity) }.onSuccess { _state.value = it }
     }
 
     override fun requestLauncherContract(): ActivityResultContract<Array<String>, Map<String, Boolean>> =
@@ -120,7 +123,8 @@ class AndroidPermissions(
         return if (permanently) Perm.PermanentlyDenied else Perm.Denied
     }
 
-    private fun granted(name: String) = ContextCompat.checkSelfPermission(context, name) == PackageManager.PERMISSION_GRANTED
+    private fun granted(name: String) =
+        runCatching { ContextCompat.checkSelfPermission(context, name) == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
 
     private fun bluetoothOn() = try {
         context.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true

@@ -4,6 +4,7 @@ import android.util.Log
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
+import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * §4.1: scan callbacks hand observations to [offer], which never blocks; one consumer batches up to [maxBatch]
@@ -61,7 +63,12 @@ class ScanIngest(
     private val flushes = Channel<CompletableDeferred<Unit>>(Channel.UNLIMITED)
 
     init {
-        scope.launch(dispatcher) { consume() }
+        // The consumer catches every core failure itself; the handler only keeps an escape off the main thread.
+        scope.launch(dispatcher + failureHandler(TAG)) { consume() }.invokeOnCompletion {
+            // The consumer is gone (failed or cancelled): close the flush queue and release every waiting flush.
+            flushes.close()
+            while (true) flushes.tryReceive().getOrNull()?.completeExceptionally(IllegalStateException("the batcher stopped")) ?: break
+        }
     }
 
     /** From the scan callback (main thread): never blocks. */
@@ -69,11 +76,14 @@ class ScanIngest(
         queue.trySend(observation)
     }
 
-    /** Returns once everything [offer]ed before this call has reached the core (or was dropped as rejected). */
-    suspend fun flush() {
+    /**
+     * Returns true once everything [offer]ed before this call has reached the core (or was dropped as rejected);
+     * false when that did not happen within [timeoutMs] or the batcher had stopped. Never throws.
+     */
+    suspend fun flush(timeoutMs: Long = FLUSH_TIMEOUT_MS): Boolean {
         val done = CompletableDeferred<Unit>()
-        flushes.send(done)
-        done.await()
+        if (flushes.trySend(done).isFailure) return false
+        return withTimeoutOrNull(timeoutMs) { runCatching { done.await() }.isSuccess } ?: false
     }
 
     private sealed interface Next {
@@ -90,12 +100,14 @@ class ScanIngest(
                 flushes.onReceive { Next.Flush(it) }
             }
             if (first is Next.Flush) {
-                drain()
-                first.done.complete(Unit)
+                settle(first.done) { drain() }
                 continue
             }
             val batch = ArrayList<ScanObservationInput>(maxBatch)
-            batch += (first as Next.Observation).value
+            when (first) {
+                is Next.Observation -> batch += first.value
+                is Next.Flush, Next.Timeout -> continue // a flush was handled above; a timeout needs a batch
+            }
             val deadline = nowMs() + maxDelayMs
             var flush: CompletableDeferred<Unit>? = null
             while (batch.size < maxBatch && flush == null) {
@@ -119,11 +131,25 @@ class ScanIngest(
                     Next.Timeout -> break
                 }
             }
-            ingest(batch)
-            if (flush != null) {
-                drain()
-                flush.complete(Unit)
+            if (flush == null) {
+                ingest(batch)
+            } else {
+                settle(flush) {
+                    ingest(batch)
+                    drain()
+                }
             }
+        }
+    }
+
+    /** Runs [work] for a flush the consumer took; the flush is released however the work ends. */
+    private suspend fun settle(done: CompletableDeferred<Unit>, work: suspend () -> Unit) {
+        try {
+            work()
+            done.complete(Unit)
+        } finally {
+            // A no-op after the completion above; releases the waiter when the consumer is cancelled or failed.
+            done.completeExceptionally(IllegalStateException("the batcher stopped"))
         }
     }
 
@@ -163,7 +189,8 @@ class ScanIngest(
         }
     }
 
-    private companion object {
-        const val TAG = "ScanIngest"
+    companion object {
+        private const val TAG = "ScanIngest"
+        const val FLUSH_TIMEOUT_MS = 5_000L
     }
 }

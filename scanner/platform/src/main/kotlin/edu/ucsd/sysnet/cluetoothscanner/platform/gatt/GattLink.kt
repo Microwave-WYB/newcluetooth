@@ -58,5 +58,5 @@ interface GattLink {
 
 fun interface GattLinkFactory {
     /** Starts an LE, `autoConnect = false` connection; the result arrives on [sink]. */
-    fun connect(sink: GattEventSink): GattLink
+    fun connect(sink: GattEventSink): GattLink?
 }

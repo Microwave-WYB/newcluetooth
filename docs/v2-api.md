@@ -1241,7 +1241,9 @@ Before a run:
 
 During and after:
 
-- One discovery runs at a time process-wide; a new `discover` cancels the previous one.
+- One discovery runs at a time process-wide; a new `discover` that passed the preconditions cancels the previous
+  one and starts after it ended. One owner (`GattAdmission`) orders start against cancel: a discovery cancelled
+  while it is still starting never connects, and one waiting for its turn never runs.
 - GATT works with or without a recording.
 - After the final step, the runner calls `core.ingestGatt(json)` and emits the returned view. A failed save is kept
   in `filesDir/gatt-pending` and retried.

@@ -6,14 +6,18 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.IngestAck
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.platform.TestCoreIngest
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -118,6 +122,34 @@ class ScanIngestTest {
         val flushed = async { ingest.flush() }
         runCurrent()
         assertTrue(flushed.isCompleted)
+    }
+
+    @Test
+    fun `a flush the core never takes ends false after its bound, never hangs (#70 review)`() = runTest {
+        refuse = { CoreException.Backpressure() }
+        val ingest = ingest()
+        ingest.offer(observation(1))
+        val flushed = async { ingest.flush() }
+        advanceTimeBy(ScanIngest.FLUSH_TIMEOUT_MS + 1)
+        runCurrent()
+        assertTrue(flushed.isCompleted)
+        assertFalse(flushed.await())
+    }
+
+    @Test
+    fun `a flush after the batcher stopped is released at once with false (#70 review)`() = runTest {
+        val owner = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        val ingest = ScanIngest(CompletableDeferred<CoreIngest>(core), owner, StandardTestDispatcher(testScheduler), nowMs = { testScheduler.currentTime })
+        refuse = { CoreException.Backpressure() }
+        ingest.offer(observation(1))
+        val waiting = async { ingest.flush() }
+        runCurrent()
+        owner.cancel()
+        runCurrent()
+        assertTrue("a waiting flush is released", waiting.isCompleted)
+        assertFalse(waiting.await())
+        assertFalse(ingest.flush())
+        assertEquals(0L, testScheduler.currentTime)
     }
 
     @Test

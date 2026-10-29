@@ -2,20 +2,6 @@
 # An entry covers every hit on its line; an entry whose line has no hit fails the check.
 # The seed entries are the hits on feat/v2 at 6506e81; each owning lane removes its own in its refactor.
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:196  seed: existing error/check/require at 6506e81, removed by lane D's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/gatt/AndroidGattLink.kt:106  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/gatt/FilePendingDiscoveryStore.kt:17  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/gatt/FilePendingDiscoveryStore.kt:25  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/gatt/GattJson.kt:31  seed: existing as at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/location/LocationClient.kt:231  seed: existing as at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/location/LocationClient.kt:233  seed: existing as at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/recording/PlatformRecorder.kt:119  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/recording/PlatformRecorder.kt:135  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/recording/PlatformRecorder.kt:150  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/scan/ActiveRequestState.kt:17  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/scan/CallbackFence.kt:10  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/scan/ScanIngest.kt:98  seed: existing as at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/settings/DataStoreSettings.kt:47  seed: existing error/check/require at 6506e81, removed by lane B's refactor
-platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/settings/DataStoreSettings.kt:48  seed: existing !! at 6506e81, removed by lane B's refactor
 core-bridge/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/corebridge/CoreBridge.kt:74  seed: existing error/check/require at 6506e81, removed by lane A's refactor
 core-bridge/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/corebridge/CoreBridge.kt:76  seed: existing runBlocking at 6506e81, removed by lane A's refactor
 core-bridge/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/corebridge/CoreBridge.kt:77  seed: existing runBlocking at 6506e81, removed by lane A's refactor
