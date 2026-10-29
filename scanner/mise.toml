@@ -82,6 +82,7 @@ run = [
   "mise run //scanner:ui-contract-test",
   "mise run //scanner:platform-test",
   "mise run //scanner:map-test",
+  "mise run //scanner:sheets-test",
   "mise run //scanner:lint",
 ]
 
@@ -104,4 +105,17 @@ run = '''
 J21=$(mise where java@temurin-21)
 JAVA_HOME="$J21" PATH="$J21/bin:$PATH" ./gradlew --no-daemon --max-workers=2 :app:updateDebugScreenshotTest -x :app:buildCluetoothCoreAndroid
 python3 tools/ui-gallery.py app/src/screenshotTestDebug/reference "$usage_out_dir"
+'''
+
+[tasks.sheets-test]
+description = "Lane D :sheets JVM tests (no device, no Firebase)"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :sheets:testDebugUnitTest"
+
+[tasks.sheets-device-test]
+description = "OPT-IN: :sheets instrumented gesture tests on the emulator named by ANDROID_SERIAL (emulators only)"
+depends = ["sdk-check"]
+run = '''
+case "${ANDROID_SERIAL:-}" in emulator-*) ;; *) echo "Set ANDROID_SERIAL to an emulator (e.g. emulator-5562); physical phones are refused" >&2; exit 1 ;; esac
+./gradlew --no-daemon --max-workers=2 :sheets:connectedDebugAndroidTest
 '''
