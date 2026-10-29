@@ -54,7 +54,7 @@ class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight, panel: 
     internal var placedTop = 0f
 
     /** The list the sheet's gestures drive (S-13): the most recently composed one. */
-    internal var content: ContentScroll? = null
+    internal var content: ContentScroll? by mutableStateOf(null)
 
     /** The main list's live position while it is composed. */
     internal var scrollReader: (() -> ScrollSnapshot)? = null

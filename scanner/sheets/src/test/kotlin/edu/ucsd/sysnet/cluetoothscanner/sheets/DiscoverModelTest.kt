@@ -7,6 +7,9 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Identification
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -90,7 +93,7 @@ class DiscoverModelTest {
         val rnd = Random(7)
         val s = session()
         val m = model(s)
-        val initial = m.order.visible(DeviceKeys(longArrayOf(10, 20, 30, 40, 50, 60, 70), 0)).toList()
+        val initial = m.ordered(DeviceKeys(longArrayOf(10, 20, 30, 40, 50, 60, 70), 0)).toList()
         var nextKey = 60L
         repeat(200) {
             when (rnd.nextInt(6)) {
@@ -105,7 +108,7 @@ class DiscoverModelTest {
                     m.appendLive(longArrayOf(d.key))
                 }
             }
-            val all = m.order.visible(DeviceKeys(s.devices.map { it.key }.toLongArray(), 0)).toList()
+            val all = m.ordered(DeviceKeys(s.devices.map { it.key }.toLongArray(), 0)).toList()
             assertEquals("the order is the first sort plus appends", initial + (60L until nextKey).toList(), all)
             val shown = m.rows.toList()
             val reference = if (m.segment == Segment.ThisArea) m.area?.order?.let { o -> o.visible(DeviceKeys(all.toLongArray(), 0)).toList() } ?: all else all
@@ -285,7 +288,83 @@ class DiscoverModelTest {
         m.appendLive(longArrayOf(60, 70))
         assertArrayEquals(longArrayOf(10, 30, 50, 60), m.rows)
         m.exitSearch()
-        assertEquals(listOf(10L, 20, 30, 40, 50, 60, 70), m.order.visible(DeviceKeys(longArrayOf(10, 20, 30, 40, 50, 60, 70), 0)).toList())
+        assertEquals(listOf(10L, 20, 30, 40, 50, 60, 70), m.ordered(DeviceKeys(longArrayOf(10, 20, 30, 40, 50, 60, 70), 0)).toList())
+    }
+
+    // ---- #58 review fixes ----
+
+    /** Queries whose first sort waits for [gate], to act while the model is Loading. */
+    private class Gated(val inner: FakeSession) : DiscoverQueries by inner {
+        val gate = CompletableDeferred<Unit>()
+        override suspend fun deviceOrder(): DeviceKeys {
+            val sorted = inner.deviceOrder() // the snapshot is taken first, as the core does (§2.6)
+            gate.await()
+            return sorted
+        }
+    }
+
+    @Test
+    fun `lifecycle - a live append while Loading is kept and applied when Ready, never a crash`() = runTest {
+        val s = session()
+        val q = Gated(s)
+        val m = DiscoverModel(q, true, stack())
+        assertTrue(m.phase is DiscoverPhase.Loading)
+        val opening = launch { m.open() }
+        runCurrent() // the sort is in flight
+        s.devices += FakeSession.Dev(60, "new", p(0.5, 0.5), inRange = true)
+        m.appendLive(longArrayOf(60)) // was UninitializedPropertyAccessException on the lateinit order
+        assertEquals(listOf(60L), (m.phase as DiscoverPhase.Loading).pending)
+        q.gate.complete(Unit)
+        opening.join()
+        assertTrue(m.phase is DiscoverPhase.Ready)
+        assertArrayEquals(longArrayOf(10, 30, 50, 60), m.rows) // 60 after the sorted ones (G-9)
+    }
+
+    @Test
+    fun `lifecycle - a failed first sort is a state, every entry point is safe`() = runTest {
+        val failing = object : DiscoverQueries by session() {
+            override suspend fun deviceOrder(): DeviceKeys = throw IllegalStateException("core closed")
+        }
+        val st = stack()
+        val m = DiscoverModel(failing, true, st)
+        m.open()
+        assertEquals(DiscoverPhase.Failed("core closed"), m.phase)
+        m.appendLive(longArrayOf(10))
+        m.setFilter(DeviceFilter(readable = true)) // the view's own choices still apply
+        m.selectSegment(Segment.All)
+        m.onCameraIdle(true, west, 15.0)
+        m.enterSearch("qt", null, viewportCamera(west, 15.0))
+        assertNull(m.search)
+        assertArrayEquals(LongArray(0), m.keysFor(DeviceFilter()))
+        assertArrayEquals(LongArray(0), m.rows)
+        assertEquals(DeviceFilter(readable = true), m.filter)
+    }
+
+    @Test
+    fun `Q-5 a result picked while Loading enters search once the order is ready`() = runTest {
+        val q = Gated(session())
+        val m = DiscoverModel(q, false, stack())
+        val opening = launch { m.open() }
+        val searching = launch { m.enterSearch("qt", null, viewportCamera(west, 15.0)) }
+        runCurrent()
+        assertNull(m.search) // waiting on the phase, not racing it
+        q.gate.complete(Unit)
+        opening.join(); searching.join()
+        assertArrayEquals(longArrayOf(10, 30, 50), m.rows)
+        assertEquals("qt", m.search?.query)
+    }
+
+    @Test
+    fun `G-9 a product's device list gets live devices of that product appended`() = runTest {
+        val s = session()
+        val m = model(s, live = true)
+        val wearables = DeviceFilter(categories = setOf("wearable"))
+        assertArrayEquals(longArrayOf(10, 50), m.keysFor(wearables))
+        val before = m.liveAppends
+        s.devices.add(0, FakeSession.Dev(60, "band", p(0.5, 0.5), category = "wearable")) // strongest, but new
+        m.appendLive(longArrayOf(60))
+        assertEquals(before + 1, m.liveAppends) // the product sheet re-queries on this
+        assertArrayEquals(longArrayOf(10, 50, 60), m.keysFor(wearables)) // appended, never re-sorted
     }
 
     private companion object {
