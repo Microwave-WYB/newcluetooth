@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,6 +38,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Handle
@@ -191,7 +193,8 @@ fun TabletPanelHost(
                         .clickable(enabled = !open, onClick = controller::expandPanel),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Glyphs.panelMore, Strings.ExpandPanel, tint = colors.chevron)
+                    // `.panel-more-btn svg`: the handle's width (36 × 8 dp) with a 2 dp stroke; Icon's size is the height
+                    Icon(Glyphs.panelMore, Strings.ExpandPanel, size = Css.PanelMoreBtn_Svg.height, tint = colors.chevron, strokeWidth = Css.PanelMoreBtn_Svg.strokeWidth)
                 }
             }
         }
@@ -214,8 +217,12 @@ fun SheetFrame(
         Column(Modifier.fillMaxWidth().onSizeChanged { entry.peek = it.height.toFloat() }) {
             Handle(tablet = controller.tablet)
             // S-2, S-3, T-3: the header line's centre sits on the corner arc's centre (48 dp deep on phone, under
-            // the handle zone; 30 dp on tablet), with the prototype's 8 dp under it (`.sheet-top` min-height).
-            Box(Modifier.fillMaxWidth().padding(top = Concentric.cornerButton(controller.tablet), bottom = HEADER_BELOW)) { header() }
+            // the handle zone; 30 dp on tablet). Like `.sheet-top`'s min-height, a one-line header gets 8 dp under
+            // it; a taller one (the device head) ends at its own bottom.
+            Box(
+                Modifier.fillMaxWidth().padding(top = Concentric.cornerButton(controller.tablet))
+                    .defaultMinSize(minHeight = Tokens.sheetHeaderH + HEADER_BELOW),
+            ) { header() }
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             body()

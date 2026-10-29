@@ -143,19 +143,22 @@ private fun ProductHead(state: SheetsState, p: ProductDetail, tablet: Boolean) {
                 Modifier.padding(top = Css.ProdMeta.margin.top, bottom = Css.ProdMeta.margin.bottom),
                 style = t.sub, color = c.t2,
             )
-            p.wikiUrl?.let { WikiLink(Strings.OpenInWiki, it, Modifier.padding(bottom = Css.ProdMeta.margin.bottom)) }
+            p.wikiUrl?.let { WikiLink(Strings.OpenInWiki, it) }
         }
         SectionLabel(Strings.Devices)
     }
 }
 
-/** D-7.5, D-9: a `--blue` link with ↗ that opens the wiki page in the external browser. */
+/**
+ * D-7.5, D-9: a `--blue` link with ↗ that opens the wiki page in the external browser. Like the prototype's inline
+ * `.dev-product`, it sits on a body line: its 20 dp line is centered in 24 dp.
+ */
 @Composable
 internal fun WikiLink(label: String, url: String, modifier: Modifier = Modifier) {
     val uri = LocalUriHandler.current
     val c = CluetoothTheme.colors
     Row(
-        modifier.testTag(PushedTags.WIKI).plainClickable(remember { MutableInteractionSource() }) { uri.openUri(url) },
+        modifier.padding(vertical = (Tokens.bodyLine - Tokens.subLine) / 2).testTag(PushedTags.WIKI).plainClickable(remember { MutableInteractionSource() }) { uri.openUri(url) },
         horizontalArrangement = Arrangement.spacedBy(Css.DevProduct.gap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
