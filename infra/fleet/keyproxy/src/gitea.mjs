@@ -5,7 +5,7 @@
 // Merging, reviews, edits, deletes, branch protection, settings, hooks, collaborators and every
 // admin or user-settings endpoint are not routed at all.
 import { Readable } from "node:stream";
-import { Reject, encodePath, pathSegments, readBody } from "./http.mjs";
+import { Reject, encodePath, netError, pathSegments, readBody } from "./http.mjs";
 
 const N = /^[1-9][0-9]{0,9}$/;
 const PULL_DIFF = /^[1-9][0-9]{0,9}\.(diff|patch)$/;
@@ -130,7 +130,7 @@ async function api(req, res, ctx, deps, seg, url) {
       signal: AbortSignal.timeout(120_000),
     });
   } catch (e) {
-    throw new Reject(502, `Gitea unreachable: ${e.cause?.code ?? e.name}`);
+    throw new Reject(502, `Gitea unreachable: ${netError(e)}`);
   }
   // API answers are small JSON: buffer and scrub them. Raw and media files stream unchanged.
   await relay(up, res, ctx, deps, { buffer: name !== "raw" && name !== "media" });
@@ -200,8 +200,17 @@ async function git(req, res, ctx, deps, seg, url) {
     if (req.headers["content-encoding"] && req.headers["content-encoding"] !== "identity") {
       throw new Reject(415, "compressed push requests are not supported");
     }
-    const { head, commands, iterator } = await readCommands(req);
+    const { head, commands, caps, iterator } = await readCommands(req);
     ctx.params.refs = commands.map((c) => c.ref);
+    const refused = commands.length > 0 && commands.find(refusalOf);
+    if (refused && (caps.has("report-status") || caps.has("report-status-v2"))) {
+      // Answer in git's own report-status format, so `git push` prints the reason per ref
+      // instead of "the remote end hung up". Nothing reaches Gitea.
+      for (;;) if ((await iterator.next()).done) break;
+      ctx.params.refused = true;
+      ctx.error = refusalOf(refused);
+      return refusePush(res, commands, caps, ctx.error);
+    }
     checkCommands(commands);
     if (req.headers["content-length"]) headers["content-length"] = req.headers["content-length"];
     // The same bytes go upstream: the command list already read, then the rest of the pack.
@@ -229,7 +238,7 @@ async function git(req, res, ctx, deps, seg, url) {
       redirect: "manual",
     });
   } catch (e) {
-    throw new Reject(502, `Gitea unreachable: ${e.cause?.code ?? e.name}`);
+    throw new Reject(502, `Gitea unreachable: ${netError(e)}`);
   }
   await relay(up, res, ctx, deps, { buffer: false });
 }
@@ -238,14 +247,15 @@ const PKT_COMMAND = /^([0-9a-f]{40}|[0-9a-f]{64}) ([0-9a-f]{40}|[0-9a-f]{64}) (\
 
 /**
  * Parses the receive-pack command list (pkt-lines up to the first flush-pkt) from the start of
- * the push body. Returns the bytes read so far, the commands, and the iterator for the rest.
+ * the push body. Returns the bytes read so far, the commands, the capabilities the client asked
+ * for, and the iterator for the rest.
  */
 export async function readCommands(stream, limit = 1 << 20) {
   const iterator = stream[Symbol.asyncIterator]();
   let head = Buffer.alloc(0);
   for (;;) {
     const parsed = parseCommandList(head);
-    if (parsed) return { head, commands: parsed, iterator };
+    if (parsed) return { head, ...parsed, iterator };
     const { value, done } = await iterator.next();
     if (done) throw new Reject(400, "push request ended inside the command list");
     head = Buffer.concat([head, value]);
@@ -253,28 +263,28 @@ export async function readCommands(stream, limit = 1 << 20) {
   }
 }
 
-/** Returns the commands once a flush-pkt has been read, null if more bytes are needed. */
+/** Returns {commands, caps} once a flush-pkt has been read, null if more bytes are needed. */
 export function parseCommandList(buf) {
   const commands = [];
+  let caps = new Set();
   let pos = 0;
   for (;;) {
     if (buf.length < pos + 4) return null;
     const hex = buf.toString("latin1", pos, pos + 4);
     if (!/^[0-9a-f]{4}$/.test(hex)) throw new Reject(400, "malformed pkt-line");
     const len = Number.parseInt(hex, 16);
-    if (len === 0) return commands;
+    if (len === 0) return { commands, caps };
     if (len < 5) throw new Reject(400, "unexpected special pkt-line in the command list");
     if (buf.length < pos + len) return null;
     let line = buf.toString("latin1", pos + 4, pos + len);
     pos += len;
-    let caps = "";
     const nul = line.indexOf("\0");
     if (nul >= 0) {
-      caps = line.slice(nul + 1);
+      caps = new Set(line.slice(nul + 1).split(/\s+/).filter(Boolean));
       line = line.slice(0, nul);
     }
     line = line.replace(/\n$/, "");
-    if (caps.split(/\s+/).includes("push-options")) throw new Reject(403, "push options are not allowed");
+    if (caps.has("push-options")) throw new Reject(403, "push options are not allowed");
     if (line.startsWith("shallow ")) continue;
     if (line.startsWith("push-cert")) throw new Reject(403, "signed pushes are not supported");
     const m = PKT_COMMAND.exec(line);
@@ -283,14 +293,42 @@ export function parseCommandList(buf) {
   }
 }
 
+/** Why a ref update is refused, or null if it is allowed. */
+export function refusalOf(c) {
+  if (!TASK_REF.test(c.ref) || !safeRefName(c.ref.slice("refs/heads/".length))) {
+    return `keyproxy: push to ${c.ref} refused: only refs/heads/task/* may be pushed`;
+  }
+  if (/^0+$/.test(c.new)) return `keyproxy: deleting ${c.ref} is not allowed`;
+  return null;
+}
+
 export function checkCommands(commands) {
   if (commands.length === 0) throw new Reject(400, "push has no ref updates");
   for (const c of commands) {
-    if (!TASK_REF.test(c.ref) || !safeRefName(c.ref.slice("refs/heads/".length))) {
-      throw new Reject(403, `push to ${c.ref} refused: only refs/heads/task/* may be pushed`);
-    }
-    if (/^0+$/.test(c.new)) throw new Reject(403, `deleting ${c.ref} is not allowed`);
+    const why = refusalOf(c);
+    if (why) throw new Reject(403, why);
   }
+}
+
+const pktLine = (data) => {
+  const b = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  return Buffer.concat([Buffer.from((b.length + 4).toString(16).padStart(4, "0")), b]);
+};
+
+/** A receive-pack result that refuses every ref: report-status, in side-band if asked for. */
+function refusePush(res, commands, caps, reason) {
+  const lines = commands.map((c) => pktLine(`ng ${c.ref} ${refusalOf(c) ?? "keyproxy: another ref in this push was refused"}\n`));
+  const report = Buffer.concat([pktLine("unpack ok\n"), ...lines, Buffer.from("0000")]);
+  let body = report;
+  if (caps.has("side-band-64k") || caps.has("side-band")) {
+    const max = caps.has("side-band-64k") ? 65515 : 995;
+    const parts = [pktLine(Buffer.concat([Buffer.from([2]), Buffer.from(`${reason}\n`)]))];
+    for (let i = 0; i < report.length; i += max) parts.push(pktLine(Buffer.concat([Buffer.from([1]), report.subarray(i, i + max)])));
+    parts.push(Buffer.from("0000"));
+    body = Buffer.concat(parts);
+  }
+  res.writeHead(200, { "content-type": "application/x-git-receive-pack-result", "cache-control": "no-cache", "content-length": body.length });
+  res.end(body);
 }
 
 // ---------------------------------------------------------------- response relay

@@ -68,3 +68,9 @@ export function callerOf(req) {
 export function userAgent(version) {
   return `cluetooth-keyproxy/${version} (+https://wirelesswiki.org; research fleet key proxy)`;
 }
+
+/** A short, secret-free description of a network failure from fetch. */
+export function netError(e) {
+  const c = e?.cause;
+  return c?.code ?? c?.errors?.[0]?.code ?? String(c?.message ?? e?.name ?? "Error").slice(0, 120);
+}

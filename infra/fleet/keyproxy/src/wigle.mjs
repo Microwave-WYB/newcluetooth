@@ -1,5 +1,5 @@
 // WiGLE: Bluetooth search only, under a daily budget that stops RESERVE calls short of it.
-import { Reject, sendJson } from "./http.mjs";
+import { Reject, netError, sendJson } from "./http.mjs";
 
 export const WIGLE_PATH = "/wigle/api/v2/bluetooth/search";
 
@@ -72,7 +72,7 @@ export async function handleWigle(req, res, ctx, deps) {
     });
     text = await up.text();
   } catch (e) {
-    throw new Reject(502, `WiGLE unreachable: ${e.cause?.code ?? e.name}`);
+    throw new Reject(502, `WiGLE unreachable: ${netError(e)}`);
   }
   if (up.status === 429 || (up.status === 200 && isLimitBody(text))) counters.flag("wigle.limited");
 

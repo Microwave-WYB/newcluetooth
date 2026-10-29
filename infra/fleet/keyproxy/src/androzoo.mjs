@@ -2,7 +2,7 @@
 // the key is known to allow it (ANDROZOO_GP_METADATA=1).
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { Reject, pathSegments } from "./http.mjs";
+import { Reject, netError, pathSegments } from "./http.mjs";
 
 const SHA256 = /^[0-9A-Fa-f]{64}$/;
 const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
@@ -50,7 +50,7 @@ async function download(sha, res, ctx, deps) {
         signal: abort.signal,
       });
     } catch (e) {
-      throw new Reject(502, `AndroZoo unreachable: ${e.cause?.code ?? e.name}`);
+      throw new Reject(502, `AndroZoo unreachable: ${netError(e)}`);
     }
     if (up.status !== 200) return relayError(up, res, ctx, deps);
     const headers = {
@@ -92,7 +92,7 @@ async function gpMetadata(pkg, res, ctx, deps) {
       signal: AbortSignal.timeout(60_000),
     });
   } catch (e) {
-    throw new Reject(502, `AndroZoo unreachable: ${e.cause?.code ?? e.name}`);
+    throw new Reject(502, `AndroZoo unreachable: ${netError(e)}`);
   }
   if (up.status !== 200) return relayError(up, res, ctx, deps);
   const body = deps.scrubber.scrub(await up.text());

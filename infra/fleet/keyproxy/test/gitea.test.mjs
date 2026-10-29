@@ -171,14 +171,31 @@ describe("git smart HTTP", () => {
     ["a delete of a task branch", [{ ref: "refs/heads/task/1", old: OID_A, new: ZERO }]],
     ["dot-dot in the name", [{ ref: "refs/heads/task/../main" }]],
     ["a .lock suffix", [{ ref: "refs/heads/task/x.lock" }]],
-    ["push options", [{ ref: "refs/heads/task/1", caps: "report-status push-options" }]],
   ]) {
     test(`push refused: ${name}`, async () => {
       const r = await push(pushBody(commands));
-      assert.ok([400, 403].includes(r.status), `status ${r.status}`);
+      // git's report-status in side-band 1, so `git push` prints "! [remote rejected] <ref> (<reason>)".
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get("content-type"), "application/x-git-receive-pack-result");
+      const body = Buffer.from(await r.arrayBuffer()).toString("latin1");
+      assert.match(body, /unpack ok\n/);
+      for (const c of commands) assert.match(body, new RegExp(`ng ${c.ref.replaceAll(".", "\\.")} keyproxy: `));
+      assert.match(body, /0000$/);
       assert.equal(up.requests.length, 0, "nothing reached Gitea");
     });
   }
+
+  test("push refused without report-status: plain 403", async () => {
+    const r = await push(pushBody([{ ref: "refs/heads/main", caps: "ofs-delta" }]));
+    assert.equal(r.status, 403);
+    assert.equal(up.requests.length, 0);
+  });
+
+  test("push refused: push options", async () => {
+    const r = await push(pushBody([{ ref: "refs/heads/task/1", caps: "report-status push-options" }]));
+    assert.equal(r.status, 403);
+    assert.equal(up.requests.length, 0);
+  });
 
   test("push refused: signed push certificate", async () => {
     const r = await push(Buffer.from("0010push-cert\0\n0000"));
@@ -203,6 +220,7 @@ describe("git smart HTTP", () => {
     const entry = JSON.parse(proxy.lines.at(-1));
     assert.equal(entry.endpoint, "git.receive-pack");
     assert.deepEqual(entry.params.refs, ["refs/heads/main"]);
-    assert.equal(entry.status, 403);
+    assert.equal(entry.params.refused, true);
+    assert.match(entry.error, /only refs\/heads\/task\/\* may be pushed/);
   });
 });
