@@ -1,14 +1,13 @@
 package edu.ucsd.sysnet.cluetoothscanner.sheets
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
@@ -286,13 +286,18 @@ private fun GattTab(gatt: GattController) {
             GattUi.Idle, GattUi.Confirm -> {
                 Text(Strings.GattNote, Modifier.padding(bottom = Css.GattNote.margin.bottom), style = CluetoothTheme.type.sub, color = c.t2)
                 val confirm = s == GattUi.Confirm
+                // D-13.3: the row turns into Cancel | I am authorized in place: Cancel grows from zero width to
+                // half the row and fades in, with the gap opening to 8 dp; nothing else moves.
+                val m = CluetoothTheme.motion
+                val grow by animateFloatAsState(if (confirm) 1f else 0f, m.std(), label = "cancelGrow")
+                val gap by animateDpAsState(if (confirm) Css.GattFlowConfirm_GattCtl.gap else Css.GattCtl.gap, m.std(), label = "gap")
                 Row(Modifier.fillMaxWidth()) {
-                    // D-13.3: Cancel grows from zero width in place; nothing else moves
-                    AnimatedVisibility(confirm, Modifier.weight(1f, fill = false), enter = expandHorizontally(), exit = shrinkHorizontally()) {
-                        Row {
-                            Button(Strings.Cancel, onClick = gatt::onCancelPrompt, kind = ButtonKind.Tonal, modifier = Modifier.testTag(DeviceTags.CANCEL))
-                            Spacer(Modifier.width(Tokens.panelPad))
-                        }
+                    if (grow > 0f) {
+                        Button(
+                            Strings.Cancel, onClick = gatt::onCancelPrompt, kind = ButtonKind.Tonal, enabled = confirm,
+                            modifier = Modifier.weight(grow).alpha(grow).testTag(DeviceTags.CANCEL),
+                        )
+                        Spacer(Modifier.width(gap))
                     }
                     Button(
                         if (confirm) Strings.IAmAuthorized else Strings.DiscoverGatt,
