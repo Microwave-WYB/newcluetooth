@@ -364,3 +364,8 @@ tables.
   immutable value updated by a pure `(state, event) -> state` function; keep
   mutation at the edges (Compose state holder, Android callbacks, MapLibre,
   the SQLite transaction). Test the pure functions directly.
+- Concurrency: lock-free structured concurrency. Prefer queues and single-owner
+  actors to locks: one task or thread owns a piece of mutable state, and others
+  talk to it through messages (with a one-shot reply when they need an answer).
+  In Rust, no `Mutex`/`RwLock` around shared state; in Kotlin, no shared mutable
+  fields guarded by synchronization. Cancellation follows the caller's scope.
