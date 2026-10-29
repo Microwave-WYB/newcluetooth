@@ -350,6 +350,17 @@ Design principles for app and core code (they take precedence over the more spec
   the logic; nothing in the logic calls Android, MapLibre, SQLite, the network or the clock directly.
 - **Execution is separate from logic.** Pure `(state, event) -> (state, effects)` functions decide; a thin
   runner executes effects and feeds results back as events. Test the logic without a device.
+- **Crashes are ruled out structurally, not by tests.** In v2 production code (`src/main`, `cluetooth-core/src/v2`):
+  - Kotlin: no `!!`, `lateinit`, unchecked `as` (use `as?`), `error`/`check`/`require`/`checkNotNull`/
+    `requireNotNull`, `TODO()`, `runBlocking`, `GlobalScope`. Failures are values (sealed results), not throws.
+  - Rust: no `unwrap`/`expect`/`panic!`/`unreachable!`/`todo!`/`unimplemented!`, no slice indexing that can
+    panic (use `get`); enforced with clippy `deny` lints. Every FFI function returns `Result<_, CoreError>`, and
+    `:core-bridge` maps every binding exception (including UniFFI's panic `InternalException`) to a typed
+    `CoreException`.
+  - Every platform call (Android, MapLibre, SQLite) happens in a runner that turns any exception into a typed
+    failure event. Every top-level coroutine scope has a handler that moves its state to `Failed`.
+  - `//scanner:check` and `//cluetooth-core:check` fail on a violation; a rare justified exception needs an
+    entry with its reason in the allowlist file next to the check.
 
 - Prefer simple stage boundaries over defensive wrappers.
 - If a function interacts with GCS, pass a `StorageClient` or GCS client
