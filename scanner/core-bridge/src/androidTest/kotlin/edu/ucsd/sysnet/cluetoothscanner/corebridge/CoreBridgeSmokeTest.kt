@@ -28,7 +28,8 @@ class CoreBridgeSmokeTest {
         fun asset(name: String) = assets.open(name).bufferedReader().use { it.readText() }
         val dir = Files.createTempDirectory("core-bridge-smoke").toFile()
         val core = CoreBridge.open(
-            CoreConfig(dataDirectory = dir.path, recipientPublicKey = ByteArray(32)),
+            // the payload core refuses an all-zero recipient key at open
+            CoreConfig(dataDirectory = dir.path, recipientPublicKey = edu.ucsd.sysnet.cluetoothscanner.core.generated.defaultCoreConfig().recipientPublicKey),
             CoreAssets(asset("wiki-bundle.json"), asset("sig-numbers.tsv")),
         )
         try {
