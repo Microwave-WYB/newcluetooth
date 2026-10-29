@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -114,22 +116,27 @@ fun MainScreen(vm: MainViewModel) {
             ui.sessions?.let { SessionsList(it, vm::selectScope, vm::openSettings, m, tablet = tablet, bottomInset = if (tablet) 0.dp else nav) }
         }
 
+        val mainLayers = @Composable {
+            // the FAB layer: above the map, below every sheet (P-3, P-4, P-5)
+            val mapUi by r.map.ui.collectAsState()
+            val recH = if (form == RecorderUi.Form.Panel) RecorderGeometry.panelHeight(true) else Tokens.fab
+            LocateControl(
+                mapUi, if (tablet) LocatePlacement.Tablet(recH) else LocatePlacement.Phone(sheetCover),
+                onLocate = r.map::locate, onWarning = { vm.setLocationPopover(!ui.locationPopoverOpen) }, dark = CluetoothTheme.isDark,
+            )
+            if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, miniMap = miniMap)
+            // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
+            if (sheets != null && !(tablet && ui.sidebarOpen)) SheetsLayer(sheets, tablet)
+            if (tablet && ui.sidebarOpen) SessionsPanel { sessions(Modifier) }
+            if (form != RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
+            if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, vm::locationFix) { vm.setLocationPopover(false) }
+        }
+        // tablet: the floating pieces stay inside the system bars; the map runs full-bleed behind them (P-1)
+        val safe = if (tablet) Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars) else Modifier.fillMaxSize()
         val main = @Composable {
             Box(Modifier.fillMaxSize()) {
                 CluetoothMap(r.map, vm.mapEvents, Modifier.fillMaxSize(), dark = CluetoothTheme.isDark)
-                // the FAB layer: above the map, below every sheet (P-3, P-4, P-5)
-                val mapUi by r.map.ui.collectAsState()
-                val recH = if (form == RecorderUi.Form.Panel) RecorderGeometry.panelHeight(true) else Tokens.fab
-                LocateControl(
-                    mapUi, if (tablet) LocatePlacement.Tablet(recH) else LocatePlacement.Phone(sheetCover),
-                    onLocate = r.map::locate, onWarning = { vm.setLocationPopover(!ui.locationPopoverOpen) }, dark = CluetoothTheme.isDark,
-                )
-                if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, miniMap = miniMap)
-                // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
-                if (sheets != null && !(tablet && ui.sidebarOpen)) SheetsLayer(sheets, tablet)
-                if (tablet && ui.sidebarOpen) SessionsPanel { sessions(Modifier) }
-                if (form != RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
-                if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, vm::locationFix) { vm.setLocationPopover(false) }
+                Box(safe) { mainLayers() }
             }
         }
 
@@ -145,8 +152,9 @@ fun MainScreen(vm: MainViewModel) {
         }
         if (tablet) {
             main()
-            TabletTopChrome(ui.sidebarOpen, ui.search?.query ?: ui.searchQuery.orEmpty(), ui.page == Page.SearchPage, ui.search, ui.searchRows, live,
-                topActions.forTablet(vm), showSearchThisArea = sheets?.searchMovedAway == true)
+            TabletTopChrome(modifier = Modifier.windowInsetsPadding(WindowInsets.systemBars), sessionsOpen = ui.sidebarOpen, query = ui.search?.query ?: ui.searchQuery.orEmpty(),
+                resultsOpen = ui.page == Page.SearchPage, page = ui.search, rows = ui.searchRows, live = live,
+                actions = topActions.forTablet(vm), showSearchThisArea = sheets?.searchMovedAway == true)
         } else {
             PhoneSidebarLayout(ui.sidebarOpen, vm::closeSidebar, sidebar = { m -> sessions(m) }) { main() }
             PhoneTopChrome(topState, topActions, ui.searchRows, live, statusInset = status)
