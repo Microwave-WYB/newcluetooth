@@ -106,8 +106,6 @@
   --drag-slop: 8px;         /* a pointer moving less is a tap; more, vertically, drags the sheet */
   --chip-h: 34px;
   --chip-pad: 14px;
-  --chip-gap: 6px;
-  --chip-row-pad: 6px;
   --count-badge: 16px;    /* the Filter button's count */
   --check-size: 20px;     /* the Filter sheet's checkbox */
   --check-r: 6px;
