@@ -9,6 +9,9 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.map.MapLibreCacheInfo
 import edu.ucsd.sysnet.cluetoothscanner.platform.location.LocationClient
+import edu.ucsd.sysnet.cluetoothscanner.platform.recording.InterruptedRecordingNotice
+import edu.ucsd.sysnet.cluetoothscanner.platform.settings.AndroidPermissions
+import edu.ucsd.sysnet.cluetoothscanner.platform.settings.DataStoreSettings
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.AndroidForegroundHost
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.AndroidRecordingGrants
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.PlatformRecorder
@@ -46,9 +49,11 @@ class AppGraph(private val app: Application) {
     val core: Deferred<CoreHandle> = scope.async(io, start = CoroutineStart.LAZY) { CoreBinding.open(app, scope) }
     private val ingest: Deferred<CoreIngest> = scope.async(start = CoroutineStart.LAZY) { core.await().ingest }
 
-    internal val placeholders by lazy { PlatformPlaceholders(app, appVersion) }
-    val settings get() = placeholders.settings
-    val permissions get() = placeholders.permissions
+    internal val placeholders by lazy { PlatformPlaceholders() }
+    /** O-1 / V-6 (#53): DataStore `cluetooth_settings`, migrated once from v3's prefs; V-6 awaits [DataStoreSettings.loaded]. */
+    val settings: DataStoreSettings by lazy { DataStoreSettings(app, scope, appVersion) }
+    /** O-2 (#53): the grants; the Activity refreshes it on resume and after a request. */
+    val permissions: AndroidPermissions by lazy { AndroidPermissions(app) }
     val uploads get() = placeholders.uploads
     val exportShare get() = placeholders.exportShare
     val gattRunner get() = placeholders.gattRunner
@@ -78,7 +83,8 @@ class AppGraph(private val app: Application) {
         scope.launch {
             val handle = core.await()
             platformRecorder.restore()
-            placeholders.checkInterruptedRecording(handle.queries)
+            // §1.2.6 (#53): one "Recording interrupted" notice for sessions Core::open marked interrupted
+            runCatching { InterruptedRecordingNotice(app).check { handle.queries.sessions() } }
             // G-12: the display filter follows the setting; it never affects ingest or upload
             settings.settings.map { it.hideUnnamedApple }.distinctUntilChanged().collect { hide ->
                 kotlinx.coroutines.withContext(io) { handle.ingest.setDisplayFilter(DisplayFilter(hide)) }

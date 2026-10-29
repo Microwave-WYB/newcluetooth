@@ -298,6 +298,7 @@ dependencies {
     implementation(project(":core-fake")) // only v2/CoreBinding.kt may use it (until :core-bridge)
     implementation(project(":platform-fake")) // only v2/PlatformPlaceholders.kt may use it (until #53 and the GATT/upload/export pieces)
     implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.datastore.preferences) // DataStoreSettings exposes DataStore in its constructor; :platform has it as implementation
 
 
     implementation(platform("com.google.firebase:firebase-bom:33.16.0"))

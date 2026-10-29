@@ -114,7 +114,7 @@ fun MainScreen(vm: MainViewModel) {
                 // the sheet stack (lane D): a placeholder slot; on tablet ☰ swaps its content for the sessions (T-6)
                 if (hasSession) PlaceholderSheet(ui.view, tablet, nav, panelContent = if (tablet && ui.sidebarOpen) ({ sessions(Modifier) }) else null)
                 if (form != RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, searching = ui.searchQuery != null, miniMap = miniMap)
-                if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH) { vm.setLocationPopover(false) }
+                if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, vm::locationFix) { vm.setLocationPopover(false) }
             }
         }
 
@@ -160,8 +160,8 @@ fun MainScreen(vm: MainViewModel) {
             Onboarding(
                 ob, ui.onboardingSteps,
                 OnboardingActions(
-                    onRequest = { _: OnboardingPermission -> }, onOpenSettings = vm.graph.permissions::openAppSettings,
-                    onEnableBluetooth = {}, onUserId = { id -> vm.editOnboarding { it.copy(userId = id, userIdValid = edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings.isValidUserId(id)) } },
+                    onRequest = { which: OnboardingPermission -> vm.request(which) }, onOpenSettings = vm.graph.permissions::openAppSettings,
+                    onEnableBluetooth = vm::enableBluetooth, onUserId = { id -> vm.editOnboarding { it.copy(userId = id, userIdValid = edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings.isValidUserId(id)) } },
                     onAutoRecord = { v -> vm.editOnboarding { it.copy(autoRecord = v) } },
                     onBack = { vm.editOnboarding { it.copy(step = it.step - 1) } }, onNext = { vm.editOnboarding { it.copy(step = it.step + 1) } },
                     onDone = { vm.finishOnboarding() },
@@ -181,7 +181,7 @@ private fun TopChromeActions.forTablet(vm: MainViewModel) = TopChromeActions(
 
 /** P-5: the popover above the warning button (E places the button; the anchor follows LocateControl's spot). */
 @Composable
-private fun LocationPopoverLayer(status: LocationStatus, tablet: Boolean, sheetCover: Dp, recorderHeight: Dp, onClose: () -> Unit) {
+private fun LocationPopoverLayer(status: LocationStatus, tablet: Boolean, sheetCover: Dp, recorderHeight: Dp, onFix: (LocationStatus.Action) -> Unit, onClose: () -> Unit) {
     Box(Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null, onClick = onClose)) {
         val gap = 8.dp
         val bottom = if (tablet) Tokens.edge + 12.dp + recorderHeight + 12.dp + Tokens.rb + gap
@@ -190,7 +190,7 @@ private fun LocationPopoverLayer(status: LocationStatus, tablet: Boolean, sheetC
             Modifier.align(if (tablet) Alignment.BottomEnd else Alignment.BottomStart)
                 .padding(start = Tokens.edge, end = Tokens.edge, bottom = bottom).width(300.dp),
             contentAlignment = if (tablet) Alignment.BottomEnd else Alignment.BottomStart,
-        ) { LocationPopover(status, onAction = {}) }
+        ) { LocationPopover(status, onAction = onFix) }
     }
 }
 

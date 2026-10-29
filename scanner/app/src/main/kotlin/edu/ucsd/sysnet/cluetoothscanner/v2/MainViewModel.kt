@@ -107,7 +107,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---- V-6 launch ----
 
     private suspend fun launchView() {
-        val s = settings.value
+        val s = graph.settings.loaded() // V-6 decides on the stored settings, not the defaults
+        viewModelScope.launch { graph.permissions.state.collect { p -> editOnboarding { it.copy(permissions = p) } } }
         if (!s.onboardingDone) {
             val steps = onboardingSteps(true, graph.permissions.state.value)
             _ui.update {
@@ -358,6 +359,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Onboarding (O-2) ----
+
+    /** What the Activity must launch: a permission request or the Bluetooth enable dialog (they need an Activity). */
+    sealed interface ActivityRequest {
+        class Permissions(val names: Array<String>) : ActivityRequest
+        data object EnableBluetooth : ActivityRequest
+        data object TurnOnLocation : ActivityRequest
+    }
+
+    private val _requests = kotlinx.coroutines.flow.MutableSharedFlow<ActivityRequest>(extraBufferCapacity = 4)
+    val requests: kotlinx.coroutines.flow.SharedFlow<ActivityRequest> = _requests
+
+    fun request(which: edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission) {
+        val names = when (which) {
+            edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission.Nearby -> edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions.nearby()
+            edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission.Location -> edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions.location()
+            edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission.Notifications -> edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions.notifications()
+        }
+        _requests.tryEmit(ActivityRequest.Permissions(names))
+    }
+    fun enableBluetooth() { _requests.tryEmit(ActivityRequest.EnableBluetooth) }
+
+    /** P-5: the popover's fix (Allow asks for location; Turn on opens the location settings). */
+    fun locationFix(action: LocationStatus.Action) {
+        setLocationPopover(false)
+        when (action) {
+            LocationStatus.Action.Allow -> _requests.tryEmit(ActivityRequest.Permissions(edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions.location()))
+            LocationStatus.Action.TurnOn -> _requests.tryEmit(ActivityRequest.TurnOnLocation)
+        }
+    }
 
     fun editOnboarding(t: (OnboardingUi) -> OnboardingUi) = _ui.update { it.copy(onboarding = it.onboarding?.let(t)) }
 
