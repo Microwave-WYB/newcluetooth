@@ -92,8 +92,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val core = graph.core.await()
             val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(app), viewModelScope)
+            // §2.6: subscribe before querying
+            launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                core.queries.events.collect { if (it is CoreEvent.SessionsChanged || it is CoreEvent.DataInvalidated) refreshSessions() }
+            }
             _ready.value = Ready(core, map)
-            launch { core.queries.events.collect { if (it is CoreEvent.SessionsChanged || it is CoreEvent.DataInvalidated) refreshSessions() } }
             launch { graph.recorder.state.collect { onRecorder(it) } }
             launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { launchView() }
         }
@@ -313,7 +316,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshStorage() = viewModelScope.launch {
         val r = ready()
-        val stats = r.core.storage.storageStats()
+        // the real core does not implement storage stats yet (CoreException.Db): show zeros rather than fail
+        val stats = runCatching { r.core.storage.storageStats() }.getOrNull()
+            ?: edu.ucsd.sysnet.cluetoothscanner.api.core.StorageStats(0, 0, 0, 0, 0)
         val cache = runCatching { graph.mapCache.sizeBytes() }.getOrNull()
         val scope = _ui.value.scope ?: Scope.All
         _ui.update {
@@ -331,7 +336,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val format: ExportFormat = st.exportFormat ?: return@launch
         editStorage { it.copy(exporting = true) }
         val prepared = runCatching { ready().core.storage.prepareExport(st.exportScope, format) }.getOrNull()
-        if (prepared != null) { if (toDownloads) graph.exportShare.saveToDownloads(prepared) else graph.exportShare.share(prepared) }
+        if (prepared != null) runCatching { if (toDownloads) graph.exportShare.saveToDownloads(prepared) else graph.exportShare.share(prepared) }
         editStorage { it.copy(exporting = false) }
     }
 
@@ -344,8 +349,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun delete(includeUnuploaded: Boolean) = viewModelScope.launch {
         val st = _ui.value.storage ?: return@launch
         editStorage { it.copy(deleteConfirm = null) }
-        val outcome = ready().core.storage.deleteLocalData(st.deleteScope, includeUnuploaded)
-        if (outcome !is DeleteOutcome.Refused) {
+        val outcome = runCatching { ready().core.storage.deleteLocalData(st.deleteScope, includeUnuploaded) }.getOrNull()
+        if (outcome != null && outcome !is DeleteOutcome.Refused) {
             refreshStorage(); refreshSessions()
             val shown = _ui.value.scope
             if (shown != null && (st.deleteScope.sessions == SessionScope.All || shown == st.deleteScope)) openLaunchView()
