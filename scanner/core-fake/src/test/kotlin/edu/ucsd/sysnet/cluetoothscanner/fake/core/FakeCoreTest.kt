@@ -205,6 +205,59 @@ class FakeCoreTest {
         assertEquals(0, c.deviceOrder(Scope(SessionScope.Sessions(listOf("nope")))).keys.size)
     }
 
+    private fun obs(rssi: Int) = ScanObservationInput("C0:FF:EE:00:00:02", rssi, FakeCore.DEMO_NOW_MS, 0,
+        byteArrayOf(2, 1, 6), null, null, true, true, 1, 0, null, null, null, 0, 0)
+
+    private fun fix() = edu.ucsd.sysnet.cluetoothscanner.api.core.LocationFix(32.88, -117.234, 5.0, FakeCore.DEMO_NOW_MS, 0)
+
+    /** §2.1: the strongest RSSI stays the strongest seen even when the strongest located point is weaker. */
+    @Test
+    fun unionKeepsStrongestRssiApartFromLocatedPoint() = runTest {
+        val c = FakeCore(backgroundScope, { FakeCore.DEMO_NOW_MS + testScheduler.currentTime }, simulate = false)
+        val key = 0xC0FFEE000002L
+        val unlocated = c.startRecording(FakeCore.DEMO_ENVIRONMENT)
+        c.ingestScans(listOf(obs(-40)))
+        c.stopRecording()
+        val located = c.startRecording(FakeCore.DEMO_ENVIRONMENT)
+        c.ingestLocation(fix())
+        c.ingestScans(listOf(obs(-70)))
+        c.stopRecording()
+        val one = c.deviceRows(Scope.session(unlocated), longArrayOf(key)).single()
+        assertEquals(-40, one.rssi)
+        assertNull(one.best)
+        for (scope in listOf(Scope(SessionScope.Sessions(listOf(unlocated, located))), Scope.All)) {
+            val row = c.deviceRows(scope, longArrayOf(key)).single()
+            assertEquals("$scope", -40, row.rssi)
+            assertEquals(edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint(-117.234, 32.88), row.best)
+        }
+        // within one session too: an unlocated -40 then a located -70
+        val both = c.startRecording(FakeCore.DEMO_ENVIRONMENT)
+        c.clearLocation()
+        c.ingestScans(listOf(obs(-40)))
+        c.ingestLocation(fix())
+        c.ingestScans(listOf(obs(-70)))
+        c.stopRecording()
+        val row = c.deviceRows(Scope.session(both), longArrayOf(key)).single()
+        assertEquals(-40, row.rssi)
+        assertNotNull(row.best)
+    }
+
+    /** §2.1: an empty session never takes part, but the live scope is the current session even while empty. */
+    @Test
+    fun emptyCurrentSessionIsLeftOutOfOtherScopes() = runTest {
+        val c = FakeCore(backgroundScope, { FakeCore.DEMO_NOW_MS + testScheduler.currentTime }, simulate = false)
+        val id = c.startRecording(FakeCore.DEMO_ENVIRONMENT)
+        assertFalse(id in c.sessionView(Scope.All).sessionIds)
+        assertFalse(id in c.sessionView(Scope(SessionScope.Sessions(listOf(id, "r1")))).sessionIds)
+        assertEquals(5, c.allSessionsSummary().sessionCount)
+        val live = c.sessionView(Scope.session(id))
+        assertTrue(live.live)
+        assertEquals(listOf(id), live.sessionIds)
+        assertFalse(live.routesFaint)
+        c.ingestScans(listOf(obs(-60)))
+        assertTrue(id in c.sessionView(Scope.All).sessionIds)
+    }
+
     /** Q-1/Q-2: blank is no search; results keep device_order; the area limits them. */
     @Test
     fun searchKeepsOrder() = runTest {
