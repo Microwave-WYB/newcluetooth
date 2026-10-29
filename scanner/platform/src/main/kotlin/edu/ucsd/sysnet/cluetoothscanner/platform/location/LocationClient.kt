@@ -29,22 +29,20 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.LocationSettingsRequest
 import com.google.android.gms.location.Priority
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
-import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
-import edu.ucsd.sysnet.cluetoothscanner.api.core.LocationFix
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.MyLocation
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.RecordingLocation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -59,9 +57,11 @@ import kotlinx.coroutines.launch
  * - [status] follows SPEC P-5 ([locationStatus]) and is re-evaluated every 5 s while a request is wanted; that tick
  *   also registers a request that was waiting for the permission.
  *
- * Everything runs on the main looper.
+ * The decisions are in [LocationMachine]; this class is its runner. One actor on the main thread owns the state and
+ * the Android objects (the registrations, the status tick and the providers receiver); callbacks become events, and
+ * any exception from a registration becomes a failure event.
  */
-@SuppressLint("MissingPermission") // Every registration checks the permission first.
+@SuppressLint("MissingPermission") // A registration is only requested when the reducer saw the permission granted.
 class LocationClient(
     private val context: Context,
     private val core: Deferred<CoreIngest>,
@@ -70,128 +70,143 @@ class LocationClient(
     uiStarted: StateFlow<Boolean>,
     private val elapsedMs: () -> Long = SystemClock::elapsedRealtime,
 ) : RecordingLocation, LocationStatusSource {
-    private val locationManager = context.getSystemService(LocationManager::class.java)
-    private val recording = MutableStateFlow(false)
+    private val locationManager: LocationManager? = context.getSystemService(LocationManager::class.java)
     private val _status = MutableStateFlow(LocationStatus.Ok)
     private val _myLocation = MutableStateFlow<MyLocation?>(null)
     override val status: StateFlow<LocationStatus> = _status.asStateFlow()
     override val myLocation: StateFlow<MyLocation?> = _myLocation.asStateFlow()
 
-    private var wanted: LocationProfile? = null
-    private var active: LocationProfile? = null
-    private var registration: Registration? = null
-    private var requestedSinceMs: Long? = null
-    private var lastFix: FixStamp? = null
-    private var lastFixAtMs: Long? = null
-    private var lastLocation: Location? = null
+    private val inbox = Channel<LocEvent>(Channel.UNLIMITED)
+
+    // ---- Owned by the actor (main thread) ----
+    private val registrations = mutableMapOf<RegistrationId, Listener>()
     private var ticker: Job? = null
 
     /** One registration with either backend: Play services calls the callback, the platform the listener. */
-    private abstract inner class Registration : LocationCallback(), LocationListener {
-        var fused = false
+    private inner class Listener(val id: RegistrationId, val fused: Boolean) : LocationCallback(), LocationListener {
+        override fun onLocationResult(result: LocationResult) {
+            result.locations.lastOrNull()?.let { send(LocEvent.Fixed(id, it.reading())) }
+        }
+
+        override fun onLocationChanged(location: Location) = send(LocEvent.Fixed(id, location.reading()))
+
+        @Deprecated("Required on API < 29")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+        override fun onProviderEnabled(provider: String) = send(LocEvent.Tick)
+        override fun onProviderDisabled(provider: String) = send(LocEvent.Tick)
     }
 
     private val providersReceiver = object : BroadcastReceiver() {
-        override fun onReceive(receiverContext: Context?, intent: Intent?) = evaluate()
+        override fun onReceive(receiverContext: Context?, intent: Intent?) = send(LocEvent.Tick)
     }
 
     init {
         scope.launch(Dispatchers.Main.immediate) {
-            combine(recording, uiStarted) { rec, ui -> LocationProfile.wanted(rec, ui) }
-                .distinctUntilChanged()
-                .collect(::want)
+            var state = LocState()
+            for (event in inbox) {
+                val transition = LocationMachine.reduce(state, event, env())
+                state = transition.state
+                _status.value = state.status
+                _myLocation.value = state.shown
+                transition.effects.forEach(::execute)
+            }
         }
+        scope.launch(Dispatchers.Main.immediate) { uiStarted.collect { send(LocEvent.UiStarted(it)) } }
     }
 
-    override fun startRecording() {
-        recording.value = true
-    }
+    override fun startRecording() = send(LocEvent.Recording(true))
 
-    override fun stopRecording() {
-        recording.value = false
-        scope.launch { core.await().clearLocation() }
-    }
+    override fun stopRecording() = send(LocEvent.Recording(false))
 
     /** P-5 "Turn on": the Play services settings dialog, else the system location settings. */
     override fun turnOn(activity: ComponentActivity) {
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LocationProfile.RECORDING.intervalMs).build()
-        val settings = LocationSettingsRequest.Builder().addLocationRequest(request).setAlwaysShow(true).build()
         if (!playServices()) return openLocationSettings(activity)
-        LocationServices.getSettingsClient(activity).checkLocationSettings(settings)
-            .addOnFailureListener { error ->
-                if (error is ResolvableApiException) {
-                    runCatching { error.startResolutionForResult(activity, TURN_ON_REQUEST) }
-                        .onFailure { openLocationSettings(activity) }
-                } else {
-                    openLocationSettings(activity)
+        try {
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LocationProfile.RECORDING.intervalMs).build()
+            val settings = LocationSettingsRequest.Builder().addLocationRequest(request).setAlwaysShow(true).build()
+            LocationServices.getSettingsClient(activity).checkLocationSettings(settings)
+                .addOnFailureListener { error ->
+                    val resolved = (error as? ResolvableApiException)?.let {
+                        runCatching { it.startResolutionForResult(activity, TURN_ON_REQUEST) }.isSuccess
+                    } ?: false
+                    if (!resolved) openLocationSettings(activity)
                 }
-            }
+        } catch (failure: Exception) {
+            log("Location settings check failed", failure)
+            openLocationSettings(activity)
+        }
     }
 
     private fun openLocationSettings(activity: ComponentActivity) {
-        activity.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        runCatching { activity.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+            .onFailure { log("No location settings screen", it) }
     }
 
-    private fun want(profile: LocationProfile?) {
-        wanted = profile
-        if (profile == null) {
-            unregister()
-            requestedSinceMs = null
-            _myLocation.value = null
-            ticker?.cancel()
-            ticker = null
-            runCatching { context.unregisterReceiver(providersReceiver) }
-            return
-        }
-        if (ticker == null) {
-            ContextCompat.registerReceiver(
-                context, providersReceiver, IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED,
-            )
-            ticker = scope.launch(Dispatchers.Main.immediate) {
-                while (isActive) {
-                    delay(STATUS_TICK_MS)
-                    evaluate()
+    private fun send(event: LocEvent) {
+        inbox.trySend(event)
+    }
+
+    private fun env() = LocEnv(LocElapsedMs(elapsedMs()), permitted(), providerOn())
+
+    private fun permitted() = try {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun providerOn() = try {
+        val manager = locationManager
+        manager != null && (manager.isProviderEnabled(LocationManager.GPS_PROVIDER) || manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER))
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun execute(effect: LocEffect) {
+        when (effect) {
+            is LocEffect.Register -> register(effect.id, effect.profile)
+            is LocEffect.Unregister -> unregister(effect.id)
+            LocEffect.StartTicking -> {
+                runCatching {
+                    ContextCompat.registerReceiver(
+                        context, providersReceiver, IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED,
+                    )
+                }.onFailure { log("Providers receiver not registered", it) }
+                ticker?.cancel()
+                ticker = scope.launch(Dispatchers.Main.immediate) {
+                    while (isActive) {
+                        delay(STATUS_TICK_MS)
+                        send(LocEvent.Tick)
+                    }
                 }
             }
-        }
-        if (requestedSinceMs == null) requestedSinceMs = elapsedMs()
-        register(profile)
-        evaluate()
-    }
-
-    private fun permitted() =
-        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-
-    private fun providerOn() = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
-        locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-
-    private fun evaluate() {
-        val profile = wanted
-        if (profile != null && active != profile && permitted()) register(profile)
-        val now = elapsedMs()
-        _status.value = locationStatus(permitted(), providerOn(), requestedSinceMs, lastFixAtMs, now)
-        lastLocation?.let { _myLocation.value = it.toMyLocation(now) }
-    }
-
-    private fun register(profile: LocationProfile) {
-        if (active == profile) return
-        unregister()
-        if (!permitted()) return
-        val registration = object : Registration() {
-            override fun onLocationResult(result: LocationResult) {
-                result.locations.lastOrNull()?.let { deliver(this, it) }
+            LocEffect.StopTicking -> {
+                ticker?.cancel()
+                ticker = null
+                runCatching { context.unregisterReceiver(providersReceiver) }
             }
-
-            override fun onLocationChanged(location: Location) = deliver(this, location)
-
-            @Deprecated("Required on API < 29")
-            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
-            override fun onProviderEnabled(provider: String) = evaluate()
-            override fun onProviderDisabled(provider: String) = evaluate()
+            is LocEffect.Ingest -> toCore { it.ingestLocation(effect.fix) }
+            LocEffect.ClearCore -> toCore { it.clearLocation() }
         }
+    }
+
+    private fun toCore(call: (CoreIngest) -> Unit) {
+        scope.launch {
+            try {
+                call(core.await())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                log("Location not passed to the core", failure)
+            }
+        }
+    }
+
+    private fun register(id: RegistrationId, profile: LocationProfile) {
+        val fused = playServices()
+        val listener = Listener(id, fused)
         try {
-            if (playServices()) {
-                registration.fused = true
+            val manager = locationManager
+            if (fused) {
                 val request = LocationRequest.Builder(
                     if (profile.highAccuracy) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY,
                     profile.intervalMs,
@@ -200,66 +215,61 @@ class LocationClient(
                     // High accuracy otherwise holds fixes back until they are accurate, starving indoor recordings.
                     .setWaitForAccurateLocation(false)
                     .build()
+                val callback: LocationCallback = listener
                 LocationServices.getFusedLocationProviderClient(context)
-                    .requestLocationUpdates(request, registration, Looper.getMainLooper())
-            } else {
+                    .requestLocationUpdates(request, callback, Looper.getMainLooper())
+                    .addOnFailureListener { send(LocEvent.RegistrationFailed(id)) }
+            } else if (manager != null) {
                 val providers = (
                     if (profile.highAccuracy) {
                         listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
                     } else {
                         listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
                     }
-                    ).filter { it in locationManager.allProviders }
+                    ).filter { it in manager.allProviders }
                     .let { if (profile.highAccuracy) it else it.take(1) }
+                val platform: LocationListener = listener
                 for (provider in providers) {
-                    locationManager.requestLocationUpdates(provider, profile.intervalMs, 0f, registration, Looper.getMainLooper())
+                    manager.requestLocationUpdates(provider, profile.intervalMs, 0f, platform, Looper.getMainLooper())
                 }
-            }
-        } catch (error: Exception) {
-            Log.w(TAG, "Location request failed", error)
-            return
-        }
-        this.registration = registration
-        active = profile
-    }
-
-    private fun unregister() {
-        val current = registration ?: return
-        registration = null
-        active = null
-        if (current.fused) {
-            LocationServices.getFusedLocationProviderClient(context).removeLocationUpdates(current as LocationCallback)
-        } else {
-            locationManager.removeUpdates(current as LocationListener)
-        }
-    }
-
-    private fun deliver(from: Registration, location: Location) {
-        if (from !== registration) return
-        val stamp = FixStamp(location.provider, if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE, location.elapsedRealtimeNanos)
-        if (!acceptsFix(lastFix, stamp)) return
-        lastFix = stamp
-        lastFixAtMs = location.elapsedRealtimeNanos / 1_000_000
-        lastLocation = location
-        if (active == LocationProfile.RECORDING) {
-            val fix = if (location.hasAccuracy()) {
-                LocationFix(location.latitude, location.longitude, location.accuracy.toDouble(), location.time, location.elapsedRealtimeNanos)
             } else {
-                null
+                send(LocEvent.RegistrationFailed(id))
+                return
             }
-            scope.launch {
-                val ingest = core.await()
-                if (fix != null) ingest.ingestLocation(fix) else ingest.clearLocation()
-            }
+            registrations[id] = listener
+        } catch (failure: Exception) {
+            log("Location request failed", failure)
+            send(LocEvent.RegistrationFailed(id))
         }
-        evaluate()
     }
 
-    private fun Location.toMyLocation(nowMs: Long) = MyLocation(
-        at = GeoPoint(lon = longitude, lat = latitude),
-        accuracyM = if (hasAccuracy()) accuracy.toDouble() else 0.0,
-        ageMs = (nowMs - elapsedRealtimeNanos / 1_000_000).coerceAtLeast(0),
+    private fun unregister(id: RegistrationId) {
+        val listener = registrations.remove(id) ?: return
+        try {
+            if (listener.fused) {
+                val callback: LocationCallback = listener
+                LocationServices.getFusedLocationProviderClient(context).removeLocationUpdates(callback)
+            } else {
+                val platform: LocationListener = listener
+                locationManager?.removeUpdates(platform)
+            }
+        } catch (failure: Exception) {
+            log("Location updates not removed", failure)
+        }
+    }
+
+    private fun Location.reading() = FixReading(
+        provider = provider,
+        lat = latitude,
+        lon = longitude,
+        accuracyM = if (hasAccuracy()) accuracy else null,
+        timeMs = time,
+        elapsedRealtimeNanos = elapsedRealtimeNanos,
     )
+
+    private fun log(message: String, failure: Throwable) {
+        runCatching { Log.w(TAG, message, failure) }
+    }
 
     private fun playServices() = try {
         GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
