@@ -353,3 +353,10 @@ tables.
   to later stages.
 - Preserve exact raw payload bytes whenever possible; derive additional meaning
   into separate enrichment or analysis outputs.
+- App state (Kotlin/Compose, Rust core): model async lifecycles as explicit state
+  machines (sealed states such as `Loading → Ready(data) / Failed(error)`), not
+  `lateinit` or nullable-later fields, flag clusters or effect ordering. Events
+  that arrive in the wrong state are handled by the state (buffered, dropped and
+  re-read, or ignored), never by timing luck.
+- Every top-level coroutine scope has error handling that moves its state to
+  `Failed`; an exception must never reach the main thread's uncaught handler.
