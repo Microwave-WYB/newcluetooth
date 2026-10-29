@@ -25,13 +25,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // §1.2.2: the splash holds while the core opens; a failure releases it to show the error and a retry
-        installSplashScreen().setKeepOnScreenCondition { vm.ready.value == null && vm.coreState.value !is CoreState.Failed }
+        // §1.2.2: the splash renders from the core state: it holds while Opening (and until the screen's state is built)
+        installSplashScreen().setKeepOnScreenCondition { vm.coreState.value is CoreState.Opening || (vm.coreState.value is CoreState.Ready && vm.ready.value == null) }
         super.onCreate(savedInstanceState)
         val permissions = vm.graph.permissions
         permissionLauncher = registerForActivityResult(permissions.requestLauncherContract()) { permissions.refresh(this) }
         enableEdgeToEdge()
-        lifecycleScope.launch {
+        lifecycleScope.launch(vm.graph.core.handler) {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 vm.requests.collect { r ->
                     when (r) {

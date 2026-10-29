@@ -78,6 +78,9 @@ data class MainUiState(
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     val graph: AppGraph = (app as CluetoothApplication).graph
 
+    /** Every coroutine of this ViewModel runs here: a failure is logged and moves the core state to Failed. */
+    private val vmScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + graph.core.handler)
+
     private val _ready = MutableStateFlow<Ready?>(null)
     /** Null until the core is open; the splash screen is held until then (§1.2.2). */
     val ready: StateFlow<Ready?> = _ready.asStateFlow()
@@ -92,9 +95,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var viewJob: Job? = null
 
     init {
-        viewModelScope.launch {
+        vmScope.launch {
             val core = graph.core.ready()
-            val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(app), viewModelScope)
+            val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(app), vmScope)
             // §2.6: subscribe before querying
             launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                 core.queries.events.collect { if (it is CoreEvent.SessionsChanged || it is CoreEvent.DataInvalidated) refreshSessions() }
@@ -115,7 +118,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun launchView() {
         val s = graph.settings.loaded() // V-6 decides on the stored settings, not the defaults
-        viewModelScope.launch { graph.permissions.state.collect { p -> editOnboarding { it.copy(permissions = p) } } }
+        vmScope.launch { graph.permissions.state.collect { p -> editOnboarding { it.copy(permissions = p) } } }
         if (!s.onboardingDone) {
             val steps = onboardingSteps(true, graph.permissions.state.value)
             _ui.update {
@@ -147,7 +150,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(scope = scope, sidebarOpen = false, searchQuery = null, search = null, searchRows = emptyList(), page = it.page.takeIf { p -> p == Page.Settings }) }
         searchOrder = null
         viewJob?.cancel()
-        viewJob = viewModelScope.launch {
+        viewJob = vmScope.launch {
             val r = ready()
             if (scope == null) { _ui.update { it.copy(view = null, route = emptyList()) }; return@launch }
             val view = r.core.queries.sessionView(scope)
@@ -189,12 +192,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** R-2 / V-2: start, then switch to the new current session. */
-    fun startRecording() = viewModelScope.launch {
+    fun startRecording() = vmScope.launch {
         graph.recorder.start().onSuccess { id -> selectScope(Scope.session(id)) }
     }
-    fun pause() = viewModelScope.launch { graph.recorder.pause() }
-    fun resume() = viewModelScope.launch { graph.recorder.resume() }
-    fun stop() = viewModelScope.launch { graph.recorder.stop() }
+    fun pause() = vmScope.launch { graph.recorder.pause() }
+    fun resume() = vmScope.launch { graph.recorder.resume() }
+    fun stop() = vmScope.launch { graph.recorder.stop() }
     fun setRecorderPanel(open: Boolean) = _ui.update { it.copy(recorderPanelOpen = open) }
 
     /** R-5: collapse the panel, close any page and fit the main map to the route. */
@@ -267,7 +270,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Q-1/Q-2 through the core; results in the session's fixed order (G-9). */
     private fun runSearch() {
         searchJob?.cancel()
-        searchJob = viewModelScope.launch {
+        searchJob = vmScope.launch {
             val page = _ui.value.search ?: return@launch
             val scope = _ui.value.scope ?: return@launch
             val q = ready().core.queries
@@ -322,9 +325,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Settings (O-1) ----
 
-    fun updateSettings(t: (Settings) -> Settings) = viewModelScope.launch { graph.settings.update(t) }
+    fun updateSettings(t: (Settings) -> Settings) = vmScope.launch { graph.settings.update(t) }
 
-    fun refreshStorage() = viewModelScope.launch {
+    fun refreshStorage() = vmScope.launch {
         val r = ready()
         // the real core does not implement storage stats yet (CoreException.Db): show zeros rather than fail
         val stats = runCatching { r.core.storage.storageStats() }.getOrNull()
@@ -341,7 +344,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun editStorage(t: (StorageUi) -> StorageUi) = _ui.update { it.copy(storage = it.storage?.let(t)) }
 
     /** O-1 item 10: prepare the scope's export, then hand it to the system share sheet or Downloads (B). */
-    fun export(toDownloads: Boolean) = viewModelScope.launch {
+    fun export(toDownloads: Boolean) = vmScope.launch {
         val st = _ui.value.storage ?: return@launch
         val format: ExportFormat = st.exportFormat ?: return@launch
         editStorage { it.copy(exporting = true) }
@@ -356,7 +359,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (st.pendingCount > 0) editStorage { it.copy(deleteConfirm = DeleteConfirm.LoseUnuploaded) } else delete(false)
     }
 
-    fun delete(includeUnuploaded: Boolean) = viewModelScope.launch {
+    fun delete(includeUnuploaded: Boolean) = vmScope.launch {
         val st = _ui.value.storage ?: return@launch
         editStorage { it.copy(deleteConfirm = null) }
         val outcome = runCatching { ready().core.storage.deleteLocalData(st.deleteScope, includeUnuploaded) }.getOrNull()
@@ -401,7 +404,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun editOnboarding(t: (OnboardingUi) -> OnboardingUi) = _ui.update { it.copy(onboarding = it.onboarding?.let(t)) }
 
     /** O-2 Done: save, then open the first run, recording straight away if the switch was left on. */
-    fun finishOnboarding() = viewModelScope.launch {
+    fun finishOnboarding() = vmScope.launch {
         val ob = _ui.value.onboarding ?: return@launch
         graph.settings.update { it.copy(userId = ob.userId, recordOnOpen = ob.autoRecord, onboardingDone = true) }
         _ui.update { it.copy(onboarding = null) }

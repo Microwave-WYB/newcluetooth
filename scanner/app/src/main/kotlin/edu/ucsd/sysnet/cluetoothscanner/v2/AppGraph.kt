@@ -39,17 +39,17 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppGraph(private val app: Application) {
-    /** The process scope (main thread; work that blocks hops to [io]). A failure in it is logged, never fatal. */
-    val scope = CoroutineScope(
-        SupervisorJob() + Dispatchers.Main.immediate +
-            kotlinx.coroutines.CoroutineExceptionHandler { _, e -> android.util.Log.e("AppGraph", "process scope", e) },
-    )
     private val io = Dispatchers.IO
+    private val base = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** §1.2.2: the core lifecycle (Opening → Ready | Failed, Retry); it opens the core on Dispatchers.IO. */
+    val core: CoreOpener = CoreOpener(base, io, open = { CoreBinding.open(app, scope) })
+
+    /** The process scope (main thread; work that blocks hops to [io]). A failure in it moves the core to Failed. */
+    val scope: CoroutineScope = CoroutineScope(base.coroutineContext + core.handler)
 
     val appVersion: String = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "0.1.0"
 
-    /** §1.2.2: opens the core on Dispatchers.IO; a failure is a [CoreState.Failed] state with a retry, not a crash. */
-    val core = CoreOpener(scope, io) { CoreBinding.open(app, scope) }
     private val ingest: Deferred<CoreIngest> get() = core.ingest
 
     internal val placeholders by lazy { PlatformPlaceholders() }
