@@ -36,7 +36,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.max
 import androidx.compose.ui.unit.min
 
@@ -97,6 +99,17 @@ internal fun PhoneSheetHost(
                         .sheetGestures(controller, entry),
                 ) {
                     SheetContentSlop(slopPx) { sheet(entry) }
+                    // S-1: resting at Collapsed, the strip under the header above the navigation bar stays plain panel,
+                    // so the content's first row never shows behind the gesture bar.
+                    if (entry.height == SheetHeight.Collapsed && entry.liveOffset == null && !entry.peek.isNaN()) {
+                        Box(
+                            Modifier
+                                .offset { IntOffset(0, entry.peek.roundToInt()) }
+                                .fillMaxWidth()
+                                .height(with(density) { bottomInset.toDp() })
+                                .background(colors.panel),
+                        )
+                    }
                 }
             }
         }

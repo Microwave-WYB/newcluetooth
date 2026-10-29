@@ -39,6 +39,7 @@ dependencies {
     implementation(project(":core-api"))
     implementation(project(":platform-api"))
     implementation(project(":platform-fake"))
+    implementation(project(":sheets"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
