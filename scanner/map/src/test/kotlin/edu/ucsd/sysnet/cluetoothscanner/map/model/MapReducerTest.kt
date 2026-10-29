@@ -31,7 +31,7 @@ class MapReducerTest {
     private fun idle(c: CameraSnapshot, at: Long = 0) = MapEvent.Idle(c, view, MapGeometry.visibleBbox(c, view), UptimeMs(at))
     private fun List<MapEffect>.onMap() = filterIsInstance<MapEffect.OnMap>()
     private inline fun <reified T : MapEffect> List<MapEffect>.only(): List<T> = filterIsInstance<T>()
-    private val route = RouteLine(PayloadId(100), 2, sd, GeoPoint(sd.lon + 0.01, sd.lat))
+    private val route = RouteLine.of(PayloadId(100), listOf(sd, GeoPoint(sd.lon + 0.01, sd.lat)))
     private fun viewInfo(frame: Bbox? = bbox, live: Boolean = false) =
         ViewInfo(live = live, sessionIds = listOf("s1"), frame = frame, route = route)
 
@@ -192,9 +192,31 @@ class MapReducerTest {
         val next = GeoPoint(sd.lon + 0.02, sd.lat)
         val effects = r.send(MapEvent.Live("s1", listOf(next), pointsChanged = false))
         assertEquals(MapEffect.AppendRoute(route.base, listOf(next)), effects.only<MapEffect.AppendRoute>().single())
-        assertEquals(SourceData.Line(route.copy(length = 3, end = next)), r.state.sources[Source.Route])
+        assertEquals(SourceData.Line(route.appended(listOf(next))), r.state.sources[Source.Route])
         assertEquals(SourceData.Ends(sd, next), r.state.sources[Source.Ends])
         // another session's delta is ignored
         assertTrue(r.send(MapEvent.Live("other", listOf(next), pointsChanged = true)).isEmpty())
+    }
+
+    @Test fun `M-8 a session that never left 50 m of its start draws no Start and End, until it does`() {
+        val r = Run()
+        r.send(attached())
+        val load = r.send(MapEvent.Show(session, DeviceFilter(), false)).only<MapEffect.LoadView>().single()
+        // standing still: GPS jitter of a few metres around the start
+        val jitter = listOf(sd, GeoPoint(sd.lon + 0.0001, sd.lat), GeoPoint(sd.lon, sd.lat - 0.0002), GeoPoint(sd.lon - 0.0002, sd.lat + 0.0001))
+        val still = RouteLine.of(PayloadId(200), jitter)
+        r.send(MapEvent.ViewLoaded(load.request, ViewInfo(live = true, sessionIds = listOf("s1"), frame = bbox, route = still)))
+        assertEquals(SourceData.Line(still), r.state.sources[Source.Route])
+        assertEquals(SourceData.Empty, r.state.sources[Source.Ends])
+        // more jitter: still nothing
+        r.send(MapEvent.Live("s1", listOf(GeoPoint(sd.lon + 0.0003, sd.lat + 0.0002)), pointsChanged = false))
+        assertEquals(SourceData.Empty, r.state.sources[Source.Ends])
+        // walking off 100 m: Start and End appear
+        val away = GeoPoint(sd.lon + 0.0011, sd.lat)
+        r.send(MapEvent.Live("s1", listOf(away), pointsChanged = false))
+        assertEquals(SourceData.Ends(sd, away), r.state.sources[Source.Ends])
+        // and coming back to the start keeps them: the test is how far the route got, not where it ends
+        r.send(MapEvent.Live("s1", listOf(sd), pointsChanged = false))
+        assertEquals(SourceData.Ends(sd, sd), r.state.sources[Source.Ends])
     }
 }

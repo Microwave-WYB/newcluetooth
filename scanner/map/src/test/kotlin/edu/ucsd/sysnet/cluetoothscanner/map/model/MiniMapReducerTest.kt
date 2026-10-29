@@ -38,6 +38,19 @@ class MiniMapReducerTest {
         assertTrue(next.none { it is MiniMapEffect.Create })
     }
 
+    @Test fun `M-8 a stationary route snapshots without Start and End, a moving one with them`() {
+        val r = Run()
+        val still = listOf(a, GeoPoint(a.lon + 0.0001, a.lat + 0.0001), GeoPoint(a.lon - 0.0002, a.lat))
+        r.send(MiniMapEvent.Inputs(still, null))
+        r.send(MiniMapEvent.Configure(frame))
+        val first = r.send(MiniMapEvent.Tick).filterIsInstance<MiniMapEffect.Start>().single()
+        assertEquals(false, first.target.showEnds)
+        r.send(MiniMapEvent.Done(first.id, first.target))
+        r.send(MiniMapEvent.Inputs(still + b, null))
+        val moved = r.send(MiniMapEvent.Tick).filterIsInstance<MiniMapEffect.Start>().single()
+        assertEquals(true, moved.target.showEnds)
+    }
+
     @Test fun `no route and no fallback, nothing to show`() {
         val r = Run()
         r.send(MiniMapEvent.Configure(frame))

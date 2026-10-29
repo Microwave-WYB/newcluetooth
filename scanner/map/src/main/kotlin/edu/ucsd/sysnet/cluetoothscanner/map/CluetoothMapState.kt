@@ -271,7 +271,7 @@ class CluetoothMapState(
             }
             is MapEffect.LoadView -> launchQuery(effect) {
                 val v = queries.sessionView(effect.scope)
-                val route = RouteLine(storeRoute(v.route), v.route.size, v.route.firstOrNull(), v.route.lastOrNull())
+                val route = RouteLine.of(storeRoute(v.route), v.route)
                 MapEvent.ViewLoaded(effect.request, ViewInfo(v.live, v.sessionIds, v.frame, route))
             }
             is MapEffect.LoadPoints -> launchQuery(effect) {

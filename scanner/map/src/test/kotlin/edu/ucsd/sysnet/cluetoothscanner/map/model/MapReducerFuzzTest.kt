@@ -123,7 +123,8 @@ class MapReducerFuzzTest {
                     request(),
                     run {
                         val n = rnd.nextInt(0, 4)
-                        val route = RouteLine(payload(), n, if (n > 0) point() else null, if (n > 0) point() else null)
+                        val pts = List(n) { if (rnd.nextBoolean()) point() else GeoPoint(center.lon + rnd.nextDouble(-2e-4, 2e-4), center.lat + rnd.nextDouble(-2e-4, 2e-4)) }
+                        val route = RouteLine.of(payload(), pts)
                         ViewInfo(rnd.nextBoolean(), listOf(pick(listOf("a", "b"))), if (rnd.nextBoolean()) bbox() else null, route)
                     },
                 )
@@ -223,6 +224,12 @@ class MapReducerFuzzTest {
             if (event == MapEvent.StyleLoaded && ready) {
                 val replay = step.effects.filterIsInstance<MapEffect.ReplaySources>().single()
                 assertEquals(after.sources, replay.sources)
+            }
+
+            // 10. M-8: Start and End are set only for a route that got farther than 50 m from its first point
+            if (after.sources[Source.Ends] is SourceData.Ends && after.sources[Source.Ends] != before.sources[Source.Ends]) {
+                val route = ((showing?.view as? ViewState.Ready)?.info?.route)
+                assertTrue("Start/End on a stationary route $route", route != null && route.length > 1 && route.farthestFromStartM > 50.0)
             }
 
             // 9. the first-run location shows only while no scope is shown

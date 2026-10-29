@@ -7,6 +7,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.map.MapUiState
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
+import edu.ucsd.sysnet.cluetoothscanner.map.camera.RouteEnds
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.TapAction
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.TapResolver
@@ -328,10 +329,12 @@ object MapReducer {
         b.requestPoints(force = true)
     }
 
+    /** M-8: Start and End, unless the session barely moved (every point within 50 m of the first, RouteEnds). */
     private fun endsOf(route: RouteLine): SourceData.EndsData {
         val start = route.start
         val end = route.end
-        return if (route.length > 1 && start != null && end != null) SourceData.Ends(start, end) else SourceData.Empty
+        return if (start != null && end != null && RouteEnds.shown(route.length, route.farthestFromStartM)) SourceData.Ends(start, end)
+        else SourceData.Empty
     }
 
     /** Accumulates the next state and its effects for one event. */

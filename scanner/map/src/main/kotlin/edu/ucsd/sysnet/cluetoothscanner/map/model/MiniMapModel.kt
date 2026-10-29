@@ -4,6 +4,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Padding
+import edu.ucsd.sysnet.cluetoothscanner.map.camera.RouteEnds
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
@@ -22,8 +23,8 @@ data class MiniFrame(val widthPx: Int, val heightPx: Int, val density: Float, va
 /** Snapshotters are counted; a result from an older one (cancelled with its frame) is dropped. */
 @JvmInline value class SnapshotterId(val value: Int)
 
-/** What one snapshot shows. */
-data class MiniTarget(val route: List<GeoPoint>, val camera: CameraSnapshot)
+/** What one snapshot shows; [showEnds]: M-8's Start and End (hidden when the session barely moved). */
+data class MiniTarget(val route: List<GeoPoint>, val camera: CameraSnapshot, val showEnds: Boolean)
 
 sealed interface MiniSnapshotter {
     data object None : MiniSnapshotter
@@ -96,7 +97,7 @@ object MiniMapReducer {
         val frame = state.frame ?: return MiniStep(state, emptyList())
         val shot = state.shot as? MiniShot.Idle ?: return MiniStep(state, emptyList())
         val camera = camera(state.route, state.fallback, frame.widthDp, frame.heightDp) ?: return MiniStep(state, emptyList())
-        val target = MiniTarget(state.route, camera)
+        val target = MiniTarget(state.route, camera, showEnds = RouteEnds.shown(state.route))
         if (shot.rendered == target) return MiniStep(state, emptyList())
         return when (val s = state.snapshotter) {
             MiniSnapshotter.None -> {
