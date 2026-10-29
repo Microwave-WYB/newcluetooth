@@ -73,7 +73,7 @@ class BleScanner(
     private var receiversRegistered = false
     private var startedAtElapsedMs = 0L
     /**
-     * The Coded PHY setting the core's payload footer records (from [recordingEnvironment] or the last successful
+     * The Coded PHY setting the core's payload footer records (from [environment] or the last successful
      * `configureScan`). Every start scans with exactly this; only [restartNow] changes it, after telling the core.
      */
     private var footerCodedPhy: Boolean? = null
@@ -131,18 +131,18 @@ class BleScanner(
     }
 
     /**
-     * The environment for `core.startRecording`: the current Coded PHY setting becomes the footer's, and the scans
-     * of this recording use it until a restart changes it through `configureScan`. The recorder's `environment` is
-     * this function.
+     * The environment for `core.startRecording` (the recorder's `environment`): the current Coded PHY setting becomes
+     * the footer's, and the scans of this recording use it until a restart changes it through `configureScan`. This is
+     * the only public way to get an environment, so a new recording can never start on the previous one's PHY.
      */
-    fun recordingEnvironment(): ScanEnvironment {
+    fun environment(): ScanEnvironment {
         val coded = codedPhy()
         footerCodedPhy = coded
-        return environment(coded)
+        return environmentFor(coded)
     }
 
     /** The footer facts of a scan with the given Coded PHY setting (`start_recording`, `configure_scan`). */
-    fun environment(coded: Boolean = codedPhy()): ScanEnvironment {
+    private fun environmentFor(coded: Boolean): ScanEnvironment {
         val adapter = adapter()
         val o = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
         return buildScanEnvironment(
@@ -261,7 +261,7 @@ class BleScanner(
         cancel(restart)
         scope.launch(Dispatchers.Main.immediate) {
             val configured = try {
-                withContext(io) { core.await().configureScan(environment(coded)) }
+                withContext(io) { core.await().configureScan(environmentFor(coded)) }
                 true
             } catch (cancelled: CancellationException) {
                 throw cancelled

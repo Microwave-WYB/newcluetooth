@@ -133,8 +133,10 @@ class BleScannerTest {
 
     @Test
     fun `the scan environment states the Coded PHY setting`() {
-        assertEquals("all_supported", scanner.environment(coded = true).scanPhy)
-        assertEquals("1m", scanner.environment(coded = false).scanPhy)
+        coded = true
+        assertEquals("all_supported", scanner.environment().scanPhy)
+        coded = false
+        assertEquals("1m", scanner.environment().scanPhy)
         assertEquals("0.1.0-test", scanner.environment().appVersion)
     }
 
@@ -283,11 +285,29 @@ class BleScannerTest {
     @Test
     fun `the recording starts with the PHY its environment declared`() {
         coded = false
-        assertEquals("1m", scanner.recordingEnvironment().scanPhy)
+        assertEquals("1m", scanner.environment().scanPhy)
         coded = true // changed between startRecording and the first scan
         shadowOf(adapter).setEnabled(true)
         scanner.start()
         idle()
         assertEquals(BluetoothDevice.PHY_LE_1M, activePhy())
+    }
+
+    @Test
+    fun `a new recording starts on the PHY its footer records, not the previous recording's`() {
+        shadowOf(adapter).setEnabled(true)
+        coded = true
+        assertEquals("all_supported", scanner.environment().scanPhy) // recording 1: core.startRecording(env)
+        scanner.start()
+        idle()
+        assertEquals(ScanSettings.PHY_LE_ALL_SUPPORTED, activePhy())
+        drain() // stop
+        coded = false
+        val footer = scanner.environment() // recording 2: core.startRecording(env)
+        scanner.start()
+        idle()
+        assertEquals("1m", footer.scanPhy)
+        assertEquals("the scan agrees with the footer from the first start", BluetoothDevice.PHY_LE_1M, activePhy())
+        assertEquals("no configureScan was needed", 0, configures)
     }
 }
