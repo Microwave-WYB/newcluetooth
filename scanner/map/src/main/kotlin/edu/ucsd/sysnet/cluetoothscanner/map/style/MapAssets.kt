@@ -31,7 +31,10 @@ object MapAssets {
         } catch (e: java.io.IOException) {
             return StyleLoad.Failed("map-style.json: $e")
         }
-        return MapStyleSpec.decode(json)?.let { StyleLoad.Loaded(it) } ?: StyleLoad.Failed("map-style.json does not decode")
+        return when (val decoded = MapStyleSpec.decode(json)) {
+            is MapStyleSpec.Decoded.Ok -> StyleLoad.Loaded(decoded.spec)
+            is MapStyleSpec.Decoded.Err -> StyleLoad.Failed("map-style.json: ${decoded.reason}")
+        }
     }
 
     /**

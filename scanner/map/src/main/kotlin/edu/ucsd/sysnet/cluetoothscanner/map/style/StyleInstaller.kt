@@ -40,10 +40,19 @@ object StyleInstaller {
     /** The layers MapLibre can build, in order; a layer of an unknown type is left out (MapStyleSpecTest rules it out). */
     fun layers(json: List<JsonObject>): List<Layer> = json.mapNotNull(::layer)
 
-    /** Adds the sources and layers above the base map's own layers. */
-    fun install(style: Style, spec: MapStyleSpec, theme: MapTheme) {
+    /** [install]'s result. */
+    sealed interface Installed {
+        data object Ok : Installed
+        data class Err(val reason: String) : Installed
+    }
+
+    /** Adds the sources and layers above the base map's own layers; a MapLibre failure comes back as [Installed.Err]. */
+    fun install(style: Style, spec: MapStyleSpec, theme: MapTheme): Installed = try {
         sources(spec).forEach(style::addSource)
         layers(spec.layers(theme)).forEach(style::addLayer)
+        Installed.Ok
+    } catch (e: Exception) {
+        Installed.Err(e.toString())
     }
 
     /** One map-style.json layer, or null when its id, source or type is missing or unknown. */

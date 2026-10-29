@@ -154,9 +154,12 @@ fun CluetoothMap(
                 else -> Style.Builder().fromUri(spec.baseStyleUrl(theme))
             }
             m.setStyle(builder) { style ->
-                if (guard("install overlay") { StyleInstaller.install(style, spec, theme) } != null) {
-                    surface?.style = style
-                    state.onStyleLoaded()
+                when (val installed = StyleInstaller.install(style, spec, theme)) {
+                    StyleInstaller.Installed.Ok -> {
+                        surface?.style = style
+                        state.onStyleLoaded()
+                    }
+                    is StyleInstaller.Installed.Err -> state.onPlatformFailure("install overlay", IllegalStateException(installed.reason))
                 }
             }
         }

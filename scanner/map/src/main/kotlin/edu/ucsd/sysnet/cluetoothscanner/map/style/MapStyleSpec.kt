@@ -112,6 +112,12 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
         else -> e
     }
 
+    /** [decode]'s result. */
+    sealed interface Decoded {
+        data class Ok(val spec: MapStyleSpec) : Decoded
+        data class Err(val reason: String) : Decoded
+    }
+
     companion object {
         const val CELLS = "cells"
         const val CELLS_LAYER = "cells"
@@ -119,15 +125,16 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
         private val CLONES = mapOf("clusters" to CELLS_LAYER, "cluster-count" to CELL_COUNT_LAYER)
         private val MINI_MAP_LAYERS = setOf("route", "end-dots", "end-labels")
 
-        fun parse(json: String): MapStyleSpec = MapStyleSpec(Json.parseToJsonElement(json).jsonObject)
+        /** Parses a map-style.json this module ships (its tests read the committed export); throws if it is broken. */
+        internal fun parse(json: String): MapStyleSpec = MapStyleSpec(Json.parseToJsonElement(json).jsonObject)
 
         /**
-         * The spec, or null when [json] is not a complete map-style.json: every accessor is read once here, so a
-         * decoded spec never fails later. (The committed export is checked by MapStyleSpecTest; this is the app's
-         * guard against a broken asset.)
+         * The spec, or why [json] is not a complete map-style.json: every accessor is read once here, so a decoded
+         * spec never fails later. (The committed export is checked by MapStyleSpecTest; this is the app's guard
+         * against a broken asset.)
          */
-        fun decode(json: String): MapStyleSpec? = try {
-            parse(json).also { spec ->
+        fun decode(json: String): Decoded = try {
+            Decoded.Ok(parse(json).also { spec ->
                 for (theme in MapTheme.entries) {
                     spec.baseStyleUrl(theme)
                     spec.layers(theme)
@@ -135,9 +142,9 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
                 }
                 spec.selection(null)
                 spec.selection("00:00:00:00:00:00")
-            }
+            })
         } catch (e: Exception) {
-            null
+            Decoded.Err(e.toString())
         }
 
         /** The spec used when the asset is broken: the base maps without any overlay (so no value here is ever drawn). */

@@ -3,12 +3,6 @@
 # The seed entries are the hits on feat/v2 at 6506e81; each owning lane removes its own in its refactor.
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:196  seed: existing error/check/require at 6506e81, removed by lane D's refactor
 chrome/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/chrome/LocationPopover.kt:68  seed: existing !! at 6506e81, removed by lane C's refactor
-map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/data/RouteGeoJson.kt:45  seed: existing !! at 6506e81, removed by lane E's refactor
-map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/style/MapStyleSpec.kt:91  seed: existing error/check/require at 6506e81, removed by lane E's refactor
-map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/style/StyleInstaller.kt:57  seed: existing error/check/require at 6506e81, removed by lane E's refactor
-map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/style/StyleInstaller.kt:73  seed: existing error/check/require at 6506e81, removed by lane E's refactor
-map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/style/StyleInstaller.kt:82  seed: existing error/check/require at 6506e81, removed by lane E's refactor
-map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/style/StyleInstaller.kt:97  seed: existing error/check/require at 6506e81, removed by lane E's refactor
 platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/gatt/AndroidGattLink.kt:106  seed: existing error/check/require at 6506e81, removed by lane B's refactor
 platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/gatt/FilePendingDiscoveryStore.kt:17  seed: existing error/check/require at 6506e81, removed by lane B's refactor
 platform/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/platform/gatt/FilePendingDiscoveryStore.kt:25  seed: existing error/check/require at 6506e81, removed by lane B's refactor
