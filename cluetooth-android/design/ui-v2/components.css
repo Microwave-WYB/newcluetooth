@@ -319,9 +319,8 @@ button.item:active { background: var(--fill2); }
 }
 .phone.side-open .side { transform: none; visibility: visible; }
 .side.static { position: relative; transform: none; visibility: visible; width: 100%; height: 100%; }
-.side-head { flex: none; height: var(--top-zone); display: flex; align-items: center; padding: 0 var(--gutter); }
-.side-head .brand { padding: 0; }
-.side-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px; }
+.side-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--top-zone) 8px 0; } /* phone: the first item clears the ☰ row */
+.phone.tablet .side-list { padding-top: var(--corner-btn); } /* tablet: the panel's concentric top inset */
 .side-foot { flex: none; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); }
 .item.sel { background: var(--fill2); }
 /* MenuButton: rides the sidebar's edge (4 px in), its icon turning from ☰ into "collapse sidebar" */
@@ -525,8 +524,7 @@ button.item:active { background: var(--fill2); }
 /* ☰: the sessions list takes the panel's place (no drawer, no dim); X or Back gives the Discover stack back */
 .phone.tablet .side { top: var(--top-zone); left: var(--edge); bottom: var(--edge); width: var(--panel-w); z-index: 99; border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transform: none; opacity: 0; transition: opacity var(--t-fast), visibility var(--t-fast); overflow: hidden; }
 .phone.tablet.side-open .side { opacity: 1; }
-.phone.tablet .side-head { height: auto; padding: var(--corner-btn) var(--gutter) 4px; }
-.phone.tablet .main-dim { display: none; }
+.phone.tablet .phone.tablet .main-dim { display: none; }
 /* the recorder stays at the bottom right of the map: the FAB widens in place into the capsule (FAB height) and its
    panel grows upward; locate / warning sit right above it and move up while the panel is open */
 .phone.tablet .recorder { right: var(--edge); bottom: calc(var(--edge) + 12px); }

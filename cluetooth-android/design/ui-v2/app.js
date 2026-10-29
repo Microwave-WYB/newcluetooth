@@ -200,7 +200,6 @@
 
     /** Sidebar content: the current session (pinned while recording), the history by day, Settings at the bottom. */
     sidebar: ({ current, all, days, selected }) => `
-      <div class="side-head"><span class="brand">Cluetooth</span></div>
       <div class="side-list">
         ${current ? UI.listItem({ title: current.title, sub: current.sub, action: "session", value: current.id, sel: current.id === selected }) : ""}
         ${all ? UI.listItem({ title: "All sessions", sub: all.sub, action: "session", value: "all", sel: selected === "all" }) : ""}
