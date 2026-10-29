@@ -18,6 +18,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import androidx.compose.ui.unit.dp
 
 internal val sessionA = Scope.session("a")
 internal val sessionB = Scope.session("b")
@@ -334,5 +335,20 @@ class GuardedTest {
         val thrown = runCatching { guarded(MainTask.Link, { _, _ -> reported = true }) { throw kotlinx.coroutines.CancellationException("c") } }
         assertTrue(thrown.exceptionOrNull() is kotlinx.coroutines.CancellationException)
         assertEquals(false, reported)
+    }
+}
+
+/** P-3, P-5, R-3, R-4: the phone insets of the FAB layer and the recorder (the tablet is inside the safe area). */
+class InsetRulesTest {
+    @Test fun theFabLayerClearsTheSheetOrTheNavigationBar() {
+        assertEquals(78.dp + 24.dp, fabLayerCover(tablet = false, sheetPeek = 78.dp, navigationBar = 24.dp))
+        // first run, no sheet: still above the gesture bar
+        assertEquals(24.dp, fabLayerCover(tablet = false, sheetPeek = null, navigationBar = 24.dp))
+        assertEquals(0.dp, fabLayerCover(tablet = true, sheetPeek = 78.dp, navigationBar = 24.dp))
+    }
+
+    @Test fun theIslandStartsBelowTheStatusBarOnPhone() {
+        assertEquals(24.dp, recorderTopInset(tablet = false, statusBar = 24.dp))
+        assertEquals(0.dp, recorderTopInset(tablet = true, statusBar = 24.dp))
     }
 }
