@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Handle
@@ -192,7 +193,8 @@ fun TabletPanelHost(
                         .clickable(enabled = !open, onClick = controller::expandPanel),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Glyphs.panelMore, Strings.ExpandPanel, tint = colors.chevron)
+                    // `.panel-more-btn svg`: the handle's width (36 × 8 dp) with a 2 dp stroke; Icon's size is the height
+                    Icon(Glyphs.panelMore, Strings.ExpandPanel, size = Css.PanelMoreBtn_Svg.height, tint = colors.chevron, strokeWidth = Css.PanelMoreBtn_Svg.strokeWidth)
                 }
             }
         }
