@@ -200,11 +200,15 @@ private fun Categories(state: SheetsState, entry: SheetEntry) {
     var groups by remember { mutableStateOf<Loaded<List<CategoryGroup>>>(Loaded.Pending) }
     val filter = d.queryFilter()
     LaunchedEffect(filter, d.rows) {
-        groups = loadedOf(state.load(SheetQuery.Products(filter)))
+        // every answer also teaches the category labels (D-6: titles never show an id)
+        suspend fun read() = state.load(SheetQuery.Products(filter)).also { o ->
+            (o as? Outcome.Ok)?.let { state.learnLabels(it.value.map { g -> g.category to g.label }) }
+        }
+        groups = loadedOf(read())
         if (state.live) while (true) { // live cards update in place (§2.6); new ones are appended by the core order
             delay(LIVE_REFRESH_MS)
             // a failed refresh keeps the cards shown
-            (state.load(SheetQuery.Products(filter)) as? Outcome.Ok)?.let { groups = Loaded.Found(it.value) }
+            (read() as? Outcome.Ok)?.let { groups = Loaded.Found(it.value) }
         }
     }
     val listState = rememberSheetListState(entry, CATEGORIES_LIST)

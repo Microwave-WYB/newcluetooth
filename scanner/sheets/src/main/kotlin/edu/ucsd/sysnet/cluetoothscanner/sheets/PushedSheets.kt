@@ -89,7 +89,15 @@ internal fun Kicker(text: String) {
 internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?) {
     var content by remember { mutableStateOf(ProductContent()) }
     val filter = state.productFilter(pageId)
-    LaunchedEffect(filter) { content = content.withDetail(state.load(SheetQuery.Product(pageId, filter))) }
+    LaunchedEffect(filter) {
+        val detail = state.load(SheetQuery.Product(pageId, filter))
+        // D-6: the category's display label (never its id), learned if this view has not seen it yet
+        val title = when (val p = (detail as? Outcome.Ok)?.value) {
+            null -> ""
+            else -> if (p.page == null) Strings.Unidentified else p.categories.firstOrNull()?.let { state.labelOf(it, pageId) }.orEmpty()
+        }
+        content = content.withDetail(detail).withTitle(title)
+    }
     // D-7.6: sorted once by RSSI (the session order), filtered by This area; G-9: live devices of the product
     // are appended as they arrive (the order only grows)
     LaunchedEffect(filter, state.discover.liveAppends, state.opened) { content = content.withKeys(state.discover.keysFor(filter)) }
@@ -97,7 +105,7 @@ internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?
     val detail = content.detail
     SheetFrame(state.stack, entry, state.metrics, header = {
         // D-6, G-11: the category, not the product name the body shows
-        PushedHeader(state) { Kicker(detail.valueOrNull()?.let { categoryLabel(state, it) } ?: "") }
+        PushedHeader(state) { Kicker(content.title) }
     }) {
         when (detail) {
             Loaded.Pending, Loaded.Missing -> Unit
@@ -108,9 +116,6 @@ internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?
         }
     }
 }
-
-private fun categoryLabel(state: SheetsState, p: ProductDetail): String =
-    if (p.page == null) Strings.Unidentified else state.categoryLabels[p.categories.firstOrNull()] ?: p.categories.firstOrNull().orEmpty()
 
 @Composable
 private fun ProductHead(state: SheetsState, p: ProductDetail, tablet: Boolean) {
@@ -169,7 +174,10 @@ internal fun FilterSheet(state: SheetsState, entry: SheetEntry) {
     val countsFilter = d.queryFilter()
     LaunchedEffect(countsFilter) {
         when (val counts = state.load(SheetQuery.Counts(countsFilter))) {
-            is Outcome.Ok -> content = content.withCounts(counts.value, d.filter.categories) { state.categoryLabels[it] ?: it }
+            is Outcome.Ok -> {
+                state.learnLabels(counts.value.map { it.category to it.label })
+                content = content.withCounts(counts.value, d.filter.categories) { state.categoryLabels[it] ?: it }
+            }
             is Outcome.Failed -> Unit // the rows keep their last counts (or none yet); the next filter change asks again
         }
     }

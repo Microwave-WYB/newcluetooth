@@ -93,6 +93,27 @@ class SheetsState internal constructor(
     /** Category ids to their vocabulary labels (the core's, G-8), for headers and the Filter sheet. */
     internal var categoryLabels by mutableStateOf<Map<String, String>>(emptyMap())
         private set
+
+    /**
+     * Learns category labels from any core answer that carries them (category counts, product groups). The first read
+     * at open can come back empty (a live session that has not seen a device yet), so labels are never a one-time
+     * snapshot.
+     */
+    internal fun learnLabels(labels: List<Pair<String, String>>) {
+        val merged = mergeLabels(categoryLabels, labels)
+        if (merged !== categoryLabels) categoryLabels = merged
+    }
+
+    /** D-6: the display label of [category] for a product sheet's title; read from the product's counts if unknown. */
+    internal suspend fun labelOf(category: String, pageId: String?): String {
+        categoryLabels[category]?.let { return it }
+        val filter = if (pageId == null) DeviceFilter(identification = Identification.Unidentified) else DeviceFilter(page = pageId)
+        when (val counts = load(SheetQuery.Counts(filter))) {
+            is Outcome.Ok -> learnLabels(counts.value.map { it.category to it.label })
+            is Outcome.Failed -> Unit // the id stands in for the label
+        }
+        return categoryLabels[category] ?: category
+    }
     /** The first sort has landed (S-7 content can show); derived from the model's phase, not a flag. */
     internal val opened: Boolean get() = discover.phase is DiscoverPhase.Ready
 
@@ -227,7 +248,7 @@ class SheetsState internal constructor(
     /** Called once by [start]: the labels (cosmetic: a failed read leaves the ids), then the model's first sort. */
     internal suspend fun open() {
         when (val counts = attempt { core.categoryCounts(scope, DeviceFilter()) }) {
-            is Outcome.Ok -> categoryLabels = counts.value.associate { it.category to it.label }
+            is Outcome.Ok -> learnLabels(counts.value.map { it.category to it.label })
             is Outcome.Failed -> Unit // the Filter sheet and product titles fall back to the category ids
         }
         discover.open()
@@ -298,6 +319,10 @@ internal sealed interface SheetQuery<T> {
         override suspend fun run(core: CoreQueries, scope: Scope) = core.categoryCounts(scope, filter)
     }
 }
+
+/** [old] with [learned] added; [old] itself when nothing is new (no state write). */
+internal fun mergeLabels(old: Map<String, String>, learned: List<Pair<String, String>>): Map<String, String> =
+    if (learned.all { (id, label) -> old[id] == label }) old else old + learned
 
 /** The bounding box of [points], or null when there are none. */
 internal fun boundsOf(points: List<GeoPoint>): Bbox? =
