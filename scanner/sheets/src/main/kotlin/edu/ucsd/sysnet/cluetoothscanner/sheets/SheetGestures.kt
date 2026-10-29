@@ -149,38 +149,34 @@ internal class ScrollableContent(private val state: ScrollableState, private val
     }
 }
 
-/** A LazyList state for [entry]'s content: starts at its saved scroll (S-8) and lets the sheet drive it (S-13). */
+/**
+ * A LazyList state for one list of [entry]'s content, under [key] (the main list by default): it starts at that
+ * list's saved scroll (S-8), lets the sheet drive it (S-13), and moves when a restore targets it (Q-7). Leaving the
+ * composition saves its position under its own key only, so a second list never overwrites the main one's.
+ */
 @Composable
-internal fun rememberSheetListState(entry: SheetEntry): LazyListState {
-    val state = remember(entry.id) { LazyListState(entry.scroll.index, entry.scroll.offset) }
+internal fun rememberSheetListState(entry: SheetEntry, key: Any = SheetEntry.MAIN_LIST): LazyListState {
+    val state = remember(entry.id, key) { entry.scrollOf(key).let { LazyListState(it.index, it.offset) } }
     val fling = ScrollableDefaults.flingBehavior()
-    DisposableEffect(entry, state, fling) {
-        val reader = { ScrollSnapshot(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset) }
-        entry.content = ScrollableContent(state, fling)
-        entry.scrollReader = reader
-        onDispose {
-            entry.scroll = reader()
-            entry.content = null
-            entry.scrollReader = null
+    DisposableEffect(entry, key, state, fling) {
+        val content = ScrollableContent(state, fling)
+        entry.attachList(key, content, { ScrollSnapshot(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset) }) {
+            state.scrollToItem(it.index, it.offset)
         }
+        onDispose { entry.detachList(key, content) }
     }
     return state
 }
 
 /** The same for a plain vertically scrolling column. */
 @Composable
-internal fun rememberSheetScrollState(entry: SheetEntry): ScrollState {
-    val state = remember(entry.id) { ScrollState(entry.scroll.offset) }
+internal fun rememberSheetScrollState(entry: SheetEntry, key: Any = SheetEntry.MAIN_LIST): ScrollState {
+    val state = remember(entry.id, key) { ScrollState(entry.scrollOf(key).offset) }
     val fling = ScrollableDefaults.flingBehavior()
-    DisposableEffect(entry, state, fling) {
-        val reader = { ScrollSnapshot(0, state.value) }
-        entry.content = ScrollableContent(state, fling)
-        entry.scrollReader = reader
-        onDispose {
-            entry.scroll = reader()
-            entry.content = null
-            entry.scrollReader = null
-        }
+    DisposableEffect(entry, key, state, fling) {
+        val content = ScrollableContent(state, fling)
+        entry.attachList(key, content, { ScrollSnapshot(0, state.value) }) { state.scrollTo(it.offset) }
+        onDispose { entry.detachList(key, content) }
     }
     return state
 }

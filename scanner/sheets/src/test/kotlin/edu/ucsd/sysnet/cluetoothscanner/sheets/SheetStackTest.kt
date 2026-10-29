@@ -461,4 +461,17 @@ class SheetStackTest {
         assertEquals(Full, e.height)
         assertEquals(1, content.flings.size) // released moving up at Full: the content keeps the momentum
     }
+
+    @Test
+    fun `T-2 setHeight on tablet keeps the panel and only records the phone height`() = runTest {
+        val s = stack(rootHeight = Collapsed)
+        s.setLayout(tablet = true)
+        assertEquals(PanelHeight.Open, s.root.panel)
+        s.setHeight(s.root, Half)
+        assertEquals(PanelHeight.Open, s.root.panel)
+        s.onMapUserGesture()
+        s.setHeight(s.root, Full)
+        assertEquals(PanelHeight.Partial, s.root.panel)
+        assertEquals(Full, s.root.height)
+    }
 }

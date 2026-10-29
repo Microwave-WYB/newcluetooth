@@ -1452,6 +1452,11 @@ class OrderedKeys(initial: LongArray) {
     fun visible(passing: DeviceKeys): LongArray    // order ∩ passing, order kept
 }
 data class CameraSnapshot(val center: GeoPoint, val zoom: Double, val bearing: Double = 0.0)
+/** M-11 (used by Q-6): zoom differs by ≥ 1, or the centre moved > 25 % of the viewport on either axis, measured on
+ *  screen (Web Mercator). The one copy; D's search state and E's map both call it. App camera moves are never passed. */
+fun movedAway(reference: CameraSnapshot, current: CameraSnapshot, viewport: Bbox): Boolean
+/** The camera showing [viewport] at [zoom]: centred on the viewport's screen (Web Mercator) centre. */
+fun viewportCamera(viewport: Bbox, zoom: Double): CameraSnapshot
 data class CoverInsets(val top: Int, val bottom: Int, val left: Int, val right: Int)   // dp the sheet/panel/chrome cover
 
 /** Search state (Q-5..Q-7); D owns the instance, C and E read it. */
