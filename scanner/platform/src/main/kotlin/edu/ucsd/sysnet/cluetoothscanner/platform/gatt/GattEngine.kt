@@ -59,6 +59,7 @@ class GattEngine(
         var discoverMs: Long? = null
         var readMs: Long? = null
         var services: List<GattServiceResult> = emptyList()
+        var servicesFound: Int? = null
 
         fun resetForRetry() {
             stage = GattStage.CONNECT
@@ -70,6 +71,7 @@ class GattEngine(
             discoverMs = null
             readMs = null
             services = emptyList()
+            servicesFound = null
         }
     }
 
@@ -231,6 +233,7 @@ class GattEngine(
             }
         }
 
+        run.servicesFound = snapshots.size
         enter(run, GattStage.READ, attempt, readsDone = 0, readsTotal = plan.size)
         run.services = assemble()
         val readStart = elapsedMs()
@@ -329,7 +332,7 @@ class GattEngine(
                 Wait.TimedOut -> Unit
             }
             done++
-            onProgress(GattProgress(GattStage.READ, done, plan.size, attempt))
+            onProgress(progress(run, GattStage.READ, done, plan.size, attempt))
         }
         finishRead(run, assemble(), readStart)
         run.outcome = GattOutcome.COMPLETE
@@ -372,8 +375,14 @@ class GattEngine(
 
     private fun enter(run: Run, stage: GattStage, attempt: Int, readsDone: Int = 0, readsTotal: Int? = null) {
         run.stage = stage
-        onProgress(GattProgress(stage, readsDone, readsTotal, attempt))
+        onProgress(progress(run, stage, readsDone, readsTotal, attempt))
     }
+
+    private fun progress(run: Run, stage: GattStage, readsDone: Int, readsTotal: Int?, attempt: Int) = GattProgress(
+        stage, readsDone, readsTotal, attempt,
+        connectMs = run.connectMs?.let { it + (run.mtuMs ?: 0) },
+        services = run.servicesFound,
+    )
 
     /** The peer (or stack) ended the connection before any read: failed, retry on 133. */
     private fun failRemote(run: Run, status: Int, attempt: Int): Boolean {

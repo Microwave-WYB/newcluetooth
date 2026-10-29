@@ -97,9 +97,12 @@ class GattDiscoveryManager(
     val state: StateFlow<GattUiState> = _state.asStateFlow()
 
     /** False when a discovery is already running. */
-    fun start(request: GattStartRequest): Boolean {
-        if (!running.compareAndSet(false, true)) return false
-        scope.launch {
+    fun start(request: GattStartRequest): Boolean = launch(request) != null
+
+    /** [start] returning the discovery's job (null when one is already running); [state] ends Finished or Idle. */
+    fun launch(request: GattStartRequest): Job? {
+        if (!running.compareAndSet(false, true)) return null
+        return scope.launch {
             try {
                 execute(request)
             } finally {
@@ -109,7 +112,6 @@ class GattDiscoveryManager(
                 if (_state.value is GattUiState.Running) _state.value = GattUiState.Idle
             }
         }
-        return true
     }
 
     /** Stops the running discovery; whatever was collected is kept and stored as `cancelled`. */

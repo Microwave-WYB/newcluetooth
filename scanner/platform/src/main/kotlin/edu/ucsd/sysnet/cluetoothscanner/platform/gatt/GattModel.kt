@@ -199,6 +199,10 @@ data class GattProgress(
     val readsDone: Int = 0,
     val readsTotal: Int? = null,
     val attempt: Int = 1,
+    /** Connect plus MTU time once connected (D-13 "0.8 s"; §2.7 folds MTU into Connecting). */
+    val connectMs: Long? = null,
+    /** Services found, once discovery finished (D-13 "N services"). */
+    val services: Int? = null,
 )
 
 private val HEX = "0123456789abcdef".toCharArray()
