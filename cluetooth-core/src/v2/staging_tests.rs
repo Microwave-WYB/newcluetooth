@@ -330,6 +330,38 @@ fn storage_cleanup_keeps_unuploaded_payloads() {
     core.prepare_upload(still[0].payload_id.clone()).unwrap();
 }
 
+/// Owner decision: no backfill. A session recorded before the Parquet staging (local.db only) stays local-only:
+/// it shows the Empty upload state, and neither open nor a recording creates a payload for it.
+#[test]
+fn a_db_only_session_is_not_backfilled() {
+    let dir = tempfile::tempdir().unwrap();
+    let t0 = 1_761_000_000_000i64;
+    let old = "019a03c7-d820-7973-8013-63f452e5a126";
+    {
+        let core = open(dir.path(), t0);
+        core.with_writer_conn(move |c| {
+            c.execute(
+                "INSERT INTO sessions (uuid, status, started_ms, ended_ms, active_ms, device_count, sightings)
+                 VALUES (?1, 2, ?2, ?2 + 60000, 60000, 3, 40)",
+                rusqlite::params![old, t0],
+            )
+            .unwrap();
+        });
+    }
+    let core = open(dir.path(), t0 + 100_000);
+    core.start_recording_at(env(), t0 + 100_000).unwrap();
+    core.ingest_scans_at(vec![obs(1, t0 + 100_010)], t0 + 100_010)
+        .unwrap();
+    let new = core.stop_recording_at(t0 + 101_000).unwrap();
+    let sessions = futures_executor::block_on(core.sessions()).unwrap();
+    let state = |id: &str| sessions.iter().find(|s| s.id == id).map(|s| s.upload);
+    assert_eq!(state(old), Some(UploadState::Empty));
+    assert_eq!(state(&new), Some(UploadState::Pending));
+    let pending = core.pending_uploads().unwrap();
+    assert_eq!(pending.len(), 1, "only the new recording has a payload");
+    assert!(!pending[0].local_path.contains(old));
+}
+
 /// §2.4: a GATT discovery joins the upload queue as gatt/v1 plaintext.
 #[test]
 fn a_gatt_discovery_is_queued_for_upload() {
