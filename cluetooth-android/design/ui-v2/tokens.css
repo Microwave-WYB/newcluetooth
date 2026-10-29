@@ -157,6 +157,9 @@
   --sheet-radius: calc(var(--edge) + var(--rb) / 2);
   --sheet-header-h: var(--icon-btn); /* a sheet header row: the view switch, the X, the segmented control, titles */
   --handle-zone: 14px;          /* phone: the drag handle's own zone at the top of every sheet (the header row sits below it) */
+  --panel-partial-h: max(calc((100cqh - var(--top-zone) - var(--edge)) * 0.45), 300px); /* tablet panel, Partial: 45% of the column, at least header + ~3 rows */
+  --panel-fade-h: 48px;         /* tablet Partial: the fade over the cut-off content */
+  --panel-more-w: 120px;        /* tablet Partial: the expand chevron's tap target (height --rb) */
   --panel-pad: var(--panel-inset); /* inset of content inside a rounded container's corner region (top and sides alike) */
   --pop-pad: 12px;              /* popover padding (all sides) */
   --rec-panel-r: 22px;          /* phone recorder panel: concentric with its 36 px buttons at a 4 px inset (18 + 4) */

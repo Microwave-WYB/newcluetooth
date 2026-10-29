@@ -527,23 +527,26 @@ button.item:active { background: var(--fill2); }
 .phone.tablet .sheet:not(.static) {
   left: var(--edge); right: auto; top: var(--top-zone); bottom: auto; width: var(--panel-w); height: calc(100% - var(--top-zone) - var(--edge));
   border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transition: height var(--t-std) var(--ease), opacity var(--t-fast), visibility var(--t-fast);
+  overflow: hidden; /* the panel clips its content to its rounded shape */
 }
 .phone.tablet .disc-head { padding: var(--corner-btn) var(--corner-btn) 10px; } /* no handle zone on tablet */ /* the corner buttons concentric with the panel */
 .phone.tablet .sheet.sheet.open { transform: none; }
 .phone.tablet .sheet:not(.open) { opacity: 0; pointer-events: none; }
-.phone.tablet .sheet.open.collapsed { height: var(--peek); }
+/* Partial (a user pan or zoom; the header tap toggles it): every panel level keeps its top and shrinks to
+   --panel-partial-h; the content still scrolls */
+.phone.tablet.panel-partial .sheet.open:not(.static):not(.following), .phone.tablet.panel-partial .side, .phone.tablet.panel-partial .page.search-page { height: var(--panel-partial-h); }
 .phone.tablet .sheet.following { opacity: 0; visibility: hidden; pointer-events: none; } /* only the top level shows */
 .phone.tablet .handle::before { opacity: 0; }
 .phone.tablet .sheet .sheet-body { overflow-y: auto; touch-action: pan-y; padding: 0 var(--panel-pad) var(--panel-pad); }
 .phone.tablet .sheet .row, .phone.tablet .sheet .item { border-radius: calc(var(--panel-radius) - var(--panel-pad)); } /* tablet panel content */
 .phone.tablet .disc-head, .phone.tablet .sheet-top, .phone.tablet .handle { cursor: pointer; }
 /* search: typing shows the results in the panel */
-.phone.tablet .page.search-page { left: var(--edge); top: var(--top-zone); bottom: var(--edge); right: auto; width: var(--panel-w); border-radius: var(--corner-r); box-shadow: var(--shadow-raised); background: var(--panel); overflow: hidden; }
+.phone.tablet .page.search-page { left: var(--edge); top: var(--top-zone); bottom: auto; height: calc(100% - var(--top-zone) - var(--edge)); transition: height var(--t-std) var(--ease), opacity var(--t-fade) var(--ease); right: auto; width: var(--panel-w); border-radius: var(--corner-r); box-shadow: var(--shadow-raised); background: var(--panel); overflow: hidden; }
 .phone.tablet .scroll.search-results { top: 0; padding: var(--panel-pad); } /* tablet results panel: the same inset and radius */
 .phone.tablet .search-page .row { border-radius: calc(var(--panel-radius) - var(--panel-pad)); }
 .phone.tablet .search-area, .phone.tablet.recording .search-area { top: var(--edge); left: calc((var(--edge) + var(--panel-w) + 100%) / 2); }
 /* ☰: the sessions list takes the panel's place (no drawer, no dim); X or Back gives the Discover stack back */
-.phone.tablet .side { top: var(--top-zone); left: var(--edge); bottom: var(--edge); width: var(--panel-w); z-index: 99; border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transform: none; opacity: 0; transition: opacity var(--t-fast), visibility var(--t-fast); overflow: hidden; }
+.phone.tablet .side { top: var(--top-zone); left: var(--edge); bottom: auto; height: calc(100% - var(--top-zone) - var(--edge)); width: var(--panel-w); z-index: 99; border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transform: none; opacity: 0; transition: height var(--t-std) var(--ease), opacity var(--t-fast), visibility var(--t-fast); overflow: hidden; }
 .phone.tablet.side-open .side { opacity: 1; }
 .phone.tablet .main-dim { display: none; }
 /* the recorder stays at the bottom right of the map: the FAB widens in place into the capsule (FAB height) and its
@@ -570,3 +573,18 @@ button.item:active { background: var(--fill2); }
 @keyframes swap-out-right { to { opacity: 0; transform: translateX(var(--swap-x)); } }
 @keyframes swap-in-right { from { opacity: 0; transform: translateX(var(--swap-x)); } }
 @keyframes swap-in-left { from { opacity: 0; transform: translateX(calc(-1 * var(--swap-x))); } }
+
+/* ---------- Tablet Partial: the cut-off content fades out, and a chevron (the drag handle's width) expands it ---------- */
+.panel-more { display: none; }
+.phone.tablet .panel-more {
+  display: block; position: absolute; z-index: 102; left: var(--edge); width: var(--panel-w); height: var(--panel-fade-h);
+  top: calc(var(--top-zone) + var(--panel-partial-h) - var(--panel-fade-h)); border-radius: 0 0 var(--corner-r) var(--corner-r);
+  background: linear-gradient(transparent, var(--panel)); pointer-events: none; opacity: 0; transition: opacity var(--t-std) var(--ease);
+}
+.phone.tablet.panel-partial.has-panel .panel-more { opacity: 1; }
+.panel-more-btn {
+  position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: var(--panel-more-w); height: var(--rb);
+  display: grid; place-items: center; color: var(--t2); pointer-events: auto;
+}
+.phone.tablet:not(.panel-partial) .panel-more-btn, .phone.tablet:not(.has-panel) .panel-more-btn { pointer-events: none; }
+.panel-more-btn svg { width: var(--handle-w); height: 8px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

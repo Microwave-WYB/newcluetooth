@@ -330,7 +330,8 @@
       <div class="search-bar-slot" id="search-bar"></div>
       <div class="search-area gone" id="search-area">${UI.chip({ label: "Search this area", on: false, action: "search-area" })}</div>
       <div id="pages"></div>
-      <div class="scrim" data-action="sheet-close"></div>`;
+      <div class="scrim" data-action="sheet-close"></div>
+      <div class="panel-more"><button class="panel-more-btn" data-action="panel-expand" aria-label="Expand the panel"><svg viewBox="0 0 36 8" aria-hidden="true"><path d="M2 1.5 18 6.5 34 1.5"/></svg></button></div>`;
   }
 
   /** The Discover sheet (the stack's root): categories or the device list (Nearby / All only while live). */
@@ -338,6 +339,7 @@
     const sheet = $(".disc-sheet", phone);
     const sess = S.session && D.getRecording(S.session);
     sheet.classList.toggle("open", !!sess);
+    phone.classList.toggle("has-panel", !!sess);
     if (!sess) return liftRecorder();
     const mode = S.live ? S.discoverMode : "all";
     const head = $("#disc-head"), chips = $("#disc-chips"), body = $("#disc-body");
@@ -723,6 +725,7 @@
     const w = phone.clientWidth, mode = w >= parseFloat(tok("--bp-expanded")) ? "expanded" : w >= parseFloat(tok("--bp-medium")) ? "medium" : "compact";
     if (mode === S.layout) return;
     const wasCompact = S.layout === "compact";
+    if (mode === "compact") phone.classList.remove("panel-partial");
     S.layout = mode;
     phone.dataset.layout = mode;
     phone.classList.toggle("tablet", isTablet());
@@ -851,7 +854,9 @@
   const sheetState = (sheet) => SNAP_STATES.find((st) => sheet.classList.contains(st)) || null;
   function setSheetState(sheet, state) {
     if (state === "dismissed") return Stack.pop();
-    if (isTablet() && state === "half") state = "full"; // the panel: open or collapsed
+    if (isTablet() && state === "half") state = "full"; // the panel: open or partial (its "collapsed")
+    // tablet: Partial is one state for the whole panel (every level, sessions and results alike)
+    if (isTablet() && sheet === Stack.top().el) phone.classList.toggle("panel-partial", state === "collapsed");
     SNAP_STATES.forEach((st) => sheet.classList.toggle(st, st === state));
     if (sheet === Stack.top().el) { couple(); updateScrim(); }
     liftRecorder();
@@ -861,6 +866,8 @@
   function couple(liveY) {
     const top = Stack.top().el, y = liveY != null ? liveY : offsetOf(top, sheetState(top));
     phone.classList.toggle("stacked", Stack.entries.length > 1);
+    // tablet: the whole panel is Partial exactly when the top level is "collapsed" (there is no header-only state)
+    if (isTablet()) phone.classList.toggle("panel-partial", sheetState(top) === "collapsed");
     Stack.entries.forEach((e) => {
       const below = e.el !== top;
       e.el.classList.toggle("following", below);
@@ -1359,6 +1366,7 @@
     "search-edit": () => openSearchPage(),
     "search-exit": () => exitSearch(),
     "search-area": () => searchThisArea(),
+    "panel-expand": () => setSheetState(Stack.top().el, "full"),
     locate: () => { S.map.locate(); S.locZoomed = false; $(".locate-btn", phone).classList.add("gone"); },
     "loc-pop": () => setLocPop(!$("#loc-pop").innerHTML),
     "loc-pop-close": () => setLocPop(false),
