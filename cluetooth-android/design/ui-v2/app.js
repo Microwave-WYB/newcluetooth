@@ -119,14 +119,14 @@
       `<div class="chips ${cls}">${UI.chip({ label: "All", on: all, action: "filter-preset", value: "all" })}${
         PRESETS.map((p) => UI.chip({ label: p.label, on: on.includes(p.id), action: "filter-preset", value: p.id })).join("")}</div>`,
     /** The Filter sheet's body: the presets as switches, Identification, the categories of the scope as checkbox
-     *  rows with their device counts (cats: [{ id, label, count }]), and Clear. f: { presets, ident, cats }. */
+     *  rows with their faceted counts (cats: [{ id, label, count }]; 0 is dimmed), and Clear. f: { presets, ident, cats }. */
     filterSheet: (cats, f) => `<div class="filter-sheet">
       ${PRESETS.map((p) => `<div class="item"><span class="item-text"><span class="item-title">${p.label}</span></span>${UI.switch(f.presets.includes(p.id), "filter-preset", p.id)}</div>`).join("")}
       <div class="sect">Identification</div>
       <div class="filter-seg">${UI.segmented([{ id: "any", label: "Any" }, { id: "identified", label: "Identified" }, { id: "unidentified", label: "Unidentified" }], f.ident, "filter-ident")}</div>
       <div class="sect">Categories</div>
       <div class="filter-list">${cats.map((c) => `
-      <button class="item filter-item" role="checkbox" aria-checked="${f.cats.includes(c.id)}" data-action="filter-cat" data-value="${c.id}">
+      <button class="item filter-item ${c.count ? "" : "zero"}" role="checkbox" aria-checked="${f.cats.includes(c.id)}" data-action="filter-cat" data-value="${c.id}">
         <span class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5 10 17l9-10"/></svg></span>
         <span class="item-text"><span class="item-title">${esc(c.label)}</span></span><span class="item-end">${c.count}</span></button>`).join("")}
       </div><div class="filter-foot"><button class="text-btn" data-action="filter-clear">Clear</button></div></div>`,
@@ -817,11 +817,19 @@
    *  Presets combine with AND, the categories with any-of, and the three groups with AND. */
   const noFilter = () => ({ presets: [], ident: "any", cats: [] });
   const filterCount = () => S.filter.presets.length + (S.filter.ident !== "any") + S.filter.cats.length;
-  function matchesFilter(d) {
+  /** cats false: every filter but the categories facet (the Filter sheet's counts). */
+  function matchesFilter(d, cats = true) {
     const f = S.filter;
     return f.presets.every((id) => PRESETS.find((p) => p.id === id).test(d))
       && (f.ident === "any" || (f.ident === "identified") === !!d.product)
-      && (!f.cats.length || f.cats.includes(d.category));
+      && (!cats || !f.cats.length || f.cats.includes(d.category));
+  }
+  /** The Filter sheet's faceted counts: per category, the session's devices (G-12 applied) that match every other
+   *  filter, i.e. what checking that category would add. */
+  function facetCounts() {
+    const count = {};
+    for (const d of D.getSessionDevices(S.session)) if (!hiddenByFilter(d) && matchesFilter(d, false)) count[d.category] = (count[d.category] || 0) + 1;
+    return count;
   }
   const sessionPoints = () => D.getSessionDevices(S.session).filter((d) => !S.search || S.search.order.includes(d.addr)).map((d) => ({ addr: d.addr, at: d.best, rssi: d.rssi, category: d.category, product: d.product || "unidentified" }));
 
@@ -1000,14 +1008,20 @@
       body.innerHTML = UI.deviceBody(d, { tab: entry.props.tab, gatt: null, chartW: phone.clientWidth - 32 });
       $("#dev-tab", body).innerHTML = entry.props.tab === "adv" ? UI.advertising(d) : gattTabNow(d.addr);
     } else if (entry.kind === "filter") {
-      const f = S.filter, fs = $(".filter-sheet", body);
+      const f = S.filter, fs = $(".filter-sheet", body), n = facetCounts();
       if (!fs) {
         top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">Filter</span>`);
-        body.innerHTML = UI.filterSheet(entry.props.cats, f);
+        body.innerHTML = UI.filterSheet(entry.props.cats.map((c) => ({ ...c, count: n[c.id] || 0 })), f);
       } else {
         fs.querySelectorAll('[data-action="filter-preset"]').forEach((b) => b.setAttribute("aria-checked", f.presets.includes(b.dataset.value)));
         setSegValue($(".seg", fs), f.ident);
-        fs.querySelectorAll(".filter-item").forEach((b) => b.setAttribute("aria-checked", f.cats.includes(b.dataset.value)));
+        // counts change in place; a row at 0 stays where it is, dimmed (and can still be unchecked)
+        fs.querySelectorAll(".filter-item").forEach((b) => {
+          const k = n[b.dataset.value] || 0;
+          b.setAttribute("aria-checked", f.cats.includes(b.dataset.value));
+          b.classList.toggle("zero", !k);
+          $(".item-end", b).textContent = k;
+        });
       }
     } else {
       const p = D.getProduct(entry.props.id);
@@ -1396,7 +1410,12 @@
     },
     "filter-clear": () => { S.filter = noFilter(); refreshSheets(); },
     // the categories of the scope and their counts (without hidden devices), taken when the sheet opens
-    "filter-open": () => Stack.push("filter", { cats: D.getCategoryCounts(S.session, { hideUnnamedApple: S.settings.hideUnnamedApple }).filter((c) => c.id !== "unidentified") }),
+    // the categories of the scope, ordered once by their faceted count when the sheet opens (rows never reorder)
+    "filter-open": () => {
+      const n = facetCounts();
+      Stack.push("filter", { cats: D.getCategoryCounts(S.session, { hideUnnamedApple: S.settings.hideUnnamedApple }).filter((c) => c.id !== "unidentified")
+        .map((c, i) => ({ ...c, i })).sort((a, b) => (n[b.id] || 0) - (n[a.id] || 0) || a.i - b.i) });
+    },
     recorder: () => { if (S.recorder === "idle") startRecording(); },
     "recorder-open": () => { if (S.recorder === "capsule") setRecorder("panel"); },
     "recorder-close": () => setRecorder("capsule"),
