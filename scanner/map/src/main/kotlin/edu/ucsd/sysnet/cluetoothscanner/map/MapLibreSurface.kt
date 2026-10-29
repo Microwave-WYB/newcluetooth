@@ -5,9 +5,9 @@ import android.view.Gravity
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.Hit
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.TapResolver
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.CameraSnapshot
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.map.style.SelectionProp
 import edu.ucsd.sysnet.cluetoothscanner.map.style.StyleInstaller
 import org.maplibre.android.camera.CameraPosition

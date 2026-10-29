@@ -4,25 +4,26 @@ import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.Hit
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.CameraSnapshot
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.CoreQueries
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
+import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.CoverInsets
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceFilter
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceKey
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceLive
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceRow
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.GeoPoint
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.LiveDelta
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceLive
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatusSource
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapData
+import edu.ucsd.sysnet.cluetoothscanner.api.core.MapData
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapEvents
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapMode
+import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.MyLocation
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Scope
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.SessionView
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Sighting
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
+import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionView
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Sighting
 import edu.ucsd.sysnet.cluetoothscanner.map.style.SelectionProp
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -42,7 +43,7 @@ private val CENTER = GeoPoint(-117.2340, 32.8801)
 /** One device per key, along a line east of CENTER; the "name" drives the Q-1 stand-in below. */
 private class FakeDevice(val key: DeviceKey, val name: String?, val at: GeoPoint)
 
-private class FakeQueries(val devices: List<FakeDevice>, val isLive: Boolean = false, val cellsAbove: Int = 10_000) : CoreQueries {
+private class FakeQueries(val devices: List<FakeDevice>, val isLive: Boolean = false, val cellsAbove: Int = 10_000) : UnusedCoreQueries() {
     override val live = MutableSharedFlow<LiveDelta>(extraBufferCapacity = 16)
     val mapPointCalls = ArrayList<Pair<DeviceFilter, Bbox>>()
     val route = listOf(CENTER, GeoPoint(CENTER.lon + 0.01, CENTER.lat), GeoPoint(CENTER.lon + 0.01, CENTER.lat + 0.01))
@@ -61,7 +62,8 @@ private class FakeQueries(val devices: List<FakeDevice>, val isLive: Boolean = f
     override suspend fun mapPoints(scope: Scope, filter: DeviceFilter, viewport: Bbox, zoom: Double): MapData {
         mapPointCalls += filter to viewport
         // the core's Q-1 in miniature: a name substring
-        val shown = devices.filter { d -> filter.query == null || d.name?.contains(filter.query, ignoreCase = true) == true }
+        val q = filter.query
+        val shown = devices.filter { d -> q == null || d.name?.contains(q, ignoreCase = true) == true }
         if (shown.size > cellsAbove) return MapData(MapMode.Cells, shown.size, CELLS_JSON, 0)
         val features = shown.joinToString(",") { d ->
             """{"type":"Feature","properties":{"addr":"${edu.ucsd.sysnet.cluetoothscanner.map.interaction.DeviceAddr.addrOf(d.key)}"},""" +
@@ -316,7 +318,9 @@ class CluetoothMapStateTest {
         runCurrent()
         val calls = q.mapPointCalls.size
         val next = GeoPoint(CENTER.lon + 0.02, CENTER.lat + 0.01)
-        q.live.emit(LiveDelta(SESSION, 1, 0, listOf(DeviceLive(devices[0].key, -50, true, ByteArray(0), null, null, next)), emptyList(), listOf(next)))
+        val state = CoreRecordingState(RecordingPhase.Recording, SESSION, 0, 0, 0, devices.size, 0.0)
+        q.live.emit(LiveDelta(SESSION, 1, 0, state, listOf(DeviceLive(devices[0].key, -50, true, ByteArray(0), null, null, next)),
+            emptyList(), emptyList(), listOf(next), null, null))
         runCurrent()
         assertEquals(GeoJson.routes(listOf(q.route + next)), r.surface.sources["route"])
         assertEquals(GeoJson.ends(q.route + next, Design.style.endProperties), r.surface.sources["ends"])

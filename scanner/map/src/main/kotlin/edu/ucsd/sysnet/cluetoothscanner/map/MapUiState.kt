@@ -1,7 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.map
 
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.CoverInsets
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 
 /** docs/v2-api.md §5.4: the map's UI state. showLocate is P-4, showWarning is P-5. */
 data class MapUiState(

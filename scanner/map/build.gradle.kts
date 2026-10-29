@@ -39,6 +39,7 @@ android {
 tasks.named("preBuild") { dependsOn(copyMapStyle) }
 
 dependencies {
+    api(project(":core-api"))
     implementation(libs.maplibre.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

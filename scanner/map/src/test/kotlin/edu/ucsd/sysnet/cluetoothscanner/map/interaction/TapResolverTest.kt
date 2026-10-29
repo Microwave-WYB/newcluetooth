@@ -1,6 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.map.interaction
 
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

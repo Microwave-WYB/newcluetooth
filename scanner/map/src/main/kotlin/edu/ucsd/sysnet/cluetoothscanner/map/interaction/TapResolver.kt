@@ -1,7 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.map.interaction
 
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceKey
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 
 /** What a tap does (M-7, M-4, §6.6 cells). */
 sealed interface TapAction {

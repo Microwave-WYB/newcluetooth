@@ -13,22 +13,22 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.DeviceAddr
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Bbox
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.CoreQueries
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceFilter
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceKey
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceRow
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.GeoPoint
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.LiveDelta
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatusSource
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapData
+import edu.ucsd.sysnet.cluetoothscanner.api.core.MapData
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapEvents
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapMode
+import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.MyLocation
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Scope
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.SessionView
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Sighting
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
+import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionView
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Sighting
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,7 +50,7 @@ const val BLANK_STYLE = """{"version":8,"glyphs":"https://tiles.openfreemap.org/
  * A core stand-in for the map: [devices] with the §3.7 rule (≤ 10 000 in the viewport + 50 % → Points, else Cells
  * aggregated to about 1/16 of the viewport side).
  */
-class GridQueries(private val devices: List<Pair<DeviceKey, GeoPoint>>) : CoreQueries {
+class GridQueries(private val devices: List<Pair<DeviceKey, GeoPoint>>) : UnusedCoreQueries() {
     override val live = MutableSharedFlow<LiveDelta>()
     val lastMode = MutableStateFlow<MapMode?>(null)
 

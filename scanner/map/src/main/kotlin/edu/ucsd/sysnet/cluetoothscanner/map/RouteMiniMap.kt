@@ -23,8 +23,8 @@ import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Padding
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Bbox
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapStyleSpec
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme

@@ -6,10 +6,10 @@ import androidx.activity.ComponentActivity
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.DeviceAddr
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.CameraSnapshot
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceFilter
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.GeoPoint
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapMode
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Scope
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After

@@ -8,9 +8,9 @@ import androidx.metrics.performance.JankStats
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.CameraSnapshot
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.DeviceFilter
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapMode
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Scope
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Rule

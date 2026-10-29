@@ -1,7 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.map.data
 
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.GeoPoint
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.Sighting
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Sighting
 import kotlinx.serialization.json.JsonObject
 
 /** GeoJSON strings for the sources the map fills itself; devices, density and cells come from MapData (§2.5). */
