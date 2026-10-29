@@ -2,7 +2,8 @@ package edu.ucsd.sysnet.cluetoothscanner.map
 
 import android.content.ComponentCallbacks2
 import android.content.res.Configuration
-import androidx.compose.foundation.isSystemInDarkTheme
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -18,6 +19,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
+import edu.ucsd.sysnet.cluetoothscanner.map.style.BundledGlyphs
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme
 import edu.ucsd.sysnet.cluetoothscanner.map.style.StyleInstaller
@@ -39,13 +41,14 @@ fun CluetoothMap(
     state: CluetoothMapState,
     events: MapEvents,
     modifier: Modifier = Modifier,
-    dark: Boolean = isSystemInDarkTheme(),
+    dark: Boolean = CluetoothTheme.isDark,
     baseStyleJson: String? = null,
 ) {
     val context = LocalContext.current
-    val (spec, tokens) = remember { MapAssets.load(context) }
+    val spec = remember { MapAssets.style(context) }
     val mapView = remember {
         MapLibre.getInstance(context.applicationContext)
+        BundledGlyphs.install(context, spec)
         // TextureView: the map is an ordinary view in the window, so Compose can slide, clip and fade it with the
         // rest of the screen (L-1 slides the whole main screen; the tablet panel and sheets draw over it), and
         // its frames are the window's frames (JankStats).
@@ -102,7 +105,7 @@ fun CluetoothMap(
     DisposableEffect(mapView) {
         var attached: MapLibreSurface? = null
         mapView.getMapAsync { m ->
-            val s = MapLibreSurface(mapView, m, state, tokens.dp("--drag-slop"))
+            val s = MapLibreSurface(mapView, m, state, Tokens.dragSlop.value)
             attached = s
             map = m
             surface = s
@@ -122,11 +125,12 @@ fun CluetoothMap(
         val m = map ?: return@LaunchedEffect
         val builder = when {
             baseStyleJson != null -> Style.Builder().fromJson(baseStyleJson)
-            offline -> Style.Builder().fromJson(MapAssets.fallbackStyleJson(tokens, theme))
+            offline -> Style.Builder().fromJson(MapAssets.fallbackStyleJson(theme))
             else -> Style.Builder().fromUri(spec.baseStyleUrl(theme))
         }
         m.setStyle(builder) { style ->
             StyleInstaller.install(style, spec, theme)
+            surface?.style = style
             state.onStyleLoaded()
         }
     }

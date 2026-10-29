@@ -61,6 +61,9 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
 
     private val runtime = root.obj("runtime")
 
+    /** The one font map-style.js names for its labels (text-font), the same in both themes. */
+    val font: String = root.obj("values").getValue("light").jsonObject.getValue("font").jsonPrimitive.content
+
     /** M-8: line-opacity of `route` for one session and for All sessions (every route, fainter). */
     val routeOpacitySession: Double = runtime.obj("routeOpacity").getValue("session").jsonPrimitive.double
     val routeOpacityAllSessions: Double = runtime.obj("routeOpacity").getValue("allSessions").jsonPrimitive.double

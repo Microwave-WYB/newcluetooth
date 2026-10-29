@@ -2,7 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.map
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.isSystemInDarkTheme
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -26,6 +26,7 @@ import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.map.style.BundledGlyphs
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapStyleSpec
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme
@@ -48,13 +49,19 @@ import org.maplibre.android.style.sources.GeoJsonSource
  * R-5: the recorder panel's route mini map. Non-interactive: a MapSnapshotter image of the route with Start and End
  * (M-8) and no caption, refreshed when it appears (the panel opens) and every 10 s while shown. With no route yet
  * it shows [fallback] (the user's location). Taps belong to the caller (lane C: collapse, close, fit).
+ *
+ * It fits :chrome's `RecorderControl(miniMap: @Composable (Modifier) -> Unit)` slot, which already clips it to the
+ * concentric radius and handles the tap; :app passes it in, since :chrome does not depend on :map:
+ * ```
+ * RecorderControl(ui, actions, tablet, miniMap = { m -> RouteMiniMap(ui.route, fallback = myLocation?.at, modifier = m) })
+ * ```
  */
 @Composable
 fun RouteMiniMap(
     route: List<GeoPoint>,
     fallback: GeoPoint?,
     modifier: Modifier = Modifier,
-    dark: Boolean = isSystemInDarkTheme(),
+    dark: Boolean = CluetoothTheme.isDark,
     baseStyleJson: String? = null,
 ) {
     val context = LocalContext.current
@@ -73,6 +80,7 @@ fun RouteMiniMap(
     LaunchedEffect(size, theme, baseStyleJson) {
         if (size.width == 0 || size.height == 0) return@LaunchedEffect
         MapLibre.getInstance(context.applicationContext)
+        BundledGlyphs.install(context, spec)
         holder[0]?.cancel()
         holder[0] = null
         var rendered: Pair<List<GeoPoint>, CameraSnapshot>? = null

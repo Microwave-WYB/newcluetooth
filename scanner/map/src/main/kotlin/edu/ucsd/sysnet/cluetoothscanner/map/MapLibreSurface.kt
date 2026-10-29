@@ -15,6 +15,7 @@ import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.PaintPropertyValue
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
@@ -29,6 +30,13 @@ class MapLibreSurface(
     slopDp: Float,
 ) : MapSurface {
     private val density = view.resources.displayMetrics.density
+
+    /**
+     * The style our layers were installed in, from the setStyle callback. MapLibreMap.getStyle() is null until the
+     * style is fully loaded, which a single failed resource (a glyph range offline) can delay indefinitely; the
+     * overlay must keep updating meanwhile.
+     */
+    var style: Style? = null
 
     /** For instrumented tests. */
     internal val mapView: MapView get() = view
@@ -87,15 +95,15 @@ class MapLibreSurface(
         }
 
     override fun setGeoJson(source: String, geojson: String) {
-        map.style?.getSourceAs<GeoJsonSource>(source)?.setGeoJson(geojson)
+        style?.getSourceAs<GeoJsonSource>(source)?.setGeoJson(geojson)
     }
 
     override fun applySelection(props: List<SelectionProp>) {
-        map.style?.let { StyleInstaller.applySelection(it, props) }
+        style?.let { StyleInstaller.applySelection(it, props) }
     }
 
     override fun setRouteOpacity(opacity: Double) {
-        map.style?.getLayer("route")?.setProperties(PaintPropertyValue("line-opacity", opacity.toFloat()))
+        style?.getLayer("route")?.setProperties(PaintPropertyValue("line-opacity", opacity.toFloat()))
     }
 
     override fun move(camera: CameraSnapshot, durationMs: Int) {
@@ -109,7 +117,7 @@ class MapLibreSurface(
 
     override fun clusterExpansionZoom(hit: Hit): Int? {
         val feature = hit.native as? Feature ?: return null
-        return map.style?.getSourceAs<GeoJsonSource>("devices")?.getClusterExpansionZoom(feature)
+        return style?.getSourceAs<GeoJsonSource>("devices")?.getClusterExpansionZoom(feature)
     }
 
     /** M-7: the topmost feature in an 8 dp box around the finger, layer by layer from the top. */

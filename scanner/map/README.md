@@ -10,6 +10,9 @@ the camera rules, selection, taps and the R-5 mini map. See `docs/v2-api.md` §6
   framing when a product sheet opens.
 - **GeoJSON `addr`.** The core writes it in uppercase colon form (`AA:BB:CC:DD:EE:FF`); `DeviceAddr` maps it to and
   from `DeviceKey`.
+- **M-11.** The moved-away test is the one copy in `:ui-contract` (`movedAway`, `viewportCamera`). `:map` has no
+  caller of its own: it supplies the inputs, `MapEvents.onCameraIdle(byUser, viewport, zoom)` with the visible
+  bbox, and `MapGeometryTest` checks the shared function against that viewport in the real view's screen space.
 - **Loaded area.** `map_points` serves the viewport + 50 %, a quarter of the width and height on each side; an idle
   camera inside that area (in Points mode) does not re-query.
 

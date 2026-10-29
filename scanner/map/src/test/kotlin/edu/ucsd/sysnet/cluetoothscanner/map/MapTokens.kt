@@ -1,14 +1,13 @@
-package edu.ucsd.sysnet.cluetoothscanner.map.style
+package edu.ucsd.sysnet.cluetoothscanner.map
+
+import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/**
- * The few tokens.json values :map reads directly (G-1: never copied by hand). TEMPORARY for the components:
- * once :designsystem (C1) merges, the locate and warning buttons use its FloatButton and theme instead.
- */
+/** tokens.json read directly, so the style tests check map-style.json against the tokens independently. */
 class MapTokens private constructor(private val tokens: JsonObject) {
     /** "#AARRGGBB" of a color token. */
     fun argb(name: String, theme: MapTheme): Long =

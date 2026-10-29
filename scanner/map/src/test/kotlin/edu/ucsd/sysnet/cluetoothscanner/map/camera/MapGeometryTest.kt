@@ -8,6 +8,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.movedAway
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera
 import kotlin.math.max
 
 class MapGeometryTest {
@@ -65,11 +67,17 @@ class MapGeometryTest {
         assertEquals((view.heightDp - 613) / 2, y, 1e-6)
     }
 
+    /**
+     * M-11 through the shared :ui-contract movedAway, fed what the map reports: onCameraIdle's viewport is
+     * visibleBbox of the current camera. The rule is in screen space of the real view (412 × 915 dp at 32.88 N).
+     */
+    private fun moved(ref: CameraSnapshot, current: CameraSnapshot) = movedAway(ref, current, MapGeometry.visibleBbox(current, view))
+
     @Test fun `M-11 a zoom change of 1 or more is moved away, less is not`() {
         val ref = CameraSnapshot(sd, 15.0)
-        assertFalse(MapGeometry.movedAway(ref, ref.copy(zoom = 15.99), view))
-        assertTrue(MapGeometry.movedAway(ref, ref.copy(zoom = 16.0), view))
-        assertTrue(MapGeometry.movedAway(ref, ref.copy(zoom = 14.0), view))
+        assertFalse(moved(ref, ref.copy(zoom = 15.99)))
+        assertTrue(moved(ref, ref.copy(zoom = 16.0)))
+        assertTrue(moved(ref, ref.copy(zoom = 14.0)))
     }
 
     @Test fun `M-11 the reference centre more than 25 percent of the viewport away on either axis`() {
@@ -77,12 +85,20 @@ class MapGeometryTest {
         val w = MapGeometry.worldSize(15.0)
         val (cx, cy) = MapGeometry.project(sd)
         fun shifted(dxDp: Double, dyDp: Double) = CameraSnapshot(MapGeometry.unproject(cx + dxDp / w, cy + dyDp / w), 15.0)
-        assertFalse(MapGeometry.movedAway(ref, shifted(0.24 * view.widthDp, 0.0), view))
-        assertTrue(MapGeometry.movedAway(ref, shifted(0.26 * view.widthDp, 0.0), view))
-        assertTrue(MapGeometry.movedAway(ref, shifted(-0.26 * view.widthDp, 0.0), view))
-        assertFalse(MapGeometry.movedAway(ref, shifted(0.0, 0.24 * view.heightDp), view))
-        assertTrue(MapGeometry.movedAway(ref, shifted(0.0, 0.26 * view.heightDp), view))
-        assertFalse(MapGeometry.movedAway(ref, shifted(0.24 * view.widthDp, -0.24 * view.heightDp), view))
+        assertFalse(moved(ref, shifted(0.24 * view.widthDp, 0.0)))
+        assertTrue(moved(ref, shifted(0.26 * view.widthDp, 0.0)))
+        assertTrue(moved(ref, shifted(-0.26 * view.widthDp, 0.0)))
+        assertFalse(moved(ref, shifted(0.0, 0.24 * view.heightDp)))
+        assertTrue(moved(ref, shifted(0.0, 0.26 * view.heightDp)))
+        assertTrue(moved(ref, shifted(0.0, -0.26 * view.heightDp)))
+        assertFalse(moved(ref, shifted(0.24 * view.widthDp, -0.24 * view.heightDp)))
+    }
+
+    @Test fun `M-11 viewportCamera of the map's visible bbox is the map's own camera`() {
+        val cam = CameraSnapshot(sd, 15.5)
+        val back = viewportCamera(MapGeometry.visibleBbox(cam, view), cam.zoom)
+        assertEquals(cam.center.lon, back.center.lon, 1e-9)
+        assertEquals(cam.center.lat, back.center.lat, 1e-9)
     }
 
     @Test fun `P-4 location offset is measured from the centre of the uncovered area`() {

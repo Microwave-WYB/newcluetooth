@@ -1,7 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.map
 
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapStyleSpec
-import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTokens
 import java.io.File
 
 /** The committed design exports (design/ui-v2), as the build copies them into the assets. */

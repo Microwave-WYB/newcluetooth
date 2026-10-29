@@ -163,4 +163,42 @@ class MapInstrumentedTest {
         rule.waitUntil(60_000) { MiniMapStats.snapshots > snapshots + 1 }
         assertEquals(1, MiniMapStats.created - created)
     }
+
+    /**
+     * M-4, M-8: cluster counts and Start/End labels render offline, from the bundled glyphs. The ambient cache is
+     * cleared (no glyphs fetched by earlier tests), seeded from the assets, and MapLibre is cut off the network.
+     */
+    @Test fun m4_m8_labelsRenderOfflineFromBundledGlyphs() {
+        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val cleared = java.util.concurrent.CountDownLatch(1)
+        rule.runOnUiThread {
+            org.maplibre.android.MapLibre.getInstance(context)
+            org.maplibre.android.offline.OfflineManager.getInstance(context).clearAmbientCache(
+                object : org.maplibre.android.offline.OfflineManager.FileSourceCallback {
+                    override fun onSuccess() = cleared.countDown()
+                    override fun onError(message: String) = cleared.countDown()
+                },
+            )
+        }
+        assertTrue(cleared.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        rule.runOnUiThread {
+            edu.ucsd.sysnet.cluetoothscanner.map.style.BundledGlyphs.seed(context, "Noto Sans Bold")
+            org.maplibre.android.MapLibre.setConnected(false)
+        }
+        try {
+            val a = GeoPoint(CENTER.lon, CENTER.lat)
+            val b = GeoPoint(CENTER.lon + 0.0004, CENTER.lat)
+            val route = listOf(GeoPoint(CENTER.lon - 0.01, CENTER.lat - 0.005), GeoPoint(CENTER.lon + 0.01, CENTER.lat + 0.005))
+            val offline = edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets.fallbackStyleJson(edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme.Light)
+            val h = MapHarness(rule, GridQueries(listOf(1L to a, 2L to b), route), baseStyleJson = offline).also { harness = it }
+            h.showAt(CameraSnapshot(CENTER, 13.0))
+            h.waitUntil("a cluster") { h.rendered("clusters").isNotEmpty() }
+            h.waitUntil("the cluster's count label", 20_000) { h.rendered("cluster-count").isNotEmpty() }
+            assertEquals("2", h.rendered("cluster-count").single().getStringProperty("point_count_abbreviated"))
+            h.waitUntil("Start and End labels", 20_000) { h.rendered("end-labels").size == 2 }
+            assertEquals(setOf("Start", "End"), h.rendered("end-labels").map { it.getStringProperty("label") }.toSet())
+        } finally {
+            rule.runOnUiThread { org.maplibre.android.MapLibre.setConnected(null) }
+        }
+    }
 }

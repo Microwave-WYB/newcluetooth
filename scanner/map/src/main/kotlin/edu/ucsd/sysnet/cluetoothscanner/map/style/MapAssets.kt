@@ -1,30 +1,27 @@
 package edu.ucsd.sysnet.cluetoothscanner.map.style
 
 import android.content.Context
+import androidx.compose.ui.graphics.toArgb
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 
-/** map-style.json and tokens.json, copied from design/ui-v2 into the assets at build time (map/build.gradle.kts). */
+/** map-style.json, copied from design/ui-v2 into the assets at build time (map/build.gradle.kts). */
 object MapAssets {
     private const val DIR = "cluetooth-map"
-    @Volatile private var cached: Pair<MapStyleSpec, MapTokens>? = null
+    @Volatile private var cached: MapStyleSpec? = null
 
-    fun load(context: Context): Pair<MapStyleSpec, MapTokens> = cached ?: synchronized(this) {
-        cached ?: run {
-            val assets = context.applicationContext.assets
-            fun read(name: String) = assets.open("$DIR/$name").bufferedReader().use { it.readText() }
-            (MapStyleSpec.parse(read("map-style.json")) to MapTokens.parse(read("tokens.json"))).also { cached = it }
-        }
+    fun style(context: Context): MapStyleSpec = cached ?: synchronized(this) {
+        cached ?: context.applicationContext.assets.open("$DIR/map-style.json").bufferedReader().use { it.readText() }
+            .let(MapStyleSpec::parse).also { cached = it }
     }
 
-    fun style(context: Context) = load(context).first
-    fun tokens(context: Context) = load(context).second
-
     /**
-     * The style used when the base map cannot load (offline): the `--bg` background and the OpenFreeMap glyphs, so
-     * the overlay layers still draw on a plain map.
+     * The style used when the base map cannot load (offline): the `--bg` background and the OpenFreeMap glyph URL,
+     * which [BundledGlyphs] serves from the cache, so the overlay layers and their labels still draw on a plain map.
      */
-    fun fallbackStyleJson(tokens: MapTokens, theme: MapTheme): String {
-        val bg = "#%06x".format(tokens.argb("--bg", theme) and 0xFFFFFF)
-        return """{"version":8,"glyphs":"https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf","sources":{},""" +
+    fun fallbackStyleJson(theme: MapTheme): String {
+        val colors = if (theme == MapTheme.Dark) Tokens.darkColors else Tokens.lightColors
+        val bg = "#%06x".format(colors.bg.toArgb() and 0xFFFFFF)
+        return """{"version":8,"glyphs":"${BundledGlyphs.GLYPHS_URL}","sources":{},""" +
             """"layers":[{"id":"background","type":"background","paint":{"background-color":"$bg"}}]}"""
     }
 }
