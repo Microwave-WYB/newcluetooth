@@ -9,12 +9,12 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepKind
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattView
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
 import kotlin.math.ceil
 
 /** What the fake needs to know of a device (`data.js` `DEVICE[addr]`). */
@@ -37,41 +37,46 @@ class FakeGattRunner(
     private var running: Job? = null
     private var discoveries = 0
 
-    override fun discover(key: DeviceKey): Flow<GattView> = flow {
-        // One discovery at a time: a new collection cancels the previous one.
-        val job = currentCoroutineContext()[Job]
+    override fun discover(key: DeviceKey): Flow<GattView> = channelFlow {
+        // One discovery at a time: a new collection cancels the previous run's own job, never its collector.
+        val run = launch(start = CoroutineStart.LAZY) { run(key) { send(it) } }
         synchronized(this@FakeGattRunner) {
-            running?.takeIf { it != job }?.cancel()
-            running = job
+            running?.cancel()
+            running = run
         }
+        run.start()
+        run.join()
+    }
+
+    private suspend fun run(key: DeviceKey, emit: suspend (GattView) -> Unit) {
         val run = Run(key, id = "fake-gatt-${++discoveries}", startedMs = nowMs())
-        if (!available()) return@flow emit(run.failedBeforeConnect(GattFailure.Other(GattRunner.GATT_UNAVAILABLE)))
+        if (!available()) return emit(run.failedBeforeConnect(GattFailure.Other(GattRunner.GATT_UNAVAILABLE)))
         val target = device(key)
-            ?: return@flow emit(run.failedBeforeConnect(GattFailure.Other(GattRunner.GATT_NO_TARGET)))
+            ?: return emit(run.failedBeforeConnect(GattFailure.Other(GattRunner.GATT_NO_TARGET)))
         val services = demoServices(target)
         val characteristics = services.sumOf { it.characteristics.size }
 
-        run.step(this, GattStepKind.Connecting)
+        run.step(emit, GattStepKind.Connecting)
         if (!target.connectable) {
-            return@flow finish(run.fail(GattFailure.TimedOut))
+            return finish(emit, run.fail(GattFailure.TimedOut))
         }
         run.done(GattStep(GattStepKind.Connecting, GattStepState.Done, 800, null, null, null, null))
-        run.step(this, GattStepKind.DiscoveringServices)
+        run.step(emit, GattStepKind.DiscoveringServices)
         run.done(GattStep(GattStepKind.DiscoveringServices, GattStepState.Done, null, services.size, null, null, null))
         val partial = ceil(characteristics * 0.6).toInt()
-        run.step(this, GattStepKind.ReadingCharacteristics, read = partial, readable = characteristics)
+        run.step(emit, GattStepKind.ReadingCharacteristics, read = partial, readable = characteristics)
         if (target.name == DISCONNECTING_NAME) {
-            return@flow finish(run.fail(GattFailure.DisconnectedUnexpectedly, read = partial, readable = characteristics))
+            return finish(emit, run.fail(GattFailure.DisconnectedUnexpectedly, read = partial, readable = characteristics))
         }
         run.done(
             GattStep(GattStepKind.ReadingCharacteristics, GattStepState.Done, null, null, characteristics, characteristics, null),
         )
-        run.step(this, GattStepKind.Disconnected)
+        run.step(emit, GattStepKind.Disconnected)
         run.done(GattStep(GattStepKind.Disconnected, GattStepState.Done, null, null, null, null, null))
-        finish(run.view(ok = true, services = services))
+        finish(emit, run.view(ok = true, services = services))
     }
 
-    private suspend fun FlowCollector<GattView>.finish(view: GattView) {
+    private suspend fun finish(emit: suspend (GattView) -> Unit, view: GattView) {
         emit(view)
         onFinished(view)
     }
@@ -83,8 +88,8 @@ class FakeGattRunner(
             GattView(id, key, startedMs, ok, steps.toList(), services)
 
         /** Shows [kind] running, then waits one step. */
-        suspend fun step(collector: FlowCollector<GattView>, kind: GattStepKind, read: Int? = null, readable: Int? = null) {
-            collector.emit(
+        suspend fun step(emit: suspend (GattView) -> Unit, kind: GattStepKind, read: Int? = null, readable: Int? = null) {
+            emit(
                 GattView(id, key, startedMs, false, steps + GattStep(kind, GattStepState.Running, null, null, read, readable, null), emptyList()),
             )
             delay(stepMs)

@@ -94,10 +94,12 @@ class FakesTest {
         runCurrent()
         val second = launch { gatt.discover(1).collect { } }
         runCurrent()
-        assertTrue(firstJob.isCancelled)
+        assertTrue("the earlier run ends; its collector is not cancelled", firstJob.isCompleted)
+        assertFalse(firstJob.isCancelled)
         assertFalse(first.last().ok)
         advanceTimeBy(1_000)
         assertTrue(second.isCompleted)
+        assertFalse(second.isCancelled)
     }
 
     @Test

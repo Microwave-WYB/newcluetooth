@@ -96,6 +96,7 @@ interface Permissions {
 
     /** The permission names behind each [PermissionState] field; empty where the API level needs none. */
     companion object {
+        /** Empty on API 24–30: there Bluetooth scanning needs only the [location] grant. */
         fun nearby(sdkInt: Int = Build.VERSION.SDK_INT): Array<String> =
             if (sdkInt >= Build.VERSION_CODES.S) {
                 arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)

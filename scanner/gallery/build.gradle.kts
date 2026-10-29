@@ -1,5 +1,6 @@
 // :gallery (docs/v2-api.md §6.0): a debug-only app that shows every lane's components on fakes. Lane B owns the
-// shell and the registry; each lane owns its own `lanes/<Lane>Gallery.kt` and adds its module dependencies here.
+// shell, the registry and this file; each lane owns its own `lanes/<Lane>Gallery.kt`. Every lane module is wired
+// below once it exists in settings.gradle.kts, so no other lane edits this file.
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -39,6 +40,9 @@ dependencies {
     implementation(project(":core-api"))
     implementation(project(":platform-api"))
     implementation(project(":platform-fake"))
+    listOf(":core-fake", ":designsystem", ":ui-contract", ":chrome", ":sheets", ":map").forEach { path ->
+        rootProject.findProject(path)?.let { implementation(it) }
+    }
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
