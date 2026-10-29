@@ -581,10 +581,20 @@ Each component is built once. Its size, color and state rules come from these to
   - Radius `--panel-radius` = 8 + 44/2 = 30 dp, with `--shadow-raised`.
   - Only the top level is visible. Push, pop and restore follow S-4, S-7 and S-8.
 - **T-2 Panel states.**
-  - Two states: Open (the full column, with native scrolling content) and Collapsed (the header only).
-  - It opens Open. Tapping the header toggles between the two.
-  - The bottom sheet's Half, drag snapping and wheel rules do not apply.
-  - No scrim; the map stays usable.
+  - Two states: Open (the full column) and Partial (the top edge stays put and the height shrinks to
+    `--panel-partial-h`, 45% of the column, never less than the header plus about 3 rows).
+  - The content stays scrollable in both states, and the panel clips its content to its rounded shape. The chip row
+    and everything else stay inside it.
+  - A user pan or zoom of the map moves Open to Partial; app camera moves don't. Tapping the header toggles Open and
+    Partial. Every level behaves the same: Discover, product, device, sessions and search results. Sessions and
+    search results have no header to tap.
+  - In Partial, the panel's bottom shows a ~48 dp gradient from transparent to `--panel` with no blur, and on it a
+    centered, handle-sized (~36 dp wide) shallow V chevron in `--t2`. The chevron has a tap target of about
+    120 × 44 dp and expands the panel to Open. Both fade out in Open.
+  - No level can ever be header-only. A saved or restored "collapsed" state maps to Partial. A pushed level opens
+    at Open, and popping restores the state below (Open or Partial).
+  - The bottom sheet's Half, drag snapping and wheel rules do not apply. There is no scrim, so the map stays usable.
+  - Height changes animate with `--t-std` / `--ease`.
 - **T-3 Concentric corners.** The panel has no handle zone. Its header buttons sit on the panel's corner arcs: center
   depth and inset are 30 dp. Inner rows follow G-13a: 8 dp inset with radius 22.
 - **T-4 Top row.**
