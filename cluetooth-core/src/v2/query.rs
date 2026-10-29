@@ -85,9 +85,14 @@ pub(crate) fn session_rows(conn: &Connection) -> Result<Vec<SessionRow>, CoreErr
 
 /// `sessions ∩ filter`; empty sessions never take part, except the live scope, which is the current session even
 /// before its first device. Unknown ids are ignored.
-pub(crate) fn resolve(conn: &Connection, ctx: &Ctx<'_>, scope: &Scope) -> Result<Resolved, CoreError> {
+pub(crate) fn resolve(
+    conn: &Connection,
+    ctx: &Ctx<'_>,
+    scope: &Scope,
+) -> Result<Resolved, CoreError> {
     let rows = session_rows(conn)?;
-    if let (Some(live), SessionScope::Sessions { ids }, None) = (&ctx.live, &scope.sessions, &scope.filter)
+    if let (Some(live), SessionScope::Sessions { ids }, None) =
+        (&ctx.live, &scope.sessions, &scope.filter)
         && ids.len() == 1
         && ids[0] == live.uuid
     {
@@ -112,7 +117,9 @@ pub(crate) fn resolve(conn: &Connection, ctx: &Ctx<'_>, scope: &Scope) -> Result
             false,
         ),
         SessionScope::Sessions { ids } => (
-            rows.into_iter().filter(|s| ids.contains(&s.uuid) && keep(s)).collect(),
+            rows.into_iter()
+                .filter(|s| ids.contains(&s.uuid) && keep(s))
+                .collect(),
             false,
             ids.len() == 1,
         ),
@@ -134,17 +141,21 @@ pub(crate) fn resolve(conn: &Connection, ctx: &Ctx<'_>, scope: &Scope) -> Result
     })
 }
 
-const D_COLUMNS: &str =
-    "addr, name, is_apple, page_id, rssi_max, best_lon, best_lat, tile17, last_seen_ms, latest_payload_id";
+const D_COLUMNS: &str = "addr, name, is_apple, page_id, rssi_max, best_lon, best_lat, tile17, last_seen_ms, latest_payload_id";
 
 /// The `WITH … d AS (…)` prefix that defines `D(scope)` (§3.6), plus its parameters.
 fn relation(r: &Resolved, params: &mut Params) -> String {
     match &r.rel {
         Rel::All => format!("WITH d AS (SELECT {D_COLUMNS} FROM devices)"),
-        Rel::One(id) => format!("WITH d AS (SELECT {D_COLUMNS} FROM session_devices WHERE session_id = {id})"),
+        Rel::One(id) => {
+            format!("WITH d AS (SELECT {D_COLUMNS} FROM session_devices WHERE session_id = {id})")
+        }
         Rel::Empty => format!("WITH d AS (SELECT {D_COLUMNS} FROM devices WHERE 0)"),
         Rel::Union(ids) => {
-            params.push(":ids", Rc::new(ids.iter().map(|i| Value::from(*i)).collect::<Vec<_>>()));
+            params.push(
+                ":ids",
+                Rc::new(ids.iter().map(|i| Value::from(*i)).collect::<Vec<_>>()),
+            );
             // §3.6 U(:ids): the strongest RSSI and the strongest located point are taken separately (§2.1).
             "WITH sd AS (SELECT * FROM session_devices WHERE session_id IN rarray(:ids)),
               bp AS (SELECT addr, best_lon, best_lat, tile17,
@@ -186,7 +197,13 @@ impl Params {
 }
 
 /// `F` (§3.6) as a SQL condition on `d`. `categories = false` is `F'` (faceted counts).
-fn predicate(ctx: &Ctx<'_>, r: &Resolved, f: &DeviceFilter, categories: bool, params: &mut Params) -> String {
+fn predicate(
+    ctx: &Ctx<'_>,
+    r: &Resolved,
+    f: &DeviceFilter,
+    categories: bool,
+    params: &mut Params,
+) -> String {
     let mut terms: Vec<String> = Vec::new();
     if ctx.hide_unnamed_apple {
         terms.push("NOT (d.is_apple AND d.name IS NULL)".into());
@@ -196,7 +213,10 @@ fn predicate(ctx: &Ctx<'_>, r: &Resolved, f: &DeviceFilter, categories: bool, pa
         PageSet::Unidentified => terms.push("d.page_id IS NULL".into()),
         PageSet::Nothing => terms.push("0".into()),
         PageSet::Only(set) => {
-            params.push(":pages", Rc::new(set.into_iter().map(Value::from).collect::<Vec<_>>()));
+            params.push(
+                ":pages",
+                Rc::new(set.into_iter().map(Value::from).collect::<Vec<_>>()),
+            );
             terms.push("d.page_id IN rarray(:pages)".into());
         }
     }
@@ -220,7 +240,14 @@ fn predicate(ctx: &Ctx<'_>, r: &Resolved, f: &DeviceFilter, categories: bool, pa
     }
 }
 
-fn push_bbox(params: &mut Params, w: &'static str, s: &'static str, e: &'static str, n: &'static str, b: Bbox) {
+fn push_bbox(
+    params: &mut Params,
+    w: &'static str,
+    s: &'static str,
+    e: &'static str,
+    n: &'static str,
+    b: Bbox,
+) {
     params.push(w, b.west);
     params.push(s, b.south);
     params.push(e, b.east);
@@ -239,7 +266,11 @@ fn in_range_sql(ctx: &Ctx<'_>, r: &Resolved, params: &mut Params) -> String {
 }
 
 fn seq_of(ctx: &Ctx<'_>, r: &Resolved) -> u64 {
-    if r.live { ctx.live.as_ref().map_or(0, |l| l.seq) } else { 0 }
+    if r.live {
+        ctx.live.as_ref().map_or(0, |l| l.seq)
+    } else {
+        0
+    }
 }
 
 fn pack(keys: &[i64]) -> Vec<u8> {
@@ -258,7 +289,8 @@ fn keys_query(
         Some(f) => predicate(ctx, r, f, true, &mut params),
         None => predicate(ctx, r, &DeviceFilter::default(), true, &mut params),
     };
-    let sql = format!("{with} SELECT d.addr FROM d WHERE {filter} ORDER BY d.rssi_max DESC, d.addr");
+    let sql =
+        format!("{with} SELECT d.addr FROM d WHERE {filter} ORDER BY d.rssi_max DESC, d.addr");
     let mut stmt = conn.prepare(&sql)?;
     let keys = stmt
         .query_map(params.refs().as_slice(), |row| row.get::<_, i64>(0))?
@@ -270,7 +302,11 @@ fn keys_query(
 }
 
 /// G-9 `device_order`: every shown device, sorted once by RSSI desc, ties by key.
-pub(crate) fn device_order(conn: &Connection, ctx: &Ctx<'_>, scope: &Scope) -> Result<DeviceKeys, CoreError> {
+pub(crate) fn device_order(
+    conn: &Connection,
+    ctx: &Ctx<'_>,
+    scope: &Scope,
+) -> Result<DeviceKeys, CoreError> {
     let r = resolve(conn, ctx, scope)?;
     keys_query(conn, ctx, &r, None)
 }
@@ -369,7 +405,10 @@ pub(crate) fn device_rows(
     }
     let r = resolve(conn, ctx, scope)?;
     let mut params = Params::default();
-    params.push(":keys", Rc::new(keys.iter().map(|k| Value::from(*k)).collect::<Vec<_>>()));
+    params.push(
+        ":keys",
+        Rc::new(keys.iter().map(|k| Value::from(*k)).collect::<Vec<_>>()),
+    );
     let rows = d_rows(conn, ctx, &r, "d.addr IN rarray(:keys)", &mut params)?;
     let mut by_key: HashMap<i64, DRow> = rows.into_iter().map(|d| (d.addr, d)).collect();
     Ok(keys
@@ -411,7 +450,9 @@ pub(crate) fn category_counts(
     let mut params = Params::default();
     let with = relation(&r, &mut params);
     let f = predicate(ctx, &r, filter, false, &mut params);
-    let sql = format!("{with} SELECT d.page_id, count(*) FROM d WHERE {f} AND d.page_id IS NOT NULL GROUP BY 1");
+    let sql = format!(
+        "{with} SELECT d.page_id, count(*) FROM d WHERE {f} AND d.page_id IS NOT NULL GROUP BY 1"
+    );
     let mut stmt = conn.prepare(&sql)?;
     let mut counts: BTreeMap<String, u32> = BTreeMap::new();
     let rows = stmt.query_map(params.refs().as_slice(), |row| {
@@ -437,7 +478,11 @@ pub(crate) fn category_counts(
             device_count,
         })
         .collect();
-    out.sort_by(|a, b| b.device_count.cmp(&a.device_count).then_with(|| a.label.cmp(&b.label)));
+    out.sort_by(|a, b| {
+        b.device_count
+            .cmp(&a.device_count)
+            .then_with(|| a.label.cmp(&b.label))
+    });
     Ok(out)
 }
 
@@ -507,7 +552,10 @@ pub(crate) fn products(
             Some(category) => groups.entry(category.clone()).or_default().push(card),
             None if page.is_none() => unidentified = Some(card),
             // a matched page without categories (identifier pages) shows with the unidentified card's group
-            None => groups.entry(UNIDENTIFIED.to_owned()).or_default().push(card),
+            None => groups
+                .entry(UNIDENTIFIED.to_owned())
+                .or_default()
+                .push(card),
         }
     }
     let mut out: Vec<CategoryGroup> = groups
@@ -524,8 +572,11 @@ pub(crate) fn products(
         .collect();
     out.sort_by(|a, b| {
         let n = |g: &CategoryGroup| g.products.iter().map(|p| p.count).sum::<u32>();
-        n(b).cmp(&n(a))
-            .then_with(|| ctx.catalog.category_order(&a.category).cmp(&ctx.catalog.category_order(&b.category)))
+        n(b).cmp(&n(a)).then_with(|| {
+            ctx.catalog
+                .category_order(&a.category)
+                .cmp(&ctx.catalog.category_order(&b.category))
+        })
     });
     if let Some(card) = unidentified {
         out.push(CategoryGroup {
@@ -555,7 +606,16 @@ pub(crate) fn product(
     let r = resolve(conn, ctx, scope)?;
     let mut params = Params::default();
     let with = relation(&r, &mut params);
-    let f = predicate(ctx, &r, &DeviceFilter { page: None, ..filter.clone() }, true, &mut params);
+    let f = predicate(
+        ctx,
+        &r,
+        &DeviceFilter {
+            page: None,
+            ..filter.clone()
+        },
+        true,
+        &mut params,
+    );
     let page_term = match page_id {
         Some(id) => {
             params.push(":page", id.to_owned());
@@ -567,7 +627,9 @@ pub(crate) fn product(
         "{with} SELECT count(*), count(DISTINCT d.tile17), max(d.last_seen_ms) FROM d WHERE {f} AND {page_term}"
     );
     let (device_count, places, last_seen_ms): (u32, u32, Option<i64>) =
-        conn.query_row(&sql, params.refs().as_slice(), |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        conn.query_row(&sql, params.refs().as_slice(), |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
     let vulnerabilities = page
         .map(|p| {
             p.vulnerabilities
@@ -579,7 +641,10 @@ pub(crate) fn product(
     Ok(Some(ProductDetail {
         page: page.map(|p| p.page_ref()),
         title: page.map_or_else(|| "Unidentified devices".to_owned(), |p| p.title.clone()),
-        one_line: page.map_or_else(|| Some("Devices no wiki family matches yet.".to_owned()), |p| p.one_line.clone()),
+        one_line: page.map_or_else(
+            || Some("Devices no wiki family matches yet.".to_owned()),
+            |p| p.one_line.clone(),
+        ),
         categories: page.map(|p| p.categories.clone()).unwrap_or_default(),
         traits: page.map(|p| p.traits.clone()).unwrap_or_default(),
         readable: page.is_some_and(|p| p.readable),
@@ -609,14 +674,18 @@ pub(crate) fn device(
     let r = resolve(conn, ctx, scope)?;
     let mut params = Params::default();
     params.push(":key", key);
-    let Some(d) = d_rows(conn, ctx, &r, "d.addr = :key", &mut params)?.into_iter().next() else {
+    let Some(d) = d_rows(conn, ctx, &r, "d.addr = :key", &mut params)?
+        .into_iter()
+        .next()
+    else {
         return Ok(None);
     };
-    let (company_id, service_uuid, tail): (Option<u16>, Option<String>, Option<Vec<u8>>) = conn.query_row(
-        "SELECT company_id, service_uuid, tail FROM payloads WHERE id = ?1",
-        [d.latest_payload_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    )?;
+    let (company_id, service_uuid, tail): (Option<u16>, Option<String>, Option<Vec<u8>>) = conn
+        .query_row(
+            "SELECT company_id, service_uuid, tail FROM payloads WHERE id = ?1",
+            [d.latest_payload_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
     let structures = conn
         .prepare_cached(
             "SELECT s.ad_type, s.data FROM payload_structures p JOIN ad_structures s ON s.id = p.structure_id
@@ -752,7 +821,8 @@ pub(crate) fn map_points(
     let f = predicate(ctx, &r, filter, true, &mut params);
     push_bbox(&mut params, ":vw", ":vs", ":ve", ":vn", view);
     let inside = "d.best_lat IS NOT NULL AND d.best_lon BETWEEN :vw AND :ve AND d.best_lat BETWEEN :vs AND :vn";
-    let count_sql = format!("{with} SELECT count(*) FROM (SELECT 1 FROM d WHERE {f} AND {inside} LIMIT 10001)");
+    let count_sql =
+        format!("{with} SELECT count(*) FROM (SELECT 1 FROM d WHERE {f} AND {inside} LIMIT 10001)");
     let count: u32 = conn.query_row(&count_sql, params.refs().as_slice(), |row| row.get(0))?;
     let seq = seq_of(ctx, &r);
     if count <= POINTS_CAP {
@@ -823,7 +893,8 @@ pub(crate) fn map_points(
 }
 
 fn route_of(conn: &Connection, session: i64) -> Result<Vec<GeoPoint>, CoreError> {
-    let mut stmt = conn.prepare_cached("SELECT lon, lat FROM route_points WHERE session_id = ?1 ORDER BY t_ms")?;
+    let mut stmt = conn
+        .prepare_cached("SELECT lon, lat FROM route_points WHERE session_id = ?1 ORDER BY t_ms")?;
     let pts = stmt
         .query_map([session], |row| {
             Ok(GeoPoint {
@@ -836,7 +907,10 @@ fn route_of(conn: &Connection, session: i64) -> Result<Vec<GeoPoint>, CoreError>
 }
 
 fn line(points: &[GeoPoint]) -> String {
-    let coords: Vec<String> = points.iter().map(|p| format!("[{},{}]", p.lon, p.lat)).collect();
+    let coords: Vec<String> = points
+        .iter()
+        .map(|p| format!("[{},{}]", p.lon, p.lat))
+        .collect();
     format!(
         r#"{{"type":"Feature","properties":{{}},"geometry":{{"type":"LineString","coordinates":[{}]}}}}"#,
         coords.join(",")
@@ -873,7 +947,10 @@ pub(crate) fn routes(
             lines.push(line(&pts));
         }
     }
-    Ok(format!(r#"{{"type":"FeatureCollection","features":[{}]}}"#, lines.join(",")))
+    Ok(format!(
+        r#"{{"type":"FeatureCollection","features":[{}]}}"#,
+        lines.join(",")
+    ))
 }
 
 fn bbox_union(a: Option<Bbox>, b: Option<Bbox>) -> Option<Bbox> {
@@ -895,7 +972,12 @@ fn session_bbox(conn: &Connection, id: i64) -> Result<Option<Bbox>, CoreError> {
         [id],
         |row| {
             Ok(match (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?) {
-                (Some(west), Some(south), Some(east), Some(north)) => Some(Bbox { west, south, east, north }),
+                (Some(west), Some(south), Some(east), Some(north)) => Some(Bbox {
+                    west,
+                    south,
+                    east,
+                    north,
+                }),
                 _ => None,
             })
         },
@@ -906,13 +988,19 @@ fn shown_count(conn: &Connection, ctx: &Ctx<'_>, r: &Resolved) -> Result<u32, Co
     let mut params = Params::default();
     let with = relation(r, &mut params);
     let f = predicate(ctx, r, &DeviceFilter::default(), true, &mut params);
-    Ok(conn.query_row(&format!("{with} SELECT count(*) FROM d WHERE {f}"), params.refs().as_slice(), |row| {
-        row.get(0)
-    })?)
+    Ok(conn.query_row(
+        &format!("{with} SELECT count(*) FROM d WHERE {f}"),
+        params.refs().as_slice(),
+        |row| row.get(0),
+    )?)
 }
 
 /// `session_view`: `getRecording` minus the points.
-pub(crate) fn session_view(conn: &Connection, ctx: &Ctx<'_>, scope: &Scope) -> Result<SessionView, CoreError> {
+pub(crate) fn session_view(
+    conn: &Connection,
+    ctx: &Ctx<'_>,
+    scope: &Scope,
+) -> Result<SessionView, CoreError> {
     let r = resolve(conn, ctx, scope)?;
     let mut frame = None;
     for s in &r.sessions {
@@ -947,7 +1035,11 @@ pub(crate) fn summary(ctx: &Ctx<'_>, s: &SessionRow, upload: UploadState) -> Ses
         ended_ms: s.ended_ms,
         active_ms: s.active_ms,
         distance_m: s.distance_m,
-        device_count: if ctx.hide_unnamed_apple { s.device_count_shown } else { s.device_count } as u32,
+        device_count: if ctx.hide_unnamed_apple {
+            s.device_count_shown
+        } else {
+            s.device_count
+        } as u32,
         upload,
     }
 }
@@ -965,8 +1057,18 @@ pub(crate) fn sessions(
         .collect())
 }
 
-pub(crate) fn all_sessions_summary(conn: &Connection, ctx: &Ctx<'_>) -> Result<AllSessionsSummary, CoreError> {
-    let r = resolve(conn, ctx, &Scope { sessions: SessionScope::All, filter: None })?;
+pub(crate) fn all_sessions_summary(
+    conn: &Connection,
+    ctx: &Ctx<'_>,
+) -> Result<AllSessionsSummary, CoreError> {
+    let r = resolve(
+        conn,
+        ctx,
+        &Scope {
+            sessions: SessionScope::All,
+            filter: None,
+        },
+    )?;
     let mut bbox = None;
     for s in &r.sessions {
         bbox = bbox_union(bbox, session_bbox(conn, s.id)?);

@@ -199,7 +199,8 @@ pub(crate) fn tile(lon: f64, lat: f64, z: u32) -> (i64, i64) {
     let scale = (1i64 << z) as f64;
     let x = ((lon + 180.0) / 360.0 * scale).floor() as i64;
     let r = lat.to_radians();
-    let y = ((1.0 - (r.tan() + 1.0 / r.cos()).ln() / std::f64::consts::PI) / 2.0 * scale).floor() as i64;
+    let y = ((1.0 - (r.tan() + 1.0 / r.cos()).ln() / std::f64::consts::PI) / 2.0 * scale).floor()
+        as i64;
     (x.clamp(0, (1 << z) - 1), y.clamp(0, (1 << z) - 1))
 }
 
@@ -257,8 +258,10 @@ impl Store {
     }
 
     pub fn set_status(&mut self, session: i64, status: i64) -> Result<(), CoreError> {
-        self.conn
-            .execute("UPDATE sessions SET status = ?2 WHERE id = ?1", params![session, status])?;
+        self.conn.execute(
+            "UPDATE sessions SET status = ?2 WHERE id = ?1",
+            params![session, status],
+        )?;
         Ok(())
     }
 
@@ -279,7 +282,13 @@ impl Store {
     }
 
     /// Finish a session: status 2 (completed) or 3 (interrupted).
-    pub fn finish(&mut self, session: i64, status: i64, ended_ms: i64, active_ms: i64) -> Result<(), CoreError> {
+    pub fn finish(
+        &mut self,
+        session: i64,
+        status: i64,
+        ended_ms: i64,
+        active_ms: i64,
+    ) -> Result<(), CoreError> {
         self.conn.execute(
             "UPDATE sessions SET status = ?2, ended_ms = ?3, active_ms = ?4 WHERE id = ?1",
             params![session, status, ended_ms, active_ms],
@@ -346,7 +355,11 @@ fn resolve_payloads(
             continue;
         }
         let existing: Option<i64> = tx
-            .query_row("SELECT id FROM payloads WHERE sha256 = ?1", [&sha[..]], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM payloads WHERE sha256 = ?1",
+                [&sha[..]],
+                |r| r.get(0),
+            )
             .optional()?;
         let id = match existing {
             Some(id) => id,
@@ -362,7 +375,12 @@ fn resolve_payloads(
 }
 
 /// A new payload: split, insert its structures, match its page once (§3.5), and verify the round trip.
-fn insert_payload(tx: &Transaction<'_>, sha: &[u8; 32], o: &Obs, catalog: &Catalog) -> Result<i64, CoreError> {
+fn insert_payload(
+    tx: &Transaction<'_>,
+    sha: &[u8; 32],
+    o: &Obs,
+    catalog: &Catalog,
+) -> Result<i64, CoreError> {
     let split = adv::split(&o.raw);
     if adv::join(&split) != o.raw {
         return Err(CoreError::InvalidPayload {
@@ -422,6 +440,7 @@ fn insert_payload(tx: &Transaction<'_>, sha: &[u8; 32], o: &Obs, catalog: &Catal
 }
 
 /// `payload_raw(id)`: the exact bytes back from the DB.
+#[cfg(test)]
 pub(crate) fn payload_raw(conn: &Connection, id: i64) -> Result<Vec<u8>, CoreError> {
     let (zero_padding, tail): (u32, Option<Vec<u8>>) = conn.query_row(
         "SELECT zero_padding, tail FROM payloads WHERE id = ?1",
@@ -442,7 +461,12 @@ pub(crate) fn payload_raw(conn: &Connection, id: i64) -> Result<Vec<u8>, CoreErr
     }))
 }
 
-fn merge_minutes(tx: &Transaction<'_>, session: i64, obs: &[Obs], ids: &[i64]) -> Result<(), CoreError> {
+fn merge_minutes(
+    tx: &Transaction<'_>,
+    session: i64,
+    obs: &[Obs],
+    ids: &[i64],
+) -> Result<(), CoreError> {
     let mut batch: BTreeMap<MinuteKey, Minute> = BTreeMap::new();
     for (o, &payload_id) in obs.iter().zip(ids) {
         let key = MinuteKey {
@@ -592,8 +616,13 @@ fn update_payload_stats(tx: &Transaction<'_>, obs: &[Obs], ids: &[i64]) -> Resul
 }
 
 /// §3.5 step 2 over the rows of `filter` (`session_id = ?` or every session of the device).
-fn device_page(tx: &Transaction<'_>, session: Option<i64>, addr: i64) -> Result<Option<String>, CoreError> {
-    let sql = "SELECT p.page_id FROM session_device_payloads s JOIN payloads p ON p.id = s.payload_id
+fn device_page(
+    tx: &Transaction<'_>,
+    session: Option<i64>,
+    addr: i64,
+) -> Result<Option<String>, CoreError> {
+    let sql =
+        "SELECT p.page_id FROM session_device_payloads s JOIN payloads p ON p.id = s.payload_id
                WHERE s.addr = ?1 AND (?2 IS NULL OR s.session_id = ?2) AND p.page_id IS NOT NULL
                GROUP BY s.payload_id ORDER BY sum(s.sightings) DESC, s.payload_id LIMIT 1";
     Ok(tx
@@ -726,7 +755,11 @@ fn merge_session_devices(
                         .map(|n| n.1.clone())
                         .or_else(|| pname.clone()),
                     *papple || d.is_apple,
-                    if d.latest.0 >= *plast { d.latest.1 } else { *plat },
+                    if d.latest.0 >= *plast {
+                        d.latest.1
+                    } else {
+                        *plat
+                    },
                     (*pfirst).min(d.first),
                     (*plast).max(d.last),
                     psight + d.sightings,
@@ -735,11 +768,18 @@ fn merge_session_devices(
                 )
             }
         };
-        let company: Option<u16> = info.get(&latest_payload).and_then(|p| p.company_id).or_else(|| {
-            tx.query_row("SELECT company_id FROM payloads WHERE id = ?1", [latest_payload], |r| r.get(0))
+        let company: Option<u16> = info
+            .get(&latest_payload)
+            .and_then(|p| p.company_id)
+            .or_else(|| {
+                tx.query_row(
+                    "SELECT company_id FROM payloads WHERE id = ?1",
+                    [latest_payload],
+                    |r| r.get(0),
+                )
                 .ok()
                 .flatten()
-        });
+            });
         let page = device_page(tx, Some(session), addr)?;
         let tile = best.map(|b| tile17(b.lon, b.lat));
         tx.prepare_cached(
@@ -779,8 +819,10 @@ fn merge_session_devices(
                 params![session, addr],
                 |r| r.get(0),
             )?;
-            tx.prepare_cached("INSERT OR REPLACE INTO session_devices_rtree VALUES (?1, ?2, ?2, ?3, ?3)")?
-                .execute(params![id, b.lon, b.lat])?;
+            tx.prepare_cached(
+                "INSERT OR REPLACE INTO session_devices_rtree VALUES (?1, ?2, ?2, ?3, ?3)",
+            )?
+            .execute(params![id, b.lon, b.lat])?;
         }
     }
     Ok(batch.into_keys().collect())
@@ -836,7 +878,10 @@ pub(crate) fn refresh_device(tx: &Transaction<'_>, addr: i64) -> Result<(), Core
         tx.execute("DELETE FROM devices_rtree WHERE id = ?1", [addr])?;
         return Ok(());
     }
-    let latest = rows.iter().max_by_key(|r| (r.last, r.session)).expect("non-empty");
+    let latest = rows
+        .iter()
+        .max_by_key(|r| (r.last, r.session))
+        .expect("non-empty");
     let named = rows
         .iter()
         .filter(|r| r.name.is_some())
@@ -925,7 +970,11 @@ pub(crate) fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 }
 
 /// Session counters and its bbox (`sessions_rtree`): every device's best point and the route.
-fn refresh_session(tx: &Transaction<'_>, session: i64, new_sightings: i64) -> Result<(), CoreError> {
+fn refresh_session(
+    tx: &Transaction<'_>,
+    session: i64,
+    new_sightings: i64,
+) -> Result<(), CoreError> {
     tx.execute(
         "UPDATE sessions SET
            device_count = (SELECT count(*) FROM session_devices WHERE session_id = ?1),
@@ -966,22 +1015,50 @@ mod tests {
     use super::*;
 
     fn sample(score: Option<f64>, accuracy: Option<f64>, seen_ms: i64) -> Sample {
-        Sample { lat: 0.0, lon: 0.0, accuracy, rssi: None, score, seen_ms }
+        Sample {
+            lat: 0.0,
+            lon: 0.0,
+            accuracy,
+            rssi: None,
+            score,
+            seen_ms,
+        }
     }
 
     /// Parity with `sighting_sample_better` (db/db/migrations/20261026000000_minute_index_schema.sql).
     #[test]
     fn sample_better_matches_the_research_function() {
         assert!(sample_better(&sample(None, None, 5), None));
-        assert!(sample_better(&sample(Some(-3.0), None, 5), Some(&sample(Some(-4.0), None, 1))));
-        assert!(!sample_better(&sample(None, None, 1), Some(&sample(Some(-9.0), None, 5))));
-        assert!(sample_better(&sample(Some(-9.0), None, 5), Some(&sample(None, None, 1))));
+        assert!(sample_better(
+            &sample(Some(-3.0), None, 5),
+            Some(&sample(Some(-4.0), None, 1))
+        ));
+        assert!(!sample_better(
+            &sample(None, None, 1),
+            Some(&sample(Some(-9.0), None, 5))
+        ));
+        assert!(sample_better(
+            &sample(Some(-9.0), None, 5),
+            Some(&sample(None, None, 1))
+        ));
         // equal scores: smaller effective accuracy (null = 50, at least 1), then earlier
-        assert!(sample_better(&sample(Some(-1.0), Some(10.0), 5), Some(&sample(Some(-1.0), None, 1))));
-        assert!(!sample_better(&sample(Some(-1.0), Some(0.2), 5), Some(&sample(Some(-1.0), Some(1.0), 1))));
-        assert!(sample_better(&sample(Some(-1.0), Some(0.2), 1), Some(&sample(Some(-1.0), Some(1.0), 5))));
+        assert!(sample_better(
+            &sample(Some(-1.0), Some(10.0), 5),
+            Some(&sample(Some(-1.0), None, 1))
+        ));
+        assert!(!sample_better(
+            &sample(Some(-1.0), Some(0.2), 5),
+            Some(&sample(Some(-1.0), Some(1.0), 1))
+        ));
+        assert!(sample_better(
+            &sample(Some(-1.0), Some(0.2), 1),
+            Some(&sample(Some(-1.0), Some(1.0), 5))
+        ));
         assert_eq!(sample_score(Some(-60), Some(10.0)), Some(-3.0 - 2.0));
-        assert_eq!(sample_score(Some(-60), None), Some(-3.0 - 2.0 * 50f64.log10()));
+        assert_eq!(
+            sample_score(Some(-60), None),
+            Some(-3.0 - 2.0 * 50f64.log10())
+        );
         assert_eq!(sample_score(None, Some(1.0)), None);
     }
 
@@ -1019,19 +1096,27 @@ mod tests {
             m
         });
         for cut in 1..all.len() {
-            let mut a = all[..cut].iter().skip(1).fold(Minute::of(&all[0]), |mut m, o| {
-                m.merge(&Minute::of(o));
-                m
-            });
-            let b = all[cut + 1..].iter().fold(Minute::of(&all[cut]), |mut m, o| {
-                m.merge(&Minute::of(o));
-                m
-            });
+            let mut a = all[..cut]
+                .iter()
+                .skip(1)
+                .fold(Minute::of(&all[0]), |mut m, o| {
+                    m.merge(&Minute::of(o));
+                    m
+                });
+            let b = all[cut + 1..]
+                .iter()
+                .fold(Minute::of(&all[cut]), |mut m, o| {
+                    m.merge(&Minute::of(o));
+                    m
+                });
             a.merge(&b);
             assert_eq!(a, one, "cut at {cut}");
         }
         assert_eq!(one.sightings, 4);
-        assert_eq!((one.rssi_min, one.rssi_max, one.rssi_sum, one.rssi_count), (Some(-70), Some(-50), -180, 3));
+        assert_eq!(
+            (one.rssi_min, one.rssi_max, one.rssi_sum, one.rssi_count),
+            (Some(-70), Some(-50), -180, 3)
+        );
         assert_eq!(one.best.unwrap().seen_ms, 4);
     }
 

@@ -264,7 +264,9 @@ fn migrate(conn: &Connection, from: u32) -> Result<(), CoreError> {
 pub(crate) fn open_reader(path: &Path) -> Result<Connection, CoreError> {
     let conn = Connection::open_with_flags(
         path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI,
     )?;
     conn.execute_batch("PRAGMA temp_store=MEMORY;")?;
     register(&conn)?;

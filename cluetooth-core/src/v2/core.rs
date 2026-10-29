@@ -7,13 +7,15 @@
 //! close; the Parquet staging append that gates each commit, the writer and read threads, the live snapshot and
 //! deltas, GATT, uploads, export and delete follow in the next slices and return `Db { "not implemented" }` here.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
-use crate::config::{INPUT_FIXED_ESTIMATE_BYTES, MAX_INPUT_BATCH_ESTIMATED_BYTES, MAX_INPUT_BATCH_ROWS};
+use crate::config::{
+    INPUT_FIXED_ESTIMATE_BYTES, MAX_INPUT_BATCH_ESTIMATED_BYTES, MAX_INPUT_BATCH_ROWS,
+};
 use crate::location::RecentLocationFixes;
 use crate::payload::MAX_RAW_BYTES;
 use crate::payload_identity::generate_uuid_v7;
@@ -65,7 +67,6 @@ struct Writer {
 pub struct Core {
     config: CoreConfig,
     catalog: Arc<Catalog>,
-    db_path: PathBuf,
     writer: Mutex<Writer>,
     reader: Mutex<Connection>,
     display: Mutex<DisplayFilter>,
@@ -101,13 +102,20 @@ fn new_uuid(now: i64) -> Result<String, CoreError> {
 
 impl Core {
     /// Open with an explicit `now`; [`Core::open`] passes the clock.
-    pub(crate) fn open_at(config: CoreConfig, assets: CoreAssets, now: i64) -> Result<Arc<Core>, CoreError> {
+    pub(crate) fn open_at(
+        config: CoreConfig,
+        assets: CoreAssets,
+        now: i64,
+    ) -> Result<Arc<Core>, CoreError> {
         if config.live_interval_ms < 1000 {
             return Err(CoreError::InvalidConfig {
                 detail: "live_interval_ms must be at least 1000".into(),
             });
         }
-        let catalog = Arc::new(Catalog::load(&assets.wiki_bundle_json, &assets.sig_numbers_tsv)?);
+        let catalog = Arc::new(Catalog::load(
+            &assets.wiki_bundle_json,
+            &assets.sig_numbers_tsv,
+        )?);
         let dir = Path::new(&config.data_directory);
         std::fs::create_dir_all(dir).map_err(CoreError::from_io)?;
         let db_path = dir.join("local.db");
@@ -120,11 +128,17 @@ impl Core {
              WHERE status IN (0, 1)",
             [],
         )?;
-        conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('rules_key', ?1)
-             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            [&catalog.rules_key],
-        )?;
+        for (key, value) in [
+            ("rules_key", Some(&catalog.rules_key)),
+            ("bundle_version", Some(&catalog.version)),
+            ("wiki_commit", catalog.wiki_commit.as_ref()),
+        ] {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, coalesce(?2, ''))
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![key, value],
+            )?;
+        }
         let reader = db::open_reader(&db_path)?;
         Ok(Arc::new(Core {
             writer: Mutex::new(Writer {
@@ -138,7 +152,6 @@ impl Core {
             }),
             listener: Mutex::new(None),
             catalog,
-            db_path,
             config,
         }))
     }
@@ -153,7 +166,10 @@ impl Core {
     }
 
     /// Runs a read on the read connection with the current recording's view.
-    fn read<T>(&self, f: impl FnOnce(&Connection, &Ctx<'_>) -> Result<T, CoreError>) -> Result<T, CoreError> {
+    fn read<T>(
+        &self,
+        f: impl FnOnce(&Connection, &Ctx<'_>) -> Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
         let now = now_ms();
         let live = self.live_of(&lock(&self.writer), now);
         let ctx = Ctx {
@@ -229,8 +245,8 @@ impl Core {
     }
 
     #[cfg(test)]
-    pub(crate) fn db_path(&self) -> &Path {
-        &self.db_path
+    pub(crate) fn with_writer_conn<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
+        f(&lock(&self.writer).store.conn)
     }
 
     pub(crate) fn ingest_scans_at(
@@ -311,7 +327,7 @@ impl Core {
         Ok(ack)
     }
 
-    fn ingest_location_at(&self, fix: LocationFix) {
+    pub(crate) fn ingest_location_at(&self, fix: LocationFix) {
         if !fix.is_usable() {
             return;
         }
@@ -342,7 +358,11 @@ impl Core {
         }
     }
 
-    pub(crate) fn start_recording_at(&self, env: ScanEnvironment, now: i64) -> Result<String, CoreError> {
+    pub(crate) fn start_recording_at(
+        &self,
+        env: ScanEnvironment,
+        now: i64,
+    ) -> Result<String, CoreError> {
         let state = {
             let mut w = lock(&self.writer);
             if w.recording.is_some() {
@@ -561,7 +581,8 @@ impl Core {
             .into_iter()
             .find(|s| s.id == r.session)
             .map(|mut s| {
-                s.active_ms = r.active_before_ms + r.running_since_ms.map_or(0, |since| now - since);
+                s.active_ms =
+                    r.active_before_ms + r.running_since_ms.map_or(0, |since| now - since);
                 query::summary(&ctx, &s, UploadState::Pending)
             })
     }
@@ -577,7 +598,12 @@ impl Core {
     }
 
     /// [V Routes] GeoJSON LineStrings for "route"; multi-session: the routes meeting the viewport.
-    pub async fn routes(&self, scope: Scope, viewport: Option<Bbox>, zoom: f64) -> Result<String, CoreError> {
+    pub async fn routes(
+        &self,
+        scope: Scope,
+        viewport: Option<Bbox>,
+        zoom: f64,
+    ) -> Result<String, CoreError> {
         let _ = zoom;
         self.read(|c, ctx| query::routes(c, ctx, &scope, viewport))
     }
@@ -588,12 +614,20 @@ impl Core {
     }
 
     /// [V AreaKeys] Keys passing the filter, in `device_order` order.
-    pub async fn device_keys(&self, scope: Scope, filter: DeviceFilter) -> Result<DeviceKeys, CoreError> {
+    pub async fn device_keys(
+        &self,
+        scope: Scope,
+        filter: DeviceFilter,
+    ) -> Result<DeviceKeys, CoreError> {
         self.read(|c, ctx| query::device_keys(c, ctx, &scope, &filter))
     }
 
     /// [P] ≤ 200 keys per call, in the given order.
-    pub async fn device_rows(&self, scope: Scope, keys: Vec<DeviceKey>) -> Result<Vec<DeviceRow>, CoreError> {
+    pub async fn device_rows(
+        &self,
+        scope: Scope,
+        keys: Vec<DeviceKey>,
+    ) -> Result<Vec<DeviceRow>, CoreError> {
         self.read(|c, ctx| query::device_rows(c, ctx, &scope, &keys))
     }
 
@@ -607,7 +641,11 @@ impl Core {
     }
 
     /// [V AreaProducts] Groups by the page's first category, "unidentified" last (D-2); `filter.page` ignored.
-    pub async fn products(&self, scope: Scope, filter: DeviceFilter) -> Result<Vec<CategoryGroup>, CoreError> {
+    pub async fn products(
+        &self,
+        scope: Scope,
+        filter: DeviceFilter,
+    ) -> Result<Vec<CategoryGroup>, CoreError> {
         self.read(|c, ctx| query::products(c, ctx, &scope, &filter))
     }
 
@@ -622,12 +660,20 @@ impl Core {
     }
 
     /// [P]
-    pub async fn device(&self, scope: Scope, key: DeviceKey) -> Result<Option<DeviceDetail>, CoreError> {
+    pub async fn device(
+        &self,
+        scope: Scope,
+        key: DeviceKey,
+    ) -> Result<Option<DeviceDetail>, CoreError> {
         self.read(|c, ctx| query::device(c, ctx, &scope, key))
     }
 
     /// [P] ≤ 10 000.
-    pub async fn device_sightings(&self, scope: Scope, key: DeviceKey) -> Result<Vec<Sighting>, CoreError> {
+    pub async fn device_sightings(
+        &self,
+        scope: Scope,
+        key: DeviceKey,
+    ) -> Result<Vec<Sighting>, CoreError> {
         self.read(|c, ctx| query::device_sightings(c, ctx, &scope, key))
     }
 
@@ -674,7 +720,10 @@ impl Core {
     }
 
     /// [F] Cancellable.
-    pub async fn prepare_export(&self, request: ExportRequest) -> Result<PreparedExport, CoreError> {
+    pub async fn prepare_export(
+        &self,
+        request: ExportRequest,
+    ) -> Result<PreparedExport, CoreError> {
         let _ = request;
         Err(not_yet("prepare_export"))
     }

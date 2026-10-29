@@ -131,10 +131,7 @@ impl Catalog {
         let bundle: BundleJson =
             serde_json::from_str(bundle_json).map_err(|e| invalid(e.to_string()))?;
         if bundle.schema != 2 {
-            return Err(invalid(format!(
-                "bundle schema {} is not 2",
-                bundle.schema
-            )));
+            return Err(invalid(format!("bundle schema {} is not 2", bundle.schema)));
         }
         let vocab = |v: &[VocabJson]| v.iter().map(|x| x.id.clone()).collect::<BTreeSet<_>>();
         let (cats, contexts, traits) = (
@@ -162,7 +159,10 @@ impl Catalog {
                 }
             }
             if let Some(bad) = p.vulnerabilities.iter().find(|v| !ids.contains(v.as_str())) {
-                return Err(invalid(format!("{}: unknown vulnerability page {bad}", p.id)));
+                return Err(invalid(format!(
+                    "{}: unknown vulnerability page {bad}",
+                    p.id
+                )));
             }
             pages.push(Page {
                 id: p.id.clone(),
@@ -255,7 +255,12 @@ impl Catalog {
     /// `vulnerable`, `page` and `Identified`; `Unidentified` is `page_id IS NULL`, and empty with any page
     /// constraint. `with_categories = false` leaves the category facet out (faceted counts, D-3a).
     pub fn page_set(&self, f: &DeviceFilter, with_categories: bool) -> PageSet {
-        let all = || self.pages.iter().map(|p| p.id.clone()).collect::<BTreeSet<_>>();
+        let all = || {
+            self.pages
+                .iter()
+                .map(|p| p.id.clone())
+                .collect::<BTreeSet<_>>()
+        };
         let mut set: Option<BTreeSet<String>> = None;
         let mut and = |s: BTreeSet<String>| {
             set = Some(match set.take() {
@@ -271,7 +276,9 @@ impl Catalog {
                 .collect::<BTreeSet<_>>()
         };
         if with_categories && !f.categories.is_empty() {
-            and(pick(&|p| p.categories.iter().any(|c| f.categories.contains(c))));
+            and(pick(&|p| {
+                p.categories.iter().any(|c| f.categories.contains(c))
+            }));
         }
         if f.readable {
             and(pick(&|p| p.readable));
@@ -343,22 +350,41 @@ pub(crate) mod tests {
 
     #[test]
     fn loads_and_builds_page_sets() {
-        let c = Catalog::load(&bundle(), "company\t004C\tApple, Inc.\nuuid16\tFEED\tTile\n").unwrap();
+        let c = Catalog::load(
+            &bundle(),
+            "company\t004C\tApple, Inc.\nuuid16\tFEED\tTile\n",
+        )
+        .unwrap();
         assert_eq!(c.rules_key, "r1+m1");
         assert_eq!(c.company_name(76).as_deref(), Some("Apple, Inc."));
         let only = |ids: &[&str]| PageSet::Only(ids.iter().map(|s| s.to_string()).collect());
         let f = DeviceFilter::default();
         assert_eq!(c.page_set(&f, true), PageSet::Any);
-        let trackers = DeviceFilter { trackers: true, ..Default::default() };
+        let trackers = DeviceFilter {
+            trackers: true,
+            ..Default::default()
+        };
         assert_eq!(c.page_set(&trackers, true), only(&["device--tile"]));
-        let readable_trackers = DeviceFilter { readable: true, ..trackers.clone() };
+        let readable_trackers = DeviceFilter {
+            readable: true,
+            ..trackers.clone()
+        };
         assert_eq!(c.page_set(&readable_trackers, true), PageSet::Nothing);
-        let cat = DeviceFilter { categories: vec!["audio-device".into()], ..Default::default() };
+        let cat = DeviceFilter {
+            categories: vec!["audio-device".into()],
+            ..Default::default()
+        };
         assert_eq!(c.page_set(&cat, true), only(&["platform--x"]));
         assert_eq!(c.page_set(&cat, false), PageSet::Any);
-        let unid = DeviceFilter { identification: Identification::Unidentified, ..Default::default() };
+        let unid = DeviceFilter {
+            identification: Identification::Unidentified,
+            ..Default::default()
+        };
         assert_eq!(c.page_set(&unid, true), PageSet::Unidentified);
-        let unid_vuln = DeviceFilter { vulnerable: true, ..unid };
+        let unid_vuln = DeviceFilter {
+            vulnerable: true,
+            ..unid
+        };
         assert_eq!(c.page_set(&unid_vuln, true), PageSet::Nothing);
         // a device page wins over a platform page that also matches (§3.5)
         let raw = [3u8, 3, 0xed, 0xfe];
@@ -369,8 +395,14 @@ pub(crate) mod tests {
     #[test]
     fn vocabulary_violations_are_refused() {
         let bad = bundle().replace("\"no-local-name\"]", "\"nope\"]");
-        assert!(matches!(Catalog::load(&bad, ""), Err(CoreError::InvalidBundle { .. })));
+        assert!(matches!(
+            Catalog::load(&bad, ""),
+            Err(CoreError::InvalidBundle { .. })
+        ));
         let schema1 = bundle().replace("\"schema\":2", "\"schema\":1");
-        assert!(matches!(Catalog::load(&schema1, ""), Err(CoreError::InvalidBundle { .. })));
+        assert!(matches!(
+            Catalog::load(&schema1, ""),
+            Err(CoreError::InvalidBundle { .. })
+        ));
     }
 }

@@ -102,8 +102,18 @@ fn structure_uuid_list(ad_type: u8, data: &[u8]) -> Option<Vec<String>> {
         0x02 | 0x03 => Some(data.chunks_exact(2).map(uuid16_le).collect()),
         0x04 | 0x05 => Some(data.chunks_exact(4).map(uuid32_le).collect()),
         0x06 | 0x07 => Some(data.chunks_exact(16).map(uuid128_le).collect()),
-        0x16 => Some((data.len() >= 2).then(|| uuid16_le(data)).into_iter().collect()),
-        0x20 => Some((data.len() >= 4).then(|| uuid32_le(data)).into_iter().collect()),
+        0x16 => Some(
+            (data.len() >= 2)
+                .then(|| uuid16_le(data))
+                .into_iter()
+                .collect(),
+        ),
+        0x20 => Some(
+            (data.len() >= 4)
+                .then(|| uuid32_le(data))
+                .into_iter()
+                .collect(),
+        ),
         0x21 => Some(
             (data.len() >= 16)
                 .then(|| uuid128_le(&data[..16]))
@@ -213,7 +223,10 @@ mod tests {
         assert_eq!(local_name(0xff, b"x"), None);
         assert_eq!(company_id(0xff, &[0x4c, 0x00, 1]), Some(76));
         assert_eq!(company_id(0xff, &[0x4c]), None);
-        assert_eq!(uuids(3, &[0x95, 0xfe, 0x0f, 0xfe]), Some("fe0f,fe95".into()));
+        assert_eq!(
+            uuids(3, &[0x95, 0xfe, 0x0f, 0xfe]),
+            Some("fe0f,fe95".into())
+        );
         assert_eq!(uuids(3, &[]), Some(String::new()));
         assert_eq!(uuids(0x16, &[0x95]), None);
         assert_eq!(uuids(0x16, &[0x95, 0xfe, 1, 2]), Some("fe95".into()));
@@ -228,8 +241,8 @@ mod tests {
     #[test]
     fn payload_fields_materialize_the_view() {
         let raw = [
-            5, 8, b'a', b'b', b'c', b'd', 4, 9, b'X', b'Y', b'Z', 5, 0xff, 0x4c, 0, 1, 2, 3, 0x16, 0xec,
-            0x88,
+            5, 8, b'a', b'b', b'c', b'd', 4, 9, b'X', b'Y', b'Z', 5, 0xff, 0x4c, 0, 1, 2, 3, 0x16,
+            0xec, 0x88,
         ];
         let f = payload_fields(&split(&raw));
         assert_eq!(f.local_name.as_deref(), Some("XYZ"));
