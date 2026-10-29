@@ -148,10 +148,9 @@ private fun DeviceBody(state: SheetsState, entry: SheetEntry, content: DeviceCon
 private fun DeviceHead(d: DeviceDetail, rssi: Int?) {
     val c = CluetoothTheme.colors
     val t = CluetoothTheme.type
-    Column(Modifier.padding(start = Css.DevHead.padding.left, bottom = Css.DevHead.padding.bottom).defaultMinSize(minHeight = Tokens.sheetHeaderH)) {
-        Box(Modifier.defaultMinSize(minHeight = Tokens.sheetHeaderH), contentAlignment = Alignment.CenterStart) {
-            Text(d.name ?: Strings.NoName, style = t.title, color = if (d.name == null) c.t3 else c.t1)
-        }
+    // `.dev-head`: the name on its 24 dp line from the header's top, the wiki link, the MAC line, 12 dp under them
+    Column(Modifier.padding(start = Css.DevHead.padding.left, bottom = Css.DevHead.padding.bottom)) {
+        Text(d.name ?: Strings.NoName, style = t.title, color = if (d.name == null) c.t3 else c.t1)
         val page = d.page
         val url = d.wikiUrl
         if (page != null && url != null) WikiLink(page.title, url)
