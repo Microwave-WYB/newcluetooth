@@ -1,6 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.platform.scan
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -13,6 +14,9 @@ class LatestByKeyTest {
         repeat(2_000) { n ->
             cache.put("new-$n", n)
             if (n % 10 == 0) cache.put("watched", n) // heard again, as a nearby device is
+            // Every round, without a lookup (which would refresh it): a put that did not refresh recency would let
+            // the device fall out between two hearings, and the next put would only re-insert it.
+            assertNotNull("the watched device is present after round $n", cache.peek("watched"))
         }
         assertEquals(1_990, cache["watched"])
         assertNull("the stalest addresses went", cache["new-0"])

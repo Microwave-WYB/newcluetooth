@@ -5,6 +5,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import edu.ucsd.sysnet.cluetoothscanner.platform.TestCoreIngest
 import kotlinx.coroutines.CompletableDeferred
@@ -159,16 +160,16 @@ class PlatformRecorderFailureTest {
         assertEquals(Phase.Paused, recorder.state.value.phase)
         assertEquals(1, drains)
         assertTrue("the service stays", foreground)
-        assertEquals(150_000_000L, recorder.storageFullBytes.value)
-        assertEquals(recorder.storageFullBytes, RecordingServiceLink.storageFull)
+        assertEquals(RecorderState.PauseReason.StorageFull(150_000_000), recorder.state.value.pause)
 
         recorder.resume()
         assertEquals("refused while full", Phase.Paused, recorder.state.value.phase)
+        assertTrue(recorder.state.value.pause is RecorderState.PauseReason.StorageFull)
         assertEquals(1, scannerStarts)
         core.full = false
         recorder.resume()
         assertEquals(Phase.Recording, recorder.state.value.phase)
         assertEquals(2, scannerStarts)
-        assertEquals(null, recorder.storageFullBytes.value)
+        assertEquals("the dialog can close: no longer paused for storage", null, recorder.state.value.pause)
     }
 }

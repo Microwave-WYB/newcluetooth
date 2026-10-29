@@ -108,10 +108,6 @@ class PlatformRecorder(
 ) : Recorder {
     private val _state = MutableStateFlow(RecorderState.Idle)
     override val state: StateFlow<RecorderState> = _state.asStateFlow()
-    private val _storageFull = MutableStateFlow<Long?>(null)
-
-    /** R-10: the free bytes the core reported while the recording is paused for storage, else null. */
-    internal val storageFullBytes: StateFlow<Long?> = _storageFull.asStateFlow()
 
     private sealed interface Message {
         class Request(val event: RecEvent, val reply: CompletableDeferred<RecOutcome>) : Message
@@ -131,7 +127,6 @@ class PlatformRecorder(
         storageFull?.let { flow -> scope.launch(guard) { flow.collect { signal(RecEvent.StorageFull(it)) } } }
         scope.launch(guard) { actor() }
         // RecordingService reads the process recorder from here (notification actions, foreground confirmation).
-        RecordingServiceLink.storageFull = storageFullBytes
         RecordingServiceLink.recorder = this
     }
 
@@ -170,7 +165,6 @@ class PlatformRecorder(
                 val transition = RecorderMachine.reduce(model, pending.removeFirst())
                 model = transition.state
                 _state.value = model.public()
-                _storageFull.value = model.storageFullBytes()
                 // The batch stops at the first failed effect: its failure (with the effects not run) is reduced
                 // next, and the machine decides which of them still run.
                 val batch = transition.effects

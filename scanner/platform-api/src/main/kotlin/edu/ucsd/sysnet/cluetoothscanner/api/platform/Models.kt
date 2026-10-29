@@ -47,8 +47,22 @@ data class RecorderState(
     val dropped: Long,
     /** A problem the user should see, such as a missing grant or a refused foreground service. */
     val error: String?,
+    /**
+     * Why the recording is paused: non-null exactly while [phase] is [Phase.Paused]. [PauseReason.StorageFull] is
+     * R-10's pause; it ends with a Resume the core accepts (from the app or the notification) or a Stop, so the
+     * storage-full dialog closes when this is no longer StorageFull.
+     */
+    val pause: PauseReason? = null,
 ) {
     enum class Phase { Idle, Starting, Recording, Paused, Stopping }
+
+    sealed interface PauseReason {
+        /** Paused by the user (R-6), or a paused session the recorder adopted. */
+        data object User : PauseReason
+
+        /** R-10: the core stopped writing below the storage floor; [freeBytes] is the free space it reported. */
+        data class StorageFull(val freeBytes: Long) : PauseReason
+    }
 
     companion object {
         val Idle = RecorderState(Phase.Idle, null, 0, null, 0, scannerDeferred = false, dropped = 0, error = null)

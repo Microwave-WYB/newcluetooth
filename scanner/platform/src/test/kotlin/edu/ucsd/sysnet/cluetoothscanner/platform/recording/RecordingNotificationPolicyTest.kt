@@ -74,15 +74,16 @@ class RecordingNotificationPolicyTest {
 
     @Test
     fun `R-10 storage full shows in the notification, with Resume and Stop`() {
-        val full = recording.copy(phase = Phase.Paused, runningSinceMs = null)
-        assertEquals("Recording paused: storage is full", RecordingNotificationPolicy.title(full, storageFreeBytes = 150_000_000))
-        assertEquals("Free up space to continue · 150 MB free", RecordingNotificationPolicy.text(full, 0, storageFreeBytes = 150_000_000))
+        val paused = recording.copy(phase = Phase.Paused, runningSinceMs = null, pause = RecorderState.PauseReason.User)
+        val full = paused.copy(pause = RecorderState.PauseReason.StorageFull(150_000_000))
+        assertEquals("Recording paused: storage is full", RecordingNotificationPolicy.title(full))
+        assertEquals("Free up space to continue · 150 MB free", RecordingNotificationPolicy.text(full, 0))
         assertEquals(Action.Resume, RecordingNotificationPolicy.pauseAction(full))
         assertTrue(RecordingNotificationPolicy.stopAction(full))
         assertTrue("the service stays", RecordingNotificationPolicy.serviceNeeded(full))
         assertFalse("nothing is collected", RecordingNotificationPolicy.wakeLockNeeded(full))
         val throttle = RecordingNotificationPolicy.Throttle()
-        assertTrue(throttle.shouldUpdate(full, 0))
-        assertTrue("storage full shows at once", throttle.shouldUpdate(full, 1, storageFull = true))
+        assertTrue(throttle.shouldUpdate(paused, 0))
+        assertTrue("storage full shows at once", throttle.shouldUpdate(full, 1))
     }
 }

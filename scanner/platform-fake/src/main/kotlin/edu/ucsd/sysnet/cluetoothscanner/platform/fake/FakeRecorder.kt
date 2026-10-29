@@ -46,6 +46,7 @@ class FakeRecorder(
         val now = nowMs()
         _state.value = current.copy(
             phase = Phase.Paused,
+            pause = RecorderState.PauseReason.User,
             activeBeforeMs = current.activeBeforeMs + (now - (current.runningSinceMs ?: now)),
             runningSinceMs = null,
         )
@@ -56,7 +57,7 @@ class FakeRecorder(
         val current = _state.value
         if (current.phase != Phase.Paused) return PlatformResult.Ok(Unit)
         onResume()
-        _state.value = current.copy(phase = Phase.Recording, runningSinceMs = nowMs())
+        _state.value = current.copy(phase = Phase.Recording, runningSinceMs = nowMs(), pause = null)
         return PlatformResult.Ok(Unit)
     }
 
@@ -71,6 +72,22 @@ class FakeRecorder(
 
     /** The live simulator's shown device count. */
     fun setDeviceCount(count: Int) = _state.update { it.copy(deviceCount = count) }
+
+    /**
+     * R-10: the core reports storage full and pauses the recording, as `PlatformRecorder` shows it. A [resume] ends
+     * it (the fake's core always accepts), as does [stop].
+     */
+    fun storageFull(freeBytes: Long) {
+        val current = _state.value
+        if (current.phase != Phase.Recording && current.phase != Phase.Paused) return
+        val now = nowMs()
+        _state.value = current.copy(
+            phase = Phase.Paused,
+            activeBeforeMs = current.activeBeforeMs + (now - (current.runningSinceMs ?: now)),
+            runningSinceMs = null,
+            pause = RecorderState.PauseReason.StorageFull(freeBytes),
+        )
+    }
 
     /** Bluetooth off while recording (§4.1). */
     fun setScannerDeferred(deferred: Boolean) = _state.update { it.copy(scannerDeferred = deferred) }

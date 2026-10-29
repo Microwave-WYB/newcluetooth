@@ -12,6 +12,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus.State
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Perm
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PermissionState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.toList
@@ -123,6 +124,18 @@ class FakesTest {
         assertEquals(1, stops)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertEquals("s1", recorder.state.value.sessionId)
+    }
+
+    @Test
+    fun `R-10 the recorder shows a storage-full pause until resumed`() = runTest {
+        val recorder = FakeRecorder(onStart = { "s1" }, onStop = { "s1" }, nowMs = { 0 })
+        recorder.start()
+        recorder.storageFull(150_000_000)
+        assertEquals(Phase.Paused, recorder.state.value.phase)
+        assertEquals(RecorderState.PauseReason.StorageFull(150_000_000), recorder.state.value.pause)
+        recorder.resume()
+        assertEquals(Phase.Recording, recorder.state.value.phase)
+        assertNull(recorder.state.value.pause)
     }
 
     @Test

@@ -26,9 +26,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -39,17 +36,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal object RecordingServiceLink {
     private val recorderRef = AtomicReference<Recorder?>(null)
     private val foregroundRef = AtomicReference<CompletableDeferred<Boolean>?>(null)
-    private val storageFullRef = AtomicReference<StateFlow<Long?>?>(null)
 
     /** The process recorder; written once at startup, read by the service on the main thread. Lock-free. */
     var recorder: Recorder?
         get() = recorderRef.get()
         set(value) = recorderRef.set(value)
-
-    /** R-10: the free bytes while the recording is paused for storage, else null; written with [recorder]. */
-    var storageFull: StateFlow<Long?>?
-        get() = storageFullRef.get()
-        set(value) = storageFullRef.set(value)
 
     /** The confirmation the next `startForeground` completes. Lock-free. */
     var foreground: CompletableDeferred<Boolean>?
@@ -101,8 +92,7 @@ class RecordingService : Service() {
         }
         if (!observing) {
             observing = true
-            val storageFull = RecordingServiceLink.storageFull ?: flowOf(null)
-            scope.launch { recorder.state.combine(storageFull, ::Shown).collect(::follow) }
+            scope.launch { recorder.state.collect(::follow) }
         }
         return START_NOT_STICKY
     }
@@ -122,11 +112,7 @@ class RecordingService : Service() {
         }
     }
 
-    /** What the notification shows: the recorder's state and, while paused for storage (R-10), the free bytes. */
-    private data class Shown(val state: RecorderState, val storageFreeBytes: Long?)
-
-    private fun follow(shown: Shown) = android("following the recorder") {
-        val state = shown.state
+    private fun follow(state: RecorderState) = android("following the recorder") {
         if (!RecordingNotificationPolicy.serviceNeeded(state)) {
             releaseWakeLock()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -135,8 +121,8 @@ class RecordingService : Service() {
             return@android
         }
         applyWakeLock(state)
-        if (inForeground && throttle.shouldUpdate(state, SystemClock.elapsedRealtime(), shown.storageFreeBytes != null)) {
-            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(state, shown.storageFreeBytes))
+        if (inForeground && throttle.shouldUpdate(state, SystemClock.elapsedRealtime())) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(state))
         }
     }
 
@@ -186,12 +172,12 @@ class RecordingService : Service() {
     /** True while the wake lock is held (tests). */
     internal val holdsWakeLock: Boolean get() = wakeLock?.isHeld == true
 
-    private fun notification(state: RecorderState, storageFreeBytes: Long? = null): Notification {
+    private fun notification(state: RecorderState): Notification {
         val now = System.currentTimeMillis()
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_recording)
-            .setContentTitle(RecordingNotificationPolicy.title(state, storageFreeBytes))
-            .setContentText(RecordingNotificationPolicy.text(state, now, storageFreeBytes))
+            .setContentTitle(RecordingNotificationPolicy.title(state))
+            .setContentText(RecordingNotificationPolicy.text(state, now))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
