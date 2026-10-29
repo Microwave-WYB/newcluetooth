@@ -3,6 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.sheets
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStep
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepKind
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepState
