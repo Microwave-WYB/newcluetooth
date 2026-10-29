@@ -39,9 +39,6 @@ pub enum CoreError {
     /// The caller dropped the query; Kotlin maps it to `CancellationException`.
     #[error("the query was cancelled")]
     Cancelled,
-    /// A newer query of the same kind replaced it; Kotlin maps it to `CancellationException`.
-    #[error("the query was superseded")]
-    Superseded,
 }
 
 impl From<crate::CoreError> for CoreError {

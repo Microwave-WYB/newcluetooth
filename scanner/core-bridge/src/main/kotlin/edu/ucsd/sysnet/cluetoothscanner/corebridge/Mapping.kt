@@ -298,7 +298,7 @@ internal fun GPreparedUpload.api() = PreparedUpload(
     payloadId, ciphertextPath, objectPath, plaintextSizeBytes.toLong(), ciphertextSizeBytes.toLong(),
 )
 
-/** §2.9 → [CoreException]; `Cancelled` and `Superseded` become [CancellationException] (§2). */
+/** §2.9 → [CoreException]; `Cancelled` becomes [CancellationException] (§2). */
 internal fun GCoreError.api(): Exception = when (this) {
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.InvalidPayload -> CoreException.InvalidPayload(detail)
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.InvalidConfig -> CoreException.InvalidConfig(detail)
@@ -316,11 +316,10 @@ internal fun GCoreError.api(): Exception = when (this) {
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.AlreadyRecording -> CoreException.AlreadyRecording()
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Closed -> CoreException.Closed()
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Cancelled -> CancellationException("query cancelled")
-    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Superseded -> CancellationException("query superseded by a newer one of its kind")
 }
 
 /**
- * Every binding failure in :core-api's types: a core error maps to its [CoreException] (`Cancelled`/`Superseded` to
+ * Every binding failure in :core-api's types: a core error maps to its [CoreException] (`Cancelled` to
  * [CancellationException]); a Rust panic UniFFI caught (`InternalException`) or any other binding fault becomes
  * [CoreException.Internal]. A coroutine cancellation passes through.
  */

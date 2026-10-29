@@ -78,7 +78,7 @@ interface CoreIngest {
 }
 
 /**
- * §2.9 `CoreError`. `Cancelled` and `Superseded` never surface: they become `CancellationException`.
+ * §2.9 `CoreError`. `Cancelled` never surfaces: it becomes `CancellationException`.
  */
 sealed class CoreException(message: String) : Exception(message) {
     class InvalidPayload(val detail: String) : CoreException("invalid payload: $detail")

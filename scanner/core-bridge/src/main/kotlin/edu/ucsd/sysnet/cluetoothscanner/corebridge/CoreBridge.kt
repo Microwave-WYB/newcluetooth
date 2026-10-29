@@ -58,7 +58,7 @@ import java.util.concurrent.LinkedBlockingQueue
 /**
  * The real core behind :core-api (docs/v2-api.md §6.2). One instance per process; open it off the main thread
  * ([open] may migrate or recover a large DB, §1.2). Suspending calls are cancellable: a cancelled coroutine drops
- * the Rust future, which skips or interrupts its query; `Cancelled`/`Superseded` surface in `CancellationException`.
+ * the Rust future, which skips or interrupts its query; `Cancelled` surfaces in `CancellationException`.
  * Every other failure is a [CoreException] (a Rust panic or binding fault is [CoreException.Internal]).
  */
 class CoreBridge private constructor(private val core: Core) : CoreQueries, CoreStorage, CoreIngest, AutoCloseable {
