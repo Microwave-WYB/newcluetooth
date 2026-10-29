@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -52,6 +53,7 @@ fun FloatButton(
     val source = remember { MutableInteractionSource() }
     Box(
         modifier
+            .disabledDim(enabled)
             .size(Css.Rb.width)
             .tokenShadow(CluetoothTheme.shadows.shadowFloat, CircleShape)
             .clip(CircleShape)
@@ -92,7 +94,7 @@ fun IconButton(
     }
     val bg by animateColorAsState(bgTarget, CluetoothTheme.motion.fast(), label = "ib")
     val source = remember { MutableInteractionSource() }
-    Box(modifier.size(size)) {
+    Box(modifier.disabledDim(enabled).size(size)) {
         Box(
             Modifier
                 .size(size)
@@ -147,6 +149,12 @@ fun CountBadge(count: Int, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * A disabled control is drawn at `--dim`, the opacity of stale rows (the prototype has no disabled style of its
+ * own); it still takes no clicks.
+ */
+internal fun Modifier.disabledDim(enabled: Boolean): Modifier = if (enabled) this else alpha(Tokens.dim)
+
 /** C-10 Button kinds: primary `--blue`/`--on-blue`, tonal `--fill2`/`--t1`. */
 enum class ButtonKind { Primary, Tonal }
 
@@ -170,6 +178,7 @@ fun Button(
     val base = if (small) CluetoothTheme.type.control else CluetoothTheme.type.body
     Row(
         modifier
+            .disabledDim(enabled)
             .height(h)
             .clip(shape)
             .background(bg)

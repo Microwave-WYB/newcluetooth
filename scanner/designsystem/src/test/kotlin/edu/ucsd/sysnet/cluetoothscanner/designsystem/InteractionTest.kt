@@ -18,6 +18,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.IconButton
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.IconButtonKind
@@ -53,6 +56,24 @@ class InteractionTest {
         compose.runOnIdle { assertEquals(2, taps) }
         node.performTouchInput { click(Offset(-with(compose.density) { 6.dp.toPx() }, height / 2f)) }
         compose.runOnIdle { assertEquals(2, taps) }
+    }
+
+    /** A disabled Button, IconButton and FloatButton take no clicks and report themselves disabled. */
+    @Test fun disabledControls() {
+        var taps = 0
+        compose.setContent {
+            CluetoothTheme {
+                androidx.compose.foundation.layout.Column {
+                    edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button("Next", { taps++ }, enabled = false)
+                    IconButton(Glyphs.pause, "Pause", { taps++ }, enabled = false)
+                    edu.ucsd.sysnet.cluetoothscanner.designsystem.components.FloatButton(Glyphs.menu, "Menu", { taps++ }, enabled = false)
+                }
+            }
+        }
+        compose.onNodeWithText("Next").assertIsNotEnabled().performClick()
+        compose.onNodeWithContentDescription("Pause").assertIsNotEnabled().performClick()
+        compose.onNodeWithContentDescription("Menu").assertIsNotEnabled().performClick()
+        compose.runOnIdle { assertEquals(0, taps) }
     }
 
     @Composable

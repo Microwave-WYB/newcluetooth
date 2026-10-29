@@ -183,6 +183,13 @@ fun designSystemCells(): List<GalleryCell> {
         }
     }
     cells += GalleryCell("Button", "text") { TextButton(Strings.SearchEverywhere, noop) }
+    cells += GalleryCell("Button", "disabled") {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(Strings.Next, noop, enabled = false)
+            Button(Strings.UploadNow, noop, kind = ButtonKind.Tonal, small = true, enabled = false)
+            IconButton(Glyphs.pause, Strings.Pause, noop, enabled = false)
+        }
+    }
 
     cells += GalleryCell("Switch", "on") { Switch(true, {}) }
     cells += GalleryCell("Switch", "off") { Switch(false, {}) }
