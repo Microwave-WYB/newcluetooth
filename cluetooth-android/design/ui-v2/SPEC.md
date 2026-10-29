@@ -111,8 +111,8 @@ Each component is built once. Its size, color and state rules come from these to
 - **C-3 Chip and ChipRow.**
   - Chip: 34 dp tall pill with 14 dp horizontal padding and 14 sp text. Unselected: `--chip-bg` (`--fill2`) with
     `--chip-fg` (`--t2`). Selected: `--chip-on-bg` (`--t1`) with `--chip-on-fg` (`--bg`) at weight 500.
-  - ChipRow: horizontally scrollable with no scrollbar, a 6 dp gap and `--edge` side padding. In the list view it
-    holds exactly four curated presets: All, Readable, Trackers, Vulnerable (D-3).
+  - ChipRow: horizontally scrollable with no scrollbar, a 6 dp gap and `--edge` side padding. The Discover sheet
+    has no chip row; filtering lives in the Filter sheet (D-3a).
 - **C-4 Segmented.**
   - A `--fill2` pill track with 2 dp padding. The selected thumb is `--seg` with `--t1`, weight 500 and
     `--shadow-thumb`. Unselected labels are `--t2`. Text is 14 sp.
@@ -347,25 +347,22 @@ Each component is built once. Its size, color and state rules come from these to
   - "Unidentified devices" comes last as a single card.
   - Nearby keeps only products with a non-stale device. All keeps every product the session saw.
 - **D-3 List view.**
-  - The ChipRow sits under the header, followed by DeviceRows in the session's fixed order (G-9).
-  - The chip row presets are multi-select and AND-combined with each other and with the Filter sheet. All clears
-    every filter.
-    - Readable: the matched wiki page has a `decoder.js`, so the advertisement is decodable without connecting.
-      Decoding itself is deferred to issue #39.
-    - Trackers: the trackers category.
-    - Vulnerable: the matched page links a vulnerability page.
-
-    Nearby hides stale rows.
+  - DeviceRows sit directly under the header, in the session's fixed order (G-9). There is no chip row.
+  - Nearby hides stale rows. The filters come from the Filter sheet (D-3a).
 - **D-3a Filter sheet.** A pushed sheet titled "Filter", with the X and the usual exit logic.
   - From top to bottom:
-    1. switches for Readable, Trackers and Vulnerable, synced both ways with the chips;
+    1. switches, AND-combined:
+       - Readable: the matched wiki page has a `decoder.js`, so the advertisement is decodable without connecting.
+         Decoding itself is deferred to issue #39.
+       - Trackers: the `asset-tracker` category.
+       - Vulnerable: the matched page links a vulnerability page.
     2. "Identification" [Any | Identified | Unidentified], default Any;
     3. "Categories": a checkbox list of every category present in the scope (data-driven from the wiki; a device
        matches any checked category);
     4. a "Clear" text button.
   - Changes apply live.
   - Category counts are faceted: each count is the devices that would show after checking that category. They
-    apply every other active constraint (presets, Identification, This area, Nearby, the Apple filter) but not the
+    apply every other active constraint (the switches, Identification, This area, Nearby, the Apple filter) but not the
     category facet itself, so a count always equals the resulting list length.
   - The row order is fixed when the sheet opens. Counts update in place. A row at 0 stays in place, dimmed, and
     can still be unchecked.
