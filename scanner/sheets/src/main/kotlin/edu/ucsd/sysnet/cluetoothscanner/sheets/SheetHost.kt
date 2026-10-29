@@ -3,7 +3,6 @@ package edu.ucsd.sysnet.cluetoothscanner.sheets
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -16,7 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -29,28 +28,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Handle
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Icon
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokenShadow
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Glyphs
 import kotlin.math.roundToInt
-import androidx.compose.ui.unit.max
 import androidx.compose.ui.unit.min
 
-/** The colors the engine draws itself; from :designsystem tokens once it merges. */
-data class SheetColors(
-    val panel: Color,     // --panel
-    val scrim: Color,     // --scrim
-    val chevron: Color,   // --t2 (T-2)
-) {
+/** The colors the engine draws itself (G-1): `--panel`, `--scrim` and `--t2` for the T-2 chevron. */
+data class SheetColors(val panel: Color, val scrim: Color, val chevron: Color) {
     companion object {
-        /** Until the screens (#58) take the :designsystem theme's `--panel`, `--scrim` and `--t2`. */
-        val Placeholder = SheetColors(panel = Color.White, scrim = Color.Black.copy(alpha = 0.32f), chevron = Color.Gray)
+        @Composable
+        fun theme() = CluetoothTheme.colors.let { SheetColors(panel = it.panel, scrim = it.scrim, chevron = it.t2) }
     }
 }
 
@@ -69,7 +68,7 @@ object SheetTags {
 @Composable
 fun PhoneSheetHost(
     controller: SheetStackController,
-    colors: SheetColors,
+    colors: SheetColors = SheetColors.theme(),
     modifier: Modifier = Modifier,
     metrics: SheetMetrics = SheetMetrics(),
     sheet: @Composable (SheetEntry) -> Unit,
@@ -87,6 +86,7 @@ fun PhoneSheetHost(
             label = "scrim",
         )
         val slopPx = with(density) { metrics.slop.toPx() }
+        val sheetShape = RoundedCornerShape(topStart = metrics.sheetRadius, topEnd = metrics.sheetRadius)
         for (entry in controller.rendered) {
             if (entry === top && scrimAlpha > 0f) {
                 key("scrim") { Scrim(colors.scrim, scrimAlpha) { controller.pop(PopReason.Scrim) } }
@@ -98,7 +98,8 @@ fun PhoneSheetHost(
                         .height(sheetHeight)
                         .sheetOffset(controller, entry)
                         .testTag(SheetTags.sheet(entry))
-                        .clip(RoundedCornerShape(topStart = metrics.sheetRadius, topEnd = metrics.sheetRadius))
+                        .tokenShadow(CluetoothTheme.shadows.shadowSheet, sheetShape)
+                        .clip(sheetShape)
                         .background(colors.panel)
                         .sheetWheel(controller, entry)
                         .sheetGestures(controller, entry),
@@ -135,20 +136,20 @@ private fun Scrim(color: Color, alpha: Float, onTap: () -> Unit) {
 
 /**
  * The tablet panel (T-1, T-2): one floating column at the left holding only the top level. Open is the full column;
- * Partial keeps the top edge and shrinks to 45 % of it (at least [SheetMetrics.panelPartialMin]), with a fade and a
+ * Partial keeps the top edge and shrinks to `--panel-partial-h` (45 %, at least about three rows), with a fade and a
  * chevron that opens it again. A header tap toggles; there is no drag, no Half and no scrim.
  */
 @Composable
 fun TabletPanelHost(
     controller: SheetStackController,
-    colors: SheetColors,
+    colors: SheetColors = SheetColors.theme(),
     modifier: Modifier = Modifier,
     metrics: SheetMetrics = SheetMetrics(),
     sheet: @Composable (SheetEntry) -> Unit,
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
         val column = maxHeight - metrics.topZone - metrics.edge
-        val partial = min(column, max(column * metrics.panelPartialFraction, metrics.panelPartialMin))
+        val partial = min(column, metrics.panelPartial(maxHeight))
         val top = controller.top
         val open = top.panel == PanelHeight.Open
         val ms = if (metrics.reducedMotion) 0 else metrics.stdMs
@@ -160,6 +161,7 @@ fun TabletPanelHost(
                 .width(metrics.panelWidth)
                 .height(height)
                 .testTag(SheetTags.PANEL)
+                .tokenShadow(CluetoothTheme.shadows.shadowRaised, RoundedCornerShape(metrics.panelRadius))
                 .clip(RoundedCornerShape(metrics.panelRadius))
                 .background(colors.panel),
         ) {
@@ -185,20 +187,10 @@ fun TabletPanelHost(
                         .clickable(enabled = !open, onClick = controller::expandPanel),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Chevron(colors.chevron)
+                    Icon(Glyphs.panelMore, Strings.ExpandPanel, tint = colors.chevron)
                 }
             }
         }
-    }
-}
-
-/** T-2's shallow V, handle-sized. */
-@Composable
-private fun Chevron(color: Color) {
-    Canvas(Modifier.size(width = 36.dp, height = 10.dp)) {
-        val stroke = 2.dp.toPx()
-        drawLine(color, Offset(0f, 0f), Offset(size.width / 2, size.height), stroke, StrokeCap.Round)
-        drawLine(color, Offset(size.width / 2, size.height), Offset(size.width, 0f), stroke, StrokeCap.Round)
     }
 }
 
@@ -216,8 +208,10 @@ fun SheetFrame(
 ) {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxWidth().onSizeChanged { entry.peek = it.height.toFloat() }) {
-            if (!controller.tablet) Box(Modifier.fillMaxWidth().height(metrics.handleZone))
-            header()
+            Handle(tablet = controller.tablet)
+            // S-2, S-3, T-3: the header line's centre sits on the corner arc's centre (48 dp deep on phone, under
+            // the handle zone; 30 dp on tablet), with the prototype's 8 dp under it (`.sheet-top` min-height).
+            Box(Modifier.fillMaxWidth().padding(top = Concentric.cornerButton(controller.tablet), bottom = HEADER_BELOW)) { header() }
         }
         Box(Modifier.fillMaxWidth().weight(1f)) { body() }
     }
@@ -234,3 +228,6 @@ fun rememberSheetStackController(
     val scope = rememberCoroutineScope()
     return remember { SheetStackController(scope, composeOffsetAnimator(metrics), metrics, hooks, root, rootHeight) }
 }
+
+/** The space under a sheet's header line: `.sheet-top` min-height = corner + header / 2 + 8 px. */
+private val HEADER_BELOW = Tokens.panelPad
