@@ -357,6 +357,10 @@ Design principles for app and core code (they take precedence over the more spec
     panic (use `get`); enforced with clippy `deny` lints. Every FFI function returns `Result<_, CoreError>`, and
     `:core-bridge` maps every binding exception (including UniFFI's panic `InternalException`) to a typed
     `CoreException`.
+  - Fallible APIs return typed result values (for example `CoreResult<T>` = `Ok(value) | Err(CoreError)` with a
+    sealed error type), never throw: `:core-api`, `:platform-api` and module boundaries included. Callers must
+    handle the error case to compile. Exceptions exist only inside the bridge and platform runners, which
+    convert them into result values at the boundary.
   - Every platform call (Android, MapLibre, SQLite) happens in a runner that turns any exception into a typed
     failure event. Every top-level coroutine scope has a handler that moves its state to `Failed`.
   - `//scanner:check` and `//cluetooth-core:check` fail on a violation; a rare justified exception needs an

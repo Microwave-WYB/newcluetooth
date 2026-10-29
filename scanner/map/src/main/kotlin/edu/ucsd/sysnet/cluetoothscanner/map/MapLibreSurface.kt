@@ -28,6 +28,8 @@ class MapLibreSurface(
     private val listener: MapSurfaceListener,
     /** `--drag-slop` (G-13). */
     slopDp: Float,
+    /** A MapLibre call inside one of the map's own callbacks (a tap's hit test) threw. */
+    private val onFailure: (String, Throwable) -> Unit = { _, _ -> },
 ) : MapSurface {
     private val density = view.resources.displayMetrics.density
 
@@ -38,6 +40,8 @@ class MapLibreSurface(
      */
     var style: Style? = null
 
+    override val styleReady: Boolean get() = style != null
+
     /** For instrumented tests. */
     internal val mapView: MapView get() = view
     internal val maplibre: MapLibreMap get() = map
@@ -47,7 +51,12 @@ class MapLibreSurface(
     }
     private val idle = MapLibreMap.OnCameraIdleListener { listener.onIdle() }
     private val click = MapLibreMap.OnMapClickListener { latLng ->
-        listener.onTap(hitAt(latLng))
+        // a hit test that throws reports the failure and taps nothing (not an empty-map tap)
+        try {
+            listener.onTap(hitAt(latLng))
+        } catch (e: Exception) {
+            onFailure("hitTest", e)
+        }
         true
     }
 
@@ -95,7 +104,7 @@ class MapLibreSurface(
         }
 
     override fun setGeoJson(source: String, geojson: String) {
-        style?.getSourceAs<GeoJsonSource>(source)?.setGeoJson(geojson)
+        (style?.getSource(source) as? GeoJsonSource)?.setGeoJson(geojson)
     }
 
     override fun applySelection(props: List<SelectionProp>) {
@@ -117,7 +126,7 @@ class MapLibreSurface(
 
     override fun clusterExpansionZoom(hit: Hit): Int? {
         val feature = hit.native as? Feature ?: return null
-        return style?.getSourceAs<GeoJsonSource>("devices")?.getClusterExpansionZoom(feature)
+        return (style?.getSource("devices") as? GeoJsonSource)?.getClusterExpansionZoom(feature)
     }
 
     /** M-7: the topmost feature in an 8 dp box around the finger, layer by layer from the top. */

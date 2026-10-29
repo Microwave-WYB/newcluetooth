@@ -59,13 +59,14 @@ fun LocationPopover(status: LocationStatus, onAction: (LocationStatus.Action) ->
             .padding(Tokens.popPad)
             .testTag("locationPopover"),
     ) {
-        val label = locationActionLabel(status.action)
+        val action = status.action
+        val label = locationActionLabel(action)
         Text(
             message,
             Modifier.padding(bottom = if (label != null) Css.LocPop_P.margin.bottom else Dp(0f)),
             style = CluetoothTheme.type.control.copy(fontSize = Css.LocPop_P.fontSize.sp, lineHeight = Css.LocPop_P.lineHeight.sp),
         )
-        if (label != null) Button(label, { onAction(status.action!!) }, kind = ButtonKind.Primary, small = true)
+        if (action != null && label != null) Button(label, { onAction(action) }, kind = ButtonKind.Primary, small = true)
     }
     }
 }

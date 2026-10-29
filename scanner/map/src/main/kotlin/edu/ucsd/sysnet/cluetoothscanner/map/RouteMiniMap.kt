@@ -10,7 +10,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -19,18 +18,21 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
-import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
-import edu.ucsd.sysnet.cluetoothscanner.map.camera.Padding
-import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
-import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.map.style.BundledGlyphs
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapStyleSpec
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme
 import edu.ucsd.sysnet.cluetoothscanner.map.style.StyleInstaller
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniFrame
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapEffect
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapEvent
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapReducer
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapState
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniTarget
+import edu.ucsd.sysnet.cluetoothscanner.map.model.SnapshotterId
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -68,71 +70,117 @@ fun RouteMiniMap(
     val density = LocalDensity.current.density
     val spec = remember { MapAssets.style(context) }
     var size by remember { mutableStateOf(IntSize.Zero) }
-    var image by remember { mutableStateOf<Bitmap?>(null) }
-    val currentRoute by rememberUpdatedState(route)
-    val currentFallback by rememberUpdatedState(fallback)
+    val runner = remember { MiniMapRunner(context, spec) }
     val theme = if (dark) MapTheme.Dark else MapTheme.Light
-    val holder = remember { arrayOfNulls<MapSnapshotter>(1) }
-    DisposableEffect(Unit) { onDispose { holder[0]?.cancel(); holder[0] = null } }
+    DisposableEffect(runner) { onDispose { runner.dispatch(MiniMapEvent.Disposed) } }
+    LaunchedEffect(route, fallback) { runner.dispatch(MiniMapEvent.Inputs(route, fallback)) }
 
-    // One snapshotter per size and theme, reused: each refresh only moves its camera and updates its two sources,
-    // and a refresh with the same route and camera takes no new snapshot.
-    LaunchedEffect(size, theme, baseStyleJson) {
-        if (size.width == 0 || size.height == 0) return@LaunchedEffect
-        MapLibre.getInstance(context.applicationContext)
-        BundledGlyphs.install(context, spec)
-        holder[0]?.cancel()
-        holder[0] = null
-        var rendered: Pair<List<GeoPoint>, CameraSnapshot>? = null
-        var inFlight = false
+    // refreshed when it appears and every 10 s while shown
+    LaunchedEffect(size, density, theme, baseStyleJson) {
+        val frame = if (size.width == 0 || size.height == 0) null else MiniFrame(size.width, size.height, density, theme, baseStyleJson)
+        runner.dispatch(MiniMapEvent.Configure(frame))
+        if (frame == null) return@LaunchedEffect
         while (true) {
-            val r = currentRoute
-            val camera = miniMapCamera(r, currentFallback, size.width / density, size.height / density)
-            if (camera != null && !inFlight && rendered != (r to camera)) {
-                val position = CameraPosition.Builder().target(LatLng(camera.center.lat, camera.center.lon)).zoom(camera.zoom).build()
-                var snapshotter = holder[0]
-                if (snapshotter == null) {
-                    // logical size in dp at the screen's pixel ratio, so the labels have their 12 sp size
-                    val options = MapSnapshotter.Options((size.width / density).toInt(), (size.height / density).toInt())
-                        .withPixelRatio(density)
-                        .withLogo(false)
-                        .withStyleBuilder(miniMapStyle(spec, theme, r, baseStyleJson))
-                        .withCameraPosition(position)
-                    options.showAttribution = false
-                    snapshotter = MapSnapshotter(context, options).also { holder[0] = it }
-                    MiniMapStats.created++
-                } else {
-                    (snapshotter.getSource("route") as? GeoJsonSource)?.setGeoJson(GeoJson.routes(listOf(r)))
-                    (snapshotter.getSource("ends") as? GeoJsonSource)?.setGeoJson(GeoJson.ends(r, spec.endProperties))
-                    snapshotter.setCameraPosition(position)
-                }
-                inFlight = true
-                val target = r to camera
-                snapshotter.start(
-                    { snapshot -> image = snapshot.bitmap; rendered = target; inFlight = false; MiniMapStats.snapshots++ },
-                    { inFlight = false /* keep the previous image */ },
-                )
-            }
-            delay(REFRESH_MS)
+            runner.dispatch(MiniMapEvent.Tick)
+            delay(MiniMapReducer.REFRESH_MS)
         }
     }
 
     Box(modifier.onSizeChanged { size = it }) {
-        image?.let { Image(it.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop) }
+        runner.image?.let { Image(it.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop) }
     }
+}
+
+/**
+ * The mini map's runner: it owns the MapSnapshotter (main thread) and executes [MiniMapReducer]'s effects; every
+ * MapLibre call that throws becomes a Failed event.
+ */
+private class MiniMapRunner(private val context: android.content.Context, private val spec: MapStyleSpec) {
+    private var state = MiniMapState.Initial
+    private var snapshotter: MapSnapshotter? = null
+    var image by mutableStateOf<Bitmap?>(null)
+        private set
+
+    /** Reduces [event] and executes its effects; each effect runs in [guarded], so a throw is a Failed event. */
+    fun dispatch(event: MiniMapEvent) {
+        val step = try {
+            MiniMapReducer.reduce(state, event)
+        } catch (e: Exception) {
+            return
+        }
+        state = step.state
+        for (effect in step.effects) execute(effect)
+    }
+
+    private fun execute(effect: MiniMapEffect) {
+        when (effect) {
+            is MiniMapEffect.Create -> guarded(effect.id) {
+                MapLibre.getInstance(context.applicationContext)
+                BundledGlyphs.install(context, spec)
+                val f = effect.frame
+                // logical size in dp at the screen's pixel ratio, so the labels have their 12 sp size
+                val options = MapSnapshotter.Options(f.widthDp.toInt(), f.heightDp.toInt())
+                    .withPixelRatio(f.density)
+                    .withLogo(false)
+                    .withStyleBuilder(miniMapStyle(spec, f.theme, effect.target, f.baseStyleJson))
+                    .withCameraPosition(position(effect.target.camera))
+                options.showAttribution = false
+                snapshotter = MapSnapshotter(context, options)
+                MiniMapStats.created++
+            }
+            is MiniMapEffect.Update -> guarded(effect.id) {
+                val s = snapshotter ?: return@guarded
+                (s.getSource("route") as? GeoJsonSource)?.setGeoJson(GeoJson.routes(listOf(effect.target.route)))
+                (s.getSource("ends") as? GeoJsonSource)?.setGeoJson(endsJson(spec, effect.target))
+                s.setCameraPosition(position(effect.target.camera))
+            }
+            is MiniMapEffect.Start -> guarded(effect.id) {
+                val s = snapshotter ?: return@guarded dispatch(MiniMapEvent.Failed(effect.id))
+                s.start(
+                    { snapshot ->
+                        image = snapshot.bitmap
+                        MiniMapStats.snapshots++
+                        dispatch(MiniMapEvent.Done(effect.id, effect.target))
+                    },
+                    { dispatch(MiniMapEvent.Failed(effect.id)) },
+                )
+            }
+            MiniMapEffect.Cancel -> {
+                val s = snapshotter
+                snapshotter = null
+                // the snapshotter is being dropped: nothing waits on it, so a failed cancel needs no event
+                guarded(null) { s?.cancel() }
+            }
+        }
+    }
+
+    /** The runner's one wrapper around every MapLibre call; a throw fails the snapshot of [id] (if any). */
+    private fun guarded(id: SnapshotterId?, call: () -> Unit) {
+        try {
+            call()
+        } catch (e: Exception) {
+            if (id != null) dispatch(MiniMapEvent.Failed(id))
+        }
+    }
+
+    private fun position(camera: CameraSnapshot) =
+        CameraPosition.Builder().target(LatLng(camera.center.lat, camera.center.lon)).zoom(camera.zoom).build()
 }
 
 /** The prototype's miniMap framing: the route's bounds with 28 dp padding, at most zoom 16. */
 internal fun miniMapCamera(route: List<GeoPoint>, fallback: GeoPoint?, widthDp: Float, heightDp: Float) =
-    (MapGeometry.bboxOf(route) ?: fallback?.let { Bbox(it.lon, it.lat, it.lon, it.lat) })?.let { bbox ->
-        MapGeometry.fit(bbox, Viewport(widthDp.toDouble(), heightDp.toDouble()), Padding(28.0, 28.0, 28.0, 28.0), maxZoom = 16.0)
-    }
+    MiniMapReducer.camera(route, fallback, widthDp, heightDp)
 
-private fun miniMapStyle(spec: MapStyleSpec, theme: MapTheme, route: List<GeoPoint>, baseStyleJson: String?): Style.Builder {
-    if (baseStyleJson != null) return Style.Builder().fromJson(miniMapStyleJson(baseStyleJson, spec, theme, route))
+/** M-8: the target's Start and End, or none when the reducer hid them (the session barely moved). */
+private fun endsJson(spec: MapStyleSpec, target: MiniTarget) =
+    if (target.showEnds) GeoJson.ends(target.route, spec.endProperties) else GeoJson.EMPTY
+
+private fun miniMapStyle(spec: MapStyleSpec, theme: MapTheme, target: MiniTarget, baseStyleJson: String?): Style.Builder {
+    val route = target.route
+    if (baseStyleJson != null) return Style.Builder().fromJson(miniMapStyleJson(baseStyleJson, spec, theme, target))
     val builder = Style.Builder().fromUri(spec.baseStyleUrl(theme))
     builder.withSource(GeoJsonSource("route", GeoJson.routes(listOf(route))))
-    builder.withSource(GeoJsonSource("ends", GeoJson.ends(route, spec.endProperties)))
+    builder.withSource(GeoJsonSource("ends", endsJson(spec, target)))
     StyleInstaller.layers(spec.miniMapLayers(theme)).forEach(builder::withLayer)
     return builder
 }
@@ -142,18 +190,17 @@ private fun miniMapStyle(spec: MapStyleSpec, theme: MapTheme, route: List<GeoPoi
  * style inside its constructor and then adds builder sources through a native peer that does not exist yet
  * ("invalid native peer"), so with a JSON base nothing goes through the builder.
  */
-internal fun miniMapStyleJson(baseStyleJson: String, spec: MapStyleSpec, theme: MapTheme, route: List<GeoPoint>): String {
+internal fun miniMapStyleJson(baseStyleJson: String, spec: MapStyleSpec, theme: MapTheme, target: MiniTarget): String {
+    val route = target.route
     val base = Json.parseToJsonElement(baseStyleJson).jsonObject
     fun source(geojson: String) = JsonObject(mapOf("type" to JsonPrimitive("geojson"), "data" to Json.parseToJsonElement(geojson)))
     val sources = JsonObject((base["sources"]?.jsonObject ?: JsonObject(emptyMap())) + mapOf(
         "route" to source(GeoJson.routes(listOf(route))),
-        "ends" to source(GeoJson.ends(route, spec.endProperties)),
+        "ends" to source(endsJson(spec, target)),
     ))
     val layers = JsonArray((base["layers"]?.jsonArray ?: JsonArray(emptyList())) + spec.miniMapLayers(theme))
     return JsonObject(base + mapOf("sources" to sources, "layers" to layers)).toString()
 }
-
-private const val REFRESH_MS = 10_000L
 
 /** Instrumented tests check that refreshes reuse one snapshotter. */
 internal object MiniMapStats {
