@@ -7,7 +7,8 @@
 use crate::config::{
     INPUT_FIXED_ESTIMATE_BYTES, MAX_INPUT_BATCH_ESTIMATED_BYTES, MAX_INPUT_BATCH_ROWS,
 };
-use crate::payload::MAX_RAW_BYTES;
+use crate::payload::{MAX_RAW_BYTES, SchemaV3Row, validate_rows};
+use crate::scan::sanitize_local_name;
 use crate::{LocationFix, ScanEnvironment, ScanObservationInput};
 
 use super::error::CoreError;
@@ -71,8 +72,11 @@ pub(crate) const STORAGE_FLOOR_BYTES: u64 = 200_000_000;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Rec {
     Idle,
-    /// The session row is being created.
-    Starting(Session),
+    /// The payload session and the session row are being created; the id comes back with them.
+    Starting {
+        started: EpochMs,
+        env: ScanEnvironment,
+    },
     Recording {
         session: Session,
         row: SessionRow,
@@ -105,9 +109,8 @@ pub(crate) enum Rec {
 impl Rec {
     pub fn session(&self) -> Option<&Session> {
         match self {
-            Rec::Idle => None,
-            Rec::Starting(s)
-            | Rec::Recording { session: s, .. }
+            Rec::Idle | Rec::Starting { .. } => None,
+            Rec::Recording { session: s, .. }
             | Rec::Pausing { session: s, .. }
             | Rec::Paused { session: s, .. }
             | Rec::Stopping { session: s, .. } => Some(s),
@@ -117,7 +120,7 @@ impl Rec {
     /// The session row; `None` while idle or while it is being created.
     pub fn row(&self) -> Option<SessionRow> {
         match self {
-            Rec::Idle | Rec::Starting(_) => None,
+            Rec::Idle | Rec::Starting { .. } => None,
             Rec::Recording { row, .. }
             | Rec::Pausing { row, .. }
             | Rec::Paused { row, .. }
@@ -133,7 +136,7 @@ impl Rec {
                 ..
             } => true,
             Rec::Idle
-            | Rec::Starting(_)
+            | Rec::Starting { .. }
             | Rec::Recording { .. }
             | Rec::Pausing { .. }
             | Rec::Paused {
@@ -148,7 +151,7 @@ impl Rec {
     pub fn phase(&self) -> RecordingPhase {
         match self {
             Rec::Idle => RecordingPhase::Idle,
-            Rec::Starting(_) | Rec::Recording { .. } | Rec::Pausing { .. } => {
+            Rec::Starting { .. } | Rec::Recording { .. } | Rec::Pausing { .. } => {
                 RecordingPhase::Recording
             }
             Rec::Paused { .. } => RecordingPhase::Paused,
@@ -163,7 +166,7 @@ impl Rec {
     pub fn active(&self) -> (Millis, Option<EpochMs>) {
         match self {
             Rec::Idle => (Millis(0), None),
-            Rec::Starting(s) => (Millis(0), Some(s.started)),
+            Rec::Starting { started, .. } => (Millis(0), Some(*started)),
             Rec::Recording {
                 active_before,
                 running_since,
@@ -186,9 +189,8 @@ impl Rec {
     fn with_last_commit(&self, at: EpochMs) -> Rec {
         let mut next = self.clone();
         match &mut next {
-            Rec::Idle => {}
-            Rec::Starting(s)
-            | Rec::Recording { session: s, .. }
+            Rec::Idle | Rec::Starting { .. } => {}
+            Rec::Recording { session: s, .. }
             | Rec::Pausing { session: s, .. }
             | Rec::Paused { session: s, .. }
             | Rec::Stopping { session: s, .. } => s.last_commit = at,
@@ -302,7 +304,6 @@ fn estimate(o: &ScanObservationInput) -> u64 {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Event {
     Start {
-        uuid: SessionUuid,
         env: ScanEnvironment,
         now: EpochMs,
     },
@@ -344,7 +345,7 @@ pub(crate) enum Event {
     },
     /// Result of [`Effect::CreateSession`].
     SessionCreated {
-        result: Result<SessionRow, CoreError>,
+        result: Result<(SessionUuid, SessionRow), CoreError>,
     },
     /// Result of [`Effect::Commit`].
     Committed {
@@ -367,9 +368,15 @@ pub(crate) enum Reply {
 pub(crate) enum Effect {
     /// Insert the session row; answer with [`Event::SessionCreated`].
     CreateSession {
-        uuid: SessionUuid,
+        env: ScanEnvironment,
         started: EpochMs,
     },
+    /// The scanner settings of the payload footer (a change seals the payload under the old ones).
+    ConfigureScan {
+        env: ScanEnvironment,
+    },
+    /// Seal the active payload into `pending/` now (close).
+    SealPayload,
     /// Forget the previous recording's live state.
     ResetLive,
     /// Append accepted rows to the pending buffer (their fixes from the ring) and to the live state.
@@ -443,11 +450,39 @@ pub(crate) fn validate(
     let mut accepted = Vec::with_capacity(batch.len());
     for input in batch {
         match key_of(&input.addr) {
-            Some(key) if input.raw.len() <= MAX_RAW_BYTES => accepted.push(Accepted { key, input }),
+            Some(key) if input.raw.len() <= MAX_RAW_BYTES && payload_row_valid(&input) => {
+                accepted.push(Accepted { key, input })
+            }
             _ => rejected += 1,
         }
     }
     Ok((accepted, rejected))
+}
+
+/// The payload v3 row rules (`validate_rows`), so a row the local DB keeps is also a row the Parquet payload
+/// keeps (§2.4 commit gating). The location is checked when the fix is taken, so it is left out here.
+fn payload_row_valid(input: &ScanObservationInput) -> bool {
+    let row = SchemaV3Row {
+        addr: input.addr.clone(),
+        rssi: input.rssi.map(i32::from),
+        scanned_at_ms: input.scanned_at_ms,
+        raw: input.raw.clone(),
+        local_name: sanitize_local_name(input.local_name.clone()),
+        tx_power: input.tx_power.map(i32::from),
+        is_connectable: input.is_connectable,
+        lat: None,
+        lon: None,
+        accuracy: None,
+        is_legacy: input.is_legacy,
+        primary_phy: input.primary_phy,
+        secondary_phy: input.secondary_phy,
+        adv_sid: input.adv_sid,
+        adv_tx_power: input.adv_tx_power,
+        periodic_interval: input.periodic_interval,
+        data_status: input.data_status,
+        addr_type: input.addr_type,
+    };
+    validate_rows(std::slice::from_ref(&row)).is_ok()
 }
 
 fn reply(e: CoreError) -> Effect {
@@ -460,34 +495,34 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
     let with = |rec: Rec| Control { rec, ..c.clone() };
     let same = |effects: Vec<Effect>| (c.clone(), effects);
     match event {
-        Event::Start { uuid, env, now } => match &c.rec {
-            Rec::Idle => {
-                let session = Session {
-                    uuid: uuid.clone(),
+        Event::Start { env, now } => match &c.rec {
+            Rec::Idle => (
+                with(Rec::Starting {
                     started: now,
-                    env,
-                    last_commit: now,
-                };
-                (
-                    with(Rec::Starting(session)),
-                    vec![E::CreateSession { uuid, started: now }],
-                )
-            }
-            Rec::Starting(_)
+                    env: env.clone(),
+                }),
+                vec![E::CreateSession { env, started: now }],
+            ),
+            Rec::Starting { .. }
             | Rec::Recording { .. }
             | Rec::Pausing { .. }
             | Rec::Paused { .. }
             | Rec::Stopping { .. } => same(vec![reply(CoreError::AlreadyRecording)]),
         },
         Event::SessionCreated { result } => match &c.rec {
-            Rec::Starting(s) => match result {
-                Ok(row) => (
+            Rec::Starting { started, env } => match result {
+                Ok((uuid, row)) => (
                     Control {
                         rec: Rec::Recording {
-                            session: s.clone(),
+                            session: Session {
+                                uuid: uuid.clone(),
+                                started: *started,
+                                env: env.clone(),
+                                last_commit: *started,
+                            },
                             row,
                             active_before: Millis(0),
-                            running_since: s.started,
+                            running_since: *started,
                         },
                         buffer: Buffer::default(),
                         ..c.clone()
@@ -496,7 +531,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                         E::ResetLive,
                         E::Snapshot,
                         E::EmitRecordingChanged,
-                        E::Reply(Reply::Session(s.uuid.clone())),
+                        E::Reply(Reply::Session(uuid)),
                     ],
                 ),
                 Err(e) => (with(Rec::Idle), vec![reply(e)]),
@@ -547,7 +582,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                     free_bytes: *free_bytes,
                 })]),
                 Rec::Idle
-                | Rec::Starting(_)
+                | Rec::Starting { .. }
                 | Rec::Pausing { .. }
                 | Rec::Paused {
                     reason: PauseReason::User,
@@ -584,7 +619,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                 },
             },
             Rec::Idle
-            | Rec::Starting(_)
+            | Rec::Starting { .. }
             | Rec::Pausing { .. }
             | Rec::Paused { .. }
             | Rec::Stopping { .. } => same(vec![]),
@@ -607,7 +642,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                 vec![E::Commit { row: *row, now }],
             ),
             Rec::Paused { .. } => same(vec![E::Reply(Reply::Done)]),
-            Rec::Idle | Rec::Starting(_) | Rec::Pausing { .. } | Rec::Stopping { .. } => {
+            Rec::Idle | Rec::Starting { .. } | Rec::Pausing { .. } | Rec::Stopping { .. } => {
                 same(vec![reply(CoreError::NotRecording)])
             }
         },
@@ -643,7 +678,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                 ],
             ),
             Rec::Recording { .. } => same(vec![E::Reply(Reply::Done)]),
-            Rec::Idle | Rec::Starting(_) | Rec::Pausing { .. } | Rec::Stopping { .. } => {
+            Rec::Idle | Rec::Starting { .. } | Rec::Pausing { .. } | Rec::Stopping { .. } => {
                 same(vec![reply(CoreError::NotRecording)])
             }
         },
@@ -678,7 +713,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                 }),
                 vec![E::Commit { row: *row, now }],
             ),
-            Rec::Idle | Rec::Starting(_) | Rec::Pausing { .. } | Rec::Stopping { .. } => {
+            Rec::Idle | Rec::Starting { .. } | Rec::Pausing { .. } | Rec::Stopping { .. } => {
                 same(vec![reply(CoreError::NotRecording)])
             }
         },
@@ -691,14 +726,14 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
             } => (
                 with(Rec::Recording {
                     session: Session {
-                        env,
+                        env: env.clone(),
                         ..session.clone()
                     },
                     row: *row,
                     active_before: *active_before,
                     running_since: *running_since,
                 }),
-                vec![E::Reply(Reply::Done)],
+                vec![E::ConfigureScan { env }, E::Reply(Reply::Done)],
             ),
             Rec::Paused {
                 session,
@@ -708,16 +743,16 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
             } => (
                 with(Rec::Paused {
                     session: Session {
-                        env,
+                        env: env.clone(),
                         ..session.clone()
                     },
                     row: *row,
                     active_before: *active_before,
                     reason: *reason,
                 }),
-                vec![E::Reply(Reply::Done)],
+                vec![E::ConfigureScan { env }, E::Reply(Reply::Done)],
             ),
-            Rec::Idle | Rec::Starting(_) | Rec::Pausing { .. } | Rec::Stopping { .. } => {
+            Rec::Idle | Rec::Starting { .. } | Rec::Pausing { .. } | Rec::Stopping { .. } => {
                 same(vec![reply(CoreError::NotRecording)])
             }
         },
@@ -727,7 +762,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                 let route = match &c.rec {
                     Rec::Recording { .. } => true,
                     Rec::Idle
-                    | Rec::Starting(_)
+                    | Rec::Starting { .. }
                     | Rec::Pausing { .. }
                     | Rec::Paused { .. }
                     | Rec::Stopping { .. } => false,
@@ -755,10 +790,12 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
             vec![E::SetListener, E::Reply(Reply::Done)],
         ),
         Event::Close { now } => match &c.rec {
-            Rec::Recording { row, .. } | Rec::Paused { row, .. } => {
-                same(vec![E::Commit { row: *row, now }, E::Reply(Reply::Done)])
-            }
-            Rec::Idle | Rec::Starting(_) | Rec::Pausing { .. } | Rec::Stopping { .. } => {
+            Rec::Recording { row, .. } | Rec::Paused { row, .. } => same(vec![
+                E::Commit { row: *row, now },
+                E::SealPayload,
+                E::Reply(Reply::Done),
+            ]),
+            Rec::Idle | Rec::Starting { .. } | Rec::Pausing { .. } | Rec::Stopping { .. } => {
                 same(vec![E::Reply(Reply::Done)])
             }
         },
@@ -896,7 +933,7 @@ fn committed(
                     effects,
                 )
             }
-            Rec::Idle | Rec::Starting(_) | Rec::Paused { .. } => (
+            Rec::Idle | Rec::Starting { .. } | Rec::Paused { .. } => (
                 Control {
                     rec,
                     buffer: Buffer::default(),
@@ -960,7 +997,9 @@ fn committed(
                         },
                     }
                 }
-                Rec::Idle | Rec::Starting(_) | Rec::Recording { .. } | Rec::Paused { .. } => rec,
+                Rec::Idle | Rec::Starting { .. } | Rec::Recording { .. } | Rec::Paused { .. } => {
+                    rec
+                }
             };
             (
                 Control {
@@ -1016,7 +1055,7 @@ fn committed(
                     ok(Rec::Idle),
                     finished(&session, row, active_before, running_since, at),
                 ),
-                Rec::Idle | Rec::Starting(_) | Rec::Paused { .. } => (ok(rec), vec![]),
+                Rec::Idle | Rec::Starting { .. } | Rec::Paused { .. } => (ok(rec), vec![]),
             }
         }
     }
@@ -1083,7 +1122,7 @@ mod tests {
             for effect in &effects {
                 match effect {
                     Effect::CreateSession { .. } => queue.push_front(Event::SessionCreated {
-                        result: Ok(SessionRow(1)),
+                        result: Ok((uuid(), SessionRow(1))),
                     }),
                     Effect::Commit { .. } => queue.push_front(Event::Committed {
                         result: if commit_ok {
@@ -1103,7 +1142,6 @@ mod tests {
 
     fn start() -> Event {
         Event::Start {
-            uuid: uuid(),
             env: env(),
             now: EpochMs(1_000),
         }

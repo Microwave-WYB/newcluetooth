@@ -32,6 +32,8 @@ mod types;
 
 #[cfg(test)]
 mod parity_tests;
+#[cfg(test)]
+mod staging_tests;
 
 pub use core::{API_VERSION, Core, CoreListener, match_device};
 pub use error::CoreError;

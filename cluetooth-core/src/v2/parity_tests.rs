@@ -39,7 +39,7 @@ fn env() -> ScanEnvironment {
 pub(crate) fn config(dir: &std::path::Path) -> CoreConfig {
     CoreConfig {
         data_directory: dir.to_string_lossy().into_owned(),
-        recipient_public_key: vec![0; 32],
+        recipient_public_key: crate::default_core_config().recipient_public_key,
         location_max_age_ms: 5_000,
         payload_max_rows: 100_000,
         payload_max_estimated_bytes: 10 << 20,

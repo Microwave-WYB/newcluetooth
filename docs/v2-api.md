@@ -185,7 +185,7 @@ The data directory is `filesDir/cluetooth-core/`, the same as v3, so the in-plac
 | `pending/gatt/v1/…/<uuid>.json` | plaintext gatt/v1 awaiting upload | same |
 | `archive/sessions/<session>/scans/…`, `archive/gatt/v1/…` | uploaded plaintext | kept; removed only by Delete local data or "Delete uploaded raw files" (§2.4.1) |
 | `upload-cache/<object path>.encrypted` | ciphertext | transient (§1.6) |
-| `upload-state/`, `active-payload/`, `export-temp/` | as v3 | as v3 |
+| `upload-state/`, `active-payload/`, `export-temp/` | as v3; `upload-state/archive-deleted/<session>` marks a session whose uploaded files were deleted (R-10), so it stays Uploaded | as v3 |
 | `sessions/*.json` | pre-v2 session metadata | kept; these sessions are not imported into the DB |
 | `local.db` (+ `-wal`, `-shm`) | the v2 DB (§3) | kept; user deletion only |
 
@@ -497,7 +497,8 @@ impl Core {
 - **Resume** is the UI's call. It returns `Err(StorageFull)` while free space is still below the floor; above it,
   recording continues in the same session. A user pause is not a storage pause: its resume needs no free space.
 - **Delete uploaded raw files** removes the regular files under `archive/` (uploaded plaintext). `pending/` and the
-  upload markers are never touched.
+  upload markers are never touched. The payload core forgets the deleted files and marks their sessions, which stay
+  Uploaded in the session list; exporting a session's raw data needs the files, so it fails for those sessions.
 - **Clear local database** deletes every session except the current one with its rows, the GATT discoveries outside
   it and the payloads nothing references any more, recomputes the devices, then `VACUUM`s. No file is touched, so
   un-uploaded raw files still upload. When both actions are chosen, run Delete uploaded raw files first: the vacuum
