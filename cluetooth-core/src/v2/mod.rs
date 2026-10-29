@@ -1,8 +1,14 @@
 //! The v2 core (`docs/v2-api.md`). The v3 `CluetoothCore` stays alongside it until integration (§6.7).
 
+mod adv;
+mod catalog;
 mod core;
+mod db;
 mod error;
+mod keys;
+mod query;
 mod search;
+mod store;
 mod types;
 
 pub use core::{API_VERSION, Core, CoreListener, match_device};

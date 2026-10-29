@@ -27,6 +27,11 @@ fn strip_separators_lower(text: &str) -> String {
         .to_lowercase()
 }
 
+/// A blank query is no search (Q-1, Q-2).
+pub(crate) fn is_blank(query: &str) -> bool {
+    js_trim(query).is_empty()
+}
+
 /// Q-1: the trimmed query matches the name case-insensitively as a substring, or, only when it contains a digit,
 /// the address with ":" and "-" dropped on both sides. A blank query and a missing name never match by name.
 pub fn matches(query: &str, name: Option<&str>, addr: &str) -> bool {
