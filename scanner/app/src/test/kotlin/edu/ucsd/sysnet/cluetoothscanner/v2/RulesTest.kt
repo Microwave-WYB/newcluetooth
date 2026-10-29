@@ -56,7 +56,7 @@ class RulesTest {
         val root = listOf(File("src/main/kotlin"), File("app/src/main/kotlin")).first { it.isDirectory }
         val files = root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
         assertTrue(files.isNotEmpty())
-        val fakeCore = files.filter { "cluetoothscanner.fake.core" in it.readText() }.map { it.name }
+        val fakeCore = files.filter { "cluetoothscanner.fake.core" in it.readText() || "cluetoothscanner.corebridge" in it.readText() }.map { it.name }
         val fakePlatform = files.filter { "cluetoothscanner.platform.fake" in it.readText() }.map { it.name }
         assertEquals(listOf("CoreBinding.kt"), fakeCore)
         assertEquals(listOf("PlatformPlaceholders.kt"), fakePlatform)

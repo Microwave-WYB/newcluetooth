@@ -6,7 +6,9 @@ import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreStorage
-import edu.ucsd.sysnet.cluetoothscanner.fake.core.FakeCore
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreAssets
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreConfig
+import edu.ucsd.sysnet.cluetoothscanner.corebridge.CoreBridge
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 
@@ -31,18 +33,12 @@ internal class CoreInputs(context: Context) {
 }
 
 /**
- * THE core seam (temporary, integration step 1): the only file of :app that names a core implementation. It runs on
- * Dispatchers.IO and is called once per process (§1.2.2); the handle is never closed in normal life.
- *
- * The swap to the real core is the one line in [open]:
- *     CoreHandle.of(CoreBridge.open(CoreConfig(inputs.dataDirectory, inputs.recipientPublicKey),
- *                                   CoreAssets(inputs.wikiBundleJson, inputs.sigNumbersTsv)))
+ * THE core seam: the only file of :app that names a core implementation (the real one, :core-bridge, #59). It runs
+ * on Dispatchers.IO and is called once per process (§1.2.2); the handle is never closed in normal life.
  */
 internal object CoreBinding {
-    fun open(context: Context, scope: CoroutineScope): CoreHandle = fake(CoreInputs(context), scope)
-
-    /** :core-fake on the wall clock (its default demo clock would skew the recorder's locally ticked time). */
     @Suppress("UNUSED_PARAMETER")
-    private fun fake(inputs: CoreInputs, scope: CoroutineScope): CoreHandle =
-        CoreHandle.of(FakeCore(scope, clock = System::currentTimeMillis))
+    fun open(context: Context, scope: CoroutineScope): CoreHandle = CoreInputs(context).let { i ->
+        CoreHandle.of(CoreBridge.open(CoreConfig(i.dataDirectory, i.recipientPublicKey), CoreAssets(i.wikiBundleJson, i.sigNumbersTsv)))
+    }
 }
