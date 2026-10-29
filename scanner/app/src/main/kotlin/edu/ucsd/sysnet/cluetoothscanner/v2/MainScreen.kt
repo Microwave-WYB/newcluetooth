@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -52,6 +53,8 @@ import edu.ucsd.sysnet.cluetoothscanner.map.CluetoothMap
 import edu.ucsd.sysnet.cluetoothscanner.map.LocateControl
 import edu.ucsd.sysnet.cluetoothscanner.map.LocatePlacement
 import edu.ucsd.sysnet.cluetoothscanner.map.RouteMiniMap
+import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetsLayer
+import edu.ucsd.sysnet.cluetoothscanner.sheets.rememberSheetsState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 
 /**
@@ -86,11 +89,22 @@ fun MainScreen(vm: MainViewModel) {
             RecorderActions(vm::startRecording.let { f -> { f(); Unit } }, { vm.setRecorderPanel(true) }, { vm.setRecorderPanel(false) },
                 { vm.pause(); Unit }, { vm.resume(); Unit }, { vm.stop(); Unit }, vm::fitRoute)
         }
-        val sheetCover = if (hasSession && !tablet) PlaceholderPeek + nav else 0.dp
-        LaunchedEffect(tablet, hasSession, nav) {
+        // lane D's sheets for the shown scope (V-7: a new scope starts them fresh)
+        val sheets = ui.scope?.let { scope ->
+            rememberSheetsState(scope, live, ui.view?.routesFaint ?: (scope.sessions == SessionScope.All), r.core.queries,
+                vm.graph.gattRunner, r.map, reducedMotion = CluetoothTheme.motion.reduced)
+        }
+        DisposableEffect(sheets) { vm.sheets = sheets; onDispose { if (vm.sheets === sheets) vm.sheets = null } }
+        // P-3: the FAB sits above the root's collapsed peek (and the navigation bar); a rising sheet covers it
+        val rootPeekPx = sheets?.stack?.root?.peek?.takeUnless { it.isNaN() }
+        val sheetCover = if (sheets != null && !tablet) with(density) { (rootPeekPx ?: PlaceholderPeek.toPx()).toDp() } + nav else 0.dp
+        // M-10 / D-14: the map's padding is what the top sheet (phone) or the panel (tablet) covers
+        val heightPx = with(density) { maxHeight.toPx() }
+        val topOffsetPx = sheets?.let { it.stack.offsetOf(it.stack.top) }
+        LaunchedEffect(tablet, topOffsetPx, heightPx) {
             vm.setCover(
                 if (tablet) CoverInsets(top = Tokens.topZone.value.toInt(), bottom = 0, left = (Tokens.edge + Tokens.panelW).value.toInt(), right = 0)
-                else CoverInsets(top = Tokens.topZone.value.toInt(), bottom = sheetCover.value.toInt(), left = 0, right = 0),
+                else CoverInsets(top = Tokens.topZone.value.toInt(), bottom = with(density) { ((heightPx - (topOffsetPx ?: heightPx)).coerceAtLeast(0f)).toDp() }.value.toInt(), left = 0, right = 0),
             )
         }
         val miniMap: @Composable (Modifier) -> Unit = { m ->
@@ -111,9 +125,10 @@ fun MainScreen(vm: MainViewModel) {
                     onLocate = r.map::locate, onWarning = { vm.setLocationPopover(!ui.locationPopoverOpen) }, dark = CluetoothTheme.isDark,
                 )
                 if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, miniMap = miniMap)
-                // the sheet stack (lane D): a placeholder slot; on tablet ☰ swaps its content for the sessions (T-6)
-                if (hasSession) PlaceholderSheet(ui.view, tablet, nav, panelContent = if (tablet && ui.sidebarOpen) ({ sessions(Modifier) }) else null)
-                if (form != RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, searching = ui.searchQuery != null, miniMap = miniMap)
+                // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
+                if (sheets != null && !(tablet && ui.sidebarOpen)) SheetsLayer(sheets, tablet)
+                if (tablet && ui.sidebarOpen) SessionsPanel { sessions(Modifier) }
+                if (form != RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
                 if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, vm::locationFix) { vm.setLocationPopover(false) }
             }
         }
@@ -121,7 +136,8 @@ fun MainScreen(vm: MainViewModel) {
         val topState = TopChromeState(
             hasSession = hasSession, sidebarOpen = ui.sidebarOpen && !tablet, recorderPanelOpen = form == RecorderUi.Form.Panel && !tablet,
             recording = rec.phase != RecorderState.Phase.Idle, page = ui.search.takeIf { ui.page == Page.SearchPage },
-            searchQuery = ui.searchQuery, showSearchThisArea = ui.showSearchThisArea,
+            searchQuery = sheets?.discover?.search?.query?.takeIf { sheets.searching } ?: ui.searchQuery?.takeIf { sheets?.searching != false },
+            showSearchThisArea = sheets?.searchMovedAway == true,
         )
         val topActions = remember(vm) {
             TopChromeActions(vm::toggleSidebar, vm::openSearch, vm::closePage, vm::setQuery, vm::pick, vm::searchEverywhere,
@@ -130,7 +146,7 @@ fun MainScreen(vm: MainViewModel) {
         if (tablet) {
             main()
             TabletTopChrome(ui.sidebarOpen, ui.search?.query ?: ui.searchQuery.orEmpty(), ui.page == Page.SearchPage, ui.search, ui.searchRows, live,
-                topActions.forTablet(vm), showSearchThisArea = ui.showSearchThisArea)
+                topActions.forTablet(vm), showSearchThisArea = sheets?.searchMovedAway == true)
         } else {
             PhoneSidebarLayout(ui.sidebarOpen, vm::closeSidebar, sidebar = { m -> sessions(m) }) { main() }
             PhoneTopChrome(topState, topActions, ui.searchRows, live, statusInset = status)

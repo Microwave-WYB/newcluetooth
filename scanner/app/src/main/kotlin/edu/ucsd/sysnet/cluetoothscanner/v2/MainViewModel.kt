@@ -30,6 +30,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.onboardingSteps
 import edu.ucsd.sysnet.cluetoothscanner.map.CluetoothMapState
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
+import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetsState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
@@ -64,8 +65,6 @@ data class MainUiState(
     val onboarding: OnboardingUi? = null,
     val onboardingSteps: List<OnboardingStep> = emptyList(),
     val viewport: Bbox? = null,
-    /** Q-6: the user moved the map away from the searched area (M-11). */
-    val showSearchThisArea: Boolean = false,
 )
 
 
@@ -139,14 +138,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** V-7: a new session view resets search, closes the sidebar and refits the map (E frames on show). */
     fun selectScope(scope: Scope?) {
         _ui.update { it.copy(scope = scope, sidebarOpen = false, searchQuery = null, search = null, searchRows = emptyList(), page = it.page.takeIf { p -> p == Page.Settings }) }
+        searchOrder = null
         viewJob?.cancel()
         viewJob = viewModelScope.launch {
             val r = ready()
             if (scope == null) { _ui.update { it.copy(view = null, route = emptyList()) }; return@launch }
             val view = r.core.queries.sessionView(scope)
             _ui.update { it.copy(view = view, route = view.route) }
-            r.map.show(scope, DeviceFilter(), view.routesFaint)
-            refreshSessions()
+            refreshSessions() // the map follows the sheets' root (SheetsState.open, S-17); E frames the session
             // the live route and device count while this view is live (V-2); frozen views are read once
             while (view.live) {
                 delay(LIVE_REFRESH_MS)
@@ -215,19 +214,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- G-14 back ----
 
-    /** The sheet stack's back step (D's `DiscoverModel.handleBack()`); a placeholder slot until :sheets exposes it. */
-    var sheetsBack: suspend () -> Boolean = { false }
-    var sheetsHasPushed: () -> Boolean = { false }
+    /** Lane D's sheets for the shown scope (set by MainScreen while they are composed). */
+    var sheets: SheetsState? = null
 
     fun backLayers(state: MainUiState = _ui.value): BackLayers = state.let {
-        BackLayers(it.locationPopoverOpen, it.page != null, sheetsHasPushed(), it.sidebarOpen, it.recorderPanelOpen, it.searchQuery != null)
+        val s = sheets
+        BackLayers(it.locationPopoverOpen, it.page != null, s != null && s.stack.entries.size > 1, it.sidebarOpen, it.recorderPanelOpen,
+            s?.searching == true)
     }
 
     /** G-14: closes the topmost layer; false when nothing is open (Back leaves the app). */
     fun onBack(): Boolean = when (backTarget(backLayers())) {
         BackTarget.LocationPopover -> { setLocationPopover(false); true }
         BackTarget.Page -> { closePage(); true }
-        BackTarget.PushedSheet -> { viewModelScope.launch { sheetsBack() }; true }
+        BackTarget.PushedSheet -> { sheets?.handleBack(); true }
         BackTarget.Sidebar -> { closeSidebar(); true }
         BackTarget.RecorderPanel -> { setRecorderPanel(false); true }
         BackTarget.SearchState -> { exitSearch(); true }
@@ -276,59 +276,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Q-5: picking a result leaves the page for search state; the map shows only the matches. */
+    /** Q-5: picking a result leaves the page for D's search state (matches only; the device opens at Half). */
     fun pick(key: DeviceKey) {
         val page = _ui.value.search ?: return
-        searchReference = null
-        _ui.update { it.copy(page = null, searchQuery = page.query, search = null, showSearchThisArea = false) }
-        val scope = _ui.value.scope ?: return
-        _ready.value?.map?.let { m ->
-            m.show(scope, DeviceFilter(query = page.query, area = page.area), _ui.value.view?.routesFaint ?: false)
-            m.setSelection(key)
-            m.focusDevice(key)
-        }
+        _ui.update { it.copy(page = null, searchQuery = page.query, search = null) }
+        val map = _ready.value?.map ?: return
+        sheets?.enterSearch(page.query, page.area, map.camera(), key)
     }
 
-    private var searchReference: edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot? = null
+    private var zoom = 0.0
 
-    /** Q-6: re-run the query on the current viewport; the map shows those matches and the chip hides. */
+    /** Q-6: D re-runs the query on the current viewport. */
     fun searchThisArea() {
-        val q = _ui.value.searchQuery ?: return
-        val scope = _ui.value.scope ?: return
-        val area = _ui.value.viewport
-        _ui.update { it.copy(showSearchThisArea = false) }
-        searchReference = null
-        _ready.value?.map?.show(scope, DeviceFilter(query = q, area = area), _ui.value.view?.routesFaint ?: false)
+        val viewport = _ui.value.viewport ?: return
+        sheets?.searchThisArea(viewport, zoom)
     }
 
-    /** Q-7: the bar's X or Back leaves search state. */
+    /** Q-7: the bar's X or Back leaves search state; D restores the Discover view and the map. */
     fun exitSearch() {
-        searchReference = null
-        _ui.update { it.copy(searchQuery = null, showSearchThisArea = false) }
-        val scope = _ui.value.scope ?: return
-        _ready.value?.map?.let { it.setSelection(null); it.show(scope, DeviceFilter(), _ui.value.view?.routesFaint ?: false) }
+        _ui.update { it.copy(searchQuery = null) }
+        sheets?.exitSearch()
     }
 
     // ---- map events (M-7, P-6, D-4, Q-6) ----
 
-    /** The sheet stack's side of [MapEvents] (D's `SheetMapEvents`); a placeholder slot until :sheets exposes it. */
-    var sheetEvents: MapEvents? = null
-
+    /** M-7, P-6, D-4, Q-6: the map's events go to D's sheets (and the viewport to the search page, Q-3). */
     val mapEvents: MapEvents = object : MapEvents {
-        override fun onUserGestureStart() { sheetEvents?.onUserGestureStart() }
+        override fun onUserGestureStart() { sheets?.mapEvents?.onUserGestureStart() }
         override fun onCameraIdle(byUser: Boolean, viewport: Bbox, zoom: Double) {
+            this@MainViewModel.zoom = zoom
             _ui.update { it.copy(viewport = viewport) }
-            // Q-6 / M-11: app camera moves (framing the picked device) set the reference; only the user's offer the chip
-            if (_ui.value.searchQuery != null) {
-                val here = edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera(viewport, zoom)
-                val ref = searchReference
-                if (!byUser || ref == null) searchReference = here
-                else _ui.update { it.copy(showSearchThisArea = edu.ucsd.sysnet.cluetoothscanner.ui.contract.movedAway(ref, here, viewport)) }
-            }
-            sheetEvents?.onCameraIdle(byUser, viewport, zoom)
+            sheets?.mapEvents?.onCameraIdle(byUser, viewport, zoom)
         }
-        override fun onDeviceTap(key: DeviceKey) { sheetEvents?.onDeviceTap(key) ?: _ready.value?.map?.setSelection(key) }
-        override fun onEmptyTap() { sheetEvents?.onEmptyTap() ?: _ready.value?.map?.setSelection(null) }
+        override fun onDeviceTap(key: DeviceKey) { sheets?.mapEvents?.onDeviceTap(key) }
+        override fun onEmptyTap() { sheets?.mapEvents?.onEmptyTap() ?: _ready.value?.map?.setSelection(null) }
     }
 
     /** What the sheets, the panel and the chrome cover, for the map's padding (M-10, D-14). */
