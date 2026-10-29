@@ -1,7 +1,13 @@
+# Run from this directory (or pass -f infra/data/compose.yaml). The project
+# name is pinned to the one the stack had at the repository root, so the
+# network and volume names (newcluetooth_postgres-data, ...) do not change.
+# COMPOSE_PROJECT_NAME still overrides it.
+name: newcluetooth
+
 services:
   postgres:
     build:
-      context: ./db
+      context: ./postgres
       dockerfile: Dockerfile
     image: cluetooth-postgis:18-3.6
     container_name: cluetooth-db
@@ -26,7 +32,7 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./db/db/migrations:/db/migrations:ro
+      - ../../db/db/migrations:/db/migrations:ro
     command:
       - --url
       - postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable
@@ -39,7 +45,7 @@ services:
     profiles:
       - manual
     build:
-      context: ./cluetooth-sync
+      context: ../../data-sync
       dockerfile: Dockerfile
     image: cluetooth-sync:latest
     depends_on:
@@ -58,7 +64,7 @@ services:
       CLUETOOTH_QUEUE_SIZE: ${CLUETOOTH_QUEUE_SIZE:-0}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-service-account
     volumes:
-      - ${CLUETOOTH_HOST_MIRROR_DIR:-./downloads}:/mirror
+      - ${CLUETOOTH_HOST_MIRROR_DIR:-../../downloads}:/mirror
     secrets:
       - cluetooth-private-key
       - google-service-account
@@ -66,7 +72,7 @@ services:
 
   sync-continuous:
     build:
-      context: ./cluetooth-sync
+      context: ../../data-sync
       dockerfile: Dockerfile
     image: cluetooth-sync:latest
     depends_on:
@@ -87,7 +93,7 @@ services:
       CLUETOOTH_HEARTBEAT_PATH: /tmp/cluetooth-sync/heartbeat.json
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-service-account
     volumes:
-      - ${CLUETOOTH_HOST_MIRROR_DIR:-./downloads}:/mirror
+      - ${CLUETOOTH_HOST_MIRROR_DIR:-../../downloads}:/mirror
     secrets:
       - cluetooth-private-key
       - google-service-account
@@ -105,7 +111,7 @@ services:
     profiles:
       - manual
     build:
-      context: ./cluetooth-sync
+      context: ../../data-sync
       dockerfile: Dockerfile
     image: cluetooth-sync:latest
     entrypoint: ["cluetooth"]
