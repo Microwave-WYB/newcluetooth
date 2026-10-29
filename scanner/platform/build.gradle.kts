@@ -29,6 +29,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.play.services.location)
+    implementation(libs.androidx.lifecycle.process)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
