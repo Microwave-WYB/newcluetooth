@@ -327,11 +327,11 @@
   }
   const nameMatch = (name, q) => !q || (name || "").toLowerCase().includes(q);
 
-  /** The record FAB sits above the top sheet's peek and hides while the top sheet is raised (Half or Full). */
+  /** The record FAB stays anchored just above the Discover sheet's collapsed peek. It lives below the sheets, so a
+   *  rising sheet slides over it and a collapsing one uncovers it: no hiding. */
   function liftRecorder() {
-    const root = $(".disc-sheet", phone), open = root.classList.contains("open"), top = Stack.top().el;
-    phone.style.setProperty("--rec-lift", `${open ? parseFloat(getComputedStyle(top).getPropertyValue("--peek")) || 0 : 0}px`);
-    $(".recorder", phone).classList.toggle("sheet-up", open && sheetState(top) !== "collapsed");
+    const root = $(".disc-sheet", phone), open = root.classList.contains("open");
+    phone.style.setProperty("--rec-lift", `${open ? parseFloat(getComputedStyle(root).getPropertyValue("--peek")) || 0 : 0}px`);
   }
 
   // ---- Left sidebar: the current session (pinned while recording), the history, Settings ----

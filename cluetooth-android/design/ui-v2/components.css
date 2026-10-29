@@ -77,8 +77,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   transition: width var(--t-morph) var(--ease), height var(--t-morph) var(--ease), border-radius var(--t-morph) var(--ease),
     background-color var(--t-std), box-shadow var(--t-morph), bottom var(--t-page) var(--ease), top var(--t-morph) var(--ease), opacity var(--t-std), scale var(--t-std) var(--ease);
 }
-/* the idle FAB hides while the Discover sheet is expanded */
-.recorder.idle.sheet-up { opacity: 0; scale: 0.6; pointer-events: none; }
+/* the idle FAB sits below the sheets (above the map): a rising sheet covers it; the island stays above */
+.recorder.idle { z-index: 11; }
 .recorder::after {
   content: ""; position: absolute; left: 50%; top: 50%; width: var(--fab-dot); height: var(--fab-dot); margin: calc(var(--fab-dot) / -2);
   border-radius: 50%; background: var(--on-rec); transition: opacity var(--t-fast), transform var(--t-std) var(--ease);
