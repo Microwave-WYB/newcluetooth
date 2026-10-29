@@ -111,8 +111,8 @@ Each component is built once. Its size, color and state rules come from these to
 - **C-3 Chip and ChipRow.**
   - Chip: 34 dp tall pill with 14 dp horizontal padding and 14 sp text. Unselected: `--chip-bg` (`--fill2`) with
     `--chip-fg` (`--t2`). Selected: `--chip-on-bg` (`--t1`) with `--chip-on-fg` (`--bg`) at weight 500.
-  - ChipRow: horizontally scrollable with no scrollbar, a 6 dp gap and `--edge` side padding. Order: All,
-    Unidentified, then the categories (Audio, Lighting, Sensors, Trackers, Wearables, Vehicles, Medical).
+  - ChipRow: horizontally scrollable with no scrollbar, a 6 dp gap and `--edge` side padding. In the list view it
+    holds exactly four curated presets: All, Readable, Trackers, Vulnerable (D-3).
 - **C-4 Segmented.**
   - A `--fill2` pill track with 2 dp padding. The selected thumb is `--seg` with `--t1`, weight 500 and
     `--shadow-thumb`. Unselected labels are `--t2`. Text is 14 sp.
@@ -337,7 +337,9 @@ Each component is built once. Its size, color and state rules come from these to
   - The centered segmented control:
     - [Nearby | All] while recording (default Nearby);
     - [This area | All] for history and All sessions (default All, reset to All on every session change).
-  - An empty right column.
+  - The filter button in the right column (D-3a). It is the same round IconButton as the view switch, with a
+    funnel icon, mirroring it at the corner, with its center under the search button's center. While any filter
+    is active it takes the selected style and shows a count badge. It is shown in both views.
 - **D-1a View switch transition.** Toggling categories ⇄ list crossfades the content and the chip row (`--t-fast`,
   no slide); the sheet height doesn't change.
 - **D-2 Categories view (default).** CategorySections built from the session:
@@ -346,7 +348,29 @@ Each component is built once. Its size, color and state rules come from these to
   - Nearby keeps only products with a non-stale device. All keeps every product the session saw.
 - **D-3 List view.**
   - The ChipRow sits under the header, followed by DeviceRows in the session's fixed order (G-9).
-  - The category chip filters rows. Nearby hides stale rows.
+  - The chip row presets are multi-select and AND-combined with each other and with the Filter sheet. All clears
+    every filter.
+    - Readable: the matched wiki page has a `decoder.js`, so the advertisement is decodable without connecting.
+      Decoding itself is deferred to issue #39.
+    - Trackers: the trackers category.
+    - Vulnerable: the matched page links a vulnerability page.
+
+    Nearby hides stale rows.
+- **D-3a Filter sheet.** A pushed sheet titled "Filter", with the X and the usual exit logic.
+  - From top to bottom:
+    1. switches for Readable, Trackers and Vulnerable, synced both ways with the chips;
+    2. "Identification" [Any | Identified | Unidentified], default Any;
+    3. "Categories": a checkbox list of every category present in the scope (data-driven from the wiki; a device
+       matches any checked category);
+    4. a "Clear" text button.
+  - Changes apply live.
+  - Category counts are faceted: each count is the devices that would show after checking that category. They
+    apply every other active constraint (presets, Identification, This area, Nearby, the Apple filter) but not the
+    category facet itself, so a count always equals the resulting list length.
+  - The row order is fixed when the sheet opens. Counts update in place. A row at 0 stays in place, dimmed, and
+    can still be unchecked.
+  - All filters reset when the session view changes. Search ignores the filters, which come back unchanged when
+    search state ends.
 - **D-4 This area.**
   - With This area selected, the content (list rows, category cards and their counts, product device lists) includes
     only devices whose point lies in the current map viewport.
@@ -627,7 +651,7 @@ The UI gets data only through these functions. Their Compose and Rust equivalent
 
 | Function | Returns |
 |---|---|
-| `getCategories()` | the chip-row categories, Unidentified first |
+| `getCategoryCounts(scope, opts)` | categories present in a scope with device counts (respecting the display filter) |
 | `getRecordings()` | finished sessions, newest first |
 | `getCurrentRecording()` | the recording session, or null |
 | `getRecording(id)` | one session: route plus one strongest point per device; `"all"` works as an id |
