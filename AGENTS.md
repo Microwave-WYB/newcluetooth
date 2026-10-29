@@ -360,3 +360,7 @@ tables.
   re-read, or ignored), never by timing luck.
 - Every top-level coroutine scope has error handling that moves its state to
   `Failed`; an exception must never reach the main thread's uncaught handler.
+- Prefer immutable data and pure functions. Hold UI and platform state as one
+  immutable value updated by a pure `(state, event) -> state` function; keep
+  mutation at the edges (Compose state holder, Android callbacks, MapLibre,
+  the SQLite transaction). Test the pure functions directly.
