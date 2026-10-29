@@ -118,6 +118,8 @@ Each component is built once. Its size, color and state rules come from these to
     `--shadow-thumb`. Unselected labels are `--t2`. Text is 14 sp.
   - In a sheet header it is 40 dp tall (inner buttons 36 dp) and 184 dp wide.
   - Advertising/GATT in the device sheet spans the full width.
+  - Switching: the thumb slides to the new option (`--t-std`). The content below moves 28 dp (`--swap-x`) in the
+    direction of the change while fading (shared-axis X, `--t-std`); the sheet height doesn't change.
 - **C-5 DeviceRow.**
   - A grid of three columns at least 64 dp tall, with 8 dp × `--gutter` (16 dp) padding and a 12 dp item radius.
   - Left: the name, one line ellipsized, or "No name" in `--t3`. Below it the MAC in 13/20 `--t2` tabular.
@@ -129,7 +131,9 @@ Each component is built once. Its size, color and state rules come from these to
 - **C-6 Sparkline.** The last minute as 30 samples. y covers −30 to −100 (clamped), with a 1.5 dp stroke in the band
   color. Gaps (missing samples) break the line.
 - **C-7 ProductCard.**
-  - 148 dp wide, 12 dp padding with an 8 dp gap, a 12 dp radius and `--fill2`, with no shadow.
+  - 148 dp wide, 12 dp padding with an 8 dp gap and `--fill2`, with no shadow. The radius `--card-r` is concentric
+    with the sheet: container radius − the card's inset from the sheet edge (phone 34 − 16 = 18; tablet
+    30 − 24 = 6).
   - A 36 dp `--bg` circle holds the category icon; `--t3` for Unidentified.
   - The name is weight 600, 20 dp line height, clamped to 2 lines (minimum height 40).
   - The status line is 13/20 `--t2`, one line, chosen as follows:
@@ -214,7 +218,11 @@ Each component is built once. Its size, color and state rules come from these to
     IconButton, 36 dp) and Stop (rec IconButton, 36 dp). Both buttons have 44 dp touch targets.
   - It stays at the top center whatever the sheets do.
 - **R-4 Panel.** Tapping the dot or time expands the panel.
-  - The control row NEVER moves: same position and size before, during and after.
+  - The row keeps its height and vertical position, so the panel grows downward on phone and upward on tablet.
+  - Inside the row, the dot and time move to the panel's horizontal center, while Pause and Stop slide right
+    together until Stop is concentric with the panel's corner: top-right on phone (4 dp from top and right), and
+    bottom-right on tablet (8 dp). The Pause–Stop gap is 6 dp on phone and 8 dp on tablet. All of it animates with
+    the panel's width (`--t-morph`), and collapsing returns exactly to the capsule layout.
   - On phone the panel widens symmetrically to the full width minus 2 × `--edge`, with a 22 dp radius and
     `--shadow-raised`. Its extra content grows downward below the row:
     - "N devices · lat, lon ±N m" (13/20 `--t2`, one line);
@@ -312,6 +320,8 @@ Each component is built once. Its size, color and state rules come from these to
     - [Nearby | All] while recording (default Nearby);
     - [This area | All] for history and All sessions (default All, reset to All on every session change).
   - An empty right column.
+- **D-1a View switch transition.** Toggling categories ⇄ list crossfades the content and the chip row (`--t-fast`,
+  no slide); the sheet height doesn't change.
 - **D-2 Categories view (default).** CategorySections built from the session:
   - Each identified product appears once, under its own category.
   - "Unidentified devices" comes last as a single card.
@@ -331,7 +341,8 @@ Each component is built once. Its size, color and state rules come from these to
 
 - **D-6 Header.** The category label as the title (S-3) and the X (S-2).
 - **D-7 Content, top to bottom.**
-  1. A hero area: 200 dp tall, `--fill2`, 12 dp radius, `--edge` side margins, holding the large category icon (88 dp,
+  1. A hero area: 200 dp tall, `--fill2`, `--edge` side margins, radius `--hero-r` (sheet radius − its inset:
+     phone 34 − 12 = 22, tablet 30 − 20 = 10), holding the large category icon (88 dp,
      stroke 1.2, `--t2`). It is structured so a real product image can replace the icon later.
   2. The full product name, 24/30 at weight 650, wrapping and never truncated.
   3. The description in `--t2`.
