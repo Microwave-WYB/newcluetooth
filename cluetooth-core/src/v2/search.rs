@@ -1,8 +1,23 @@
 //! SPEC Q-1: the `data.js` `matchDevice` rule, mirrored exactly.
 
-/// JS `String.prototype.trim` strips Unicode White_Space plus U+FEFF.
+/// JS `String.prototype.trim`: the WhiteSpace and LineTerminator code points. Rust's `char::is_whitespace` differs
+/// (it includes U+0085, and Java's includes U+001C..U+001F), so the set is explicit.
+fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{0b}' | '\u{0c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
 fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+    text.trim_matches(is_js_space)
 }
 
 fn strip_separators_lower(text: &str) -> String {
@@ -67,5 +82,8 @@ mod tests {
         ));
         assert!(matches("ÄPFEL", Some("äpfel 1"), "AA:BB:CC:00:11:22"));
         assert!(!matches("", Some("x"), "AA:BB:CC:00:11:22"));
+        // U+0085 is White_Space to Rust but not trimmed by JS, so it stays part of the query.
+        assert!(!matches("\u{85}qt", Some("QT-Sensor"), "AA:BB:CC:00:11:22"));
+        assert!(!matches(" \u{a0}\u{3000}", Some(" "), "AA:BB:CC:00:11:22"));
     }
 }
