@@ -7,12 +7,12 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKeys
-import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.SearchState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.movedAway
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera
 
 /** The Discover sheet's views (D-2, D-3) and segments (D-1); §5.4 `SheetContentState.Discover`. */
 internal enum class DiscoverView { Categories, List }
@@ -40,8 +40,6 @@ internal fun CoreQueries.forScope(scope: Scope) = object : DiscoverQueries {
     override suspend fun deviceKeys(filter: DeviceFilter) = this@forScope.deviceKeys(scope, filter)
     override suspend fun search(query: String, area: Bbox?) = this@forScope.search(scope, query, area)
 }
-
-internal fun Bbox.camera(zoom: Double) = CameraSnapshot(GeoPoint((west + east) / 2, (south + north) / 2), zoom)
 
 /** What search state saves of the root sheet and restores when it ends (Q-7). */
 internal data class SearchReturn(val view: DiscoverView, val height: SheetHeight, val panel: PanelHeight, val scroll: ScrollSnapshot)
@@ -94,6 +92,8 @@ internal class DiscoverModel(private val queries: DiscoverQueries, val live: Boo
     /** G-9: new devices of the live view, in arrival order. */
     suspend fun appendLive(keys: LongArray) {
         order.append(keys)
+        // Q-5: a new device that matches the search shows too (as on the map), appended after the present matches.
+        search?.let { s -> s.order.append(order.visible(queries.search(s.query, s.area) ?: DeviceKeys(LongArray(0), 0))) }
         refresh()
     }
 
@@ -123,7 +123,7 @@ internal class DiscoverModel(private val queries: DiscoverQueries, val live: Boo
         this.viewport = viewport
         val s = search
         if (s != null) {
-            val now = viewport.camera(zoom)
+            val now = viewportCamera(viewport, zoom)
             search = when {
                 !byUser && !s.movedAway -> s.copy(reference = now) // Q-6: app moves carry the searched area along
                 byUser -> s.copy(movedAway = movedAway(s.reference, now, viewport))
@@ -162,7 +162,7 @@ internal class DiscoverModel(private val queries: DiscoverQueries, val live: Boo
         val s = search ?: return
         val hits = queries.search(s.query, viewport) ?: DeviceKeys(LongArray(0), 0)
         val next = OrderedKeys(s.order.visible(hits)).apply { append(order.visible(hits)) }
-        search = s.copy(area = viewport, order = next, reference = viewport.camera(zoom), movedAway = false)
+        search = s.copy(area = viewport, order = next, reference = viewportCamera(viewport, zoom), movedAway = false)
         refresh()
     }
 
@@ -184,10 +184,15 @@ internal class DiscoverModel(private val queries: DiscoverQueries, val live: Boo
         stack.reset()
         if (back != null) {
             view = back.view
-            stack.root.scroll = back.scroll
-            stack.root.panel = back.panel
-            stack.setHeight(stack.root, back.height)
+            val root = stack.root
+            // Both saved states come back; the one of the current layout shows (T-2 panel, S-5 height).
+            root.panel = back.panel
+            stack.setHeight(root, back.height)
+            // The main list moves now if it is composed, else starts there; the search list keeps its own key.
+            root.restoreScroll(SheetEntry.MAIN_LIST, back.scroll)
         }
+        // D-4: the camera may have moved during search; This area follows the current view again.
+        if (segment == Segment.ThisArea) viewport?.let { applyArea(it) }
         refresh()
     }
 

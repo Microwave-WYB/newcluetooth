@@ -34,8 +34,12 @@ internal class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight
         internal set
     var panel by mutableStateOf(panel)
         internal set
-    var scroll = ScrollSnapshot()
-        internal set
+    /** The main list's saved scroll (S-8, G-10); other lists of the sheet keep theirs under their own key. */
+    var scroll: ScrollSnapshot
+        get() = scrolls[MAIN_LIST] ?: ScrollSnapshot()
+        internal set(value) {
+            scrolls[MAIN_LIST] = value
+        }
     var camera: CameraSnapshot? = null
         internal set
 
@@ -48,13 +52,51 @@ internal class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight
     /** The y the sheet was last placed at: the frame its pointer positions are relative to. */
     internal var placedTop = 0f
 
+    /** The list the sheet's gestures drive (S-13): the most recently composed one. */
     internal var content: ContentScroll? = null
+
+    /** The main list's live position while it is composed. */
     internal var scrollReader: (() -> ScrollSnapshot)? = null
+
+    private val scrolls = mutableMapOf<Any, ScrollSnapshot>()
+    private val lists = mutableMapOf<Any, LiveList>()
+
+    private class LiveList(val content: ContentScroll, val reader: () -> ScrollSnapshot, val restore: suspend (ScrollSnapshot) -> Unit)
+
+    /** The saved scroll of the list under [key]. */
+    internal fun scrollOf(key: Any): ScrollSnapshot = scrolls[key] ?: ScrollSnapshot()
+
+    /** A list of this sheet was composed. */
+    internal fun attachList(key: Any, content: ContentScroll, reader: () -> ScrollSnapshot, restore: suspend (ScrollSnapshot) -> Unit) {
+        lists[key] = LiveList(content, reader, restore)
+        this.content = content
+        if (key == MAIN_LIST) scrollReader = reader
+    }
+
+    /** A list left the composition: it saves its position under its own key only, and unregisters only itself. */
+    internal fun detachList(key: Any, content: ContentScroll) {
+        val list = lists[key]?.takeIf { it.content === content } ?: return
+        scrolls[key] = list.reader()
+        lists.remove(key)
+        if (this.content === content) this.content = lists.values.lastOrNull()?.content
+        if (key == MAIN_LIST) scrollReader = null
+    }
+
+    /** Q-7, S-8: sets the saved scroll of [key] and moves the list there if it is composed now. */
+    internal suspend fun restoreScroll(key: Any, snapshot: ScrollSnapshot) {
+        scrolls[key] = snapshot
+        lists[key]?.restore?.invoke(snapshot)
+    }
     internal var animation: Job? = null
     internal var drag: SheetDrag? = null
     internal var dragInterrupted = false
 
     override fun toString() = "SheetEntry($id, $kind, $height, $panel)"
+
+    companion object {
+        /** The key of a sheet's main list; a second list (Discover's search results) uses its own key. */
+        const val MAIN_LIST = "main"
+    }
 }
 
 /**
@@ -216,10 +258,11 @@ internal class SheetStackController(
 
     // ---- Heights ----
 
-    /** Moves the top sheet to [height] (Dismissed pops it). On tablet, Collapsed is Partial and the rest Open. */
+    /** Moves the top sheet to [height] (Dismissed pops it). On tablet it only records the phone height. */
     fun setHeight(entry: SheetEntry, height: SheetHeight) {
         if (tablet) {
-            entry.panel = height.toPanel()
+            // The panel has its own state (T-2); the phone height is only kept for going back to phone (T-9).
+            if (height != SheetHeight.Dismissed) entry.height = height
             return
         }
         if (height == SheetHeight.Dismissed) {

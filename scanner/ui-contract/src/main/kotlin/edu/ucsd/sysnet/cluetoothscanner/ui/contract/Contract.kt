@@ -7,7 +7,13 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKeys
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.tan
 
 /**
  * G-9: the one ordered-keys state. Built once from `deviceOrder` (sorted once by RSSI); changes only by appends;
@@ -53,15 +59,35 @@ data class CameraSnapshot(val center: GeoPoint, val zoom: Double, val bearing: D
 
 /**
  * M-11, used by Q-6: the view has moved away from [reference] when the zoom differs by 1 or more, or the reference
- * centre is more than 25 % of [viewport] away from the current centre on either axis. The caller passes only the
- * user's own moves; app camera moves never count.
+ * centre is more than 25 % of the viewport away from the current centre on either axis, measured on screen (Web
+ * Mercator, as MapLibre draws it). [viewport] is the current visible area; the caller passes only the user's own
+ * moves (app camera moves never count). This is the one copy: lane D's search state and lane E's map both call it.
  */
 fun movedAway(reference: CameraSnapshot, current: CameraSnapshot, viewport: Bbox): Boolean {
     if (abs(current.zoom - reference.zoom) >= 1.0) return true
-    val w = viewport.east - viewport.west
-    val h = viewport.north - viewport.south
-    return abs(current.center.lon - reference.center.lon) > 0.25 * w ||
-        abs(current.center.lat - reference.center.lat) > 0.25 * h
+    val w = mercatorX(viewport.east) - mercatorX(viewport.west)
+    val h = mercatorY(viewport.south) - mercatorY(viewport.north)
+    if (w <= 0.0 || h <= 0.0) return false
+    return abs(mercatorX(reference.center.lon) - mercatorX(current.center.lon)) / w > 0.25 ||
+        abs(mercatorY(reference.center.lat) - mercatorY(current.center.lat)) / h > 0.25
+}
+
+/** The camera that shows [viewport] at [zoom]: its centre is the viewport's centre on screen (Web Mercator). */
+fun viewportCamera(viewport: Bbox, zoom: Double): CameraSnapshot {
+    val y = (mercatorY(viewport.north) + mercatorY(viewport.south)) / 2
+    val n = PI - 2 * PI * y
+    val lat = 180 / PI * atan(0.5 * (exp(n) - exp(-n)))
+    return CameraSnapshot(GeoPoint((viewport.west + viewport.east) / 2, lat), zoom)
+}
+
+private const val MAX_LAT = 85.0511287798066
+
+/** Web Mercator world x and y in [0, 1), y growing southwards. */
+private fun mercatorX(lon: Double) = (lon + 180) / 360
+
+private fun mercatorY(lat: Double): Double {
+    val phi = lat.coerceIn(-MAX_LAT, MAX_LAT) * PI / 180
+    return (1 - ln(tan(phi) + 1 / cos(phi)) / PI) / 2
 }
 
 /** dp the sheet/panel/chrome cover. */

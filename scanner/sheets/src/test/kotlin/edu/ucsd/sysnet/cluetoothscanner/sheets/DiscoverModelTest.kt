@@ -5,7 +5,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKeys
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Identification
-import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -154,7 +154,7 @@ class DiscoverModelTest {
         m.setFilter(filtered)
         st.push(SheetKind.Product("p"))
 
-        m.enterSearch(" qt ", null, west.camera(15.0))
+        m.enterSearch(" qt ", null, viewportCamera(west, 15.0))
         assertEquals(1, st.entries.size) // the stack is reset to the root
         assertEquals(DiscoverView.List, m.view)
         assertArrayEquals(longArrayOf(10, 30, 50), m.rows) // "qt" matches QT-Sensor, SmartQt, aqtb; readable ignored
@@ -173,7 +173,7 @@ class DiscoverModelTest {
     @Test
     fun `Q-6 moving away offers search this area, which keeps present matches and appends new ones`() = runTest {
         val m = model()
-        m.enterSearch("qt", east, east.camera(15.0))
+        m.enterSearch("qt", east, viewportCamera(east, 15.0))
         assertArrayEquals(longArrayOf(30, 50), m.rows)
         m.onCameraIdle(false, Bbox(1.1, 0.0, 2.1, 1.0), 15.0) // app move: the reference follows, no chip
         assertFalse(m.search!!.movedAway)
@@ -192,7 +192,7 @@ class DiscoverModelTest {
     fun `G-14 Back pops pushed sheets first, then leaves search state`() = runTest {
         val st = stack()
         val m = DiscoverModel(session(), false, st).also { it.open() }
-        m.enterSearch("qt", null, west.camera(15.0))
+        m.enterSearch("qt", null, viewportCamera(west, 15.0))
         st.openDevice(10)
         assertTrue(m.handleBack())
         assertEquals(1, st.entries.size)
@@ -212,5 +212,83 @@ class DiscoverModelTest {
         st.setHeight(st.root, SheetHeight.Collapsed)
         m.selectSegment(Segment.ThisArea)
         assertEquals(SheetHeight.Half, st.root.height)
+    }
+
+    // ---- #52 review fixes ----
+
+    @Test
+    fun `Q-7 on tablet leaving search restores the panel state, not one derived from the phone height`() = runTest {
+        val st = stack()
+        st.setHeight(st.root, SheetHeight.Half) // on phone first: a stale height.toPanel() would say Open
+        st.setLayout(tablet = true)
+        val m = DiscoverModel(session(), false, st).also { it.open() }
+        st.onMapUserGesture() // the user panned: Partial
+        assertEquals(PanelHeight.Partial, st.root.panel)
+        m.enterSearch("qt", null, viewportCamera(west, 15.0))
+        st.expandPanel() // opened during search
+        m.exitSearch()
+        assertEquals(PanelHeight.Partial, st.root.panel)
+        assertEquals(SheetHeight.Half, st.root.height) // the phone height is kept for T-9, untouched by the panel
+    }
+
+    @Test
+    fun `Q-7 the outgoing search list does not overwrite the restored main scroll`() = runTest {
+        val st = stack()
+        val m = DiscoverModel(session(), false, st).also { it.open() }
+        val root = st.root
+        val main = FakeContent()
+        var mainAt = ScrollSnapshot(12, 4)
+        root.attachList(SheetEntry.MAIN_LIST, main, { mainAt }) { mainAt = it }
+        m.enterSearch("qt", null, viewportCamera(west, 15.0))
+        root.detachList(SheetEntry.MAIN_LIST, main) // the main list leaves; the results list comes in
+        val results = FakeContent()
+        root.attachList(SEARCH, results, { ScrollSnapshot(2, 0) }) {}
+        mainAt = ScrollSnapshot(0, 0)
+        m.exitSearch()
+        root.detachList(SEARCH, results) // after the restore, as composition disposes it
+        assertEquals(ScrollSnapshot(12, 4), root.scroll)
+        assertEquals(ScrollSnapshot(2, 0), root.scrollOf(SEARCH))
+    }
+
+    @Test
+    fun `Q-7 a main list still composed moves to the restored scroll`() = runTest {
+        val st = stack()
+        val m = DiscoverModel(session(), false, st).also { it.open() }
+        var mainAt = ScrollSnapshot(9, 1)
+        st.root.attachList(SheetEntry.MAIN_LIST, FakeContent(), { mainAt }) { mainAt = it }
+        m.enterSearch("qt", null, viewportCamera(west, 15.0))
+        mainAt = ScrollSnapshot(0, 0) // the same list showed the results and was scrolled
+        m.exitSearch()
+        assertEquals(ScrollSnapshot(9, 1), mainAt)
+    }
+
+    @Test
+    fun `D-4 This area follows the camera that moved during search`() = runTest {
+        val m = model()
+        m.onCameraIdle(false, west, 15.0)
+        m.selectSegment(Segment.ThisArea)
+        assertArrayEquals(longArrayOf(10, 40), m.rows)
+        m.enterSearch("qt", null, viewportCamera(west, 15.0))
+        m.onCameraIdle(true, east, 15.0) // the user panned during search
+        m.exitSearch()
+        assertArrayEquals(longArrayOf(20, 30, 50), m.rows)
+    }
+
+    @Test
+    fun `G-9 Q-5 a live device that matches during search is appended to the results`() = runTest {
+        val s = session()
+        val m = model(s, live = true)
+        m.enterSearch("qt", null, viewportCamera(west, 15.0))
+        assertArrayEquals(longArrayOf(10, 30, 50), m.rows)
+        s.devices += FakeSession.Dev(60, "qt-live", p(0.5, 0.5))
+        s.devices += FakeSession.Dev(70, "other", p(0.5, 0.5))
+        m.appendLive(longArrayOf(60, 70))
+        assertArrayEquals(longArrayOf(10, 30, 50, 60), m.rows)
+        m.exitSearch()
+        assertEquals(listOf(10L, 20, 30, 40, 50, 60, 70), m.order.visible(DeviceKeys(longArrayOf(10, 20, 30, 40, 50, 60, 70), 0)).toList())
+    }
+
+    private companion object {
+        const val SEARCH = "search"
     }
 }

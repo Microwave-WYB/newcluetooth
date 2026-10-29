@@ -32,6 +32,10 @@ internal sealed interface GattUi {
  *   discovery, so cancelling the collector cancels it. A cancelled run is never shown.
  *
  * The last view of [runner]'s flow is final.
+ *
+ * Ownership (D-13.8): one controller per device sheet entry, owned by whoever composes the sheet stack (:app at
+ * integration). That owner must call [cancel] when the entry leaves the stack, i.e. from `SheetStackHooks.onRemoved`
+ * (pop, a device replacing a device, a reset); the stack itself does not know about GATT.
  */
 internal class GattController(
     private val key: DeviceKey,
