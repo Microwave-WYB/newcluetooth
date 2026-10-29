@@ -19,7 +19,10 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapRequests
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
@@ -45,7 +48,6 @@ class SheetsState internal constructor(
     internal val metrics: SheetMetrics,
 ) {
     private val gatt = HashMap<Long, GattController>()
-    private var focusOnOpen = false
 
     /** The stack (S-4..S-9): the cover geometry is `offsetOf(top)` and `top.peek`, for MapRequests.setCover. */
     val stack: SheetStackController = SheetStackController(
@@ -65,18 +67,21 @@ class SheetsState internal constructor(
 
     /** Category ids to their vocabulary labels (the core's, G-8), for headers and the Filter sheet. */
     internal val categoryLabels = mutableStateMapOf<String, String>()
-    internal var opened by mutableStateOf(false)
-        private set
+    /** The first sort has landed (S-7 content can show); derived from the model's phase, not a flag. */
+    internal val opened: Boolean get() = discover.phase is DiscoverPhase.Ready
 
     private val sheetEvents = SheetMapEvents(stack) { byUser, viewport, zoom ->
-        coroutines.launch { discover.onCameraIdle(byUser, viewport, zoom) }
+        coroutines.launch {
+            discover.onCameraIdle(byUser, viewport, zoom)
+            // D-4, S-17: This area followed the user's move; the map shows the new set
+            if (byUser && discover.search == null && discover.segment == Segment.ThisArea) followDiscover()
+        }
     }
 
     /** :app routes the map's events here (and to lane C for the "Search this area" chip). */
     val mapEvents: MapEvents = object : MapEvents by sheetEvents {
         override fun onDeviceTap(key: DeviceKey) {
-            focusOnOpen = false // D-14: from a map tap the camera stays put
-            stack.openDevice(key)
+            stack.openDevice(key) // D-14: from a map tap the camera stays put
         }
     }
 
@@ -118,8 +123,8 @@ class SheetsState internal constructor(
 
     /** S-4: open a device; from a list (and search results) the camera eases to it (D-14). */
     fun openDevice(key: DeviceKey, fromList: Boolean) {
-        focusOnOpen = fromList
-        stack.openDevice(key)
+        stack.openDevice(key) // selects it on the map (S-17, M-6)
+        if (fromList) map?.focusDevice(key)
     }
 
     internal fun openProduct(pageId: String?) {
@@ -143,11 +148,39 @@ class SheetsState internal constructor(
     internal fun discoverMapFilter(): DeviceFilter =
         discover.search?.let { searchQueryFilter(it.query, it.area) } ?: discover.queryFilter()
 
+    /**
+     * §2.6: subscribe to the live deltas first, then read the first sort, so no delta between the two is lost. A
+     * delta that arrives while the model is Loading is kept by the model's state and applied when it is Ready
+     * ([DiscoverPhase.Loading.pending]); nothing depends on which one finishes first.
+     */
+    internal suspend fun start() = coroutineScope {
+        if (live) launch(start = CoroutineStart.UNDISPATCHED) { rows.followLive(discover) }
+        open()
+    }
+
+    /** D-1: a segment switch; S-17: the map shows the new point set. */
+    internal fun selectSegment(segment: Segment) {
+        coroutines.launch {
+            discover.selectSegment(segment)
+            followDiscover()
+        }
+    }
+
+    /** S-17: re-show the Discover point set if the Discover sheet is on top. */
+    private fun followDiscover() {
+        if (stack.top === stack.root) followTop(stack.root, opening = false)
+    }
+
+    /** Called once by [start]: the labels (cosmetic: a failed read leaves the ids), then the model's first sort. */
     internal suspend fun open() {
-        if (opened) return
-        core.categoryCounts(scope, DeviceFilter()).forEach { categoryLabels[it.category] = it.label }
+        try {
+            core.categoryCounts(scope, DeviceFilter()).forEach { categoryLabels[it.category] = it.label }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // the Filter sheet and product titles fall back to the category ids
+        }
         discover.open()
-        opened = true
         followTop(stack.root, opening = false)
     }
 
@@ -165,11 +198,7 @@ class SheetsState internal constructor(
                 map.show(scope, filter, routesFaint)
                 if (opening) coroutines.launch { productFrame(filter)?.let(map::frame) } // D-8
             }
-            is SheetKind.Device -> {
-                map.setSelection(kind.key) // M-6
-                if (opening && focusOnOpen) map.focusDevice(kind.key) // D-14
-                focusOnOpen = false
-            }
+            is SheetKind.Device -> map.setSelection(kind.key) // M-6; D-14's ease is openDevice's (from a list only)
             SheetKind.Filter -> Unit // the map stays as it is
         }
     }
@@ -206,8 +235,7 @@ fun rememberSheetsState(
     val state = remember(scope, live) {
         SheetsState(scope, live, routesFaint, core, gatt, map, coroutines, nowMs, SheetMetrics(reducedMotion = reducedMotion))
     }
-    LaunchedEffect(state) { state.open() }
-    LaunchedEffect(state) { if (live) state.rows.followLive(state.discover) }
+    LaunchedEffect(state) { state.start() }
     return state
 }
 

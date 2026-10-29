@@ -75,6 +75,7 @@ internal object DeviceTags {
     const val DISCOVER = "gatt-discover"
     const val CANCEL = "gatt-cancel"
     const val TRY_AGAIN = "gatt-try-again"
+    const val NOTE = "gatt-note"
     fun step(kind: GattStepKind) = "gatt-step-${kind.name}"
 }
 
@@ -276,15 +277,26 @@ private fun RawRow(len: String, type: String, data: String, style: androidx.comp
 /** Zero-width spaces between characters let hex wrap anywhere (`word-break: break-all`). */
 private fun String.breakAnywhere(): String = toCharArray().joinToString("​")
 
+/** D-13.1: "Only connect to devices you own…", above the button area whenever a button is present. */
+@Composable
+private fun GattNote(modifier: Modifier = Modifier) {
+    Text(
+        Strings.GattNote,
+        modifier.padding(bottom = Css.GattNote.margin.bottom).testTag(DeviceTags.NOTE),
+        style = CluetoothTheme.type.sub,
+        color = CluetoothTheme.colors.t2,
+    )
+}
+
 /** D-13: the note and buttons, the steps, Try again, the services. */
 @Composable
-private fun GattTab(gatt: GattController) {
+internal fun GattTab(gatt: GattController) {
     val c = CluetoothTheme.colors
     val pad = Css.GattFlow.padding
     Column(Modifier.fillMaxWidth().padding(horizontal = pad.left, vertical = pad.top)) {
         when (val s = gatt.state) {
             GattUi.Idle, GattUi.Confirm -> {
-                Text(Strings.GattNote, Modifier.padding(bottom = Css.GattNote.margin.bottom), style = CluetoothTheme.type.sub, color = c.t2)
+                GattNote()
                 val confirm = s == GattUi.Confirm
                 // D-13.3: the row turns into Cancel | I am authorized in place: Cancel grows from zero width to
                 // half the row and fades in, with the gap opening to 8 dp; nothing else moves.
@@ -309,7 +321,8 @@ private fun GattTab(gatt: GattController) {
             is GattUi.Running -> Steps(s.view)
             is GattUi.Failed -> {
                 Steps(s.view)
-                Button(Strings.TryAgain, onClick = gatt::onTryAgain, kind = ButtonKind.Tonal, modifier = Modifier.padding(top = Css.GattNote.margin.bottom).testTag(DeviceTags.TRY_AGAIN))
+                GattNote(Modifier.padding(top = Css.GattNote.margin.bottom)) // D-13.1: with any button
+                Button(Strings.TryAgain, onClick = gatt::onTryAgain, kind = ButtonKind.Tonal, modifier = Modifier.testTag(DeviceTags.TRY_AGAIN))
             }
             is GattUi.Done -> {
                 Steps(s.view)

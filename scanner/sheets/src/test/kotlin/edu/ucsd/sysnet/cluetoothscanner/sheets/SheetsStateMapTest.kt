@@ -13,7 +13,16 @@ import edu.ucsd.sysnet.cluetoothscanner.platform.fake.FakeGattRunner
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapRequests
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKeys
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.flow.onSubscription
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -120,4 +129,63 @@ class SheetsStateMapTest {
         assertTrue(!s.searching)
         assertTrue(!s.handleBack())
     }
+
+    @Test
+    fun `S-17 a segment switch shows the new point set, and This area follows the user's pan`() = runTest {
+        val map = RecordingMap()
+        val s = state(map)
+        val view = Bbox(-117.25, 32.86, -117.22, 32.89)
+        s.mapEvents.onCameraIdle(false, view, 15.0)
+        advanceUntilIdle()
+        s.selectSegment(Segment.ThisArea)
+        advanceUntilIdle()
+        assertEquals(view, map.shown?.area)
+        val panned = Bbox(-117.24, 32.87, -117.21, 32.90)
+        s.mapEvents.onCameraIdle(true, panned, 15.0)
+        advanceUntilIdle()
+        assertEquals(panned, map.shown?.area)
+        s.selectSegment(Segment.All)
+        advanceUntilIdle()
+        assertNull(map.shown?.area)
+    }
+
+    @Test
+    fun `S-2_6 the live deltas are subscribed before the first sort, and a delta during Loading is kept`() = runTest {
+        val calls = mutableListOf<String>()
+        val core = FakeCore(backgroundScope, clock = { FakeCore.DEMO_NOW_MS }, demo = FakeDemo.History, simulate = false)
+        val gate = CompletableDeferred<Unit>()
+        val deltas = MutableSharedFlow<LiveDelta>()
+        val newRow = core.deviceRows(core.initialScope!!, core.deviceOrder(core.initialScope!!).keys.copyOf(1)).single()
+            .copy(key = 0x0000AABBCCDDEEFFL, addr = "AA:BB:CC:DD:EE:FF")
+        val spy = object : CoreQueries by core {
+            override val live: Flow<LiveDelta> = deltas.onSubscription { calls += "live" }
+            override suspend fun deviceOrder(scope: Scope): DeviceKeys {
+                calls += "order"
+                return core.deviceOrder(scope).also { gate.await() }
+            }
+        }
+        val s = SheetsState(
+            core.initialScope!!, live = true, routesFaint = false, core = spy,
+            gattRunner = FakeGattRunner({ FakeGattDevice(null, true) }), map = null, coroutines = this,
+            nowMs = { FakeCore.DEMO_NOW_MS }, metrics = SheetMetrics(reducedMotion = true),
+        )
+        val job = launch { s.start() }
+        runCurrent()
+        assertEquals(listOf("live", "order"), calls)
+        deltas.emit(delta(seq = 1, appended = listOf(newRow))) // while Loading: kept by the state
+        assertTrue(s.discover.phase is DiscoverPhase.Loading)
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(s.discover.phase is DiscoverPhase.Ready)
+        assertEquals(newRow.key, s.discover.ordered(DeviceKeys(longArrayOf(newRow.key), 0)).single())
+        job.cancel()
+    }
+
+    private fun delta(seq: Long, appended: List<edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow>) = LiveDelta(
+        sessionId = FakeCore.HISTORY_SESSION, seq = seq, atMs = FakeCore.DEMO_NOW_MS,
+        state = edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState(
+            edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase.Recording, FakeCore.HISTORY_SESSION, 0, 0, null, 0, 0.0,
+        ),
+        changed = emptyList(), appended = appended, products = emptyList(), routeAppended = emptyList(), fix = null, chart = null,
+    )
 }

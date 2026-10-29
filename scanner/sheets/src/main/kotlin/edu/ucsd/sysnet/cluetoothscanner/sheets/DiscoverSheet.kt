@@ -14,7 +14,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -42,7 +41,6 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Glyphs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 
 internal object DiscoverTags {
     const val VIEW_SWITCH = "discover-view"
@@ -61,7 +59,8 @@ internal fun DiscoverSheet(state: SheetsState, entry: SheetEntry) {
         state.stack, entry, state.metrics,
         header = { if (d.search != null) SearchHeader(d) else DiscoverHeader(state, tablet) },
     ) {
-        if (!state.opened) return@SheetFrame
+        // the content needs the first sort: nothing while it loads, and no rows if it failed (DiscoverPhase)
+        if (d.phase !is DiscoverPhase.Ready) return@SheetFrame
         when {
             d.search != null -> DeviceList(state, entry, d.rows, listKey = SEARCH_LIST, empty = {
                 EmptyText(if (d.search?.area != null) Strings.NoResultsInArea else Strings.NoDevicesMatch)
@@ -82,7 +81,6 @@ internal fun DiscoverSheet(state: SheetsState, entry: SheetEntry) {
 @Composable
 private fun DiscoverHeader(state: SheetsState, tablet: Boolean) {
     val d = state.discover
-    val scope = rememberCoroutineScope()
     val inset = Concentric.cornerButton(tablet)
     Box(Modifier.fillMaxWidth().height(Css.DiscTitle.height).padding(horizontal = inset)) {
         val toList = d.view == DiscoverView.Categories
@@ -96,7 +94,7 @@ private fun DiscoverHeader(state: SheetsState, tablet: Boolean) {
         Segmented(
             segments.map { it.label() },
             segments.indexOf(d.segment),
-            onSelect = { i -> scope.launch { d.selectSegment(segments[i]) } },
+            onSelect = { i -> state.selectSegment(segments[i]) },
             modifier = Modifier.align(Alignment.Center).width(Css.DiscHead_Seg.width).testTag(DiscoverTags.SEGMENT),
             size = SegmentedSize.Header,
         )

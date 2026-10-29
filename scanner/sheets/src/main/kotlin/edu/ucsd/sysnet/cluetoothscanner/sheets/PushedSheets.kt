@@ -93,11 +93,10 @@ internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?
     var detail by remember { mutableStateOf<ProductDetail?>(null) }
     var keys by remember { mutableStateOf(LongArray(0)) }
     val filter = state.productFilter(pageId)
-    LaunchedEffect(filter) {
-        detail = state.core.product(state.scope, pageId, filter)
-        // D-7.6: sorted once by RSSI (the session order), filtered by This area
-        keys = state.discover.order.visible(state.core.deviceKeys(state.scope, filter))
-    }
+    LaunchedEffect(filter) { detail = state.core.product(state.scope, pageId, filter) }
+    // D-7.6: sorted once by RSSI (the session order), filtered by This area; G-9: live devices of the product
+    // are appended as they arrive (the order only grows)
+    LaunchedEffect(filter, state.discover.liveAppends) { keys = state.discover.keysFor(filter) }
     val tablet = state.stack.tablet
     SheetFrame(state.stack, entry, state.metrics, header = {
         // D-6, G-11: the category, not the product name the body shows
