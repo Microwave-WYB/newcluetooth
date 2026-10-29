@@ -1,0 +1,212 @@
+# The research agent fleet: Gitea with its runners and Cloudflare tunnel, keyproxy and the
+# research agent. Use the mise tasks (`mise run fleet:up`, see README.md), not plain
+# `docker compose up`.
+#
+# Two compose projects from one file, so the names of the running deployment on simi stay
+# exactly as they are and a redeploy reuses its data:
+#   profile gitea -> project wirelesswiki-gitea: gitea, cloudflared, runner-1..4
+#   profile agent -> project research-agent:     keyproxy, research-agent
+# Every service has a profile, so `docker compose up` without one starts nothing, and every
+# container name is pinned, so starting a group under the wrong project fails on a name clash
+# instead of opening the same Gitea data twice. Volume names are pinned to the project-prefixed
+# names they already have.
+#
+# Secrets: files in FLEET_SECRETS_DIR (default ~/.config/cluetooth-fleet/secrets, mode 600),
+# outside the repo. API keys are mounted only into keyproxy. The research agent gets no keys.
+# Host-specific, non-secret settings come from .env next to this file (see .env.example).
+
+services:
+  # ------------------------------------------------------------------ wirelesswiki-gitea
+  gitea:
+    profiles: [gitea]
+    container_name: wirelesswiki-gitea-gitea-1
+    image: gitea/gitea:1.27.0-rootless
+    restart: unless-stopped
+    user: "${GITEA_UID:-1000}:${GITEA_GID:-1000}"
+    environment:
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-git.wirelesswiki.org}
+      GITEA__server__ROOT_URL: https://${GITEA_DOMAIN:-git.wirelesswiki.org}/
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__DISABLE_SSH: "true"
+      GITEA__server__START_SSH_SERVER: "false"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__service__REQUIRE_SIGNIN_VIEW: "true"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__actions__ENABLED: "true"
+      GITEA__webhook__ALLOWED_HOST_LIST: private
+      GITEA__ui__THEMES: gitea-auto,gitea-light,gitea-dark,github-auto,github-light,github-dark,github-soft-dark
+      GITEA__ui__DEFAULT_THEME: github-auto
+    volumes:
+      # Gitea's data (repos, sqlite, the theme CSS) and app.ini (with its generated secrets)
+      # stay on the host. simi: GITEA_HOST_DIR=/data/services/wirelesswiki/gitea
+      - ${GITEA_HOST_DIR:-${HOME}/.local/share/cluetooth-fleet/gitea}/data:/var/lib/gitea
+      - ${GITEA_HOST_DIR:-${HOME}/.local/share/cluetooth-fleet/gitea}/config:/etc/gitea
+    networks: [wirelesswiki]
+
+  cloudflared:
+    profiles: [gitea]
+    container_name: wirelesswiki-gitea-cloudflared-1
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    # One tunnel, routes configured in the Cloudflare dashboard: git.wirelesswiki.org -> gitea:3000
+    # and db.wirelesswiki.org -> tcp://cluetooth-db:5432 (the scan database, through scandb).
+    command: [tunnel, --no-autoupdate, run, --token-file, /run/secrets/cloudflared-tunnel-token]
+    # Runs as the owner of the secret files so it can read the 600 token file.
+    user: "${FLEET_UID:-1000}:${FLEET_GID:-1000}"
+    secrets: [cloudflared-tunnel-token]
+    depends_on: [gitea]
+    networks: [wirelesswiki, scandb]
+
+  runner-1: &runner
+    profiles: [gitea]
+    container_name: wirelesswiki-gitea-runner-1-1
+    build: ./runner
+    image: wirelesswiki-runner:0.6.1
+    restart: unless-stopped
+    # No registration token here: a runner volume already holds its .runner registration. A
+    # new runner idles until `mise run fleet:register-runners` registers it once.
+    environment:
+      GITEA_INSTANCE_URL: http://gitea:3000
+      GITEA_RUNNER_LABELS: ubuntu-latest:host,linux:host
+      GITEA_RUNNER_NAME: simi-runner-1
+    volumes:
+      - runner-1-data:/data
+      - ./runner/config.yaml:/etc/act_runner/config.yaml:ro
+    networks: [wirelesswiki]
+  runner-2:
+    <<: *runner
+    container_name: wirelesswiki-gitea-runner-2-1
+    environment:
+      GITEA_INSTANCE_URL: http://gitea:3000
+      GITEA_RUNNER_LABELS: ubuntu-latest:host,linux:host
+      GITEA_RUNNER_NAME: simi-runner-2
+    volumes:
+      - runner-2-data:/data
+      - ./runner/config.yaml:/etc/act_runner/config.yaml:ro
+  runner-3:
+    <<: *runner
+    container_name: wirelesswiki-gitea-runner-3-1
+    environment:
+      GITEA_INSTANCE_URL: http://gitea:3000
+      GITEA_RUNNER_LABELS: ubuntu-latest:host,linux:host
+      GITEA_RUNNER_NAME: simi-runner-3
+    volumes:
+      - runner-3-data:/data
+      - ./runner/config.yaml:/etc/act_runner/config.yaml:ro
+  runner-4:
+    <<: *runner
+    container_name: wirelesswiki-gitea-runner-4-1
+    environment:
+      GITEA_INSTANCE_URL: http://gitea:3000
+      GITEA_RUNNER_LABELS: ubuntu-latest:host,linux:host
+      GITEA_RUNNER_NAME: simi-runner-4
+    volumes:
+      - runner-4-data:/data
+      - ./runner/config.yaml:/etc/act_runner/config.yaml:ro
+
+  # ------------------------------------------------------------------ research-agent
+  keyproxy:
+    profiles: [agent]
+    container_name: research-agent-keyproxy-1
+    build: ./keyproxy
+    image: cluetooth-keyproxy:dev
+    restart: unless-stopped
+    # The owner of the secret files (mode 600), so only this container can read them.
+    user: "${FLEET_UID:-1000}:${FLEET_GID:-1000}"
+    environment:
+      GITEA_URL: http://gitea:3000
+      GITEA_USER: ${GITEA_BOT_USER:-wiki-bot}
+      GITEA_REPOS: ${GITEA_REPOS:-y2wei/wirelesswiki}
+      WIGLE_DAILY_BUDGET: ${WIGLE_DAILY_BUDGET:-100}
+      WIGLE_RESERVE: ${WIGLE_RESERVE:-10}
+      WIGLE_PER_CALLER_DAILY: ${WIGLE_PER_CALLER_DAILY:-0}
+      ANDROZOO_MIN_INTERVAL_SECONDS: ${ANDROZOO_MIN_INTERVAL_SECONDS:-10}
+      ANDROZOO_DAILY_LIMIT: ${ANDROZOO_DAILY_LIMIT:-200}
+      ANDROZOO_GP_METADATA: ${ANDROZOO_GP_METADATA:-0}
+      STATE_FILE: /var/lib/keyproxy/counters.json
+      LOG_FILE: /var/lib/keyproxy/requests.log
+    secrets: [gitea-token, wigle-api-key, androzoo-api-key]
+    volumes:
+      - keyproxy-state:/var/lib/keyproxy
+    # default = research-agent_default, shared with the agent; wirelesswiki reaches Gitea.
+    networks: [default, wirelesswiki]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  research-agent:
+    profiles: [agent]
+    container_name: research-agent-research-agent-1
+    # Built by `mise run fleet:build` (zstd layers, agent-image/build-image.sh).
+    build: ./agent-image
+    image: ${RESEARCH_AGENT_IMAGE:-research-agent:dev}
+    init: false              # tini is the entrypoint
+    # Harness credentials only (Paseo password, scan DB URLs; see README.md). The entrypoint
+    # refuses to start if a Gitea, WiGLE, AndroZoo or GitHub key is set here. `docker compose
+    # config` prints env_file values: use `mise run fleet:config` (--no-env-resolution).
+    env_file:
+      - path: ${FLEET_SECRETS_DIR:-${HOME}/.config/cluetooth-fleet/secrets}/agent-runtime.env
+        required: false
+    environment:
+      PASEO_LISTEN: 0.0.0.0:6767     # inside the container; published on host loopback only
+      PASEO_RELAY_ENABLED: ${PASEO_RELAY_ENABLED:-false}
+      KEYPROXY_URL: http://keyproxy:8080
+      GITEA_URL: http://keyproxy:8080/gitea
+      GITEA_REPO: ${GITEA_REPOS:-y2wei/wirelesswiki}
+      WIGLE_BASE_URL: http://keyproxy:8080/wigle
+    ports:
+      - "127.0.0.1:${PASEO_HOST_PORT:-6768}:6767"
+    volumes:
+      - agent-home:/home/agent
+      - agent-workspace:/workspace
+      - mise-data:/opt/mise
+      # The bottom-line rules, outside the agents' reach. The entrypoint reads them first.
+      - ./policy:/etc/research-agent/policy:ro
+    depends_on: [keyproxy]
+    # Not on the wirelesswiki network: Gitea only through keyproxy. scandb reaches cluetooth-db.
+    networks: [default, scandb]
+    # A runaway job must hit this limit, not take the host (Gitea, the scan DB) down with it.
+    mem_limit: ${AGENT_MEM_LIMIT:-40g}
+    memswap_limit: ${AGENT_MEM_LIMIT:-40g}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+networks:
+  # Created by `mise run fleet:up` if missing; shared by both projects.
+  wirelesswiki:
+    name: wirelesswiki
+    external: true
+  # The data stack's network (infra/data, project newcluetooth), for cluetooth-db.
+  scandb:
+    name: ${SCANDB_NETWORK:-newcluetooth_default}
+    external: true
+
+volumes:
+  runner-1-data:
+    name: wirelesswiki-gitea_runner-1-data
+  runner-2-data:
+    name: wirelesswiki-gitea_runner-2-data
+  runner-3-data:
+    name: wirelesswiki-gitea_runner-3-data
+  runner-4-data:
+    name: wirelesswiki-gitea_runner-4-data
+  agent-home:
+    name: research-agent_agent-home
+  agent-workspace:
+    name: research-agent_agent-workspace
+  mise-data:
+    name: research-agent_mise-data
+  keyproxy-state:
+    name: research-agent_keyproxy-state
+
+secrets:
+  gitea-token:
+    file: ${FLEET_SECRETS_DIR:-${HOME}/.config/cluetooth-fleet/secrets}/gitea-token
+  wigle-api-key:
+    file: ${FLEET_SECRETS_DIR:-${HOME}/.config/cluetooth-fleet/secrets}/wigle-api-key
+  androzoo-api-key:
+    file: ${FLEET_SECRETS_DIR:-${HOME}/.config/cluetooth-fleet/secrets}/androzoo-api-key
+  cloudflared-tunnel-token:
+    file: ${FLEET_SECRETS_DIR:-${HOME}/.config/cluetooth-fleet/secrets}/cloudflared-tunnel-token

@@ -50,3 +50,45 @@ run = ["mise run //cluetooth-core:check", "mise run //scanner:check", "mise run 
 [tasks.native-check]
 description = "Build the Android API-24 native ABIs in CLUETOOTH_ABIS (default arm64-v8a); separate from host tests and product APKs"
 depends = ["//cluetooth-core:build-android"]
+
+# Research agent fleet (infra/fleet): Gitea, runners, tunnel, keyproxy, research agent.
+# Secrets stay in ~/.config/cluetooth-fleet/secrets (FLEET_SECRETS_DIR); see infra/fleet/README.md.
+[tasks."fleet:secrets"]
+description = "Check the fleet's secret files exist with mode 600 (prints names and modes, never contents)"
+run = "infra/fleet/fleet.sh secrets"
+
+[tasks."fleet:build"]
+description = "Build the runner, keyproxy and research-agent images (the agent with zstd layers)"
+run = "infra/fleet/fleet.sh build"
+
+[tasks."fleet:up"]
+description = "Check secrets, then start the fleet (compose projects wirelesswiki-gitea and research-agent)"
+run = "infra/fleet/fleet.sh up"
+
+[tasks."fleet:down"]
+description = "Stop and remove the fleet's containers (volumes and host data are kept)"
+run = "infra/fleet/fleet.sh down"
+
+[tasks."fleet:status"]
+description = "Show the fleet's containers, keyproxy health and today's WiGLE budget"
+run = "infra/fleet/fleet.sh status"
+
+[tasks."fleet:logs"]
+description = "Follow one fleet service's logs: mise run fleet:logs <service>"
+usage = 'arg "<service>" help="gitea, cloudflared, runner-1..4, keyproxy or research-agent"'
+run = 'infra/fleet/fleet.sh logs {{arg(name="service")}}'
+
+[tasks."fleet:test"]
+description = "keyproxy and agent tool tests (node --test, no network, no Docker)"
+run = [
+  "cd infra/fleet/keyproxy && node --test 'test/*.test.mjs'",
+  "cd infra/fleet/agent-image && node --test tools/wigle/test/*.test.mjs tools/gitea-watch/test/*.test.mjs",
+]
+
+[tasks."fleet:config"]
+description = "Render the fleet compose file (all profiles) without resolving env files, so no secret is printed"
+run = "infra/fleet/fleet.sh config"
+
+[tasks."fleet:register-runners"]
+description = "Register the four Gitea runners once (needs gitea-runner-registration-token in the secrets dir)"
+run = "infra/fleet/fleet.sh register-runners"
