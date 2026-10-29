@@ -13,6 +13,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.PermissionState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
 import edu.ucsd.sysnet.cluetoothscanner.chrome.Cleanup
+import edu.ucsd.sysnet.cluetoothscanner.chrome.CleanupFailure
 import edu.ucsd.sysnet.cluetoothscanner.chrome.DeleteConfirm
 import edu.ucsd.sysnet.cluetoothscanner.chrome.Reclaimable
 import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageFullUi
@@ -24,6 +25,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.SearchPageState
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.onboardingSteps
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.map.CluetoothMapState
 import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetsState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
@@ -118,7 +120,8 @@ sealed interface ReclaimRead {
 
 /** R-10: choosing the cleanups (after one ran, with what it freed), or one running. */
 sealed interface CleanupStep {
-    data class Choosing(val lastFreed: Bytes?) : CleanupStep
+    /** [last]: what the last run did (null before any). */
+    data class Choosing(val last: CleanupOutcome?) : CleanupStep
     data object Freeing : CleanupStep
 }
 
@@ -232,8 +235,8 @@ sealed interface MainEvent {
     data class ReclaimableRead(val reclaim: Reclaim?) : MainEvent
     data class ChooseCleanup(val cleanup: Cleanup, val on: Boolean) : MainEvent
     data object FreeUpSpace : MainEvent
-    /** The cleanups ran: what they freed in total, and the free space and reclaimable sizes after. */
-    data class SpaceFreed(val ran: Set<Cleanup>, val freed: Bytes, val after: Reclaim?) : MainEvent
+    /** The cleanups ran: what each freed or why it failed, and the free space and reclaimable sizes after. */
+    data class SpaceFreed(val outcome: CleanupOutcome, val after: Reclaim?) : MainEvent
     data object StorageFullNotNow : MainEvent
     data object StorageFullResume : MainEvent
     /** Settings › Storage (O-1 item 11): a cleanup's button, its confirmation, its cancel. */
@@ -391,7 +394,8 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
         val f = e.facts
         s.copy(storage = StorageUi(f.databaseBytes, f.rawFilesBytes, f.mapCacheBytes, f.pendingCount,
             prev?.exportScope ?: shown, prev?.exportFormat, false, null, prev?.deleteScope ?: shown,
-            reclaimable = prev?.reclaimable, cleaning = prev?.cleaning ?: false, cleanupFreed = prev?.cleanupFreed)).only()
+            reclaimable = prev?.reclaimable, cleaning = prev?.cleaning ?: false, cleanupFreed = prev?.cleanupFreed,
+            cleanupFailure = prev?.cleanupFailure)).only()
     }
     is MainEvent.EditStorage -> s.copy(storage = s.storage?.let(e.transform)).only()
     // O-1 item 10: prepare the scope's export, then hand it to the share sheet or Downloads
@@ -443,7 +447,7 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.CleanupCancelled -> s.copy(storage = s.storage?.copy(cleanupConfirm = null)).only()
     MainEvent.CleanupConfirmed -> s.storage?.let { st ->
         st.cleanupConfirm?.let { c ->
-            s.copy(storage = st.copy(cleanupConfirm = null, cleaning = true, cleanupFreed = null)).with(MainEffect.FreeUpSpace(setOf(c)))
+            s.copy(storage = st.copy(cleanupConfirm = null, cleaning = true, cleanupFreed = null, cleanupFailure = null)).with(MainEffect.FreeUpSpace(setOf(c)))
         }
     } ?: s.only()
     // O-2 Done: save, then the first run (recording straight away if the switch was left on)
@@ -468,11 +472,10 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         MainEffect.ReadLaunchFacts -> reduce(s, MainEvent.LaunchFactsRead(LaunchFacts(null, recordOnOpen = false, sessionCount = 0)))
         MainEffect.LoadStorage -> reduce(s, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)))
         MainEffect.LoadReclaimable -> reduce(s, MainEvent.ReclaimableRead(null))
-        // the dialog and Settings go back to choosing; nothing is known to have been freed
-        is MainEffect.FreeUpSpace -> s.copy(
-            storageFull = s.storageFull?.let { d -> if (d.step is CleanupStep.Freeing) d.copy(step = CleanupStep.Choosing(null)) else d },
-            storage = s.storage?.copy(cleaning = false),
-        ).only()
+        // a throw fails every cleanup of the run, each with the error's message, as a typed Err would
+        is MainEffect.FreeUpSpace -> reduce(s, MainEvent.SpaceFreed(
+            CleanupOutcome(emptyMap(), task.effect.cleanups.associateWith { CleanupError.Failed(error.message ?: error::class.simpleName.orEmpty()) }), null,
+        ))
         is MainEffect.Export -> reduce(s, MainEvent.ExportFinished)
         // the onboarding stays, so Done can be pressed again
         is MainEffect.SaveOnboarding,
@@ -492,28 +495,39 @@ private fun withPanel(s: MainUiState, open: Boolean): MainUiState = when (s.reco
     is RecorderMirror.Active -> s.copy(recorder = RecorderMirror.Active(open))
 }
 
-/** G-14: closes the topmost layer; Leave changes nothing (the BackHandler is disabled then). */
 /**
- * R-10: after the cleanups the dialog shows what they freed (and Resume, if free space is back above the floor),
- * Settings shows it too, and the storage figures are re-read. Clearing the database may have removed the shown
- * sessions, so the launch view opens again (a paused recording keeps its session, V-6).
+ * R-10: after the cleanups the dialog shows what each did: what the ones that succeeded freed, and why each one that
+ * failed did not (its switch stays on, so "Free up space" retries it). Resume shows if free space is back above the
+ * floor. Settings shows the same, and the storage figures are re-read. Clearing the database may have removed the
+ * shown sessions, so the launch view opens again (a paused recording keeps its session, V-6).
  */
 private fun spaceFreed(s: MainUiState, e: MainEvent.SpaceFreed): Step {
+    val outcome = e.outcome
     val dialog = s.storageFull?.let { d ->
         if (d.step !is CleanupStep.Freeing) d
         else d.copy(
-            free = e.after?.free ?: d.free, reclaim = e.after?.let(ReclaimRead::Known) ?: ReclaimRead.Unknown,
-            chosen = d.chosen - e.ran, step = CleanupStep.Choosing(e.freed),
+            free = e.after?.free ?: d.free, reclaim = e.after?.let(ReclaimRead::Known) ?: d.reclaim.takeIf { it is ReclaimRead.Known } ?: ReclaimRead.Unknown,
+            chosen = d.chosen - outcome.freed.keys, step = CleanupStep.Choosing(outcome),
         )
     }
     val storage = s.storage?.let { st ->
-        st.copy(reclaimable = e.after?.let(::reclaimable) ?: st.reclaimable, cleaning = false, cleanupFreed = if (st.cleaning) e.freed.n else st.cleanupFreed)
+        if (!st.cleaning) st.copy(reclaimable = e.after?.let(::reclaimable) ?: st.reclaimable)
+        else st.copy(
+            reclaimable = e.after?.let(::reclaimable) ?: st.reclaimable, cleaning = false,
+            cleanupFreed = outcome.freedTotal?.n, cleanupFailure = outcome.failed.entries.firstOrNull()?.let { (c, err) -> CleanupFailure(c, reason(err)) },
+        )
     }
     val effects = buildList {
         if (s.storage != null) add(MainEffect.LoadStorage)
-        if (Cleanup.LocalDatabase in e.ran) { add(MainEffect.LoadSessions); if (s.scope != null) add(MainEffect.ReadLaunchFacts) }
+        if (Cleanup.LocalDatabase in outcome.freed) { add(MainEffect.LoadSessions); if (s.scope != null) add(MainEffect.ReadLaunchFacts) }
     }
     return Step(s.copy(storageFull = dialog, storage = storage), effects)
+}
+
+/** The text after "Couldn't …:" for a typed failure. */
+fun reason(e: CleanupError): String = when (e) {
+    CleanupError.Unavailable -> Strings.CleanupUnavailable
+    is CleanupError.Failed -> e.message
 }
 
 private fun reclaimable(r: Reclaim) = Reclaimable(r.uploadedRaw.n, r.localDatabase.n)
@@ -524,7 +538,8 @@ fun storageFullUi(d: StorageFullState): StorageFullUi = StorageFullUi(
     reclaimable = (d.reclaim as? ReclaimRead.Known)?.reclaim?.let(::reclaimable),
     chosen = d.chosen,
     freeing = d.step is CleanupStep.Freeing,
-    freedBytes = (d.step as? CleanupStep.Choosing)?.lastFreed?.n,
+    freedBytes = (d.step as? CleanupStep.Choosing)?.last?.freedTotal?.n,
+    failures = (d.step as? CleanupStep.Choosing)?.last?.failed?.map { (c, err) -> CleanupFailure(c, reason(err)) }.orEmpty(),
     canResume = d.canResume,
     checking = d.reclaim is ReclaimRead.Reading,
 )
@@ -533,6 +548,7 @@ fun storageFullUi(d: StorageFullState): StorageFullUi = StorageFullUi(
 private fun back(s: MainUiState, e: MainEvent.Back): Step =
     if (s.storageFull != null) s.copy(storageFull = null).only() else backLayer(s, e)
 
+/** G-14: closes the topmost layer; Leave changes nothing (the BackHandler is disabled then). */
 private fun backLayer(s: MainUiState, e: MainEvent.Back): Step = when (backTarget(backLayers(s, e.pushedSheet, e.sheetSearching))) {
     BackTarget.LocationPopover -> s.copy(locationPopoverOpen = false).only()
     BackTarget.Page -> s.copy(page = null).only()

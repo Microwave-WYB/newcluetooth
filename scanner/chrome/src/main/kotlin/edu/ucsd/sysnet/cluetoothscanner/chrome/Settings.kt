@@ -67,8 +67,10 @@ data class StorageUi(
     val cleanupConfirm: Cleanup? = null,
     /** A cleanup is running. */
     val cleaning: Boolean = false,
-    /** What the last cleanup freed. */
+    /** What the last cleanup freed (null when it failed or none ran). */
     val cleanupFreed: Long? = null,
+    /** Why the last cleanup failed. */
+    val cleanupFailure: CleanupFailure? = null,
 )
 
 /** Confirm: the scope's deletion, keeping un-uploaded data; LoseUnuploaded: the explicit second step. */
@@ -266,7 +268,10 @@ private fun CleanupBlock(st: StorageUi, a: SettingsActions) {
         ConfirmCard(title, body, secondary = Strings.Cancel to a.onCleanupCancel, primary = cleanupAction(cleanup) to a.onCleanupConfirm, tag = "cleanupConfirm")
     }
     if (st.cleaning) ListItem(Strings.Freeing)
-    st.cleanupFreed?.takeIf { !st.cleaning }?.let { ListItem(Strings.freed(it), modifier = Modifier.testTag("cleanupFreed")) }
+    if (!st.cleaning) {
+        st.cleanupFreed?.let { ListItem(Strings.freed(it), modifier = Modifier.testTag("cleanupFreed")) }
+        st.cleanupFailure?.let { ListItem(cleanupFailedText(it), titleColor = CluetoothTheme.colors.rec, modifier = Modifier.testTag("cleanupFailed")) }
+    }
 }
 
 private fun cleanupAction(c: Cleanup): String = when (c) {

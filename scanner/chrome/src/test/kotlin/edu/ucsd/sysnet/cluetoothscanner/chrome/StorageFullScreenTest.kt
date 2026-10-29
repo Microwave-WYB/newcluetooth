@@ -100,6 +100,38 @@ class StorageFullScreenTest {
         compose.runOnIdle { assertEquals(listOf("confirm"), calls) }
     }
 
+    /** A typed Err is a failure line, never "Freed"; next to a cleanup that succeeded, both show. */
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
+    @Test fun failuresShowInsteadOfFreedAndNextToIt() {
+        var state by androidx.compose.runtime.mutableStateOf(
+            ui.copy(chosen = setOf(Cleanup.LocalDatabase), freedBytes = null, failures = listOf(CleanupFailure(Cleanup.LocalDatabase, "the database is busy"))),
+        )
+        compose.setContent { CluetoothTheme(reducedMotion = true) { StorageFullDialog(state, actions) } }
+        compose.onNodeWithText("Couldn't clear the local database: the database is busy").assertExists()
+        compose.onNodeWithTag("freed").assertDoesNotExist()
+        // its switch stayed on, so Free up space retries it
+        compose.onNodeWithTag("freeUp").assertIsEnabled()
+        state = ui.copy(freedBytes = 300_000_000, failures = listOf(CleanupFailure(Cleanup.LocalDatabase, "not available in this version")))
+        compose.onNodeWithText("Freed 300 MB").assertExists()
+        compose.onNodeWithText("Couldn't clear the local database: not available in this version").assertExists()
+        state = ui.copy(freedBytes = null, failures = listOf(CleanupFailure(Cleanup.UploadedRaw, "x")))
+        compose.onNodeWithText("Couldn't delete uploaded raw files: x").assertExists()
+    }
+
+    /** Settings › Storage: a failed cleanup shows why, not "Freed". */
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
+    @Test fun settingsShowsAFailedCleanup() {
+        val settings = Settings("wyb01", recordOnOpen = true, wifiOnlyUpload = false, scanCodedPhy = true, hideUnnamedApple = true, appVersion = "0.1.0")
+        val storage = StorageUi(12_000_000, 340_000_000, null, 0, Scope.All, null, false, null,
+            reclaimable = Reclaimable(300_000_000, 40_000_000), cleanupFailure = CleanupFailure(Cleanup.UploadedRaw, "the archive is busy"))
+        val a = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+        compose.setContent {
+            CluetoothTheme(reducedMotion = true) { SettingsPage(true, SettingsUi(settings, UploadStatus(0, 0, 0, null), storage), a, sessionLabel = null, sessionScope = null) }
+        }
+        compose.onNodeWithText("Couldn't delete uploaded raw files: the archive is busy").performScrollTo()
+        compose.onNodeWithTag("cleanupFreed").assertDoesNotExist()
+    }
+
     /** "Checking…" only while the core is asked; when it cannot say, no size shows. */
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
     @Test fun sizesAreCheckingThenKnownOrAbsent() {
@@ -115,7 +147,8 @@ class StorageFullScreenTest {
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneDark() = shot(true)
 
     private fun shot(dark: Boolean) {
-        show(ui.copy(chosen = setOf(Cleanup.UploadedRaw), freedBytes = 20_000_000), dark)
+        show(ui.copy(chosen = setOf(Cleanup.LocalDatabase), freedBytes = 300_000_000,
+            failures = listOf(CleanupFailure(Cleanup.LocalDatabase, "the database is busy"))), dark)
         compose.onRoot().captureRoboImage("src/test/screenshots/storage-full/412x915-${if (dark) "dark" else "light"}.png")
     }
 }

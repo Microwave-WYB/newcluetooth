@@ -44,6 +44,15 @@ data class Reclaimable(val uploadedRawBytes: Long, val localDatabaseBytes: Long)
     }
 }
 
+/** R-10: a cleanup that failed, with the core's reason. */
+data class CleanupFailure(val cleanup: Cleanup, val reason: String)
+
+/** "Couldn't delete uploaded raw files: …". */
+fun cleanupFailedText(f: CleanupFailure): String = when (f.cleanup) {
+    Cleanup.UploadedRaw -> Strings.deleteUploadedRawFailed(f.reason)
+    Cleanup.LocalDatabase -> Strings.clearLocalDatabaseFailed(f.reason)
+}
+
 /** The switch or button label of a cleanup. */
 fun cleanupTitle(c: Cleanup): String = when (c) {
     Cleanup.UploadedRaw -> Strings.DeleteUploadedRaw
@@ -59,12 +68,14 @@ data class StorageFullUi(
     val chosen: Set<Cleanup>,
     /** A cleanup is running: the switches and the button wait. */
     val freeing: Boolean,
-    /** After "Free up space": what it freed. */
+    /** After "Free up space": what the cleanups that succeeded freed (null when none did). */
     val freedBytes: Long?,
     /** Free space is back above the floor: "Resume" continues the recording. */
     val canResume: Boolean,
     /** The core is being asked what each cleanup frees. */
     val checking: Boolean = false,
+    /** After "Free up space": each cleanup that failed (its switch stays on), shown next to what the others freed. */
+    val failures: List<CleanupFailure> = emptyList(),
 )
 
 class StorageFullActions(
@@ -75,9 +86,10 @@ class StorageFullActions(
 )
 
 /**
- * R-10: over everything, on the `--dim-strip` scrim (it takes the taps; Back is "Not now"). A `--panel` card,
+ * R-10: over everything, on the `--scrim` (it takes the taps; Back is "Not now"). A `--panel` card,
  * `min(--panel-w, width − 2 × --edge)` wide, radius and shadow as the location popover: the title, the body, the
- * free space, the two switches with what each frees, what the last cleanup freed, then "Not now" and "Free up
+ * free space, the two switches with what each frees, what the last cleanups freed and why any failed (in `--rec`),
+ * then "Not now" and "Free up
  * space" (enabled with a switch on), or "Resume" once free space is back above the floor.
  */
 @Composable
@@ -86,7 +98,7 @@ fun StorageFullDialog(ui: StorageFullUi, actions: StorageFullActions, modifier: 
     val t = CluetoothTheme.type
     val shape = RoundedCornerShape(Concentric.popover)
     BoxWithConstraints(
-        modifier.fillMaxSize().background(c.dimStrip).plainClickable(remember { MutableInteractionSource() }, role = null) {}.testTag("storageFull"),
+        modifier.fillMaxSize().background(c.scrim).plainClickable(remember { MutableInteractionSource() }, role = null) {}.testTag("storageFull"),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -111,7 +123,10 @@ fun StorageFullDialog(ui: StorageFullUi, actions: StorageFullActions, modifier: 
                 )
             }
             if (ui.freeing) Text(Strings.Freeing, style = t.sub, color = c.t2)
-            else ui.freedBytes?.let { Text(Strings.freed(it), style = t.sub, modifier = Modifier.testTag("freed")) }
+            else {
+                ui.freedBytes?.let { Text(Strings.freed(it), style = t.sub, modifier = Modifier.testTag("freed")) }
+                for (f in ui.failures) Text(cleanupFailedText(f), style = t.sub, color = c.rec, modifier = Modifier.testTag("failed:${f.cleanup}"))
+            }
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Css.BtnRow.gap, Alignment.End),

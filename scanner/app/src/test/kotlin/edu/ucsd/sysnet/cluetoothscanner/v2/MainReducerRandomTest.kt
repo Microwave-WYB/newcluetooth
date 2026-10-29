@@ -70,8 +70,15 @@ class MainReducerRandomTest {
         43 -> MainEvent.ReclaimableRead(if (nextBoolean()) null else Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(nextLong(1_000)), Bytes(nextLong(1_000))))
         44, 45 -> MainEvent.ChooseCleanup(Cleanup.entries.random(this), nextBoolean())
         46 -> MainEvent.FreeUpSpace
-        47 -> Cleanup.entries.filter { nextBoolean() }.toSet().let { ran ->
-            MainEvent.SpaceFreed(ran, Bytes(nextLong(1_000)), Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(0), Bytes(0)))
+        // each cleanup of a run: not run, freed something, or failed with a typed error
+        47 -> Cleanup.entries.groupBy { nextInt(3) }.let { split ->
+            MainEvent.SpaceFreed(
+                CleanupOutcome(
+                    split[1].orEmpty().associateWith { Bytes(nextLong(1_000)) },
+                    split[2].orEmpty().associateWith { listOf(CleanupError.Unavailable, CleanupError.Failed("busy")).random(this) },
+                ),
+                if (nextBoolean()) null else Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(0), Bytes(0)),
+            )
         }
         48 -> listOf(MainEvent.StorageFullNotNow, MainEvent.StorageFullResume).random(this)
         49 -> listOf(MainEvent.CleanupRequested(Cleanup.entries.random(this)), MainEvent.CleanupConfirmed, MainEvent.CleanupCancelled).random(this)
@@ -128,6 +135,22 @@ class MainReducerRandomTest {
                 }
                 if (e is MainEvent.StorageFullResume && MainEffect.ResumeRecording in step.effects) check("resume below the floor", (s.storageFull?.free ?: Bytes(0)) > STORAGE_FLOOR)
                 n.storageFull?.let { d -> if (s.storageFull == null) check("opened with a switch on", d.chosen.isEmpty()) }
+                // a run's outcome: only the cleanups that freed something switch off; a failed one stays on and is shown
+                val before = s.storageFull
+                if (e is MainEvent.SpaceFreed && before != null && before.step is CleanupStep.Freeing) {
+                    val d = n.storageFull
+                    check("outcome dropped the dialog", d != null)
+                    if (d != null) {
+                        val ui = storageFullUi(d)
+                        check("switches after the outcome", d.chosen == before.chosen - e.outcome.freed.keys)
+                        check("a failure shown as freed", (ui.freedBytes == null) == e.outcome.freed.isEmpty())
+                        check("failures not shown", ui.failures.map { it.cleanup }.toSet() == e.outcome.failed.keys)
+                    }
+                }
+                if (e is MainEvent.SpaceFreed && s.storage?.cleaning == true) {
+                    check("settings shows a failure as freed", (n.storage?.cleanupFreed == null) == e.outcome.freed.isEmpty())
+                    check("settings hides the failure", (n.storage?.cleanupFailure == null) == e.outcome.failed.isEmpty())
+                }
                 // storage: an export runs only with a format
                 n.storage?.let { if (it.exporting) check("export without a format", it.exportFormat != null) }
                 if (e is MainEvent.Back) checkBack(s, e, step, ::check)

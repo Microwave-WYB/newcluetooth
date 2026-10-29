@@ -20,7 +20,6 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
-import edu.ucsd.sysnet.cluetoothscanner.chrome.Cleanup
 import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
@@ -292,19 +291,9 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             MainEffect.UploadNow -> graph.uploads.uploadNow()
             MainEffect.LoadReclaimable -> dispatch(MainEvent.ReclaimableRead(readReclaim()))
             is MainEffect.FreeUpSpace -> {
-                var freed = Bytes(0)
-                // raw files first (they never include un-uploaded ones), then the history; an Err frees nothing
-                for (c in Cleanup.entries.filter { it in effect.cleanups }) {
-                    val result = when (c) {
-                        Cleanup.UploadedRaw -> graph.storageCleanup.deleteUploadedRaw()
-                        Cleanup.LocalDatabase -> graph.storageCleanup.clearLocalDatabase()
-                    }
-                    when (result) {
-                        is CleanupResult.Ok -> freed += result.value
-                        is CleanupResult.Err -> Log.w(TAG, "$c: ${result.reason}")
-                    }
-                }
-                dispatch(MainEvent.SpaceFreed(effect.cleanups, freed, readReclaim()))
+                val outcome = graph.storageCleanup.run(effect.cleanups)
+                outcome.failed.forEach { (c, error) -> Log.w(TAG, "$c: $error") }
+                dispatch(MainEvent.SpaceFreed(outcome, readReclaim()))
             }
         }
     }
@@ -312,7 +301,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     /** R-10: the free space and what each cleanup frees, or null when the core cannot say. */
     private suspend fun readReclaim(): Reclaim? = when (val r = graph.storageCleanup.reclaimable()) {
         is CleanupResult.Ok -> r.value
-        is CleanupResult.Err -> null.also { Log.w(TAG, "reclaimable: ${r.reason}") }
+        is CleanupResult.Err -> null.also { Log.w(TAG, "reclaimable: ${r.error}") }
     }
 
     /** V-6's facts: a recording the recorder restored, the stored setting and how many sessions exist. */

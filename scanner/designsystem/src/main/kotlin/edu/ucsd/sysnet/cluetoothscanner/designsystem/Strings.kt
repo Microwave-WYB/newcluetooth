@@ -248,6 +248,11 @@ object Strings {
     const val Freeing = "Freeing up space…"
     /** After a cleanup: "Freed 340 MB". */
     fun freed(bytes: Long) = "Freed ${Format.bytes(bytes)}"
+    /** A cleanup that failed, with the core's reason. */
+    fun deleteUploadedRawFailed(reason: String) = "Couldn't delete uploaded raw files: $reason"
+    fun clearLocalDatabaseFailed(reason: String) = "Couldn't clear the local database: $reason"
+    /** The reason while the core does not offer the cleanups yet. */
+    const val CleanupUnavailable = "not available in this version"
     const val DeleteUploadedRawConfirmTitle = "Delete uploaded raw files?"
     const val DeleteUploadedRawConfirmBody = "Raw files that have already uploaded are deleted. Files not yet uploaded are never touched."
     const val ClearLocalDatabaseConfirmTitle = "Clear local database?"

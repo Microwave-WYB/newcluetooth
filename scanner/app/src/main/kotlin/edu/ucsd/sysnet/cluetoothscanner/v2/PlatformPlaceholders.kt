@@ -28,6 +28,6 @@ internal class PlatformPlaceholders {
     }
 
     private companion object {
-        val NotYet = CleanupResult.Err("R-10 storage calls are not in the core yet")
+        val NotYet = CleanupResult.Err(CleanupError.Unavailable)
     }
 }
