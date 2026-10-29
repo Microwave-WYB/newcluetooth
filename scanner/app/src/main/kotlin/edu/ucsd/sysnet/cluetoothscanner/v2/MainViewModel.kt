@@ -198,8 +198,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _ready.value?.map?.frame(box)
     }
 
-    fun fix(): FixSummary? = graph.location.myLocation.value?.let { FixSummary(it.at.lat, it.at.lon, it.accuracyM, it.ageMs) }
-
     // ---- layout, sidebar, pages, popover ----
 
     /** G-2 and T-9: a breakpoint crossing re-lays out and keeps the state. */

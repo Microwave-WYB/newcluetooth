@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionScope
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
@@ -70,6 +71,7 @@ fun MainScreen(vm: MainViewModel) {
     val rec by vm.recorder.collectAsState()
     val settings by vm.settings.collectAsState()
     val location by vm.location.collectAsState()
+    val myLocation by vm.graph.location.myLocation.collectAsState()
     val r = ready ?: return
     val density = LocalDensity.current
     val nav = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
@@ -86,7 +88,7 @@ fun MainScreen(vm: MainViewModel) {
         val live = ui.view?.live == true
         val form = vm.recorderForm(rec, ui.recorderPanelOpen)
         val recorderUi = RecorderUi(form, rec.phase == RecorderState.Phase.Paused, rememberElapsedMs(rec.activeBeforeMs, rec.runningSinceMs),
-            rec.deviceCount, vm.fix(), ui.route)
+            rec.deviceCount, myLocation?.let { FixSummary(it.at.lat, it.at.lon, it.accuracyM, it.ageMs) }, ui.route)
         val recorderActions = remember(vm) {
             RecorderActions(vm::startRecording.let { f -> { f(); Unit } }, { vm.setRecorderPanel(true) }, { vm.setRecorderPanel(false) },
                 { vm.pause(); Unit }, { vm.resume(); Unit }, { vm.stop(); Unit }, vm::fitRoute)
@@ -110,7 +112,7 @@ fun MainScreen(vm: MainViewModel) {
             )
         }
         val miniMap: @Composable (Modifier) -> Unit = { m ->
-            RouteMiniMap(ui.route, vm.graph.location.myLocation.value?.at, m, dark = CluetoothTheme.isDark)
+            RouteMiniMap(ui.route, myLocation?.at, m, dark = CluetoothTheme.isDark)
         }
         val sessions = @Composable { m: Modifier ->
             ui.sessions?.let { SessionsList(it, vm::selectScope, vm::openSettings, m, tablet = tablet, bottomInset = if (tablet) 0.dp else nav) }
