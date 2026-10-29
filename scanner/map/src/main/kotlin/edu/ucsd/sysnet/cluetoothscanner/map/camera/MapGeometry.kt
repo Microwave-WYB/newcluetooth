@@ -136,8 +136,8 @@ object MapGeometry {
     }
 
     /**
-     * The area map_points loaded for [viewport]: the core serves the viewport + 50 % (§2.5), taken here as a
-     * quarter of the width and height on each side.
+     * The area map_points loaded for [viewport]: the core serves the viewport + 50 % (§2.5), which is a quarter of
+     * the width and height added on each side (confirmed with lane A).
      */
     fun loadedArea(viewport: Bbox): Bbox {
         val dx = (viewport.east - viewport.west) / 4

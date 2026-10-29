@@ -43,7 +43,10 @@ object TapResolver {
     fun cellZoom(current: Double) = current + 2
 }
 
-/** DeviceKey (§2.2: the 48-bit MAC as an integer) ⇄ the `addr` property of the map's GeoJSON ("AA:BB:CC:DD:EE:FF"). */
+/**
+ * DeviceKey (§2.2: the 48-bit MAC as an integer) ⇄ the `addr` property of the map's GeoJSON. The core writes `addr`
+ * in uppercase colon form, "AA:BB:CC:DD:EE:FF" (confirmed with lane A).
+ */
 object DeviceAddr {
     fun keyOf(addr: String): DeviceKey? {
         val hex = addr.replace(":", "").replace("-", "")

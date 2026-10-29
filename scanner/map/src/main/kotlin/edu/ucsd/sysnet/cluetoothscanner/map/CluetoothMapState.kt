@@ -45,8 +45,9 @@ import kotlin.math.max
  *
  * Main thread only; [scope] must run on Dispatchers.Main (the app's ViewModel scope).
  *
- * - [show] with a new scope frames that session itself, without animation (M-10, V-7). [frame] is the animated
- *   framing D-8 asks for.
+ * - [show] with a new scope frames that session itself, without animation (M-10, V-7), from its SessionView.frame.
+ *   :app never calls [frame] on a session switch (coordinator decision); [frame] is only the animated framing D-8
+ *   asks for (a product sheet opening).
  * - With no scope shown yet (first run, V-6) the map shows only the user's location at zoom 16 (M-9).
  */
 class CluetoothMapState(

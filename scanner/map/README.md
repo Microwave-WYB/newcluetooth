@@ -3,6 +3,18 @@
 MapLibre Android with the shared overlay style (`design/ui-v2/map-style.json`, copied into the assets at build time),
 the camera rules, selection, taps and the R-5 mini map. See `docs/v2-api.md` §6.6 and SPEC M, P-4, P-5, T-8.
 
+## Contract notes
+
+- **Session framing.** `show()` with a new scope frames that session itself, from `SessionView.frame`, without
+  animation (M-10, V-7). `:app` does not call `frame()` on a session switch; `frame()` is only the animated D-8
+  framing when a product sheet opens.
+- **GeoJSON `addr`.** The core writes it in uppercase colon form (`AA:BB:CC:DD:EE:FF`); `DeviceAddr` maps it to and
+  from `DeviceKey`.
+- **Loaded area.** `map_points` serves the viewport + 50 %, a quarter of the width and height on each side; an idle
+  camera inside that area (in Points mode) does not re-query.
+
+## Tests
+
 - JVM tests and lint: `mise run //scanner:map-test`.
 - Instrumented tests run on the `cluetooth-test` AVD only. Build the test APK and install it on the emulator by serial;
   do not use `connectedAndroidTest`, which installs on every attached device:
