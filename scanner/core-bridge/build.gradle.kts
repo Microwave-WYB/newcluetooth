@@ -33,9 +33,9 @@ android {
             java.srcDir(uniffiDirectory)
             jniLibs.srcDir(jniLibsDirectory)
         }
-        // the instrumented smoke test reads the same bundle the JVM tests use
+        // the instrumented smoke test opens the core on the assets the app ships (wiki-bundle.json, sig-numbers.tsv)
         getByName("androidTest") {
-            assets.srcDir(rootProject.layout.projectDirectory.dir("core-fake/src/test/resources"))
+            assets.srcDir(rootProject.layout.projectDirectory.dir("app/src/main/assets"))
         }
     }
     testOptions {

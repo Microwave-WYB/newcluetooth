@@ -24,12 +24,12 @@ class CoreBridgeSmokeTest {
 
     @Test
     fun recordIngestAndQuery() = runBlocking {
-        val bundle = InstrumentationRegistry.getInstrumentation().context.assets.open("fake-bundle.json")
-            .bufferedReader().use { it.readText() }
+        val assets = InstrumentationRegistry.getInstrumentation().context.assets
+        fun asset(name: String) = assets.open(name).bufferedReader().use { it.readText() }
         val dir = Files.createTempDirectory("core-bridge-smoke").toFile()
         val core = CoreBridge.open(
             CoreConfig(dataDirectory = dir.path, recipientPublicKey = ByteArray(32)),
-            CoreAssets(bundle, "company\t0057\tHarman International\n"),
+            CoreAssets(asset("wiki-bundle.json"), asset("sig-numbers.tsv")),
         )
         try {
             val session = core.startRecording(env)
