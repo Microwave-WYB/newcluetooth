@@ -121,15 +121,16 @@ fun MainScreen(vm: MainViewModel) {
         val topState = TopChromeState(
             hasSession = hasSession, sidebarOpen = ui.sidebarOpen && !tablet, recorderPanelOpen = form == RecorderUi.Form.Panel && !tablet,
             recording = rec.phase != RecorderState.Phase.Idle, page = ui.search.takeIf { ui.page == Page.SearchPage },
-            searchQuery = ui.searchQuery, showSearchThisArea = false,
+            searchQuery = ui.searchQuery, showSearchThisArea = ui.showSearchThisArea,
         )
         val topActions = remember(vm) {
             TopChromeActions(vm::toggleSidebar, vm::openSearch, vm::closePage, vm::setQuery, vm::pick, vm::searchEverywhere,
-                vm::openSearch, vm::exitSearch, {})
+                vm::openSearch, vm::exitSearch, vm::searchThisArea)
         }
         if (tablet) {
             main()
-            TabletTopChrome(ui.sidebarOpen, ui.search?.query ?: ui.searchQuery.orEmpty(), ui.page == Page.SearchPage, ui.search, ui.searchRows, live, topActions.forTablet(vm))
+            TabletTopChrome(ui.sidebarOpen, ui.search?.query ?: ui.searchQuery.orEmpty(), ui.page == Page.SearchPage, ui.search, ui.searchRows, live,
+                topActions.forTablet(vm), showSearchThisArea = ui.showSearchThisArea)
         } else {
             PhoneSidebarLayout(ui.sidebarOpen, vm::closeSidebar, sidebar = { m -> sessions(m) }) { main() }
             PhoneTopChrome(topState, topActions, ui.searchRows, live, statusInset = status)

@@ -64,6 +64,8 @@ data class MainUiState(
     val onboarding: OnboardingUi? = null,
     val onboardingSteps: List<OnboardingStep> = emptyList(),
     val viewport: Bbox? = null,
+    /** Q-6: the user moved the map away from the searched area (M-11). */
+    val showSearchThisArea: Boolean = false,
 )
 
 
@@ -277,7 +279,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Q-5: picking a result leaves the page for search state; the map shows only the matches. */
     fun pick(key: DeviceKey) {
         val page = _ui.value.search ?: return
-        _ui.update { it.copy(page = null, searchQuery = page.query, search = null) }
+        searchReference = null
+        _ui.update { it.copy(page = null, searchQuery = page.query, search = null, showSearchThisArea = false) }
         val scope = _ui.value.scope ?: return
         _ready.value?.map?.let { m ->
             m.show(scope, DeviceFilter(query = page.query, area = page.area), _ui.value.view?.routesFaint ?: false)
@@ -286,9 +289,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var searchReference: edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot? = null
+
+    /** Q-6: re-run the query on the current viewport; the map shows those matches and the chip hides. */
+    fun searchThisArea() {
+        val q = _ui.value.searchQuery ?: return
+        val scope = _ui.value.scope ?: return
+        val area = _ui.value.viewport
+        _ui.update { it.copy(showSearchThisArea = false) }
+        searchReference = null
+        _ready.value?.map?.show(scope, DeviceFilter(query = q, area = area), _ui.value.view?.routesFaint ?: false)
+    }
+
     /** Q-7: the bar's X or Back leaves search state. */
     fun exitSearch() {
-        _ui.update { it.copy(searchQuery = null) }
+        searchReference = null
+        _ui.update { it.copy(searchQuery = null, showSearchThisArea = false) }
         val scope = _ui.value.scope ?: return
         _ready.value?.map?.let { it.setSelection(null); it.show(scope, DeviceFilter(), _ui.value.view?.routesFaint ?: false) }
     }
@@ -302,6 +318,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         override fun onUserGestureStart() { sheetEvents?.onUserGestureStart() }
         override fun onCameraIdle(byUser: Boolean, viewport: Bbox, zoom: Double) {
             _ui.update { it.copy(viewport = viewport) }
+            // Q-6 / M-11: app camera moves (framing the picked device) set the reference; only the user's offer the chip
+            if (_ui.value.searchQuery != null) {
+                val here = edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera(viewport, zoom)
+                val ref = searchReference
+                if (!byUser || ref == null) searchReference = here
+                else _ui.update { it.copy(showSearchThisArea = edu.ucsd.sysnet.cluetoothscanner.ui.contract.movedAway(ref, here, viewport)) }
+            }
             sheetEvents?.onCameraIdle(byUser, viewport, zoom)
         }
         override fun onDeviceTap(key: DeviceKey) { sheetEvents?.onDeviceTap(key) ?: _ready.value?.map?.setSelection(key) }
