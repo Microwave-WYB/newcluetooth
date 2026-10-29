@@ -56,10 +56,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .loc-warn.static, .loc-pop.static { position: static; }
 .loc-pop {
   position: absolute; z-index: 13; left: var(--edge); bottom: calc(var(--rec-lift, 0px) + var(--edge) + 12px + (var(--fab) - var(--rb)) / 2 + var(--rb) + 8px);
-  width: min(260px, calc(100% - 2 * var(--edge))); padding: var(--pop-pad); border-radius: var(--r-pop); background: var(--panel); box-shadow: var(--shadow-raised);
+  width: min(260px, calc(100% - 2 * var(--edge))); padding: var(--pop-pad); border-radius: var(--pop-r); background: var(--panel); box-shadow: var(--shadow-raised);
   animation: pop-in var(--t-fast) var(--ease);
 }
-.loc-pop .btn { border-radius: calc(var(--r-pop) - var(--pop-pad)); } /* in the popover's corner: 20 - 12 = 8 */
+.loc-pop .btn { border-radius: var(--r-pill); } /* a pill; the popover radius is concentric with it (16 + 12 = 28) */
 .loc-pop p { margin: 0 0 10px; font-size: 14px; line-height: 20px; }
 .loc-pop p:last-child { margin: 0; }
 .pop-catch { position: absolute; inset: 0; z-index: 12; display: none; }
@@ -134,13 +134,13 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .recorder.capsule, .recorder.panel { background: var(--panel); cursor: default; }
 .recorder.capsule::after, .recorder.panel::after { opacity: 0; transform: scale(0.3); }
 .recorder.capsule { width: var(--capsule-w, var(--recorder-capsule-w)); }
-.recorder.panel { width: calc(100% - 2 * var(--edge)); height: var(--panel-h, var(--recorder-panel-h)); border-radius: var(--r-pop); box-shadow: var(--shadow-raised); }
+.recorder.panel { width: calc(100% - 2 * var(--edge)); height: var(--panel-h, var(--recorder-panel-h)); border-radius: var(--rec-r, var(--rec-panel-r)); box-shadow: var(--shadow-raised); }
 .recorder.static { position: relative; right: auto; bottom: auto; }
 .rec-row { flex: none; align-self: flex-end; width: max-content; height: var(--fab); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 var(--recorder-pad); white-space: nowrap; opacity: 0; transition: opacity var(--t-fast); }
 .rec-open { display: flex; align-items: center; gap: 8px; height: 100%; padding-right: 4px; cursor: pointer; }
 .rec-time { font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
 .rec-meta { flex: none; padding: 14px var(--gutter) 0; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity var(--t-fast); }
-.rec-map { flex: none; margin: 10px var(--edge) 0; height: var(--recorder-map-h); border-radius: calc(var(--r-pop) - var(--edge)); /* panel 20 - inset 12 = 8 */ overflow: hidden; background: var(--fill2); opacity: 0; transition: opacity var(--t-fast); cursor: pointer; }
+.rec-map { flex: none; margin: 10px var(--edge) 0; height: var(--recorder-map-h); border-radius: calc(var(--rec-r, var(--rec-panel-r)) - var(--edge)); /* panel radius - inset 12: phone 10, tablet 16 */ overflow: hidden; background: var(--fill2); opacity: 0; transition: opacity var(--t-fast); cursor: pointer; }
 .recorder.capsule .rec-row, .recorder.panel .rec-row { opacity: 1; transition-delay: var(--t-fast); }
 .recorder.panel .rec-meta, .recorder.panel .rec-map { opacity: 1; transition-delay: var(--t-fast); }
 .recorder-catch { position: absolute; inset: 0; z-index: 14; display: none; }
@@ -539,3 +539,4 @@ button.item:active { background: var(--fill2); }
 .phone.tablet .locate-btn, .phone.tablet .loc-warn { left: auto; right: calc(var(--edge) + (var(--fab) - var(--rb)) / 2); bottom: calc(var(--edge) + 12px + var(--rec-h, var(--fab)) + 12px); }
 .phone.tablet .loc-pop { left: auto; right: var(--edge); bottom: calc(var(--edge) + 12px + var(--rec-h, var(--fab)) + 12px + var(--rb) + 8px); }
 .phone.tablet.rec-top-open .menu-btn, .phone.tablet.rec-top-open .search-box { opacity: 1; pointer-events: auto; }
+.phone.tablet { --rec-r: var(--rec-panel-r-tablet); }

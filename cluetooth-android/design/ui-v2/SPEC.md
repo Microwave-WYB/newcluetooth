@@ -77,8 +77,11 @@ expanded (G-2).
 - **G-13a Inner corners.** An element inside a rounded container's corner region has the same inset on its top and
   sides, and its radius is the container radius minus that inset. Examples:
   - tablet panel rows: 30 − 8 = 22;
-  - the recorder mini map: 20 − 12 = 8;
-  - the location popover button: 20 − 12 = 8.
+  - the recorder mini map: panel radius − 12 (phone 22 − 12 = 10, tablet 28 − 12 = 16);
+  - the location popover: its radius is 28, concentric with its pill button (16 + 12).
+
+  The recorder panel radius is concentric with its Pause/Stop buttons: 22 on phone (18 + 4) and 28 on tablet
+  (20 + 8).
 
   The tokens are `--panel-pad` (8) and `--pop-pad` (12).
 - **G-13 Slop.** `--drag-slop` is 8 dp. A pointer that moves less than that is a tap; past it, a vertical move is a drag.
@@ -185,7 +188,7 @@ Each component is built once. Its size, color and state rules come from these to
 - **P-5 Location warning.**
   - While the location is unusable, the locate button's spot shows a 44 dp FloatButton with a crossed-out location
     icon in `--warn`. It is always visible, overriding P-4, and sheets still cover it.
-  - Tapping it opens a popover anchored above it, at most 260 dp wide, with `--panel`, a 20 dp radius and
+  - Tapping it opens a popover anchored above it, at most 260 dp wide, with `--panel`, a 28 dp radius, 12 dp padding and
     `--shadow-raised`. It contains:
     - "Location permission is off", with a small primary "Allow" button;
     - "Location is turned off", with a small primary "Turn on" button;
@@ -212,7 +215,7 @@ Each component is built once. Its size, color and state rules come from these to
   - It stays at the top center whatever the sheets do.
 - **R-4 Panel.** Tapping the dot or time expands the panel.
   - The control row NEVER moves: same position and size before, during and after.
-  - On phone the panel widens symmetrically to the full width minus 2 × `--edge`, with a 20 dp radius and
+  - On phone the panel widens symmetrically to the full width minus 2 × `--edge`, with a 22 dp radius and
     `--shadow-raised`. Its extra content grows downward below the row:
     - "N devices · lat, lon ±N m" (13/20 `--t2`, one line);
     - a 132 dp rounded route mini map.
