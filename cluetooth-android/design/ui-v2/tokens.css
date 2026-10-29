@@ -144,6 +144,9 @@
 
   /* top fade: content scrolling up under the float controls fades into --bg (solid gradient, no blur) */
   --status-safe: env(safe-area-inset-top, 0px);
+  /* phone: the gesture bar. Sheets run under it to the screen's bottom edge (square bottom corners); their
+     content and the collapsed peek stay above it. 0 on tablet (the panel floats). */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
   --fade-solid: calc(var(--status-safe) + var(--edge));
   --fade-h: calc(var(--list-top) + 28px);          /* Scan: menu, search, Discover and chips */
   --fade-h-short: calc(var(--top-zone) + 16px);    /* Discover, product page: one row of buttons */

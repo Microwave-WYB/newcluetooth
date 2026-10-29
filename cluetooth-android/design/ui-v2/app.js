@@ -348,6 +348,7 @@
       <div class="search-area gone" id="search-area">${UI.chip({ label: "Search this area", on: false, action: "search-area" })}</div>
       <div id="pages"></div>
       <div class="scrim" data-action="sheet-close"></div>
+      <div class="safe-probe" aria-hidden="true"></div>
       <div class="panel-more"><button class="panel-more-btn" data-action="panel-expand" aria-label="Expand the panel"><svg viewBox="0 0 36 8" aria-hidden="true"><path d="M2 1.5 18 6.5 34 1.5"/></svg></button></div>`;
   }
 
@@ -434,8 +435,10 @@
    *  them: no hiding. */
   function liftRecorder() {
     const root = $(".disc-sheet", phone), open = root.classList.contains("open") && !isTablet();
-    phone.style.setProperty("--rec-lift", `${open ? parseFloat(getComputedStyle(root).getPropertyValue("--peek")) || 0 : 0}px`);
+    phone.style.setProperty("--rec-lift", `${open ? (parseFloat(getComputedStyle(root).getPropertyValue("--peek")) || 0) + safeBottom() : 0}px`);
   }
+  /** The bottom safe-area inset (the gesture bar) in px: --safe-bottom, 0 on tablet. */
+  const safeBottom = () => $(".safe-probe", phone).offsetHeight;
 
   // ---- Left sidebar: the current session (pinned while recording), the history, Settings ----
   function renderSidebar() {
@@ -1048,7 +1051,7 @@
     const h = sheet.offsetHeight, peek = parseFloat(getComputedStyle(sheet).getPropertyValue("--peek")) || 92;
     const hv = tok("--discover-sheet-half"); // e.g. "67cqh": a share of the phone's height
     const half = hv.endsWith("cqh") ? (phone.clientHeight * parseFloat(hv)) / 100 : parseFloat(hv) || h;
-    const at = { dismissed: h + 8, collapsed: h - peek, half: Math.max(0, h - half), full: 0, expanded: 0 };
+    const at = { dismissed: h + 8, collapsed: h - peek - safeBottom(), half: Math.max(0, h - half), full: 0, expanded: 0 };
     return sheet.dataset.snaps.split(" ").map((st) => ({ st, y: at[st] })).sort((a, b) => b.y - a.y); // lowest first
   }
   /** How much of the screen bottom the sheets cover (the top sheet). */

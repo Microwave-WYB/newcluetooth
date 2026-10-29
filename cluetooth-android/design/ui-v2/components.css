@@ -374,10 +374,13 @@ button.item:active { background: var(--fill2); }
   transform: translateY(calc(100% + 8px)); visibility: hidden; transition: transform var(--t-page) var(--ease), visibility var(--t-page);
 }
 .sheet.open { visibility: visible; }
-.sheet.open.collapsed { transform: translateY(calc(100% - var(--peek, var(--sheet-peek)))); }
+.sheet.open.collapsed { transform: translateY(calc(100% - var(--peek, var(--sheet-peek)) - var(--safe-bottom))); } /* the peek, above the gesture bar */
 .sheet.open.expanded, .sheet.open.full { transform: none; }
 .sheet.open.half { transform: translateY(calc(100% - var(--discover-sheet-half))); }
 .sheet.dragging { transition: none; }
+/* collapsed at rest: the strip under the gesture bar (below the peek) is the sheet's background, no content */
+.sheet::after { content: ""; position: absolute; z-index: 3; left: 0; right: 0; top: var(--peek, var(--sheet-peek)); height: var(--safe-bottom); background: var(--panel); pointer-events: none; opacity: 0; transition: opacity var(--t-fast); }
+.sheet.open.collapsed:not(.dragging)::after { opacity: 1; }
 .sheet.static { position: relative; transform: none; visibility: visible; height: auto; border-radius: var(--corner-r); }
 .sheet .handle { cursor: grab; touch-action: none; }
 /* corner geometry: --corner-r is the top corner radius and the depth / inset of the corner buttons' centers */
@@ -387,6 +390,7 @@ button.item:active { background: var(--fill2); }
 .phone, .gallery { --card-r: calc(var(--corner-r) - var(--content-inset) - var(--gutter)); --hero-r: calc(var(--corner-r) - var(--content-inset) - var(--edge)); }
 .phone.tablet { --content-inset: var(--panel-pad); }
 .phone.tablet { --head-drop: 0px; }
+.phone.tablet { --safe-bottom: 0px; } /* the floating panel ends above the screen's edge */
 /* the handle floats centered at the top, between the corner buttons (never over them) */
 .handle { position: absolute; z-index: 1; top: 0; left: 50%; transform: translateX(-50%); display: grid; place-items: center; height: var(--handle-zone); width: calc(var(--handle-w) * 2); }
 .handle::before { content: ""; width: var(--handle-w); height: var(--handle-h); border-radius: var(--r-pill); background: var(--div); }
@@ -394,7 +398,8 @@ button.item:active { background: var(--fill2); }
 .sheet-fade { position: relative; z-index: 2; flex: none; height: 0; pointer-events: none; }
 .sheet-fade::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: var(--sheet-fade-h); background: linear-gradient(var(--panel), transparent); opacity: 0; transition: opacity var(--t-fast); }
 .sheet-fade.on::after { opacity: 1; }
-.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--gutter); touch-action: pan-y; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: calc(var(--gutter) + var(--safe-bottom)); touch-action: pan-y; }
+.safe-probe { position: absolute; width: 0; height: var(--safe-bottom); visibility: hidden; pointer-events: none; } /* JS reads the inset */
 
 /* ---------- DeviceSheet ---------- */
 .dev-head { flex: none; padding: 0 var(--gutter) 12px; }
