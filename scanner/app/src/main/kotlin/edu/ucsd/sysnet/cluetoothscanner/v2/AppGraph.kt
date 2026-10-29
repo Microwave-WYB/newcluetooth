@@ -82,6 +82,8 @@ class AppGraph(private val app: Application) {
         PlatformRecorder(
             ingest, scanner, locationClient, AndroidForegroundHost(app), AndroidRecordingGrants(app),
             { scanner.environment() }, io, scope, coreStates,
+            // R-10: pause on storage full. Once lane A lands it: core events filterIsInstance<CoreEvent.StorageFull>().
+            storageFull = storageCleanup.storageFull.map { it.n },
         )
     }
     val mapCache: MapCacheInfo by lazy { MapLibreCacheInfo(app) }

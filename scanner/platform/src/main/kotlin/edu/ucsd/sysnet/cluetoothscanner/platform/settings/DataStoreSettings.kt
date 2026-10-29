@@ -11,6 +11,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.SettingsStore
 import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
@@ -52,28 +54,31 @@ class DataStoreSettings(
     /** The stored settings, after the first read (and the one-time migration). */
     suspend fun loaded(): Settings = toSettings(data.first())
 
-    /** A user id that breaks the O-2 rule is refused ([IllegalArgumentException]); nothing is written then. */
-    override suspend fun update(transform: (Settings) -> Settings) {
-        try {
-            write(transform)
-        } catch (refused: IllegalArgumentException) {
-            throw refused
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            // A failed write (I/O) leaves the stored settings, and so the shown ones, unchanged.
-            runCatching { Log.w(TAG, "settings not written", failure) }
-        }
+    /**
+     * A user id that breaks the O-2 rule is [PlatformError.InvalidUserId] and a failed write (I/O)
+     * [PlatformError.Io]; nothing is written then, so the stored and shown settings stay as they were.
+     */
+    override suspend fun update(transform: (Settings) -> Settings): PlatformResult<Unit> = try {
+        write(transform)
+        PlatformResult.Ok(Unit)
+    } catch (refused: InvalidUserId) {
+        PlatformResult.Err(PlatformError.InvalidUserId(refused.userId))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        runCatching { Log.w(TAG, "settings not written", failure) }
+        PlatformResult.Err(PlatformError.Io(failure.message ?: failure::class.java.simpleName))
     }
+
+    /** Aborts the DataStore edit (its only way to roll back); [update] turns it into a value. */
+    private class InvalidUserId(val userId: String) : Exception("invalid user id")
 
     private suspend fun write(transform: (Settings) -> Settings) {
         store.edit { prefs ->
             val next = transform(toSettings(prefs))
             val userId = next.userId
             // The API's documented refusal: the caller (the O-2 form) shows the rule; nothing is written.
-            if (userId != null && !Settings.isValidUserId(userId)) {
-                throw IllegalArgumentException("User ID must be lowercase letters and digits, 1-9")
-            }
+            if (userId != null && !Settings.isValidUserId(userId)) throw InvalidUserId(userId)
             if (userId == null) prefs.remove(USER_ID) else prefs[USER_ID] = userId
             prefs[RECORD_ON_OPEN] = next.recordOnOpen
             prefs[WIFI_ONLY] = next.wifiOnlyUpload

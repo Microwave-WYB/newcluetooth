@@ -4,6 +4,8 @@ import android.util.Log
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.platform.describe
@@ -138,17 +140,13 @@ class PlatformRecorder(
         ask(RecEvent.Restore)
     }
 
-    override suspend fun start(): Result<String> = ask(Start).sessionResult()
+    override suspend fun start(): PlatformResult<String> = ask(Start).sessionResult()
 
-    override suspend fun pause() {
-        ask(RecEvent.Pause)
-    }
+    override suspend fun pause(): PlatformResult<Unit> = ask(RecEvent.Pause).doneResult()
 
-    override suspend fun resume() {
-        ask(RecEvent.Resume)
-    }
+    override suspend fun resume(): PlatformResult<Unit> = ask(RecEvent.Resume).doneResult()
 
-    override suspend fun stop(): Result<String> = ask(RecEvent.Stop).sessionResult()
+    override suspend fun stop(): PlatformResult<String> = ask(RecEvent.Stop).sessionResult()
 
     private fun signal(event: RecEvent) {
         inbox.trySend(Message.Signal(event))
@@ -197,7 +195,7 @@ class PlatformRecorder(
                 }
             }
             // A request the machine left unanswered (never expected) must not hang its caller.
-            reply?.complete(RecOutcome.Failed(IllegalStateExceptionValue("the recorder did not answer")))
+            reply?.complete(RecOutcome.Failed(PlatformError.Unavailable("the recorder did not answer")))
         }
     }
 
@@ -257,10 +255,15 @@ class PlatformRecorder(
         listOf(failure.message ?: "grants unavailable")
     }
 
-    private fun RecOutcome.sessionResult(): Result<String> = when (this) {
-        is RecOutcome.Session -> Result.success(session.value)
-        is RecOutcome.Failed -> Result.failure(cause)
-        RecOutcome.Done -> Result.failure(IllegalStateExceptionValue("no session"))
+    private fun RecOutcome.sessionResult(): PlatformResult<String> = when (this) {
+        is RecOutcome.Session -> PlatformResult.Ok(session.value)
+        is RecOutcome.Failed -> PlatformResult.Err(error)
+        RecOutcome.Done -> PlatformResult.Err(PlatformError.Unavailable("the recorder answered without a session"))
+    }
+
+    private fun RecOutcome.doneResult(): PlatformResult<Unit> = when (this) {
+        is RecOutcome.Session, RecOutcome.Done -> PlatformResult.Ok(Unit)
+        is RecOutcome.Failed -> PlatformResult.Err(error)
     }
 
     companion object {

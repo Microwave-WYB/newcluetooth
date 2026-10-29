@@ -10,6 +10,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.v2.AppGraph
 import edu.ucsd.sysnet.cluetoothscanner.v2.CoreLink
@@ -45,11 +46,13 @@ class MainActivity : ComponentActivity() {
                 vm.requests.collect { r ->
                     // a launch that throws (no such activity on the device) is the ViewModel's typed failure
                     runCatching {
-                        when (r) {
-                            is MainViewModel.ActivityRequest.Permissions -> permissionLauncher.launch(r.names)
+                        val launched = when (r) {
+                            is MainViewModel.ActivityRequest.Permissions -> PlatformResult.Ok(permissionLauncher.launch(r.names))
                             MainViewModel.ActivityRequest.EnableBluetooth -> permissions.requestEnableBluetooth(this@MainActivity)
                             MainViewModel.ActivityRequest.TurnOnLocation -> graph.location.turnOn(this@MainActivity)
                         }
+                        // a launch the platform refused (no such activity) is a typed failure, like a thrown one
+                        if (launched is PlatformResult.Err) vm.launchFailed(launched.error)
                     }.onFailure(vm::launchFailed)
                 }
             }

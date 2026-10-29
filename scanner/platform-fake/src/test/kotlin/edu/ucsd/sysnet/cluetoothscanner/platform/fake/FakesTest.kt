@@ -4,6 +4,8 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GattFailure
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepKind
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattView
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus.Action
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus.State
@@ -107,7 +109,7 @@ class FakesTest {
         var now = 0L
         var stops = 0
         val recorder = FakeRecorder(onStart = { "s1" }, onStop = { stops++; "s1" }, nowMs = { now })
-        assertEquals("s1", recorder.start().getOrThrow())
+        assertEquals(PlatformResult.Ok("s1"), recorder.start())
         assertEquals(Phase.Recording, recorder.state.value.phase)
         now = 10_000
         recorder.pause()
@@ -117,7 +119,7 @@ class FakesTest {
         now = 70_000
         recorder.resume()
         assertEquals(70_000L, recorder.state.value.runningSinceMs)
-        assertEquals("s1", recorder.stop().getOrThrow())
+        assertEquals(PlatformResult.Ok("s1"), recorder.stop())
         assertEquals(1, stops)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertEquals("s1", recorder.state.value.sessionId)
@@ -127,7 +129,8 @@ class FakesTest {
     fun `recorder with a missing grant stays idle with an error and starts no session`() = runTest {
         var starts = 0
         val recorder = FakeRecorder(onStart = { starts++; "s1" }, onStop = { "s1" }, grantsOk = { false })
-        assertTrue(recorder.start().isFailure)
+        val refused = recorder.start()
+        assertTrue(refused is PlatformResult.Err && refused.error is PlatformError.MissingGrants)
         assertEquals(0, starts)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertNotNull(recorder.state.value.error)
@@ -165,8 +168,14 @@ class FakesTest {
     @Test
     fun `settings update and upload now`() = runTest {
         val settings = FakeSettings()
-        settings.update { it.copy(onboardingDone = true, userId = "abc") }
+        assertEquals(PlatformResult.Ok(Unit), settings.update { it.copy(onboardingDone = true, userId = "abc") })
         assertTrue(settings.settings.value.onboardingDone)
+        assertEquals(
+            "an invalid user id is a typed refusal, nothing changes",
+            PlatformResult.Err(PlatformError.InvalidUserId("Bad_Id")),
+            settings.update { it.copy(userId = "Bad_Id") },
+        )
+        assertEquals("abc", settings.settings.value.userId)
         val uploads = FakeUploads()
         uploads.uploadNow()
         assertEquals(0, uploads.status.value.pendingCount)

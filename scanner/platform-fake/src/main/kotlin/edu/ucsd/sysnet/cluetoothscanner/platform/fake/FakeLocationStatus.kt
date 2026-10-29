@@ -2,6 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.platform.fake
 
 import androidx.activity.ComponentActivity
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus.Action
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus.State
@@ -26,9 +27,10 @@ class FakeLocationStatus(demo: LocationDemo = LocationDemo.Ok) : LocationStatusS
         private set
 
     /** Plays the user turning location on: the status becomes Ok. */
-    override fun turnOn(activity: ComponentActivity) {
+    override fun turnOn(activity: ComponentActivity): PlatformResult<Unit> {
         turnOnCalls++
         set(LocationDemo.Ok)
+        return PlatformResult.Ok(Unit)
     }
 
     fun set(demo: LocationDemo) {

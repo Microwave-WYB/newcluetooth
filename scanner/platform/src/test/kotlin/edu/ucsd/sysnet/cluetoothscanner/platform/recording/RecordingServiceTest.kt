@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
@@ -33,15 +34,16 @@ class RecordingServiceTest {
 
     private val recorder = object : Recorder {
         override val state = this@RecordingServiceTest.state
-        override suspend fun start() = Result.success("s1")
-        override suspend fun pause() {
+        override suspend fun start() = PlatformResult.Ok("s1")
+        override suspend fun pause(): PlatformResult<Unit> {
             pauses++
+            return PlatformResult.Ok(Unit)
         }
 
-        override suspend fun resume() = Unit
-        override suspend fun stop(): Result<String> {
+        override suspend fun resume() = PlatformResult.Ok(Unit)
+        override suspend fun stop(): PlatformResult<String> {
             stops++
-            return Result.success("s1")
+            return PlatformResult.Ok("s1")
         }
     }
 

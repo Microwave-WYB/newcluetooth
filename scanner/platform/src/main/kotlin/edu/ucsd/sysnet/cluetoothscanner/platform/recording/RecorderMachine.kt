@@ -3,6 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.platform.recording
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 
@@ -67,7 +68,7 @@ internal object RecorderMachine {
                 is RecPhase.Live -> return reply(RecOutcome.Session(phase.session))
                 // A recording paused for storage is still the recording: it stays paused until Resume.
                 is RecPhase.StorageFull ->
-                    return reply(phase.session?.let(RecOutcome::Session) ?: RecOutcome.Failed(IllegalStateExceptionValue(STORAGE_FULL)))
+                    return reply(phase.session?.let(RecOutcome::Session) ?: RecOutcome.Failed(PlatformError.Core(STORAGE_FULL)))
                 // The core records a session the machine could not identify: try to adopt it again.
                 RecPhase.Unidentified -> {
                     state = state.copy(phase = RecPhase.AdoptingCore)
@@ -81,7 +82,7 @@ internal object RecorderMachine {
                 -> return reply(busy())
             }
             if (missing.isNotEmpty()) {
-                return failStart(SecurityExceptionValue("$MISSING_GRANTS: ${missing.joinToString()}"), MISSING_GRANTS)
+                return failStart(PlatformError.MissingGrants(missing), MISSING_GRANTS)
             }
             state = state.copy(phase = RecPhase.AwaitingForeground, facts = Facts.NONE, error = null)
             effects += RecEffect.EnterForeground
@@ -123,7 +124,7 @@ internal object RecorderMachine {
                 is RecPhase.Idle, RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted,
                 RecPhase.AdoptingCore, RecPhase.Restoring, is RecPhase.RestoreForeground, is RecPhase.Pausing,
                 is RecPhase.Resuming, is RecPhase.ResumingFromFull, is RecPhase.Stopping, is RecPhase.Reconciling,
-                -> return reply(RecOutcome.Failed(CoreException.NotRecording()))
+                -> return reply(RecOutcome.Failed(PlatformError.NotRecording))
             }
             effects += RecEffect.CoreStop
         }
@@ -148,7 +149,7 @@ internal object RecorderMachine {
         private fun foreground(entered: Boolean) {
             when (val phase = state.phase) {
                 RecPhase.AwaitingForeground -> {
-                    if (!entered) return failStart(IllegalStateExceptionValue(SERVICE_REFUSED), SERVICE_REFUSED)
+                    if (!entered) return failStart(PlatformError.ServiceRefused, SERVICE_REFUSED)
                     state = state.copy(phase = RecPhase.StartingCore)
                     effects += RecEffect.CoreStart
                 }
@@ -233,7 +234,7 @@ internal object RecorderMachine {
                 is RecPhase.ReadingStarted -> live(phase.session, core, startCollecting = true)
                 RecPhase.AdoptingCore -> when {
                     open && session != null -> live(session, core, startCollecting = true)
-                    open -> unidentified(IllegalStateExceptionValue("the core is recording without a session"))
+                    open -> unidentified(PlatformError.Core("the core is recording without a session"))
                     // Nothing is open after all: the start failed cleanly.
                     else -> failStartAfterForeground(CoreException.NotRecording())
                 }
@@ -256,12 +257,12 @@ internal object RecorderMachine {
                             error = phase.message,
                         )
                         if (core.phase == RecordingPhase.Recording) effects += RecEffect.StartScanner
-                        reply(RecOutcome.Failed(phase.cause))
+                        reply(RecOutcome.Failed(coreError(phase.cause)))
                     }
                     else -> {
                         state = state.copy(phase = RecPhase.Unidentified, error = phase.message)
                         effects += RecEffect.StartScanner
-                        reply(RecOutcome.Failed(phase.cause))
+                        reply(RecOutcome.Failed(coreError(phase.cause)))
                     }
                 }
                 // The paused core's facts, so the elapsed time stops where the core stopped.
@@ -289,21 +290,21 @@ internal object RecorderMachine {
                     state = state.copy(error = "The recording state could not be read ($detail)")
                 }
                 // The core records a session it would not describe: keep its service and collect.
-                RecPhase.AdoptingCore -> unidentified(cause)
+                RecPhase.AdoptingCore -> unidentified(coreError(cause))
                 is RecPhase.Pausing -> {
                     // The core still records: collect again.
                     state = state.copy(phase = RecPhase.Live(phase.session, paused = false), error = "The recording could not pause ($detail)")
                     effects += RecEffect.StartScanner
-                    reply(RecOutcome.Done)
+                    reply(RecOutcome.Failed(coreError(cause)))
                 }
                 is RecPhase.Resuming -> {
                     state = state.copy(phase = RecPhase.Live(phase.session, paused = true), error = "The recording could not resume ($detail)")
-                    reply(RecOutcome.Done)
+                    reply(RecOutcome.Failed(coreError(cause)))
                 }
                 // The core refused (still below the floor, or another failure): the pause for storage goes on.
                 is RecPhase.ResumingFromFull -> {
                     state = state.copy(phase = RecPhase.StorageFull(phase.session, phase.freeBytes), error = "$STORAGE_FULL ($detail)")
-                    reply(RecOutcome.Done)
+                    reply(RecOutcome.Failed(coreError(cause)))
                 }
                 is RecPhase.Stopping -> {
                     state = state.copy(phase = RecPhase.Reconciling(phase.session, phase.wasPaused, cause, "The recording could not stop ($detail)"))
@@ -319,7 +320,7 @@ internal object RecorderMachine {
                         state.copy(phase = RecPhase.Unidentified, error = phase.message)
                     }
                     if (!phase.wasPaused) effects += RecEffect.StartScanner
-                    reply(RecOutcome.Failed(phase.cause))
+                    reply(RecOutcome.Failed(coreError(phase.cause)))
                 }
                 RecPhase.Restoring -> {
                     state = state.copy(phase = RecPhase.Idle(lastSession = null))
@@ -408,35 +409,39 @@ internal object RecorderMachine {
 
         // ---- Helpers ----
 
-        private fun unidentified(cause: Throwable) {
-            state = state.copy(phase = RecPhase.Unidentified, facts = Facts.NONE, error = "The recording could not be identified (${cause.message})")
+        private fun unidentified(error: PlatformError) {
+            state = state.copy(phase = RecPhase.Unidentified, facts = Facts.NONE, error = "The recording could not be identified (${error.message})")
             effects += RecEffect.StartLocation
             effects += RecEffect.StartScanner
-            reply(RecOutcome.Failed(cause))
+            reply(RecOutcome.Failed(error))
         }
 
         private fun endAfterFailedStop(phase: RecPhase.Reconciling) {
             state = state.copy(phase = RecPhase.Idle(phase.session), facts = Facts.NONE, error = phase.message)
             effects += RecEffect.StopLocation
             effects += RecEffect.LeaveForeground
-            reply(RecOutcome.Failed(phase.cause))
+            reply(RecOutcome.Failed(coreError(phase.cause)))
         }
 
-        private fun failStart(cause: Throwable, message: String) {
+        private fun failStart(error: PlatformError, message: String) {
             state = state.copy(phase = RecPhase.Idle(lastSession = null), facts = Facts.NONE, error = message)
-            reply(RecOutcome.Failed(cause))
+            reply(RecOutcome.Failed(error))
         }
 
         private fun failStartAfterForeground(cause: Throwable) {
             effects += RecEffect.LeaveForeground
-            failStart(cause, "The recording could not start (${cause.message ?: cause::class.java.simpleName})")
+            val error = coreError(cause)
+            failStart(error, "The recording could not start (${error.message})")
         }
+
+        /** A failed core call (or a runner failure) as the typed error a request answers with. */
+        private fun coreError(cause: Throwable) = PlatformError.Core(cause.message ?: cause::class.java.simpleName)
 
         private fun reply(outcome: RecOutcome) {
             effects += RecEffect.Reply(outcome)
         }
 
-        private fun busy() = RecOutcome.Failed(IllegalStateExceptionValue("a recording transition is in progress"))
+        private fun busy() = RecOutcome.Failed(PlatformError.Busy)
     }
 }
 
@@ -445,7 +450,6 @@ internal object RecorderMachine {
 internal value class SessionId(val value: String)
 
 /** Exceptions as values: the reducer builds them and hands them to the caller, it never throws. */
-internal class SecurityExceptionValue(message: String) : SecurityException(message)
 internal class IllegalStateExceptionValue(message: String) : IllegalStateException(message)
 
 /** What the core says about the recording, in the units the UI ticks with. */
@@ -597,7 +601,7 @@ internal sealed interface RecEffect {
 internal sealed interface RecOutcome {
     data class Session(val session: SessionId) : RecOutcome
     data object Done : RecOutcome
-    data class Failed(val cause: Throwable) : RecOutcome
+    data class Failed(val error: PlatformError) : RecOutcome
 }
 
 internal data class RecTransition(val state: RecModel, val effects: List<RecEffect>)

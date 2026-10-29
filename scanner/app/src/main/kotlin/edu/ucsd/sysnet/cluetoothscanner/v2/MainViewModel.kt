@@ -18,6 +18,8 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.StorageStats
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
 import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission
@@ -251,7 +253,11 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             }
             MainEffect.LoadSessions -> sessionReads.trySend(Unit)
             MainEffect.ReadLaunchFacts -> dispatch(MainEvent.LaunchFactsRead(launchFacts()))
-            MainEffect.StartRecording -> graph.recorder.start().onSuccess { dispatch(MainEvent.RecordingStarted(it)) }
+            // a refused start is in the recorder's state (its error), as before
+            MainEffect.StartRecording -> when (val started = graph.recorder.start()) {
+                is PlatformResult.Ok -> dispatch(MainEvent.RecordingStarted(started.value))
+                is PlatformResult.Err -> Unit
+            }
             MainEffect.PauseRecording -> graph.recorder.pause()
             MainEffect.ResumeRecording -> graph.recorder.resume()
             MainEffect.StopRecording -> graph.recorder.stop()
@@ -264,18 +270,17 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             MainEffect.LoadStorage -> dispatch(MainEvent.StorageLoaded(storageFacts()))
             is MainEffect.Export -> {
                 val prepared = ready().core.storage.prepareExport(effect.scope, effect.format)
-                if (effect.toDownloads) graph.exportShare.saveToDownloads(prepared) else graph.exportShare.share(prepared)
-                dispatch(MainEvent.ExportFinished)
+                val handed = if (effect.toDownloads) graph.exportShare.saveToDownloads(prepared) else graph.exportShare.share(prepared)
+                handed.orFail(effect)?.let { dispatch(MainEvent.ExportFinished) }
             }
             is MainEffect.Delete -> {
                 val outcome = ready().core.storage.deleteLocalData(effect.scope, effect.includeUnuploaded)
                 dispatch(MainEvent.DeleteFinished(effect.scope, outcome !is DeleteOutcome.Refused))
             }
-            is MainEffect.UpdateSettings -> graph.settings.update(effect.transform)
-            is MainEffect.SaveOnboarding -> {
+            is MainEffect.UpdateSettings -> graph.settings.update(effect.transform).orFail(effect)
+            is MainEffect.SaveOnboarding ->
                 graph.settings.update { it.copy(userId = effect.userId, recordOnOpen = effect.autoRecord, onboardingDone = true) }
-                dispatch(MainEvent.OnboardingSaved)
-            }
+                    .orFail(effect)?.let { dispatch(MainEvent.OnboardingSaved) }
             is MainEffect.RequestPermissions -> _requests.emit(
                 ActivityRequest.Permissions(
                     when (effect.which) {
@@ -287,14 +292,23 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             )
             MainEffect.EnableBluetooth -> _requests.emit(ActivityRequest.EnableBluetooth)
             MainEffect.TurnOnLocation -> _requests.emit(ActivityRequest.TurnOnLocation)
-            MainEffect.OpenAppSettings -> graph.permissions.openAppSettings()
-            MainEffect.UploadNow -> graph.uploads.uploadNow()
+            MainEffect.OpenAppSettings -> graph.permissions.openAppSettings().orFail(effect)
+            MainEffect.UploadNow -> graph.uploads.uploadNow().orFail(effect)
             MainEffect.LoadReclaimable -> dispatch(MainEvent.ReclaimableRead(readReclaim()))
             is MainEffect.FreeUpSpace -> {
                 val outcome = graph.storageCleanup.run(effect.cleanups)
                 outcome.failed.forEach { (c, error) -> Log.w(TAG, "$c: $error") }
                 dispatch(MainEvent.SpaceFreed(outcome, readReclaim()))
             }
+        }
+    }
+
+    /** A platform call's typed failure takes the path a thrown one took: [MainEvent.Failed] for its effect. */
+    private fun <T> PlatformResult<T>.orFail(effect: MainEffect): T? = when (this) {
+        is PlatformResult.Ok -> value
+        is PlatformResult.Err -> {
+            fail(MainTask.Effect(effect), PlatformFailure(error))
+            null
         }
     }
 
@@ -354,6 +368,9 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     /** The Activity's launches fail here (e.g. no settings activity on the device). */
     fun launchFailed(error: Throwable) = fail(MainTask.Platform, error)
 
+    /** An activity launch's typed failure ([PlatformResult.Err]) takes the same path as a thrown one. */
+    fun launchFailed(error: PlatformError) = fail(MainTask.Platform, PlatformFailure(error))
+
     companion object {
         private const val TAG = "MainViewModel"
         private const val MAX_ROWS = 200
@@ -367,3 +384,9 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
 
 /** A session's label for the one-session scope in Settings ("6:05 PM"). */
 fun SessionSummary.label(): String = Format.time(startedMs)
+
+/**
+ * A platform call's typed failure ([PlatformError]) carried where the screen's logic takes a [Throwable]
+ * ([MainEvent.Failed]); a value, never thrown.
+ */
+class PlatformFailure(val error: PlatformError) : Exception(error.message)
