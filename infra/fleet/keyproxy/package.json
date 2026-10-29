@@ -1,7 +1,7 @@
 {
   "name": "cluetooth-keyproxy",
   "private": true,
-  "description": "Whitelisting key proxy for the research agent fleet (Gitea, WiGLE, AndroZoo). Node built-ins only.",
+  "description": "Key-injecting proxy for the research agent fleet (Gitea, WiGLE, AndroZoo). Node built-ins only.",
   "type": "module",
   "engines": {
     "node": ">=24"

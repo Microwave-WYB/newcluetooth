@@ -26,7 +26,11 @@ export async function fakeUpstream(handler = (_req, _body, res) => res.end("{}")
   return { url: `http://127.0.0.1:${server.address().port}`, requests, close: () => new Promise((r) => server.close(r)) };
 }
 
+/** Secrets keyed by service prefix, as loadSecrets returns them. */
+export const byPrefix = (s) => ({ "/gitea": s.gitea, "/wigle": s.wigle, "/androzoo": s.androzoo });
+
 /** Starts keyproxy against the given upstreams; returns its URL and the captured log lines. */
+
 export async function startProxy({ upstream, env = {}, secrets = SECRETS, now, stateFile } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "keyproxy-test-"));
   const config = loadConfig({
@@ -37,7 +41,7 @@ export async function startProxy({ upstream, env = {}, secrets = SECRETS, now, s
     ...env,
   });
   const lines = [];
-  const { server, counters } = createKeyproxy({ config, secrets, write: (l) => lines.push(l), now });
+  const { server, counters } = createKeyproxy({ config, secrets: byPrefix(secrets), write: (l) => lines.push(l), now });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   server.closeIdleConnections?.();
   return {
