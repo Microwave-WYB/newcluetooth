@@ -259,14 +259,18 @@ Rule-by-rule check of the Android app against SPEC.md and the prototype.
 
 ## Failures by owner
 
-- **Lane C** (`:chrome`, `:designsystem`, `:app`), fixed in follow-up PRs: R-3 and R-4 (status inset), C-9 and Q-3
-  (focused field), P-3 and P-5 (navigation inset without a sheet), and C-4 (Segmented clipping).
+- **Lane C** (`:chrome`, `:designsystem`, `:app`), fixed in follow-up PRs:
+  - #84: R-3 and R-4 (status inset), P-3 and P-5 (navigation inset without a sheet);
+  - #85: C-4 (Segmented clipping), C-9 and Q-3 (the focused field).
 - **Lane E** (`:map`):
   - M-1: no labels or POI icons;
   - R-5: an empty mini map;
   - M-8 and V-2: no live route (or the core's deltas);
   - M-10: no refit after Stop;
-  - M-9: the zoom is slightly high (minor).
+  - M-9: the zoom is slightly high (minor);
+  - once, a native crash: a SIGSEGV in `libmaplibre.so` on the main looper while the recorder panel opened, i.e.
+    while the mini map was created. The emulator died shortly after, and the panel opened several times without it
+    earlier, so it may be the AVD's software GPU.
 - **Lane D** (`:sheets`):
   - S-5: Full ignores the status inset;
   - T-2: the chevron is drawn at the wrong size.
