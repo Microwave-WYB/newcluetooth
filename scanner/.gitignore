@@ -8,7 +8,8 @@
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
 .DS_Store
-/build
+# every module's Gradle output, not only scanner/build
+build/
 /captures
 .externalNativeBuild
 .cxx
