@@ -70,7 +70,8 @@ fun MainScreen(vm: MainViewModel) {
     val nav = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
     val status = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
 
-    BackHandler(enabled = backTarget(vm.backLayers()) != BackTarget.Leave) { vm.onBack() }
+    // read `ui` here, in this scope, so the handler's enabled state recomposes with it (G-14)
+    BackHandler(enabled = backTarget(vm.backLayers(ui)) != BackTarget.Leave) { vm.onBack() }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CluetoothTheme.colors.bg)) {
         val layout = LayoutMode.of(maxWidth.value)

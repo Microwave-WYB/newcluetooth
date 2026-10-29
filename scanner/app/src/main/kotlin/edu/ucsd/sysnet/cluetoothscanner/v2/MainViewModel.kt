@@ -216,7 +216,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var sheetsBack: suspend () -> Boolean = { false }
     var sheetsHasPushed: () -> Boolean = { false }
 
-    fun backLayers(): BackLayers = _ui.value.let {
+    fun backLayers(state: MainUiState = _ui.value): BackLayers = state.let {
         BackLayers(it.locationPopoverOpen, it.page != null, sheetsHasPushed(), it.sidebarOpen, it.recorderPanelOpen, it.searchQuery != null)
     }
 
