@@ -524,7 +524,7 @@ button.item:active { background: var(--fill2); }
 /* ☰: the sessions list takes the panel's place (no drawer, no dim); X or Back gives the Discover stack back */
 .phone.tablet .side { top: var(--top-zone); left: var(--edge); bottom: var(--edge); width: var(--panel-w); z-index: 99; border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transform: none; opacity: 0; transition: opacity var(--t-fast), visibility var(--t-fast); overflow: hidden; }
 .phone.tablet.side-open .side { opacity: 1; }
-.phone.tablet .phone.tablet .main-dim { display: none; }
+.phone.tablet .main-dim { display: none; }
 /* the recorder stays at the bottom right of the map: the FAB widens in place into the capsule (FAB height) and its
    panel grows upward; locate / warning sit right above it and move up while the panel is open */
 .phone.tablet .recorder { right: var(--edge); bottom: calc(var(--edge) + 12px); }
