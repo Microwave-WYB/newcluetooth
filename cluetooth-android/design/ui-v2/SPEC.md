@@ -584,7 +584,16 @@ Each component is built once. Its size, color and state rules come from these to
     6. a "Filters" section label;
     7. switch "Hide unnamed Apple devices" (default on), with "Only what you see; scanning and recording keep
        everything";
-    8. "App version".
+    8. a "Storage" section label;
+    9. "Storage used", with the total and a breakdown (database / raw files / map cache);
+    10. "Export data": choose the scope (one session or All sessions), then the format, then hand off to the system
+        share sheet or save to Downloads. The formats are:
+        - Raw (Parquet): plaintext payload v3 plus the gatt/v1 JSON;
+        - Table (CSV): converted row for row from the Parquet, with trailing `session_id` and `source_file` columns;
+        - Database (SQLite): a snapshot of the aggregated, research-aligned tables;
+    11. "Delete local data": choose the scope, then a confirmation. Un-uploaded data is kept until it has uploaded,
+        unless the user explicitly confirms losing it in a second step;
+    12. "App version".
 - **O-2 Onboarding.** On first launch, four full-screen steps. Each has "N of 4" (12.5 `--t3`), a 24/30 title, a body,
   and Back (tonal, from step 2) on the left with Next/Done (primary) on the right.
   1. Permissions: Nearby devices, Precise location and Notifications (optional), each with a one-line reason and a
