@@ -11,6 +11,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
+import edu.ucsd.sysnet.cluetoothscanner.v2.CoreState
 import edu.ucsd.sysnet.cluetoothscanner.v2.MainScreen
 import edu.ucsd.sysnet.cluetoothscanner.v2.MainViewModel
 import kotlinx.coroutines.launch
@@ -24,7 +25,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen().setKeepOnScreenCondition { vm.ready.value == null }
+        // §1.2.2: the splash holds while the core opens; a failure releases it to show the error and a retry
+        installSplashScreen().setKeepOnScreenCondition { vm.ready.value == null && vm.coreState.value !is CoreState.Failed }
         super.onCreate(savedInstanceState)
         val permissions = vm.graph.permissions
         permissionLauncher = registerForActivityResult(permissions.requestLauncherContract()) { permissions.refresh(this) }

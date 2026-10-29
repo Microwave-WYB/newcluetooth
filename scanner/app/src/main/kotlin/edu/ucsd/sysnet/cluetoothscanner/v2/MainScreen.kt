@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
@@ -72,6 +73,8 @@ fun MainScreen(vm: MainViewModel) {
     val settings by vm.settings.collectAsState()
     val location by vm.location.collectAsState()
     val myLocation by vm.graph.location.myLocation.collectAsState()
+    val coreState by vm.coreState.collectAsState()
+    (coreState as? CoreState.Failed)?.let { CoreErrorScreen(it.error, vm::retryCore); return }
     val r = ready ?: return
     val density = LocalDensity.current
     val nav = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
@@ -218,6 +221,25 @@ private fun LocationPopoverLayer(status: LocationStatus, tablet: Boolean, sheetC
                 .padding(start = Tokens.edge, end = Tokens.edge, bottom = bottom).width(300.dp),
             contentAlignment = if (tablet) Alignment.BottomEnd else Alignment.BottomStart,
         ) { LocationPopover(status, onAction = onFix) }
+    }
+}
+
+
+/** §1.2.2: the core could not open. The process stays up; this says why and offers a retry. */
+@Composable
+private fun CoreErrorScreen(error: Throwable, onRetry: () -> Unit) {
+    val c = CluetoothTheme.colors
+    androidx.compose.foundation.layout.Column(
+        Modifier.fillMaxSize().background(c.bg).windowInsetsPadding(WindowInsets.systemBars).padding(Tokens.gutter)
+            .testTag("coreError"),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(Tokens.edge),
+    ) {
+        edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text(
+            edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings.CoreOpenFailed, style = CluetoothTheme.type.head,
+        )
+        edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text(error::class.java.simpleName, style = CluetoothTheme.type.title)
+        edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text(error.message.orEmpty(), color = c.t2)
+        edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button(edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings.TryAgain, onRetry)
     }
 }
 

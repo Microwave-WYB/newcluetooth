@@ -39,15 +39,18 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppGraph(private val app: Application) {
-    /** The process scope (main thread; work that blocks hops to [io]). */
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** The process scope (main thread; work that blocks hops to [io]). A failure in it is logged, never fatal. */
+    val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            kotlinx.coroutines.CoroutineExceptionHandler { _, e -> android.util.Log.e("AppGraph", "process scope", e) },
+    )
     private val io = Dispatchers.IO
 
     val appVersion: String = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "0.1.0"
 
-    /** §1.2.2: started by [start]; it opens the core on Dispatchers.IO. */
-    val core: Deferred<CoreHandle> = scope.async(io, start = CoroutineStart.LAZY) { CoreBinding.open(app, scope) }
-    private val ingest: Deferred<CoreIngest> = scope.async(start = CoroutineStart.LAZY) { core.await().ingest }
+    /** §1.2.2: opens the core on Dispatchers.IO; a failure is a [CoreState.Failed] state with a retry, not a crash. */
+    val core = CoreOpener(scope, io) { CoreBinding.open(app, scope) }
+    private val ingest: Deferred<CoreIngest> get() = core.ingest
 
     internal val placeholders by lazy { PlatformPlaceholders() }
     /** O-1 / V-6 (#53): DataStore `cluetooth_settings`, migrated once from v3's prefs; V-6 awaits [DataStoreSettings.loaded]. */
@@ -65,7 +68,7 @@ class AppGraph(private val app: Application) {
         BleScanner(app, scanIngest, ingest, { settings.settings.value.scanCodedPhy }, appVersion, scope, io)
     }
     private val coreStates: Flow<CoreRecordingState> = flow {
-        emitAll(core.await().queries.events.filterIsInstance<CoreEvent.RecordingChanged>().map { it.state })
+        emitAll(core.ready().queries.events.filterIsInstance<CoreEvent.RecordingChanged>().map { it.state })
     }
     val recorder: Recorder by lazy { platformRecorder }
     private val platformRecorder by lazy {
@@ -78,10 +81,10 @@ class AppGraph(private val app: Application) {
 
     /** `Application.onCreate`: start opening the core, then restore a recording and post the interrupted notice. */
     fun start() {
-        ingest.start()
+        core.start()
         platformRecorder // RecordingService finds it through RecordingServiceLink (§4.4)
         scope.launch {
-            val handle = core.await()
+            val handle = core.ready()
             platformRecorder.restore()
             // §1.2.6 (#53): one "Recording interrupted" notice for sessions Core::open marked interrupted
             runCatching { InterruptedRecordingNotice(app).check { handle.queries.sessions() } }

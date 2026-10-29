@@ -39,6 +39,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -91,7 +93,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            val core = graph.core.await()
+            val core = graph.core.ready()
             val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(app), viewModelScope)
             // §2.6: subscribe before querying
             launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
@@ -103,7 +105,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun ready(): Ready = _ready.value ?: graph.core.await().let { _ready.value!! }
+    private suspend fun ready(): Ready = _ready.filterNotNull().first()
+
+    /** §1.2.2: Opening holds the splash; Failed shows the error and a retry. */
+    val coreState: StateFlow<CoreState> get() = graph.core.state
+    fun retryCore() = graph.core.retry()
 
     // ---- V-6 launch ----
 
