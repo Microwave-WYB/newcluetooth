@@ -67,8 +67,23 @@ run = "./gradlew --no-daemon --max-workers=2 :platform-api:testDebugUnitTest :pl
 description = "Lane E's :map: JVM tests and lint (instrumented tests run on the cluetooth-test AVD, see map/README)"
 run = "./gradlew --no-daemon --max-workers=2 :map:testDebugUnitTest :map:lintDebug"
 
+[tasks.ui-contract-test]
+description = "U0 :ui-contract JVM tests (OrderedKeys, G-9)"
+run = "./gradlew --no-daemon --max-workers=2 :ui-contract:test"
+
 [tasks.check]
-run = ["mise run //scanner:host-guard-check", "mise run //scanner:design-export-check", "mise run //scanner:wiki-bundle-test", "mise run //scanner:test", "mise run //scanner:platform-test", "mise run //scanner:map-test", "mise run //scanner:lint"]
+# one entry per line: each lane appends its own task line
+run = [
+  "mise run //scanner:host-guard-check",
+  "mise run //scanner:design-export-check",
+  "mise run //scanner:wiki-bundle-test",
+  "mise run //scanner:test",
+  "mise run //scanner:core-test",
+  "mise run //scanner:ui-contract-test",
+  "mise run //scanner:platform-test",
+  "mise run //scanner:map-test",
+  "mise run //scanner:lint",
+]
 
 [tasks.build]
 description = "Product debug APKs (requires matching .debug Firebase client); no install or launch"
