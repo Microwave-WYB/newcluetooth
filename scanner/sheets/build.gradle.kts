@@ -30,6 +30,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":core-api"))
+    implementation(project(":ui-contract"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.foundation)

@@ -3,6 +3,8 @@ package edu.ucsd.sysnet.cluetoothscanner.sheets
 import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetHeight.Collapsed
 import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetHeight.Full
 import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetHeight.Half
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
@@ -19,8 +21,8 @@ import org.junit.Test
 /** S-4, S-6, S-7, S-8, S-9, S-11, S-12, P-6, T-1, T-2, T-9, V-7, G-14 on the plain stack. 1 px = 1 dp. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SheetStackTest {
-    private val cameraA = CameraSnapshot(-117.2, 32.9, 15.0)
-    private val cameraB = CameraSnapshot(-117.1, 32.8, 18.2)
+    private val cameraA = CameraSnapshot(GeoPoint(-117.2, 32.9), 15.0)
+    private val cameraB = CameraSnapshot(GeoPoint(-117.1, 32.8), 18.2)
 
     private class Log {
         var camera: CameraSnapshot? = null
