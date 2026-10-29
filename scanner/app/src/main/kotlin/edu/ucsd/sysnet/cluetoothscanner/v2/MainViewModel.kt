@@ -13,6 +13,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.StorageStats
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
@@ -27,12 +28,14 @@ import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -69,8 +72,11 @@ internal inline fun <T> guarded(task: MainTask, failed: (MainTask, Throwable) ->
  * it and asks it to change (§1.2.1).
  */
 class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(app) {
-    /** Every coroutine of this ViewModel runs here; [guarded] catches first, the core's handler is the last resort. */
-    private val vmScope = CoroutineScope(viewModelScope.coroutineContext + graph.core.handler)
+    /**
+     * Every coroutine of this ViewModel runs here. [guarded] catches first; what still escapes is the screen's own
+     * failure ([MainTask.Unhandled] → CoreLink.Failed), never the core's ([CoreState] means only the open).
+     */
+    private val vmScope = CoroutineScope(viewModelScope.coroutineContext + CoroutineExceptionHandler { _, e -> fail(MainTask.Unhandled, e) })
 
     private val _ui = MutableStateFlow(MainUiState())
     val ui: StateFlow<MainUiState> = _ui.asStateFlow()
@@ -138,13 +144,20 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
 
     // ---- the work keyed by the state ----
 
-    /** §1.2.2: each attempt awaits the core and builds the map state on it → CoreLinked, or Failed(Link). */
+    /**
+     * §1.2.2: each attempt awaits the core and builds the map state in the attempt's own scope → CoreLinked, or
+     * Failed(Link). The scope lives while the attempt is Waiting or Linked, so a failed screen's map state ends with
+     * it and Retry builds a fresh one.
+     */
     private suspend fun linkWork() = ui.map { it.linkAttempt }.distinctUntilChanged().collectLatest { attempt ->
         if (attempt == null) return@collectLatest
         guard(MainTask.Link) {
-            val core = graph.core.ready()
-            val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(getApplication<Application>()), vmScope)
-            dispatch(MainEvent.CoreLinked(Ready(core, map)))
+            coroutineScope {
+                val core = graph.core.ready()
+                val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(getApplication<Application>()), this)
+                dispatch(MainEvent.CoreLinked(Ready(core, map), attempt))
+                awaitCancellation()
+            }
         }
     }
 
@@ -173,36 +186,45 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         if (scope == null) { _view.value = null; return@collectLatest }
         coroutineScope {
             launch { searchWork(q, key) }
-            guard(MainTask.View(key)) {
-                var v = q.sessionView(scope)
-                _view.value = ViewData(key, v)
-                // the live route and device count while this view is live; frozen views are read once
-                while (v.live) {
-                    delay(LIVE_REFRESH_MS)
-                    v = q.sessionView(scope)
-                    _view.value = ViewData(key, v)
-                }
-            }
+            guard(MainTask.View(key)) { followView(q, key, scope) }
         }
     }
 
-    /** Q-1 / Q-2 through the core, in the session's fixed order (G-9), which lives as long as [view]'s work. */
-    private suspend fun searchWork(q: CoreQueries, view: ViewKey) {
-        var order: OrderedKeys? = null
+    /**
+     * V-2: the view read once; while live, the live deltas' route points are appended to it (§2.6: subscribed
+     * before the read, deltas up to the read's `seq` ignored). It is never re-read whole; V-3 re-selects after Stop.
+     */
+    private suspend fun followView(q: CoreQueries, key: ViewKey, scope: Scope) = coroutineScope {
+        val deltas = Channel<LiveDelta>(Channel.UNLIMITED)
+        val subscription = launch(start = CoroutineStart.UNDISPATCHED) { q.live.collect { deltas.send(it) } }
+        var v = q.sessionView(scope)
+        _view.value = ViewData(key, v)
+        val session = v.sessionIds.singleOrNull()
+        if (!v.live || session == null) { subscription.cancel(); return@coroutineScope }
+        val route = LiveRoute(v.route)
+        for (d in deltas) {
+            if (d.sessionId != session || d.seq <= v.seq || d.routeAppended.isEmpty()) continue
+            v = v.copy(route = route.append(d.routeAppended), seq = d.seq)
+            _view.value = ViewData(key, v)
+        }
+    }
+
+    /**
+     * Q-1 / Q-2 through the core. The core returns the hits in the session's fixed order (G-9), so only the shown
+     * ones are kept, in a fresh value per result that is never changed once published.
+     */
+    private suspend fun searchWork(q: CoreQueries, view: ViewKey) =
         ui.map { it.searchKey }.distinctUntilChanged().collectLatest { key ->
             val scope = view.scope
             if (key == null || key.view != view || scope == null) { _search.value = null; return@collectLatest }
             guard(MainTask.Search(key)) {
                 val hits = q.search(scope, key.query, key.area)
                 _search.value = if (hits == null) SearchResults(key, null, emptyList()) else {
-                    val o = order ?: OrderedKeys(q.deviceOrder(scope).keys).also { order = it }
-                    o.append(hits.keys)
-                    val keys = o.visible(hits).take(MAX_ROWS).toLongArray()
-                    SearchResults(key, o, q.deviceRows(scope, keys))
+                    val keys = hits.keys.copyOf(minOf(hits.keys.size, MAX_ROWS))
+                    SearchResults(key, OrderedKeys(keys), q.deviceRows(scope, keys))
                 }
             }
         }
-    }
 
     private suspend fun readSessions(q: CoreQueries): SessionsListState {
         val current = q.currentSession()
@@ -232,6 +254,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             MainEffect.ResumeRecording -> graph.recorder.resume()
             MainEffect.StopRecording -> graph.recorder.stop()
             MainEffect.FrameRoute -> bboxOf(shownRoute(s, _view.value))?.let { box -> s.ready?.map?.frame(box) }
+            MainEffect.Locate -> s.ready?.map?.locate()
             MainEffect.SheetsBack -> s.attachedSheets?.handleBack()
             is MainEffect.SheetsEnterSearch -> s.ready?.let { r -> s.attachedSheets?.enterSearch(effect.query, effect.area, r.map.camera(), effect.picked) }
             is MainEffect.SheetsSearchThisArea -> s.attachedSheets?.searchThisArea(effect.camera.viewport, effect.camera.zoom)
@@ -319,7 +342,6 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
 
     companion object {
         private const val TAG = "MainViewModel"
-        private const val LIVE_REFRESH_MS = 5_000L
         private const val MAX_ROWS = 200
 
         /** The Activity hands in the process graph, so nothing here looks it up or casts for it. */

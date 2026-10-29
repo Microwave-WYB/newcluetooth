@@ -16,6 +16,7 @@ import edu.ucsd.sysnet.cluetoothscanner.v2.CoreLink
 import edu.ucsd.sysnet.cluetoothscanner.v2.CoreState
 import edu.ucsd.sysnet.cluetoothscanner.v2.MainScreen
 import edu.ucsd.sysnet.cluetoothscanner.v2.MainViewModel
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.launch
 
 /**
@@ -39,7 +40,7 @@ class MainActivity : ComponentActivity() {
         // a grant changed in system settings, or Bluetooth was turned on
         lifecycle.addObserver(LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh() })
         enableEdgeToEdge()
-        lifecycleScope.launch(graph.core.handler) {
+        lifecycleScope.launch(CoroutineExceptionHandler { _, e -> vm.launchFailed(e) }) {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 vm.requests.collect { r ->
                     // a launch that throws (no such activity on the device) is the ViewModel's typed failure

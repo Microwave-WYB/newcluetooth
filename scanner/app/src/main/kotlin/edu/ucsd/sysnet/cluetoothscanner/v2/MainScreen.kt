@@ -52,6 +52,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeState
 import edu.ucsd.sysnet.cluetoothscanner.chrome.rememberElapsedMs
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import edu.ucsd.sysnet.cluetoothscanner.map.CluetoothMap
 import edu.ucsd.sysnet.cluetoothscanner.map.LocateControl
@@ -77,8 +78,8 @@ fun MainScreen(vm: MainViewModel) {
     val myLocation by vm.graph.location.myLocation.collectAsState()
     val coreState by vm.coreState.collectAsState()
     val dispatch = vm::dispatch
-    (coreState as? CoreState.Failed)?.let { CoreErrorScreen(it.error, vm::retryCore); return }
-    (ui.core as? CoreLink.Failed)?.let { CoreErrorScreen(it.error) { dispatch(MainEvent.RetryLink) }; return }
+    (coreState as? CoreState.Failed)?.let { CoreErrorScreen(Strings.CoreOpenFailed, it.error, vm::retryCore); return }
+    (ui.core as? CoreLink.Failed)?.let { CoreErrorScreen(Strings.ScreenFailed, it.error) { dispatch(MainEvent.RetryLink) }; return }
     val r = ui.ready ?: return
     val density = LocalDensity.current
     val nav = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
@@ -139,7 +140,7 @@ fun MainScreen(vm: MainViewModel) {
             val recH = if (form == RecorderUi.Form.Panel) RecorderGeometry.panelHeight(true) else Tokens.fab
             LocateControl(
                 mapUi, if (tablet) LocatePlacement.Tablet(recH) else LocatePlacement.Phone(sheetCover),
-                onLocate = r.map::locate, onWarning = { dispatch(MainEvent.SetLocationPopover(!ui.locationPopoverOpen)) },
+                onLocate = { dispatch(MainEvent.Locate) }, onWarning = { dispatch(MainEvent.SetLocationPopover(!ui.locationPopoverOpen)) },
             )
             if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, miniMap = miniMap)
             // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
@@ -254,18 +255,16 @@ private fun LocationPopoverLayer(status: LocationStatus, tablet: Boolean, sheetC
 }
 
 
-/** §1.2.2: the core could not open. The process stays up; this says why and offers a retry. */
+/** §1.2.2: the core could not open, or the screen failed. The process stays up; this says why and offers a retry. */
 @Composable
-private fun CoreErrorScreen(error: Throwable, onRetry: () -> Unit) {
+private fun CoreErrorScreen(title: String, error: Throwable, onRetry: () -> Unit) {
     val c = CluetoothTheme.colors
     androidx.compose.foundation.layout.Column(
         Modifier.fillMaxSize().background(c.bg).windowInsetsPadding(WindowInsets.systemBars).padding(Tokens.gutter)
             .testTag("coreError"),
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(Tokens.edge),
     ) {
-        edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text(
-            edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings.CoreOpenFailed, style = CluetoothTheme.type.head,
-        )
+        edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text(title, style = CluetoothTheme.type.head)
         edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text(error::class.java.simpleName, style = CluetoothTheme.type.title)
         edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text(error.message.orEmpty(), color = c.t2)
         edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button(edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings.TryAgain, onRetry)

@@ -45,8 +45,13 @@ class AppGraph(private val app: Application) {
     /** §1.2.2: the core lifecycle (Opening → Ready | Failed, Retry); it opens the core on Dispatchers.IO. */
     val core: CoreOpener = CoreOpener(base, io, open = { CoreBinding.open(app, scope) })
 
-    /** The process scope (main thread; work that blocks hops to [io]). A failure in it moves the core to Failed. */
-    val scope: CoroutineScope = CoroutineScope(base.coroutineContext + core.handler)
+    /**
+     * The process scope (main thread; work that blocks hops to [io]). It has its own handler: a failure in it is
+     * logged and ends only that coroutine; it never touches the core's state, which means only "the open failed".
+     */
+    val scope: CoroutineScope = CoroutineScope(
+        base.coroutineContext + kotlinx.coroutines.CoroutineExceptionHandler { _, e -> android.util.Log.e("AppGraph", "uncaught in the process scope", e) },
+    )
 
     val appVersion: String = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "0.1.0"
 

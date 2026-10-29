@@ -35,11 +35,15 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 /** The opened core plus the map state built on it. */
 class Ready(val core: CoreHandle, val map: CluetoothMapState)
 
-/** The screen's link to the core (§1.2.2): Waiting(attempt) → Linked(ready) | Failed(error); Retry waits again. */
+/**
+ * The screen's link to the core (§1.2.2): Waiting(n) → Linked(ready, n) → Failed(error, n); Retry → Waiting(n + 1).
+ * It fails when linking fails or when anything the screen runs fails unhandled; [CoreState] only means the open.
+ */
 sealed interface CoreLink {
     /** The runner awaits the core and builds the map state for this attempt. */
     data class Waiting(val attempt: Int) : CoreLink
-    data class Linked(val ready: Ready) : CoreLink
+    /** The map state lives in the attempt's scope until the link fails. */
+    data class Linked(val ready: Ready, val attempt: Int) : CoreLink
     data class Failed(val error: Throwable, val attempt: Int) : CoreLink
 }
 
@@ -55,6 +59,8 @@ sealed interface MainTask {
     data object CoreEvents : MainTask
     /** A call into the map or the sheets from a map callback or the cover, or an Activity launch. */
     data object Platform : MainTask
+    /** Something the screen runs threw past every guard (its scope's handler caught it). */
+    data object Unhandled : MainTask
 }
 
 /** Lane D's sheets for the shown scope; they are a Compose holder, so the composition attaches and detaches them. */
@@ -118,6 +124,8 @@ data class MainUiState(
     val onboarding: OnboardingFlow? = null,
     val camera: MapCamera? = null,
     val core: CoreLink = CoreLink.Waiting(0),
+    /** The launch flow (O-2 or V-6) runs once per screen, not again when a failed link is retried. */
+    val launched: Boolean = false,
     val sheets: SheetsLink = SheetsLink.None,
 ) {
     val viewKey: ViewKey get() = ViewKey(scope, epoch)
@@ -126,15 +134,19 @@ data class MainUiState(
     val searchKey: SearchKey? get() = searchPage?.takeIf { scope != null }?.let { SearchKey(viewKey, it.query, it.area) }
     val recorderPanelOpen: Boolean get() = (recorder as? RecorderMirror.Active)?.panelOpen == true
     val ready: Ready? get() = (core as? CoreLink.Linked)?.ready
-    /** The link attempt the runner works on, while waiting. */
-    val linkAttempt: Int? get() = (core as? CoreLink.Waiting)?.attempt
+    /** The link attempt the runner works on: its scope lives from Waiting through Linked, and ends when it fails. */
+    val linkAttempt: Int? get() = when (core) {
+        is CoreLink.Waiting -> core.attempt
+        is CoreLink.Linked -> core.attempt
+        is CoreLink.Failed -> null
+    }
     val attachedSheets: SheetsState? get() = (sheets as? SheetsLink.Attached)?.sheets
 }
 
 /** Everything that changes [MainUiState]: the user's intents, and the results the runner feeds back. */
 sealed interface MainEvent {
     // ---- results and platform state ----
-    data class CoreLinked(val ready: Ready) : MainEvent
+    data class CoreLinked(val ready: Ready, val attempt: Int) : MainEvent
     /** Anything the runner ran threw: every effect and every piece of keyed work ends in a result or this. */
     data class Failed(val task: MainTask, val error: Throwable) : MainEvent
     data object RetryLink : MainEvent
@@ -162,6 +174,8 @@ sealed interface MainEvent {
     data object FitRoute : MainEvent
     data class SetLayout(val mode: LayoutMode) : MainEvent
     data object ToggleSidebar : MainEvent
+    /** P-4: the locate button. */
+    data object Locate : MainEvent
     data object CloseSidebar : MainEvent
     data class SetLocationPopover(val open: Boolean) : MainEvent
     data class LocationFix(val action: LocationStatus.Action) : MainEvent
@@ -203,6 +217,8 @@ sealed interface MainEffect {
     data object StopRecording : MainEffect
     /** R-5: fit the main map to the shown view's route. */
     data object FrameRoute : MainEffect
+    /** P-4: the main map follows the user's location. */
+    data object Locate : MainEffect
     /** G-14: the sheet stack pops its top sheet. */
     data object SheetsBack : MainEffect
     /** Q-5: D's search state, from the map's current camera. */
@@ -234,8 +250,16 @@ private fun MainUiState.with(vararg effects: MainEffect) = Step(this, effects.to
 
 /** The pure transition function of the main screen. */
 fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
-    // §1.2.2 then V-6: the screen is linked; the launch flow starts from the stored settings
-    is MainEvent.CoreLinked -> s.copy(core = CoreLink.Linked(e.ready)).with(MainEffect.LoadSettings)
+    // §1.2.2 then V-6: the screen is linked (a stale attempt's link is dropped); the launch flow starts once
+    is MainEvent.CoreLinked -> when (val c = s.core) {
+        is CoreLink.Waiting ->
+            if (c.attempt != e.attempt) s.only()
+            else {
+                val linked = s.copy(core = CoreLink.Linked(e.ready, e.attempt), launched = true)
+                if (s.launched) linked.only() else linked.with(MainEffect.LoadSettings)
+            }
+        is CoreLink.Linked, is CoreLink.Failed -> s.only()
+    }
     is MainEvent.Failed -> failed(s, e.task, e.error)
     MainEvent.RetryLink -> when (val c = s.core) {
         is CoreLink.Failed -> s.copy(core = CoreLink.Waiting(c.attempt + 1)).only()
@@ -284,6 +308,7 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     // G-2 / T-9: a breakpoint crossing re-lays out and keeps the state
     is MainEvent.SetLayout -> s.copy(layout = e.mode).only()
     MainEvent.ToggleSidebar -> s.copy(sidebarOpen = !s.sidebarOpen).only()
+    MainEvent.Locate -> s.with(MainEffect.Locate)
     MainEvent.CloseSidebar -> s.copy(sidebarOpen = false).only()
     is MainEvent.SetLocationPopover -> s.copy(locationPopoverOpen = e.open).only()
     // P-5: Allow asks for location; Turn on opens the location settings
@@ -359,9 +384,11 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
  * for falls back (the launch view to the first run, the storage section to zeros). The runner has logged it.
  */
 private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = when (task) {
-    MainTask.Link -> when (val c = s.core) {
+    // the screen fails as a whole: its link scope ends (the map state with it) and Retry links again
+    MainTask.Link, MainTask.Unhandled -> when (val c = s.core) {
         is CoreLink.Waiting -> s.copy(core = CoreLink.Failed(error, c.attempt)).only()
-        is CoreLink.Linked, is CoreLink.Failed -> s.only()
+        is CoreLink.Linked -> s.copy(core = CoreLink.Failed(error, c.attempt)).only()
+        is CoreLink.Failed -> s.only()
     }
     is MainTask.Effect -> when (task.effect) {
         // without stored settings the launch view still opens (its own facts fall back to the first run)
@@ -372,7 +399,7 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         // the onboarding stays, so Done can be pressed again
         is MainEffect.SaveOnboarding,
         MainEffect.LoadSessions, MainEffect.StartRecording, MainEffect.PauseRecording, MainEffect.ResumeRecording,
-        MainEffect.StopRecording, MainEffect.FrameRoute, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
+        MainEffect.StopRecording, MainEffect.FrameRoute, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
         is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch, is MainEffect.Delete, is MainEffect.UpdateSettings,
         is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation, MainEffect.OpenAppSettings,
         MainEffect.UploadNow -> s.only()

@@ -59,12 +59,12 @@ class MainReducerRandomTest {
         37 -> listOf(MainEvent.Export(nextBoolean()), MainEvent.DeleteConfirmed, MainEvent.Delete(nextBoolean())).random(this)
         38 -> MainEvent.EditOnboarding { it.copy(step = it.step + 1) }
         39 -> MainEvent.Failed(
-            listOf(MainTask.Effect(effects.random(this)), MainTask.Link, MainTask.Sessions, MainTask.Platform,
+            listOf(MainTask.Effect(effects.random(this)), MainTask.Link, MainTask.Unhandled, MainTask.Sessions, MainTask.Platform,
                 MainTask.View(ViewKey(sessionA, ViewEpoch(1)))).random(this),
             IllegalStateException("random failure"),
         )
         40 -> MainEvent.RetryLink
-        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings).random(this)
+        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate).random(this)
         else -> listOf(MainEvent.RequestPermission(OnboardingPermission.entries.random(this)), MainEvent.EnableBluetooth, MainEvent.FinishOnboarding).random(this)
     }
 
@@ -109,7 +109,7 @@ class MainReducerRandomTest {
                 }
                 // a failure never leaves the export running; the link fails only while waiting
                 if (e is MainEvent.Failed && (e.task as? MainTask.Effect)?.effect is MainEffect.Export) check("export kept running", n.storage?.exporting != true)
-                if (n.core is CoreLink.Failed && s.core !is CoreLink.Failed) check("link failed from ${s.core}", s.core is CoreLink.Waiting && e is MainEvent.Failed)
+                if (n.core is CoreLink.Failed && s.core !is CoreLink.Failed) check("link failed from ${s.core}", s.core !is CoreLink.Failed && e is MainEvent.Failed)
                 // storage: an export runs only with a format
                 n.storage?.let { if (it.exporting) check("export without a format", it.exportFormat != null) }
                 if (e is MainEvent.Back) checkBack(s, e, step, ::check)

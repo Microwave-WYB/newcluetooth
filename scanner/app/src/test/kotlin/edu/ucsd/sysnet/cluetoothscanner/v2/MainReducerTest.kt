@@ -280,6 +280,18 @@ class MainFailureTest {
         assertEquals(retry, retry.on(MainEvent.RetryLink))
     }
 
+    @Test fun anUnhandledFailureFailsTheScreenNotTheCore() {
+        val failed = failed(MainUiState(), MainTask.Unhandled).state
+        assertEquals(CoreLink.Failed(boom, 0), failed.core)
+        assertEquals(CoreLink.Waiting(1), failed.on(MainEvent.RetryLink).core)
+        // a failure after the screen failed changes nothing
+        assertEquals(Step(failed), failed(failed, MainTask.Link))
+    }
+
+    @Test fun locateIsAnEffect() {
+        assertEquals(Step(MainUiState(), listOf(MainEffect.Locate)), reduce(MainUiState(), MainEvent.Locate))
+    }
+
     @Test fun whatTheScreenWaitsForFallsBack() {
         // no settings: the launch view still opens; no launch facts: the first run
         assertEquals(listOf(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts), failed(MainUiState(), MainTask.Effect(MainEffect.LoadSettings)).effects)
