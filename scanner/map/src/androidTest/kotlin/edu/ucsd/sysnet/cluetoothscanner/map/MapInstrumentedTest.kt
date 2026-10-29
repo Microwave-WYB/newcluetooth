@@ -1,7 +1,10 @@
 package edu.ucsd.sysnet.cluetoothscanner.map
 
 import android.graphics.RectF
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.unit.dp
 import androidx.activity.ComponentActivity
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.DeviceAddr
@@ -138,5 +141,26 @@ class MapInstrumentedTest {
         assertEquals(listOf(DeviceAddr.addrOf(key)), selected.map { it.getStringProperty("addr") })
         h.onMain { h.state.setSelection(null) }
         h.waitUntil("cleared") { h.rendered("sightings").isEmpty() && h.rendered("point-selected").isEmpty() }
+    }
+
+    @Test fun r5_miniMapSnapshotsTheRouteAndReusesOneSnapshotter() = miniMap(BLANK_STYLE)
+
+    /** The production path: the OpenFreeMap style by URL (needs the emulator's network). */
+    @Test fun r5_miniMapOnOpenFreeMap() = miniMap(null)
+
+    private fun miniMap(baseStyleJson: String?) {
+        val route = androidx.compose.runtime.mutableStateOf(listOf(CENTER, GeoPoint(CENTER.lon + 0.01, CENTER.lat + 0.005)))
+        val created = MiniMapStats.created
+        val snapshots = MiniMapStats.snapshots
+        rule.setContent {
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.size(androidx.compose.ui.unit.DpSize(300.dp, 132.dp))) {
+                RouteMiniMap(route.value, fallback = CENTER, modifier = androidx.compose.ui.Modifier.fillMaxSize(), dark = false, baseStyleJson = baseStyleJson)
+            }
+        }
+        rule.waitUntil(60_000) { MiniMapStats.snapshots > snapshots }
+        rule.runOnIdle { route.value = route.value + GeoPoint(CENTER.lon + 0.02, CENTER.lat) }
+        // the next 10 s refresh picks the new route up on the same snapshotter
+        rule.waitUntil(60_000) { MiniMapStats.snapshots > snapshots + 1 }
+        assertEquals(1, MiniMapStats.created - created)
     }
 }

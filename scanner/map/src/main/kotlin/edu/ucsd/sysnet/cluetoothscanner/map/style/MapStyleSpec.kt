@@ -115,9 +115,6 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
         private val CLONES = mapOf("clusters" to CELLS_LAYER, "cluster-count" to CELL_COUNT_LAYER)
         private val MINI_MAP_LAYERS = setOf("route", "end-dots", "end-labels")
 
-        /** The layers a tap hits (M-7), in no particular order; the topmost feature wins. */
-        val TAP_LAYERS = arrayOf("clusters", "points", "sightings", CELLS_LAYER)
-
         fun parse(json: String): MapStyleSpec = MapStyleSpec(Json.parseToJsonElement(json).jsonObject)
 
         private fun JsonObject.obj(key: String): JsonObject = getValue(key).jsonObject

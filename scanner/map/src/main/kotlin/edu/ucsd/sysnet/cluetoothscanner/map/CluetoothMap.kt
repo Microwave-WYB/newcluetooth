@@ -1,5 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.map
 
+import android.content.ComponentCallbacks2
+import android.content.res.Configuration
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -59,10 +61,16 @@ fun CluetoothMap(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_CREATE -> mapView.onCreate(null)
-                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_START -> {
+                    mapView.onStart()
+                    state.refillAfterTrim()
+                }
                 Lifecycle.Event.ON_RESUME -> mapView.onResume()
                 Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                Lifecycle.Event.ON_STOP -> {
+                    mapView.onStop()
+                    state.trimMemory()
+                }
                 else -> Unit
             }
         }
@@ -75,6 +83,20 @@ fun CluetoothMap(
             if (current.isAtLeast(Lifecycle.State.STARTED)) mapView.onStop()
             mapView.onDestroy()
         }
+    }
+
+    // §1.2.5: drop the cached point data when the UI is hidden or memory runs low
+    DisposableEffect(context) {
+        val callbacks = object : ComponentCallbacks2 {
+            override fun onTrimMemory(level: Int) {
+                if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) state.trimMemory()
+            }
+            override fun onConfigurationChanged(newConfig: Configuration) = Unit
+            @Deprecated("Deprecated in Java")
+            override fun onLowMemory() = state.trimMemory()
+        }
+        context.applicationContext.registerComponentCallbacks(callbacks)
+        onDispose { context.applicationContext.unregisterComponentCallbacks(callbacks) }
     }
 
     DisposableEffect(mapView) {

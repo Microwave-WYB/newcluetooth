@@ -33,7 +33,7 @@ interface MapSurface {
 
 /** The camera and tap events a surface reports to its state. */
 interface MapSurfaceListener {
-    /** byGesture: MapLibre REASON_API_GESTURE (drag, pinch, fling, double-tap). */
+    /** byGesture: MapLibre REASON_API_GESTURE (drag, pinch, fling, double-tap); our own moves are not. */
     fun onMoveStarted(byGesture: Boolean)
     fun onIdle()
     /** The topmost hit under an 8 dp box around the finger, or null for empty map (M-7). */

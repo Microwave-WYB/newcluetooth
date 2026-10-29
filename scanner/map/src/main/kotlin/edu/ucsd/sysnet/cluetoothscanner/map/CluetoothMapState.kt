@@ -4,6 +4,7 @@ import edu.ucsd.sysnet.cluetoothscanner.map.camera.LocateLogic
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.MoveClassifier
 import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
+import edu.ucsd.sysnet.cluetoothscanner.map.data.RouteGeoJson
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.DeviceAddr
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.Hit
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.TapAction
@@ -55,6 +56,8 @@ class CluetoothMapState(
     private val location: LocationStatusSource,
     private val style: MapStyleSpec,
     private val scope: CoroutineScope,
+    /** Uptime in ms (android.os.SystemClock.uptimeMillis in the app). */
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
 ) : MapRequests, MapSurfaceListener {
 
     var events: MapEvents? = null
@@ -74,7 +77,8 @@ class CluetoothMapState(
     private var shownScope: Scope? = null
     private var filter = DeviceFilter()
     private var view: SessionView? = null
-    private val liveRoute = ArrayList<GeoPoint>()
+    /** The one-session route, serialized incrementally as live points arrive. */
+    private val route = RouteGeoJson()
     private var locatedOnce = false
 
     private val moves = MoveClassifier()
@@ -82,9 +86,10 @@ class CluetoothMapState(
 
     /** What map_points must serve; null until a scope is shown and a viewport is known. */
     private data class PointsRequest(val scope: Scope, val filter: DeviceFilter, val viewport: Bbox, val zoom: Double, val nonce: Int)
-    private data class Loaded(val scope: Scope, val filter: DeviceFilter, val area: Bbox, val zoom: Double, val mode: MapMode)
+    /** What the last map_points request covers; mode is null while it is in flight. */
+    private data class Coverage(val scope: Scope, val filter: DeviceFilter, val area: Bbox, val zoom: Double, val mode: MapMode?, val nonce: Int)
     private val pointsRequest = MutableStateFlow<PointsRequest?>(null)
-    private var loaded: Loaded? = null
+    private var coverage: Coverage? = null
     private var nonce = 0
     private var liveDirty = false
     private var viewJob: Job? = null
@@ -112,9 +117,9 @@ class CluetoothMapState(
                 val v = view ?: return@collect
                 if (!v.live || v.sessionIds.singleOrNull() != delta.sessionId) return@collect
                 if (delta.routeAppended.isNotEmpty()) {
-                    liveRoute += delta.routeAppended
-                    setSource("route", GeoJson.routes(listOf(liveRoute)))
-                    setSource("ends", GeoJson.ends(liveRoute, style.endProperties))
+                    route.append(delta.routeAppended)
+                    setSource("route", route.geojson())
+                    setSource("ends", route.ends(style.endProperties))
                 }
                 if (delta.appended.isNotEmpty() || delta.changed.any { it.best != null }) liveDirty = true
             }
@@ -148,8 +153,29 @@ class CluetoothMapState(
         this.surface = null
     }
 
+    /**
+     * Drops the cached point data (devices, density, cells, sightings) while the UI is hidden (§1.2.5: onStop and
+     * onTrimMemory(UI_HIDDEN)). The native sources keep drawing what they have; the data is queried again on the
+     * next attach, style load or idle.
+     */
+    fun trimMemory() {
+        for (id in TRIMMED_SOURCES) sourceData.remove(id)
+        coverage = null
+        trimmed = true
+    }
+    private var trimmed = false
+
+    /** The UI is shown again (onStart): query what [trimMemory] dropped. */
+    fun refillAfterTrim() {
+        if (!trimmed || surface == null) return
+        trimmed = false
+        requestPoints(force = true)
+        _ui.value.selection?.let(::loadSightings)
+    }
+
     private fun replay(s: MapSurface) {
         for ((id, json) in sourceData) s.setGeoJson(id, json)
+        refillAfterTrim()
         s.setRouteOpacity(if (_ui.value.routesFaint) style.routeOpacityAllSessions else style.routeOpacitySession)
         s.applySelection(style.selection(_ui.value.selection?.let(DeviceAddr::addrOf)))
     }
@@ -216,6 +242,12 @@ class CluetoothMapState(
             setSource("sightings", GeoJson.EMPTY)
             return
         }
+        loadSightings(key)
+    }
+
+    private fun loadSightings(key: DeviceKey) {
+        val s = shownScope ?: return
+        sightingsJob?.cancel()
         sightingsJob = scope.launch {
             val sightings = runCatchingQuery { queries.deviceSightings(s, key) } ?: return@launch
             if (_ui.value.selection == key) setSource("sightings", GeoJson.sightings(sightings))
@@ -249,14 +281,14 @@ class CluetoothMapState(
     // ---- surface events ----
 
     override fun onMoveStarted(byGesture: Boolean) {
-        if (moves.onMoveStarted(byGesture, camera().zoom)) events?.onUserGestureStart()
+        if (moves.onMoveStarted(byGesture, camera().zoom, clock())) events?.onUserGestureStart()
     }
 
     override fun onIdle() {
         val s = surface ?: return
         val cam = s.camera
         lastCamera = cam
-        val move = moves.onIdle(cam.zoom)
+        val move = moves.onIdle(cam.zoom, clock())
         if (move.byUser) {
             val me = location.myLocation.value?.at
             locate.onUserIdle(move.zoomed, me?.let { MapGeometry.locationOffset(it, cam, s.viewport, _ui.value.cover) })
@@ -298,22 +330,22 @@ class CluetoothMapState(
 
     private fun loadView(s: Scope) {
         viewJob?.cancel()
-        loaded = null
+        coverage = null
         viewJob = scope.launch {
             val v = runCatchingQuery { queries.sessionView(s) } ?: return@launch
             if (shownScope != s) return@launch
             view = v
-            liveRoute.clear()
-            liveRoute += v.route
+            route.reset(v.route)
             if (_ui.value.routesFaint) {
                 setSource("ends", GeoJson.EMPTY)
             } else {
-                setSource("route", GeoJson.routes(listOf(v.route)))
-                setSource("ends", GeoJson.ends(v.route, style.endProperties))
+                setSource("route", route.geojson())
+                setSource("ends", route.ends(style.endProperties))
             }
-            // M-10, V-7: a session switch refits without animation
+            // M-10, V-7: a session switch refits without animation. The frame's idle may already have asked for
+            // this viewport; requestPoints then finds it covered, so the switch costs one map_points query.
             v.frame?.let { frameBbox(it, 0) }
-            requestPoints(force = true)
+            requestPoints(force = false)
         }
     }
 
@@ -323,17 +355,20 @@ class CluetoothMapState(
         val vp = surf.visibleBbox
         val zoom = surf.camera.zoom
         if (!force) {
-            val l = loaded
-            if (l != null && l.scope == s && l.filter == filter && MapGeometry.contains(l.area, vp) &&
-                (l.mode == MapMode.Points || abs(l.zoom - zoom) < CELLS_RELOAD_DZ)
+            val c = coverage
+            if (c != null && c.scope == s && c.filter == filter && MapGeometry.contains(c.area, vp) &&
+                (c.mode == MapMode.Points || abs(c.zoom - zoom) < CELLS_RELOAD_DZ)
             ) return
         }
-        pointsRequest.value = PointsRequest(s, filter, vp, zoom, ++nonce)
+        val r = PointsRequest(s, filter, vp, zoom, ++nonce)
+        coverage = Coverage(s, filter, MapGeometry.loadedArea(vp), zoom, mode = null, nonce = r.nonce)
+        pointsRequest.value = r
     }
 
     /** Superseded queries are dropped by collectLatest (and by the core, §2 "latest wins"). */
     private suspend fun load(r: PointsRequest) {
-        val data: MapData = runCatchingQuery { queries.mapPoints(r.scope, r.filter, r.viewport, r.zoom) } ?: return
+        val data: MapData = runCatchingQuery { queries.mapPoints(r.scope, r.filter, r.viewport, r.zoom) }
+            ?: return run { if (coverage?.nonce == r.nonce) coverage = null }
         if (r.scope != shownScope || r.filter != filter) return
         when (data.mode) {
             MapMode.Points -> {
@@ -347,7 +382,7 @@ class CluetoothMapState(
         }
         // M-5: the density wash is always on, one circle per device (per cell in Cells mode)
         setSource("density", data.geojson)
-        loaded = Loaded(r.scope, r.filter, MapGeometry.loadedArea(r.viewport), r.zoom, data.mode)
+        if (coverage?.nonce == r.nonce) coverage = coverage?.copy(mode = data.mode)
         if (_ui.value.routesFaint) {
             runCatchingQuery { queries.routes(r.scope, r.viewport, r.zoom) }?.let { setSource("route", it) }
         }
@@ -372,5 +407,7 @@ class CluetoothMapState(
         const val LIVE_POINTS_INTERVAL_MS = 5_000L
         /** Cells are re-aggregated per zoom; Points cluster natively and reload only outside the loaded area. */
         const val CELLS_RELOAD_DZ = 0.5
+        /** The sources [trimMemory] drops: the large, re-queryable ones. */
+        private val TRIMMED_SOURCES = listOf("devices", "density", MapStyleSpec.CELLS, "sightings")
     }
 }
