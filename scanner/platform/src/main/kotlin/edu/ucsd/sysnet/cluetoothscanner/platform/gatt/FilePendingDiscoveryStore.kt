@@ -2,6 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.platform.gatt
 
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 
 /**
  * One file per discovery under [directory] (`<uuidv7>.json`). Writes go to a temporary file
@@ -14,7 +15,8 @@ class FilePendingDiscoveryStore(private val directory: File) : PendingDiscoveryS
     }
 
     override fun put(id: String, json: String) {
-        require(ID.matches(id)) { "not a discovery id: $id" }
+        // An I/O edge: its caller (the manager) turns any failure into a value.
+        if (!ID.matches(id)) throw IllegalArgumentException("not a discovery id: $id")
         val temporary = File(directory, "$id.json.tmp")
         FileOutputStream(temporary).use { output ->
             output.write(json.toByteArray(Charsets.UTF_8))
@@ -22,7 +24,7 @@ class FilePendingDiscoveryStore(private val directory: File) : PendingDiscoveryS
         }
         if (!temporary.renameTo(File(directory, "$id.json"))) {
             temporary.delete()
-            error("could not store discovery $id")
+            throw IOException("could not store discovery $id")
         }
     }
 

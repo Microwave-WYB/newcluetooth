@@ -1,15 +1,12 @@
 package edu.ucsd.sysnet.cluetoothscanner.platform.gatt
 
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -82,17 +79,22 @@ class GattDiscoveryManager(
     private val retryFirstMs: Long = 30_000,
     private val retryMaxMs: Long = 10 * 60_000,
 ) {
-    private val running = AtomicBoolean(false)
+    /** One discovery at a time: admission is one compare-and-set, and [cancel] reaches the engine through it. */
+    private sealed interface Slot {
+        data object Free : Slot
+        data object Starting : Slot
+        data class Running(val engine: GattEngine) : Slot
+    }
 
-    @Volatile
-    private var engine: GattEngine? = null
+    private val slot = AtomicReference<Slot>(Slot.Free)
 
-    /** Guards the queue and [activeId] so a flush never saves the marker of a running discovery. */
-    private val queueLock = Mutex()
-    private var activeId: String? = null
-
-    @Volatile
-    private var retryJob: Job? = null
+    /**
+     * The discovery whose queue entry is its in-flight marker. It is set before the marker is written and cleared
+     * after the final result is, so a flush never saves a running discovery's marker. No lock: the marker writer is
+     * joined before the final write.
+     */
+    private val activeId = AtomicReference<String?>(null)
+    private val retryJob = AtomicReference<Job?>(null)
     private val _state = MutableStateFlow<GattUiState>(GattUiState.Idle)
     val state: StateFlow<GattUiState> = _state.asStateFlow()
 
@@ -101,13 +103,12 @@ class GattDiscoveryManager(
 
     /** [start] returning the discovery's job (null when one is already running); [state] ends Finished or Idle. */
     fun launch(request: GattStartRequest): Job? {
-        if (!running.compareAndSet(false, true)) return null
+        if (!slot.compareAndSet(Slot.Free, Slot.Starting)) return null
         return scope.launch {
             try {
                 execute(request)
             } finally {
-                engine = null
-                running.set(false)
+                slot.set(Slot.Free)
                 // A cancelled run leaves its queue entry (a `failed` object) for recovery.
                 if (_state.value is GattUiState.Running) _state.value = GattUiState.Idle
             }
@@ -116,7 +117,7 @@ class GattDiscoveryManager(
 
     /** Stops the running discovery; whatever was collected is kept and stored as `cancelled`. */
     fun cancel() {
-        engine?.cancel()
+        (slot.get() as? Slot.Running)?.engine?.cancel()
     }
 
     /** Back to idle after the UI showed a finished result. */
@@ -145,18 +146,14 @@ class GattDiscoveryManager(
         }
         // Earlier results the store never accepted get another try, without delaying this run.
         scope.launch { flushPending() }
-        queueLock.withLock {
-            activeId = request.id
-            pending.put(request.id, interruptedJson(request, startedAt, GattStage.CONNECT))
-        }
+        activeId.set(request.id)
+        putQueued(request.id, interruptedJson(request, startedAt, GattStage.CONNECT))
 
         // The queue entry follows the stage, not every read: one write per stage change.
         val stages = Channel<GattStage>(Channel.CONFLATED)
         val marker = scope.launch {
             for (stage in stages) {
-                queueLock.withLock {
-                    if (activeId == request.id) pending.put(request.id, interruptedJson(request, startedAt, stage))
-                }
+                if (activeId.get() == request.id) putQueued(request.id, interruptedJson(request, startedAt, stage))
             }
         }
         var lastStage = GattStage.CONNECT
@@ -173,7 +170,7 @@ class GattDiscoveryManager(
                 }
             },
         )
-        engine = running
+        slot.set(Slot.Running(running))
         _state.value = GattUiState.Running(request, GattProgress(GattStage.CONNECT))
 
         val result = try {
@@ -187,20 +184,18 @@ class GattDiscoveryManager(
             }
         } catch (cancelled: CancellationException) {
             // Teardown: the queue entry (a `failed` object) stays for recovery.
-            withContext(NonCancellable) { queueLock.withLock { activeId = null } }
+            activeId.set(null)
             throw cancelled
         } finally {
             stages.close()
             marker.join()
         }
         val json = GattJson.encode(result)
-        queueLock.withLock {
-            pending.put(request.id, json)
-            activeId = null
-        }
+        putQueued(request.id, json)
+        activeId.set(null)
         _state.value = try {
             store.save(json)
-            queueLock.withLock { pending.remove(request.id) }
+            removeQueued(request.id)
             GattUiState.Finished(result, saved = true)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -235,7 +230,11 @@ class GattDiscoveryManager(
      * is still queued afterwards (the store refused it).
      */
     private suspend fun saveQueued(): Boolean {
-        val queued = queueLock.withLock { pending.entries().filter { it.id != activeId } }
+        val queued = try {
+            pending.entries().filter { it.id != activeId.get() }
+        } catch (failure: Exception) {
+            return true // the queue cannot be read now: try again later
+        }
         var refused = false
         for (entry in queued) {
             try {
@@ -246,18 +245,37 @@ class GattDiscoveryManager(
                 refused = true
                 continue
             }
-            queueLock.withLock { pending.remove(entry.id) }
+            removeQueued(entry.id)
         }
         return refused
+    }
+
+    /** The durable queue is an I/O edge: a failed write keeps the result going to the store, never a crash. */
+    private fun putQueued(id: String, json: String) {
+        try {
+            pending.put(id, json)
+        } catch (_: Exception) {
+            // Not durable this time; the result itself still goes to the store.
+        }
+    }
+
+    private fun removeQueued(id: String) {
+        try {
+            pending.remove(id)
+        } catch (_: Exception) {
+            // Left queued: the next flush stores it again, which the store tolerates.
+        }
     }
 
     private suspend fun flushPending() {
         if (saveQueued()) scheduleRetry()
     }
 
+    /** At most one retry loop: a loop is installed with one compare-and-set, and started only if it won. */
     private fun scheduleRetry() {
-        if (retryJob?.isActive == true) return
-        retryJob = scope.launch {
+        val existing = retryJob.get()
+        if (existing?.isActive == true) return
+        val loop = scope.launch(start = CoroutineStart.LAZY) {
             var wait = retryFirstMs
             while (true) {
                 delay(wait)
@@ -265,6 +283,7 @@ class GattDiscoveryManager(
                 wait = minOf(wait * 2, retryMaxMs)
             }
         }
+        if (retryJob.compareAndSet(existing, loop)) loop.start() else loop.cancel()
     }
 
     /**
