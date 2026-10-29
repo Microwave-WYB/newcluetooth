@@ -364,7 +364,7 @@ object MapReducer {
             val target = when (val p = state.pending ?: return) {
                 is CameraIntent.Move -> p.camera to p.duration
                 is CameraIntent.Frame -> {
-                    if (s.viewport.widthDp <= 0 || s.viewport.heightDp <= 0) return
+                    if (!measured(s.viewport)) return
                     MapGeometry.fit(p.bbox, s.viewport, MapGeometry.framePadding(state.cover)) to p.duration
                 }
             }
@@ -427,6 +427,6 @@ object MapReducer {
         }
     }
 
-    /** The viewport is measured: something is drawn (for tests and the invariant checks). */
+    /** The viewport is measured: a frame can be fitted into it. */
     fun measured(viewport: Viewport) = viewport.widthDp > 0 && viewport.heightDp > 0
 }
