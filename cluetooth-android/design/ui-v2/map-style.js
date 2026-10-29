@@ -18,6 +18,27 @@
 
   const empty = { type: "FeatureCollection", features: [] };
 
+  /** The OpenFreeMap base styles: "liberty" in light mode and "dark" in dark mode (M-1). */
+  const baseStyles = { light: "https://tiles.openfreemap.org/styles/liberty", dark: "https://tiles.openfreemap.org/styles/dark" };
+
+  /** Where each layers() value comes from: a tokens.css custom property. Numbers are parsed; the rest are colors. */
+  const tokenOf = {
+    route: "--map-route", routeOpacity: "--map-route-opacity",
+    density: "--map-density", densityOpacity: "--map-density-opacity", densityRadius: "--map-density-radius",
+    point: "--blue", stroke: "--on-blue", clusterText: "--on-blue", selected: "--t1", me: "--blue",
+    rssiStrong: "--rssi-strong", rssiFair: "--rssi-fair", rssiWeak: "--rssi-weak",
+    start: "--map-start", end: "--map-end", endText: "--map-end", halo: "--fill1",
+  };
+  const numeric = ["routeOpacity", "densityOpacity", "densityRadius"];
+  const font = "Noto Sans Bold";
+  /** The layers() values, given tok(name) -> the token's value as a string (app.js: getComputedStyle). */
+  const valuesFrom = (tok) => {
+    const c = {};
+    for (const k in tokenOf) c[k] = numeric.includes(k) ? +tok(tokenOf[k]) : tok(tokenOf[k]);
+    c.font = font;
+    return c;
+  };
+
   /** The GeoJSON sources, empty. */
   const sources = () => ({
     route: { type: "geojson", data: empty },
@@ -98,5 +119,5 @@
     ] : [],
   });
 
-  window.CluetoothMapStyle = { sources, layers, selectionProps, endsOf };
+  window.CluetoothMapStyle = { baseStyles, tokenOf, numeric, valuesFrom, sources, layers, selectionProps, endsOf };
 })();

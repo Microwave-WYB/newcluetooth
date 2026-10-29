@@ -52,7 +52,7 @@
       }
     }
   },
-  "colors": {
+  "values": {
     "light": {
       "route": "#0064d4",
       "routeOpacity": 0.35,

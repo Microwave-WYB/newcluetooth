@@ -4,8 +4,11 @@
  *
  *   tokens.json     every custom property of tokens.css, light and dark, var() resolved and calc() folded
  *                   where every term is px or unitless; CSS units are preserved ("12px", "0.18s").
- *   map-style.json  the sources and layers of map-style.js, built with the light and the dark color sets
- *                   exactly as app.js styleColors() reads them from the tokens.
+ *   map-style.json  the sources and layers of map-style.js, built with the light and the dark values that
+ *                   map-style.js valuesFrom() reads from the tokens (the same code app.js uses).
+ *
+ * The parser is strict: anything it does not recognise (another block or at-rule, a non-token declaration, an
+ * unknown value form, an inset or multi-layer shadow, a non-color map value) stops the export with an error.
  *
  * Run from the repository root: mise exec -- node cluetooth-android/design/ui-v2/export.mjs
  * --check writes nothing and exits 1 when a committed JSON file is out of date.
@@ -18,26 +21,64 @@ import vm from "node:vm";
 const DIR = dirname(fileURLToPath(import.meta.url));
 const CHECK = process.argv.includes("--check");
 
+function fail(message) {
+  throw new Error(`export.mjs: ${message}`);
+}
+
 // ---- tokens.css ----
 
-/** The declarations of the first `:root { ... }` block at or after `from`, in source order. */
-function rootBlock(css, from) {
-  const start = css.indexOf(":root", from);
-  if (start < 0) throw new Error(":root block not found");
-  const open = css.indexOf("{", start);
-  const close = css.indexOf("}", open);
-  const body = css.slice(open + 1, close).replace(/\/\*[\s\S]*?\*\//g, "");
+/** Top-level blocks as { prelude, body } with balanced braces; comments removed. */
+function blocks(css) {
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out = [];
+  let i = 0;
+  while (i < src.length) {
+    const open = src.indexOf("{", i);
+    if (open < 0) {
+      if (src.slice(i).trim()) fail(`unexpected text after the last block: ${src.slice(i).trim().slice(0, 40)}`);
+      break;
+    }
+    let depth = 1, j = open + 1;
+    for (; j < src.length && depth; j++) {
+      if (src[j] === "{") depth++;
+      else if (src[j] === "}") depth--;
+    }
+    if (depth) fail("unbalanced braces");
+    out.push({ prelude: src.slice(i, open).trim(), body: src.slice(open + 1, j - 1) });
+    i = j;
+  }
+  return out;
+}
+
+/** The custom properties of a `:root` body, in order; `color-scheme` is the only other declaration allowed. */
+function declarations(body, where) {
+  if (/[{}]/.test(body)) fail(`nested block inside ${where}`);
   const decls = new Map();
-  for (const m of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) decls.set(m[1], m[2].trim().replace(/\s+/g, " "));
+  for (const raw of body.split(";")) {
+    const decl = raw.trim();
+    if (!decl) continue;
+    const m = /^(--[\w-]+)\s*:\s*([\s\S]+)$/.exec(decl);
+    if (!m) {
+      if (/^color-scheme\s*:\s*(light|dark)$/.test(decl)) continue;
+      fail(`unrecognised declaration in ${where}: ${decl}`);
+    }
+    if (decls.has(m[1])) fail(`${m[1]} declared twice in ${where}`);
+    decls.set(m[1], m[2].trim().replace(/\s+/g, " "));
+  }
   return decls;
 }
 
 function parseTokens(css) {
-  const light = rootBlock(css, 0);
-  const media = css.indexOf("@media (prefers-color-scheme: dark)");
-  if (media < 0) throw new Error("dark media block not found");
-  const darkOverrides = rootBlock(css, media);
-  for (const name of darkOverrides.keys()) if (!light.has(name)) throw new Error(`${name} is dark-only`);
+  const top = blocks(css);
+  if (top.length !== 2) fail(`expected :root and one dark @media block, found ${top.length} blocks`);
+  const [root, media] = top;
+  if (root.prelude !== ":root") fail(`first block must be :root, found ${root.prelude}`);
+  if (media.prelude !== "@media (prefers-color-scheme: dark)") fail(`second block must be the dark @media, found ${media.prelude}`);
+  const inner = blocks(media.body);
+  if (inner.length !== 1 || inner[0].prelude !== ":root") fail("the dark @media block must hold exactly one :root block");
+  const light = declarations(root.body, ":root");
+  const darkOverrides = declarations(inner[0].body, "dark :root");
+  for (const name of darkOverrides.keys()) if (!light.has(name)) fail(`${name} is dark-only`);
   // var() resolves in the context where it is used, so dark re-resolves every light expression with the overrides
   const dark = new Map([...light, ...darkOverrides]);
   return { light, dark, darkOverrides };
@@ -45,10 +86,11 @@ function parseTokens(css) {
 
 /** Substitutes var() references recursively, then folds calc(). */
 function resolve(decls, name, seen = new Set()) {
-  if (seen.has(name)) throw new Error(`var() cycle at ${name}`);
+  if (seen.has(name)) fail(`var() cycle at ${name}`);
   const raw = decls.get(name);
-  if (raw === undefined) throw new Error(`undefined token ${name}`);
+  if (raw === undefined) fail(`undefined token ${name}`);
   const next = new Set(seen).add(name);
+  if (/var\((?!--[\w-]+\))/.test(raw)) fail(`var() with a fallback or bad name in ${name}: ${raw}`);
   const substituted = raw.replace(/var\((--[\w-]+)\)/g, (_, ref) => resolve(decls, ref, next));
   return foldCalc(substituted);
 }
@@ -79,10 +121,12 @@ function evalPx(expr) {
       terms.push({ n: Number(m[1]), px: !!m[2] });
     }
   }
+  if (terms.length % 2 === 0) fail(`malformed calc(${expr})`);
   // * and / first, then + and -
   const stack = [terms[0]];
   for (let i = 1; i < terms.length; i += 2) {
     const op = terms[i], b = terms[i + 1];
+    if (typeof op !== "string" || typeof b !== "object") fail(`malformed calc(${expr})`);
     if (op === "*" || op === "/") {
       const a = stack.pop();
       if (op === "/" && b.px) return null;
@@ -115,41 +159,52 @@ function argb(value) {
   } else if (rgba) {
     [r, g, b] = [1, 2, 3].map((i) => Number(rgba[i]));
     if (rgba[4] !== undefined) a = Math.round(Number(rgba[4]) * 255);
+    if ([r, g, b].some((x) => x > 255) || a > 255) fail(`color out of range: ${value}`);
   } else return null;
   return "#" + [a, r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("").toUpperCase();
 }
 
-/** "0 2px 16px rgba(0, 0, 0, 0.06)" as { x, y, blur, spread, color, argb }; px preserved. */
-function shadow(value) {
-  const m = /^(\S+) (\S+) (\S+)(?: (\S+px))? (rgba?\(.*\)|#\w+)$/.exec(value);
-  if (!m) return null;
+const LENGTH = /^-?\d*\.?\d+px$|^0$/;
+
+/** One outer shadow "x y blur [spread] color" as { x, y, blur, spread, color, argb }; px preserved.
+ *  Fails on inset and multi-layer shadows, which the Compose port has no mapping for. */
+function shadow(value, name) {
+  if (/(^|\s)inset(\s|$)/.test(value)) fail(`${name}: inset shadows are not supported: ${value}`);
+  if (/,(?![^()]*\))/.test(value)) fail(`${name}: multi-layer shadows are not supported: ${value}`);
+  const m = /^(\S+) (\S+) (\S+)(?: (\S+))? (rgba?\(.*\)|#\w+)$/.exec(value);
+  if (!m || ![m[1], m[2], m[3], m[4] ?? "0"].every((x) => LENGTH.test(x)) || !argb(m[5])) {
+    fail(`${name}: unrecognised shadow: ${value}`);
+  }
   const px = (s) => (s === "0" ? "0px" : s);
   return { x: px(m[1]), y: px(m[2]), blur: px(m[3]), spread: px(m[4] ?? "0"), color: m[5], argb: argb(m[5]) };
 }
 
-function typeOf(value) {
+/** Values the layout computes at runtime (frame/window relative); the only "expression" forms accepted. */
+const RELATIVE = /^(-?\d*\.?\d+(cqw|cqh)|calc\(100% - -?\d*\.?\d+px\)|env\(safe-area-inset-top, 0px\)|calc\(env\(safe-area-inset-top, 0px\) \+ -?\d*\.?\d+px\))$/;
+
+function typeOf(value, name) {
   if (argb(value)) return "color";
-  if (shadow(value)) return "shadow";
   if (/^-?\d*\.?\d+px$/.test(value)) return "length";
   if (/^-?\d*\.?\d+s$/.test(value)) return "duration";
   if (/^-?\d*\.?\d+$/.test(value)) return "number";
-  if (/^cubic-bezier\(/.test(value)) return "easing";
-  if (value === "light" || value === "dark") return "scheme";
-  if (/,/.test(value) && !/\(/.test(value)) return "font";
-  // relative to the frame or the window (%, cqw, cqh, env()): the layout computes these
-  return "expression";
+  if (/^cubic-bezier\(\s*[-\d.]+\s*,\s*[-\d.]+\s*,\s*[-\d.]+\s*,\s*[-\d.]+\s*\)$/.test(value)) return "easing";
+  if (/^-?\d*\.?\d+px -?\d*\.?\d+px|^0 /.test(value) || /(^|\s)inset(\s|$)/.test(value)) return "shadow";
+  if (/^[\w\s"'-]+(,[\w\s"'-]+)+$/.test(value) && /^--font/.test(name)) return "font";
+  if (RELATIVE.test(value)) return "expression";
+  fail(`${name}: unrecognised value: ${value}`);
 }
 
 function tokenEntry(name, decls) {
   const light = resolve(decls.light, name);
   const dark = resolve(decls.dark, name);
-  const type = typeOf(light);
+  const type = typeOf(light, name);
+  if (typeOf(dark, name) !== type) fail(`${name}: light is a ${type} but dark is not: ${dark}`);
   const e = { type, css: decls.light.get(name) };
   if (decls.darkOverrides.has(name)) e.cssDark = decls.darkOverrides.get(name);
   e.light = light;
   e.dark = dark;
   if (type === "color") Object.assign(e, { lightArgb: argb(light), darkArgb: argb(dark) });
-  if (type === "shadow") Object.assign(e, { lightShadow: shadow(light), darkShadow: shadow(dark) });
+  if (type === "shadow") Object.assign(e, { lightShadow: shadow(light, name), darkShadow: shadow(dark, name) });
   if (type === "duration") e.ms = Math.round(parseFloat(light) * 1000);
   if (type === "easing") e.bezier = light.replace(/^cubic-bezier\(|\)$/g, "").split(",").map(Number);
   return e;
@@ -172,46 +227,50 @@ function exportTokens(css) {
 function loadMapStyle(js) {
   const sandbox = { window: {} };
   vm.runInNewContext(js, sandbox, { filename: "map-style.js" });
-  return sandbox.window.CluetoothMapStyle;
+  const MS = sandbox.window.CluetoothMapStyle;
+  for (const k of ["baseStyles", "tokenOf", "numeric", "valuesFrom", "sources", "layers", "selectionProps", "endsOf"]) {
+    if (MS?.[k] === undefined) fail(`map-style.js does not export ${k}`);
+  }
+  return MS;
 }
 
-/** For MapLibre: 3-digit hex expanded, 8-digit hex as rgba() (its color parser takes neither). */
-function mapColor(value) {
+/** For MapLibre: 3-digit hex expanded, alpha as rgba() (its color parser takes no 8-digit hex). */
+function mapColor(value, key) {
   const a = argb(value);
-  if (!a) throw new Error(`not a color: ${value}`);
+  if (!a) fail(`map value ${key} is not a color: ${value}`);
   const [al, r, g, b] = [1, 3, 5, 7].map((i) => parseInt(a.slice(i, i + 2), 16));
   if (al === 255) return "#" + a.slice(3).toLowerCase();
   return `rgba(${r}, ${g}, ${b}, ${Math.round((al / 255) * 1000) / 1000})`;
 }
 
-/** app.js styleColors(), for one scheme of tokens.json. Keep the two in step. */
-function styleColors(tokens, scheme) {
-  const t = (n) => tokens[n][scheme];
-  const c = (n) => mapColor(t(n));
-  return {
-    route: c("--map-route"), routeOpacity: +t("--map-route-opacity"),
-    density: c("--map-density"), densityOpacity: +t("--map-density-opacity"), densityRadius: +t("--map-density-radius"),
-    point: c("--blue"), stroke: c("--on-blue"), clusterText: c("--on-blue"), selected: c("--t1"), me: c("--blue"),
-    rssiStrong: c("--rssi-strong"), rssiFair: c("--rssi-fair"), rssiWeak: c("--rssi-weak"),
-    start: c("--map-start"), end: c("--map-end"), endText: c("--map-end"), halo: c("--fill1"), font: "Noto Sans Bold",
+/** map-style.js valuesFrom() over one scheme of tokens.json, colors normalized for MapLibre. */
+function styleValues(MS, tokens, scheme) {
+  const tok = (n) => {
+    if (!tokens[n]) fail(`map-style.js reads unknown token ${n}`);
+    return tokens[n][scheme];
   };
+  const values = MS.valuesFrom(tok);
+  for (const [k, v] of Object.entries(values)) {
+    if (k === "font") continue;
+    if (MS.numeric.includes(k)) {
+      if (!Number.isFinite(v)) fail(`map value ${k} is not a number: ${v}`);
+    } else values[k] = mapColor(v, k);
+  }
+  return values;
 }
 
 function exportMapStyle(js, tokens) {
   const MS = loadMapStyle(js);
   const schemes = ["light", "dark"];
-  const colors = Object.fromEntries(schemes.map((s) => [s, styleColors(tokens, s)]));
+  const values = Object.fromEntries(schemes.map((s) => [s, styleValues(MS, tokens, s)]));
   const plain = (x) => JSON.parse(JSON.stringify(x));
   return {
     generatedBy: "cluetooth-android/design/ui-v2/export.mjs",
     source: "map-style.js",
-    baseStyle: {
-      light: "https://tiles.openfreemap.org/styles/liberty",
-      dark: "https://tiles.openfreemap.org/styles/dark",
-    },
+    baseStyle: plain(MS.baseStyles),
     sources: plain(MS.sources()),
-    colors,
-    layers: Object.fromEntries(schemes.map((s) => [s, plain(MS.layers(colors[s]))])),
+    values,
+    layers: Object.fromEntries(schemes.map((s) => [s, plain(MS.layers(values[s]))])),
     runtime: {
       routeOpacity: { session: +tokens["--map-route-opacity"].light, allSessions: +tokens["--map-routes-opacity"].light },
       dim: +tokens["--dim"].light,

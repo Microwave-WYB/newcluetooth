@@ -11,7 +11,7 @@
   const tok = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const dark = () => matchMedia("(prefers-color-scheme: dark)").matches;
-  const MAP_STYLE = () => `https://tiles.openfreemap.org/styles/${dark() ? "dark" : "liberty"}`;
+  const MAP_STYLE = () => window.CluetoothMapStyle.baseStyles[dark() ? "dark" : "light"];
 
   // =============================================================================================
   // 1. UI components
@@ -549,13 +549,7 @@
   const lineGeo = (routes) => ({ type: "FeatureCollection", features: routes.filter((r) => r.length > 1).map((r) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: r } })) });
   const fc = (points) => ({ type: "FeatureCollection", features: points.map((p) => ({ type: "Feature", properties: { ...p, at: undefined }, geometry: { type: "Point", coordinates: p.at } })) });
   /** The style values, read from tokens.css. */
-  const styleColors = () => ({
-    route: tok("--map-route"), routeOpacity: +tok("--map-route-opacity"),
-    density: tok("--map-density"), densityOpacity: +tok("--map-density-opacity"), densityRadius: +tok("--map-density-radius"),
-    point: tok("--blue"), stroke: tok("--on-blue"), clusterText: tok("--on-blue"), selected: tok("--t1"), me: tok("--blue"),
-    rssiStrong: tok("--rssi-strong"), rssiFair: tok("--rssi-fair"), rssiWeak: tok("--rssi-weak"),
-    start: tok("--map-start"), end: tok("--map-end"), endText: tok("--map-end"), halo: tok("--fill1"), font: "Noto Sans Bold",
-  });
+  const styleColors = () => MS.valuesFrom(tok);
   function addStyle(map, only) {
     const src = MS.sources();
     for (const id in src) map.addSource(id, src[id]);
