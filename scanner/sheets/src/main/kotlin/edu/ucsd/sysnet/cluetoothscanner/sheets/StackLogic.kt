@@ -180,6 +180,8 @@ private fun StackState.leavingLevels(): List<Level> = (transition as? StackTrans
 private fun push(state: StackState, event: StackEvent.Push): StackStep {
     // at most one Filter level: the filter button is on the root's header only
     if (event.kind == SheetKind.Filter && state.levels.any { it.kind == SheetKind.Filter }) return StackStep(state)
+    // S-4: a device over a device replaces it
+    if (event.kind is SheetKind.Device && state.top.kind is SheetKind.Device && state.pushed.isNotEmpty()) return replaceTop(state, event.kind)
     val under = state.top
     val level = Level(
         SheetId(state.nextId), event.kind,

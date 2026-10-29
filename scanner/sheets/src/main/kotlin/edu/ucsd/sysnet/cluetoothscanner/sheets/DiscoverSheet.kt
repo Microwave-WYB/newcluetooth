@@ -177,20 +177,20 @@ private fun Row(state: SheetsState, row: DeviceRow, tablet: Boolean, onClick: ()
 @Composable
 private fun Categories(state: SheetsState, entry: SheetEntry) {
     val d = state.discover
-    var groups by remember { mutableStateOf<List<CategoryGroup>?>(null) }
+    var groups by remember { mutableStateOf<Loaded<List<CategoryGroup>>>(Loaded.Pending) }
     val filter = d.queryFilter()
     LaunchedEffect(filter, d.rows) {
-        groups = state.core.products(state.scope, filter)
+        groups = Loaded.Found(state.core.products(state.scope, filter))
         if (state.live) while (true) { // live cards update in place (§2.6); new ones are appended by the core order
             delay(LIVE_REFRESH_MS)
-            groups = state.core.products(state.scope, filter)
+            groups = Loaded.Found(state.core.products(state.scope, filter))
         }
     }
     val listState = rememberSheetListState(entry, CATEGORIES_LIST)
     val tablet = state.stack.tablet
     val now = state.nowMs()
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag(DiscoverTags.CATEGORIES)) {
-        val g = groups ?: return@LazyColumn
+        val g = groups.valueOrNull() ?: return@LazyColumn
         if (g.isEmpty()) item { EmptyText(Strings.NoProductsMatch) }
         items(g, key = { it.category }) { group ->
             CategorySection(group.label) {

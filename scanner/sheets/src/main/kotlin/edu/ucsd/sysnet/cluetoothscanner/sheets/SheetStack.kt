@@ -136,11 +136,12 @@ class SheetStackController(
     val leaving: List<SheetEntry> get() = (state.transition as? StackTransition.SlidingOut)?.leaving.orEmpty().map(::handle)
     val tablet: Boolean get() = state.tablet
 
-    /** Screen facts, px (set by the host on every layout). */
-    var screenHeight by mutableFloatStateOf(0f)
-        private set
-    private var density = 1f
-    private var bottomInset = 0f
+    /** Screen facts, px, as one value (set by the host on every layout). */
+    private data class Screen(val height: Float = 0f, val density: Float = 1f, val bottomInset: Float = 0f)
+
+    private var screen by mutableStateOf(Screen())
+
+    val screenHeight: Float get() = screen.height
 
     val top: SheetEntry get() = handle(state.top)
     val root: SheetEntry get() = handle(state.root)
@@ -150,18 +151,18 @@ class SheetStackController(
     val scrimVisible: Boolean get() = state.scrimVisible
 
     fun setScreen(heightPx: Float, density: Float, bottomInsetPx: Float) {
-        screenHeight = heightPx
-        this.density = density
-        bottomInset = bottomInsetPx
+        screen = Screen(heightPx, density, bottomInsetPx)
     }
+
+    private val density: Float get() = screen.density
 
     internal fun geometry(entry: SheetEntry): SheetGeometry {
         val peek = if (entry.peek.isNaN()) defaultPeek() else entry.peek
         return SheetGeometry(
-            screenHeight = screenHeight,
+            screenHeight = screen.height,
             topZone = metrics.topZone.value * density,
             peek = peek,
-            bottomInset = bottomInset,
+            bottomInset = screen.bottomInset,
             halfFraction = metrics.halfFraction,
             dismissGap = metrics.dismissGap.value * density,
         )

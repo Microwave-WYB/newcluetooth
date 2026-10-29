@@ -3,7 +3,6 @@ package edu.ucsd.sysnet.cluetoothscanner.sheets
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -13,7 +12,9 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Identification
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
@@ -66,7 +67,8 @@ class SheetsState internal constructor(
     internal val rows = RowStore(core, scope, coroutines)
 
     /** Category ids to their vocabulary labels (the core's, G-8), for headers and the Filter sheet. */
-    internal val categoryLabels = mutableStateMapOf<String, String>()
+    internal var categoryLabels by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
     /** The first sort has landed (S-7 content can show); derived from the model's phase, not a flag. */
     internal val opened: Boolean get() = discover.phase is DiscoverPhase.Ready
 
@@ -174,7 +176,7 @@ class SheetsState internal constructor(
     /** Called once by [start]: the labels (cosmetic: a failed read leaves the ids), then the model's first sort. */
     internal suspend fun open() {
         try {
-            core.categoryCounts(scope, DeviceFilter()).forEach { categoryLabels[it.category] = it.label }
+            categoryLabels = core.categoryCounts(scope, DeviceFilter()).associate { it.category to it.label }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -206,18 +208,15 @@ class SheetsState internal constructor(
     /** D-8: the bounding box of a product's devices' strongest points. */
     private suspend fun productFrame(filter: DeviceFilter): Bbox? {
         val keys = core.deviceKeys(scope, filter).keys
-        var west = Double.MAX_VALUE; var south = Double.MAX_VALUE; var east = -Double.MAX_VALUE; var north = -Double.MAX_VALUE
-        var any = false
-        for (chunk in keys.toList().chunked(RowStore.PAGE)) {
-            for (row in core.deviceRows(scope, chunk.toLongArray())) {
-                val p = row.best ?: continue
-                any = true
-                west = minOf(west, p.lon); east = maxOf(east, p.lon); south = minOf(south, p.lat); north = maxOf(north, p.lat)
-            }
-        }
-        return if (any) Bbox(west, south, east, north) else null
+        val points = keys.toList().chunked(RowStore.PAGE).flatMap { chunk -> core.deviceRows(scope, chunk.toLongArray()).mapNotNull { it.best } }
+        return boundsOf(points)
     }
 }
+
+/** The bounding box of [points], or null when there are none. */
+internal fun boundsOf(points: List<GeoPoint>): Bbox? =
+    if (points.isEmpty()) null
+    else Bbox(points.minOf { it.lon }, points.minOf { it.lat }, points.maxOf { it.lon }, points.maxOf { it.lat })
 
 /** The sheets for [scope]; keyed by the scope and [live], so a new session view starts fresh (V-7). */
 @Composable
@@ -239,44 +238,102 @@ fun rememberSheetsState(
     return state
 }
 
+/** The loaded device rows, which keys are loading, and the last live delta applied (§2.6). */
+internal data class RowCache(
+    val rows: Map<Long, DeviceRow> = emptyMap(),
+    val loading: Set<Long> = emptySet(),
+    val seq: Long = -1,
+)
+
+internal sealed interface RowEvent {
+    data class Requested(val keys: List<Long>) : RowEvent
+    data class ChunkLoaded(val rows: List<DeviceRow>) : RowEvent
+    data class LoadEnded(val keys: List<Long>) : RowEvent
+    data class Live(val delta: LiveDelta) : RowEvent
+}
+
+internal sealed interface RowEffect {
+    /** Read [keys] in pages of ≤ 200 (§2.5). */
+    data class Load(val keys: List<Long>) : RowEffect
+    /** G-9: new devices of the live view are appended to the order. */
+    class AppendToOrder(val keys: LongArray) : RowEffect
+}
+
+internal data class RowStep(val cache: RowCache, val effects: List<RowEffect> = emptyList())
+
+/** The pure row-cache logic: what to load, and how a live delta changes the loaded rows in place. */
+internal fun reduceRows(cache: RowCache, event: RowEvent): RowStep = when (event) {
+    is RowEvent.Requested -> {
+        val missing = event.keys.filter { it !in cache.rows && it !in cache.loading }
+        if (missing.isEmpty()) RowStep(cache) else RowStep(cache.copy(loading = cache.loading + missing), listOf(RowEffect.Load(missing)))
+    }
+    is RowEvent.ChunkLoaded -> RowStep(cache.copy(rows = cache.rows + event.rows.associateBy { it.key }))
+    is RowEvent.LoadEnded -> RowStep(cache.copy(loading = cache.loading - event.keys.toSet()))
+    is RowEvent.Live -> {
+        val delta = event.delta
+        if (delta.seq <= cache.seq) RowStep(cache)
+        else {
+            val changed = delta.changed.mapNotNull { c ->
+                cache.rows[c.key]?.let { row ->
+                    c.key to row.copy(
+                        rssi = c.rssi, inRange = c.inRange, spark = c.spark,
+                        name = c.name ?: row.name, page = c.page ?: row.page, best = c.best ?: row.best,
+                    )
+                }
+            }
+            val rows = cache.rows + changed + delta.appended.associateBy { it.key }
+            RowStep(
+                cache.copy(rows = rows, seq = delta.seq),
+                if (delta.appended.isEmpty()) emptyList() else listOf(RowEffect.AppendToOrder(delta.appended.map { it.key }.toLongArray())),
+            )
+        }
+    }
+}
+
 /**
  * Device rows by key, loaded on demand in pages of ≤ 200 (§2.5) and kept current by the live deltas (§2.6): values
- * update in place, new devices are appended to the session order (G-9).
+ * update in place, new devices are appended to the session order (G-9). The runner of [reduceRows]: a failed page
+ * read leaves those keys unloaded (their rows stay placeholders) instead of throwing.
  */
 internal class RowStore(private val core: CoreQueries, private val scope: Scope, private val coroutines: CoroutineScope) {
-    val rows = mutableStateMapOf<Long, DeviceRow>()
-    private val loading = HashSet<Long>()
+    private var cache by mutableStateOf(RowCache())
+
+    val rows: Map<Long, DeviceRow> get() = cache.rows
 
     /** Loads the rows of [keys] that are not loaded yet. */
     fun ensure(keys: List<Long>) {
-        val missing = keys.filter { it !in rows && it !in loading }
-        if (missing.isEmpty()) return
-        loading += missing
-        coroutines.launch {
-            try {
-                for (chunk in missing.chunked(PAGE)) core.deviceRows(scope, chunk.toLongArray()).forEach { rows[it.key] = it }
-            } finally {
-                loading -= missing.toSet()
-            }
-        }
+        val effects = apply(RowEvent.Requested(keys))
+        for (effect in effects) if (effect is RowEffect.Load) load(effect.keys)
     }
 
     /** §2.6: applies live deltas to the loaded rows and appends new devices to the order. */
     suspend fun followLive(discover: DiscoverModel) {
-        var seq = -1L
         core.live.collect { delta ->
-            if (delta.seq <= seq) return@collect
-            seq = delta.seq
-            for (c in delta.changed) {
-                val row = rows[c.key] ?: continue
-                rows[c.key] = row.copy(
-                    rssi = c.rssi, inRange = c.inRange, spark = c.spark,
-                    name = c.name ?: row.name, page = c.page ?: row.page, best = c.best ?: row.best,
-                )
+            for (effect in apply(RowEvent.Live(delta))) {
+                when (effect) {
+                    is RowEffect.AppendToOrder -> discover.appendLive(effect.keys)
+                    is RowEffect.Load -> load(effect.keys)
+                }
             }
-            if (delta.appended.isNotEmpty()) {
-                delta.appended.forEach { rows[it.key] = it }
-                discover.appendLive(delta.appended.map { it.key }.toLongArray())
+        }
+    }
+
+    private fun apply(event: RowEvent): List<RowEffect> {
+        val step = reduceRows(cache, event)
+        cache = step.cache
+        return step.effects
+    }
+
+    private fun load(keys: List<Long>) {
+        coroutines.launch {
+            try {
+                for (chunk in keys.chunked(PAGE)) apply(RowEvent.ChunkLoaded(core.deviceRows(scope, chunk.toLongArray())))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // the keys stay unloaded; a later scroll asks again
+            } finally {
+                apply(RowEvent.LoadEnded(keys))
             }
         }
     }

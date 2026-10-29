@@ -46,57 +46,95 @@ class GattController(
     var state by mutableStateOf<GattUi>(GattUi.Idle)
         private set
 
+    /** The running discovery: execution state, owned by this runner only. */
     private var run: Job? = null
 
     /** D-13.7: the stored result, when the sheet opens. A run already in progress wins. */
-    fun showLast(last: GattView?) {
-        if (state != GattUi.Idle || last == null) return
-        state = classify(last, final = true)
-    }
+    fun showLast(last: GattView?) = dispatch(GattEvent.LastLoaded(last))
 
-    fun onDiscover() {
-        if (state == GattUi.Idle) state = GattUi.Confirm
-    }
+    fun onDiscover() = dispatch(GattEvent.Discover)
 
-    fun onCancelPrompt() {
-        if (state == GattUi.Confirm) state = GattUi.Idle
-    }
+    fun onCancelPrompt() = dispatch(GattEvent.CancelPrompt)
 
-    fun onTryAgain() {
-        if (state is GattUi.Failed) state = GattUi.Confirm
-    }
+    fun onTryAgain() = dispatch(GattEvent.TryAgain)
 
-    fun onAuthorized() {
-        if (state != GattUi.Confirm) return
-        state = GattUi.Running(starting())
-        run = scope.launch {
-            var last: GattView? = null
-            runner.discover(key).collect { view ->
-                last = view
-                state = classify(view, final = false)
-            }
-            state = last?.let { classify(it, final = true) } ?: GattUi.Idle
-        }
-    }
+    fun onAuthorized() = dispatch(GattEvent.Authorized(key, clock()))
 
     /** D-13.8: the sheet left the stack or the composition. */
-    fun cancel() {
-        val job = run ?: return
-        run = null
-        job.cancel()
-        if (state is GattUi.Running) state = GattUi.Idle
+    fun cancel() = dispatch(GattEvent.Cancel)
+
+    private fun dispatch(event: GattEvent) {
+        val step = reduceGatt(state, event)
+        state = step.state
+        step.effects.forEach(::execute)
     }
 
-    private fun starting() = GattView(
-        discoveryId = "", key = key, startedMs = clock(), ok = false,
-        steps = listOf(GattStep(GattStepKind.Connecting, GattStepState.Running, null, null, null, null, null)),
-        services = emptyList(),
-    )
-
-    private fun classify(view: GattView, final: Boolean): GattUi = when {
-        view.steps.any { it.state == GattStepState.Failed } -> GattUi.Failed(view)
-        view.ok -> GattUi.Done(view)
-        final -> GattUi.Idle // ended without a result or a failure: cancelled, never shown
-        else -> GattUi.Running(view)
+    private fun execute(effect: GattEffect) {
+        when (effect) {
+            GattEffect.StartRun -> run = scope.launch {
+                var last: GattView? = null
+                runner.discover(key).collect { view ->
+                    last = view
+                    dispatch(GattEvent.Progress(view))
+                }
+                dispatch(GattEvent.Finished(last))
+            }
+            GattEffect.CancelRun -> {
+                run?.cancel()
+                run = null
+            }
+        }
     }
+}
+
+/** What happens to the GATT tab (D-13). */
+internal sealed interface GattEvent {
+    data class LastLoaded(val last: GattView?) : GattEvent
+    data object Discover : GattEvent
+    data object CancelPrompt : GattEvent
+    data object TryAgain : GattEvent
+    /** "I am authorized", at [startedMs] (the runner reads the clock). */
+    data class Authorized(val key: DeviceKey, val startedMs: Long) : GattEvent
+    data class Progress(val view: GattView) : GattEvent
+    /** The runner's flow ended; [last] is its final view (null if it emitted none). */
+    data class Finished(val last: GattView?) : GattEvent
+    data object Cancel : GattEvent
+}
+
+/** What the runner does: start the collector of `GattRunner.discover`, or cancel it (D-13.8). */
+internal sealed interface GattEffect {
+    data object StartRun : GattEffect
+    data object CancelRun : GattEffect
+}
+
+internal data class GattStepResult(val state: GattUi, val effects: List<GattEffect> = emptyList())
+
+/** The pure D-13 logic. */
+internal fun reduceGatt(state: GattUi, event: GattEvent): GattStepResult = when (event) {
+    is GattEvent.LastLoaded -> {
+        val last = event.last
+        if (state != GattUi.Idle || last == null) GattStepResult(state) else GattStepResult(classify(last, final = true))
+    }
+    GattEvent.Discover -> GattStepResult(if (state == GattUi.Idle) GattUi.Confirm else state)
+    GattEvent.CancelPrompt -> GattStepResult(if (state == GattUi.Confirm) GattUi.Idle else state)
+    GattEvent.TryAgain -> GattStepResult(if (state is GattUi.Failed) GattUi.Confirm else state)
+    is GattEvent.Authorized ->
+        if (state != GattUi.Confirm) GattStepResult(state)
+        else GattStepResult(GattUi.Running(starting(event.key, event.startedMs)), listOf(GattEffect.StartRun))
+    is GattEvent.Progress -> GattStepResult(classify(event.view, final = false))
+    is GattEvent.Finished -> GattStepResult(event.last?.let { classify(it, final = true) } ?: GattUi.Idle)
+    GattEvent.Cancel -> GattStepResult(if (state is GattUi.Running) GattUi.Idle else state, listOf(GattEffect.CancelRun))
+}
+
+private fun starting(key: DeviceKey, startedMs: Long) = GattView(
+    discoveryId = "", key = key, startedMs = startedMs, ok = false,
+    steps = listOf(GattStep(GattStepKind.Connecting, GattStepState.Running, null, null, null, null, null)),
+    services = emptyList(),
+)
+
+private fun classify(view: GattView, final: Boolean): GattUi = when {
+    view.steps.any { it.state == GattStepState.Failed } -> GattUi.Failed(view)
+    view.ok -> GattUi.Done(view)
+    final -> GattUi.Idle // ended without a result or a failure: cancelled, never shown
+    else -> GattUi.Running(view)
 }

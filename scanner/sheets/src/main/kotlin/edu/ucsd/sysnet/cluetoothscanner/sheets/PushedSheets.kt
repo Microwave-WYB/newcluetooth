@@ -90,22 +90,24 @@ internal fun Kicker(text: String) {
 
 @Composable
 internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?) {
-    var detail by remember { mutableStateOf<ProductDetail?>(null) }
-    var keys by remember { mutableStateOf(LongArray(0)) }
+    var content by remember { mutableStateOf(ProductContent()) }
     val filter = state.productFilter(pageId)
-    LaunchedEffect(filter) { detail = state.core.product(state.scope, pageId, filter) }
+    LaunchedEffect(filter) { content = content.withDetail(state.core.product(state.scope, pageId, filter)) }
     // D-7.6: sorted once by RSSI (the session order), filtered by This area; G-9: live devices of the product
     // are appended as they arrive (the order only grows)
-    LaunchedEffect(filter, state.discover.liveAppends) { keys = state.discover.keysFor(filter) }
+    LaunchedEffect(filter, state.discover.liveAppends) { content = content.withKeys(state.discover.keysFor(filter)) }
     val tablet = state.stack.tablet
+    val detail = content.detail
     SheetFrame(state.stack, entry, state.metrics, header = {
         // D-6, G-11: the category, not the product name the body shows
-        PushedHeader(state) { Kicker(detail?.let { categoryLabel(state, it) } ?: "") }
+        PushedHeader(state) { Kicker(detail.valueOrNull()?.let { categoryLabel(state, it) } ?: "") }
     }) {
-        val p = detail ?: return@SheetFrame
-        DeviceList(state, entry, keys, SheetEntry.MAIN_LIST, empty = {
-            edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText(Strings.NoMatchingDevices)
-        }, header = { ProductHead(state, p, tablet) })
+        when (detail) {
+            Loaded.Pending, Loaded.Missing -> Unit
+            is Loaded.Found -> DeviceList(state, entry, content.keys, SheetEntry.MAIN_LIST, empty = {
+                edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText(Strings.NoMatchingDevices)
+            }, header = { ProductHead(state, detail.value, tablet) })
+        }
     }
 }
 
@@ -165,12 +167,12 @@ internal fun WikiLink(label: String, url: String, modifier: Modifier = Modifier)
 internal fun FilterSheet(state: SheetsState, entry: SheetEntry) {
     val d = state.discover
     val scope = rememberCoroutineScope()
-    var content by remember { mutableStateOf<FilterSheetContent?>(null) }
+    var content by remember { mutableStateOf<FilterRows>(FilterRows.Pending) }
     // faceted counts: every constraint but the categories facet, with Nearby and This area (D-3a)
     val countsFilter = d.queryFilter()
     LaunchedEffect(countsFilter) {
         val counts: List<CategoryCount> = state.core.categoryCounts(state.scope, countsFilter)
-        content = content?.update(counts) ?: FilterSheetContent.open(counts, d.filter.categories) { state.categoryLabels[it] ?: it }
+        content = content.withCounts(counts, d.filter.categories) { state.categoryLabels[it] ?: it }
     }
     SheetFrame(state.stack, entry, state.metrics, header = { PushedHeader(state) { Kicker(Strings.Filter) } }) {
         val f = d.filter
@@ -194,7 +196,7 @@ internal fun FilterSheet(state: SheetsState, entry: SheetEntry) {
                 )
                 SectionLabel(Strings.Categories)
             }
-            val rows = content
+            val rows = (content as? FilterRows.Shown)?.content
             if (rows != null) items(rows.rowOrder, key = { it }) { id ->
                 val checked = id in f.categories
                 ListItem(
