@@ -125,11 +125,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun openLaunchView() {
         refreshSessions()
         val restored = recorder.value.sessionId?.takeIf { recorder.value.phase != RecorderState.Phase.Idle }
-        when {
-            restored != null -> selectScope(Scope.session(restored))
-            settings.value.recordOnOpen -> startRecording()
-            ready().core.queries.allSessionsSummary().sessionCount > 0 -> selectScope(Scope.All)
-            else -> selectScope(null)
+        val sessions = runCatching { ready().core.queries.allSessionsSummary().sessionCount }.getOrDefault(0)
+        when (val t = launchTarget(restored, graph.settings.loaded().recordOnOpen, sessions)) {
+            is LaunchTarget.Session -> selectScope(Scope.session(t.id))
+            LaunchTarget.StartRecording -> startRecording()
+            LaunchTarget.AllSessions -> selectScope(Scope.All)
+            LaunchTarget.FirstRun -> selectScope(null)
         }
     }
 

@@ -50,6 +50,23 @@ fun backTarget(l: BackLayers): BackTarget = when {
     else -> BackTarget.Leave
 }
 
+/** V-6: what the app opens on launch. */
+sealed interface LaunchTarget {
+    /** A recording survived (process restart) or the view restores to it. */
+    data class Session(val id: String) : LaunchTarget
+    data object StartRecording : LaunchTarget
+    data object AllSessions : LaunchTarget
+    data object FirstRun : LaunchTarget
+}
+
+/** V-6: a live recording first; else "Record when the app opens"; else All sessions if any exist; else first run. */
+fun launchTarget(liveSessionId: String?, recordOnOpen: Boolean, sessionCount: Int): LaunchTarget = when {
+    liveSessionId != null -> LaunchTarget.Session(liveSessionId)
+    recordOnOpen -> LaunchTarget.StartRecording
+    sessionCount > 0 -> LaunchTarget.AllSessions
+    else -> LaunchTarget.FirstRun
+}
+
 /** The bounding box of points (R-5: fit the main map to the route), or null without any. */
 fun bboxOf(points: List<GeoPoint>): Bbox? = if (points.isEmpty()) null else Bbox(
     west = points.minOf { it.lon }, south = points.minOf { it.lat }, east = points.maxOf { it.lon }, north = points.maxOf { it.lat },
