@@ -1297,6 +1297,12 @@ interface Permissions {
 interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLocation: StateFlow<MyLocation?> }
 ```
 
+- `Permissions` names the permissions behind each `PermissionState` field: `Permissions.nearby(sdk)`,
+  `Permissions.location()` and `Permissions.notifications(sdk)` (additive). Each O-2 "Allow" launches its own group.
+  An empty input array requests every permission still missing.
+- Because of `Permissions`, `:platform-api` and `:platform-fake` are Android libraries (§6.0). Every other type is plain
+  Kotlin, and the fakes run in JVM unit tests.
+
 - `onboardingDone` is not migrated from `cluetooth_prefs`. An upgrader from v3 therefore sees the v2 onboarding (O-2)
   once.
 - `ExportShare` acknowledgement:
@@ -1542,10 +1548,10 @@ Namespaces are `edu.ucsd.sysnet.cluetoothscanner.<module>`. The applicationId st
 |---|---|---|---|
 | `:core-api` | Kotlin/JVM | A (A0-api) | none |
 | `:ui-contract` | Kotlin/JVM | integration owner (U0, a transcription of §5.3) | `:core-api` |
-| `:platform-api` | Kotlin/JVM | B (B0) | `:core-api` |
+| `:platform-api` | Android lib (types only; `Permissions` names `ActivityResultContract`/`ComponentActivity`) | B (B0) | `:core-api` |
 | `:designsystem` | Android lib (Compose) | C (C1) | none (reads `design/ui-v2/tokens.json` at build) |
 | `:core-fake` | Kotlin/JVM | A (A0-fake) | `:core-api` |
-| `:platform-fake` | Kotlin/JVM | B (B0) | `:platform-api` |
+| `:platform-fake` | Android lib (JVM unit tests, no Robolectric) | B (B0) | `:platform-api` |
 | `:core-bridge` | Android lib (UniFFI + `.so`) | A | `:core-api` |
 | `:platform` | Android lib | B | `:platform-api`, `:core-api` |
 | `:chrome` | Android lib (Compose) | C | `:designsystem`, `:ui-contract`, `:core-api`, `:platform-api` |

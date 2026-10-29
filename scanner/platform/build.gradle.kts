@@ -1,5 +1,6 @@
+// :platform (lane B, docs/v2-api.md §4): BLE scanning, location, RecordingService, GATT, settings, upload.
 plugins {
-    id("com.android.library")
+    alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
 }
 
@@ -21,6 +22,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":platform-api"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
