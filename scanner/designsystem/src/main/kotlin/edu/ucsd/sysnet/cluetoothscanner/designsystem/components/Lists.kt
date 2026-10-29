@@ -160,6 +160,8 @@ fun ListItem(
     selected: Boolean = false,
     radius: Dp = Css.Item.borderRadius,
     titleColor: Color = Color.Unspecified,
+    /** The side padding: `--gutter`; 0 inside the onboarding body (`.ob-body .item`). */
+    horizontalPadding: Dp = Css.Item.padding.left,
     onClick: (() -> Unit)? = null,
     leading: @Composable (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,
@@ -175,7 +177,7 @@ fun ListItem(
             .clip(shape)
             .background(pressedFill(source, selected))
             .then(if (onClick != null) Modifier.plainClickable(source, onClick = onClick).focusRing(source, shape) else Modifier)
-            .padding(horizontal = Css.Item.padding.left, vertical = Css.Item.padding.top),
+            .padding(horizontal = horizontalPadding, vertical = Css.Item.padding.top),
         horizontalArrangement = Arrangement.spacedBy(Css.Item.gap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
