@@ -34,7 +34,7 @@ defines how the app is cut into components, what crosses each boundary, and who 
 | Export | Three formats: raw Parquet v3 with gatt/v1 JSON, CSV converted directly from that Parquet (with trailing `session_id` and `source_file` columns), and an aggregated SQLite snapshot (§2.8). |
 | Decoding | Decoding (`decoder.js` via QuickJS) is deferred to issue #39. v2.0 only carries the `readable` flag and an always-empty `decoded` field. |
 
-SPEC on `design/ui-v2-prototype` covers these decisions. This PR carries a copy synced at `9492e99`:
+SPEC on `design/ui-v2-prototype` covers these decisions. This PR carries a copy synced at `12975d4`:
 
 - D-1, the header filter button;
 - D-3a, the Filter sheet (no chip row);
