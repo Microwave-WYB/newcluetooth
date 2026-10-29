@@ -23,11 +23,18 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.RecordingScanner
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,15 +43,21 @@ import kotlinx.coroutines.withContext
 
 /**
  * The BLE scanner of a recording (§4.1, SPEC V-1): it scans only between [start] and [stopAndDrain], which the
- * recorder calls while recording and not paused. Every call and callback runs on the main looper.
+ * recorder calls while recording and not paused.
+ *
+ * All decisions are in [ScanMachine] (a pure reducer over an immutable [ScanState]); this class is its runner. One
+ * actor on the main thread owns the state and the Android objects (the scan callbacks, timers and receivers): Android
+ * callbacks and the public calls become [ScanEvent]s in its inbox, it samples the [ScanEnv] facts when it reduces, and
+ * it executes the [ScanEffect]s. Scan results never go through the actor: a callback of the live generation hands
+ * them straight to [ScanIngest].
  *
  * - ScanSettings as v3: low latency, all matches, `setLegacy(false)`, PHY `ALL_SUPPORTED` with "Scan LE Coded PHY"
  *   on (else 1M), and one empty `ScanFilter`.
  * - The scan restarts every 60 s; with the screen off the restart waits until the scan has run 20 min
  *   ([ScanRestartPolicy]). A Coded PHY change applies at the next restart, after `core.configureScan`.
  * - Bluetooth off (or no scanner) defers the scan: [deferred] is true and the scan restarts by itself on `STATE_ON`.
- * - Callbacks of a stopped or replaced scan are ignored (generation gate); [stopAndDrain] waits for the callbacks
- *   already queued (main-looper fence) and then flushes [ingest].
+ * - [stopAndDrain] waits until the actor stopped the scan, then for the callbacks already queued (main-looper
+ *   fence), then flushes [ingest].
  */
 @SuppressLint("MissingPermission") // The recorder checks BLUETOOTH_SCAN/CONNECT before a recording starts.
 class BleScanner(
@@ -61,71 +74,60 @@ class BleScanner(
 ) : RecordingScanner {
     private val main = Handler(Looper.getMainLooper())
     private val fence = CallbackFence(main::post)
-    private val requests = ActiveRequestState<ScanCallback>()
     private val _deferred = MutableStateFlow(false)
     override val deferred: StateFlow<Boolean> = _deferred.asStateFlow()
     private val _error = MutableStateFlow<String?>(null)
     override val error: StateFlow<String?> = _error.asStateFlow()
-    private val limiter = ScanStartLimiter(SystemClock::elapsedRealtime)
     override val dropped: StateFlow<Long> get() = ingest.dropped
-
-    private var requested = false
-    private var receiversRegistered = false
-    private var startedAtElapsedMs = 0L
-    /**
-     * The Coded PHY setting the core's payload footer records (from [environment] or the last successful
-     * `configureScan`). Every start scans with exactly this; only [restartNow] changes it, after telling the core.
-     */
-    private var footerCodedPhy: Boolean? = null
-    private var restartSkippedWhileScreenOff = false
-    private var restart: Runnable? = null
-    private var retry: Runnable? = null
-
-    /** A start held back by the start limit; [stopScan] cancels it. */
-    private var pendingStart: Runnable? = null
-
-    /** A Coded PHY restart is waiting for `core.configureScan`. */
-    private var reconfiguring = false
+    private val oversized = AtomicLong()
 
     /** Advertisements kept out of the durable path because they exceed the row limit. */
-    @Volatile
-    var oversizedDropped = 0L
-        private set
+    val oversizedDropped: Long get() = oversized.get()
+
+    /** One message per event; [done] completes once the actor has executed the event's effects. */
+    private class Message(val event: ScanEvent, val done: CompletableDeferred<Unit>? = null)
+
+    private val inbox = Channel<Message>(Channel.UNLIMITED)
+
+    // ---- Owned by the actor (main thread) ----
+    private var live: Pair<ScanGeneration, ScanCallback>? = null
+    private val timers = mutableMapOf<TimerKind, Job>()
+    private var receiversRegistered = false
 
     private val bluetoothReceiver = object : BroadcastReceiver() {
         override fun onReceive(receiverContext: Context?, intent: Intent?) {
             when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
-                BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> defer("Bluetooth is off")
-                BluetoothAdapter.STATE_ON -> if (requested && !requests.isActive) startScan()
+                BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> send(ScanEvent.BluetoothOff)
+                BluetoothAdapter.STATE_ON -> send(ScanEvent.BluetoothOn)
+                else -> Unit // other adapter states change nothing
             }
         }
     }
 
     private val screenReceiver = object : BroadcastReceiver() {
-        override fun onReceive(receiverContext: Context?, intent: Intent?) {
-            if (requests.isActive && ScanRestartPolicy.screenOnRestartNow(restartSkippedWhileScreenOff, footerCodedPhy ?: codedPhy(), codedPhy())) {
-                restartNow()
+        override fun onReceive(receiverContext: Context?, intent: Intent?) = send(ScanEvent.ScreenOn)
+    }
+
+    init {
+        scope.launch(Dispatchers.Main.immediate) {
+            var state = ScanState()
+            for (message in inbox) {
+                val transition = ScanMachine.reduce(state, message.event, env())
+                state = transition.state
+                _deferred.value = state.deferred
+                _error.value = state.error
+                transition.effects.forEach(::execute)
+                message.done?.complete(Unit)
             }
         }
     }
 
-    override fun start() {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            main.post(::start)
-            return
-        }
-        requested = true
-        registerReceivers()
-        if (!requests.isActive) startScan()
-    }
+    override fun start() = send(ScanEvent.Start)
 
     override suspend fun stopAndDrain() {
-        withContext(Dispatchers.Main.immediate) {
-            requested = false
-            stopScan()
-            _deferred.value = false
-            unregisterReceivers()
-        }
+        val stopped = CompletableDeferred<Unit>()
+        inbox.send(Message(ScanEvent.Stop, stopped))
+        stopped.await()
         fence.await()
         ingest.flush()
     }
@@ -136,13 +138,17 @@ class BleScanner(
      * the only public way to get an environment, so a new recording can never start on the previous one's PHY.
      */
     fun environment(): ScanEnvironment {
-        val coded = codedPhy()
-        footerCodedPhy = coded
-        return environmentFor(coded)
+        val phy = Phy.of(codedPhy())
+        send(ScanEvent.FooterDeclared(phy))
+        return environmentFor(phy)
     }
 
-    /** The footer facts of a scan with the given Coded PHY setting (`start_recording`, `configure_scan`). */
-    private fun environmentFor(coded: Boolean): ScanEnvironment {
+    private fun send(event: ScanEvent) {
+        inbox.trySend(Message(event))
+    }
+
+    /** The footer facts of a scan with the given PHY (`start_recording`, `configure_scan`). */
+    private fun environmentFor(phy: Phy): ScanEnvironment {
         val adapter = adapter()
         val o = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
         return buildScanEnvironment(
@@ -153,7 +159,7 @@ class BleScanner(
             extendedAdvertisingSupported = o && adapter?.isLeExtendedAdvertisingSupported == true,
             codedPhySupported = o && adapter?.isLeCodedPhySupported == true,
             maxAdvertisingDataLength = if (o) adapter?.leMaximumAdvertisingDataLength ?: 31 else 31,
-            codedPhyEnabled = coded,
+            codedPhyEnabled = phy == Phy.Coded,
         )
     }
 
@@ -163,148 +169,109 @@ class BleScanner(
         null
     }
 
-    /** Every start path (start, Bluetooth back, retry, restart) comes here, so the start limit covers them all. */
-    private fun startScan() {
-        cancel(retry)
-        cancel(pendingStart)
-        pendingStart = null
-        if (!requested) return
-        val wait = limiter.waitMs()
-        if (wait > 0) {
-            // Over Android's start limit: start later, never drop the start.
-            Log.i(TAG, "Scan start held back ${wait} ms by the start limit")
-            pendingStart = Runnable {
-                pendingStart = null
-                if (requested && !requests.isActive) startScan()
-            }.also { main.postDelayed(it, wait) }
-            return
-        }
+    private fun env(): ScanEnv {
         val adapter = adapter()
-        val enabled = try {
-            adapter?.isEnabled == true
+        val radio = try {
+            when {
+                adapter?.isEnabled != true -> Radio.Off
+                adapter.bluetoothLeScanner == null -> Radio.NoScanner
+                else -> Radio.On
+            }
         } catch (_: SecurityException) {
-            false
+            Radio.Off
         }
-        if (!enabled) return defer("Bluetooth is off")
-        val scanner = adapter?.bluetoothLeScanner ?: return defer("No Bluetooth LE scanner", retryMs = RETRY_MS)
-        // Bluetooth back, an error retry or a resume never switch the PHY: the footer would no longer be true.
-        val coded = footerCodedPhy ?: codedPhy().also { footerCodedPhy = it }
-        val request = requests.begin(::callback)
-        limiter.record()
-        try {
-            scanner.startScan(listOf(ScanFilter.Builder().build()), settings(coded), request.callback)
-        } catch (error: Exception) {
-            requests.fail(request.generation)
-            return defer("startScan failed: ${error.message}", retryMs = RETRY_MS)
-        }
-        restartSkippedWhileScreenOff = false
-        startedAtElapsedMs = SystemClock.elapsedRealtime()
-        _deferred.value = false
-        _error.value = null
-        scheduleRestart()
+        return ScanEnv(
+            now = ElapsedMs(SystemClock.elapsedRealtime()),
+            radio = radio,
+            wanted = Phy.of(codedPhy()),
+            screenOn = context.getSystemService(PowerManager::class.java)?.isInteractive ?: true,
+        )
     }
 
-    private fun stopScan() {
-        cancel(restart)
-        cancel(retry)
-        cancel(pendingStart)
-        pendingStart = null
-        val callback = requests.stop() ?: return
+    private fun execute(effect: ScanEffect) {
+        when (effect) {
+            ScanEffect.RegisterReceivers -> registerReceivers()
+            ScanEffect.UnregisterReceivers -> unregisterReceivers()
+            is ScanEffect.StartScan -> startScan(effect.generation, effect.phy)
+            is ScanEffect.StopScan -> stopScan(effect.generation)
+            is ScanEffect.Arm -> {
+                timers.remove(effect.kind)?.cancel()
+                timers[effect.kind] = scope.launch(Dispatchers.Main.immediate) {
+                    delay(effect.delay.value)
+                    send(ScanEvent.TimerFired(effect.kind, effect.token))
+                }
+            }
+            is ScanEffect.Cancel -> timers.remove(effect.kind)?.cancel()
+            is ScanEffect.Configure -> configure(effect.phy)
+        }
+    }
+
+    private fun startScan(generation: ScanGeneration, phy: Phy) {
+        val callback = callback(generation)
+        live = generation to callback
+        val failure = try {
+            val scanner = adapter()?.bluetoothLeScanner
+            scanner?.startScan(listOf(ScanFilter.Builder().build()), settings(phy == Phy.Coded), callback)
+            if (scanner == null) "no Bluetooth LE scanner" else null
+        } catch (failure: Exception) {
+            // SecurityException, DeadObjectException, IllegalStateException...: a typed failure event, never a crash.
+            failure.message ?: failure::class.java.simpleName
+        }
+        if (failure != null) {
+            live = null
+            send(ScanEvent.StartFailed(generation, failure))
+        }
+    }
+
+    private fun stopScan(generation: ScanGeneration) {
+        val (current, callback) = live ?: return
+        if (current != generation) return
+        live = null
         try {
             adapter()?.bluetoothLeScanner?.stopScan(callback)
-        } catch (error: Exception) {
-            Log.w(TAG, "stopScan failed", error)
+        } catch (failure: Exception) {
+            Log.w(TAG, "stopScan failed", failure)
         }
     }
 
-    /** The scan waits for Bluetooth (or retries); the recording stays open. */
-    private fun defer(reason: String, retryMs: Long? = null) {
-        if (!requested) return
-        Log.i(TAG, "Scan deferred: $reason")
-        stopScan()
-        _deferred.value = true
-        if (retryMs != null) {
-            retry = Runnable { if (requested && !requests.isActive) startScan() }.also { main.postDelayed(it, retryMs) }
-        }
-    }
-
-    private fun scheduleRestart(delayMs: Long = RESTART_MS) {
-        cancel(restart)
-        restart = Runnable {
-            if (!requests.isActive) return@Runnable
-            val screenOn = context.getSystemService(PowerManager::class.java)?.isInteractive ?: true
-            if (ScanRestartPolicy.periodicRestartNow(screenOn, SystemClock.elapsedRealtime() - startedAtElapsedMs)) {
-                restartNow()
-            } else {
-                restartSkippedWhileScreenOff = true
-                scheduleRestart()
-            }
-        }.also { main.postDelayed(it, delayMs) }
-    }
-
-    /**
-     * Restarts with the current settings; a Coded PHY change first tells the core, so the footer stays true. A restart
-     * that would break the start limit keeps the running scan and comes back when it may start. A failed
-     * `configureScan` keeps the running scan and its settings, is reported in [error], and the restart is re-armed.
-     */
-    private fun restartNow() {
-        if (reconfiguring || !requests.isActive) return
-        val wait = limiter.waitMs()
-        if (wait > 0) return scheduleRestart(wait)
-        val coded = codedPhy()
-        if (coded == footerCodedPhy) {
-            stopScan()
-            startScan()
-            return
-        }
-        reconfiguring = true
-        cancel(restart)
+    private fun configure(phy: Phy) {
         scope.launch(Dispatchers.Main.immediate) {
-            val configured = try {
-                withContext(io) { core.await().configureScan(environmentFor(coded)) }
-                true
+            val error = try {
+                withContext(io) { core.await().configureScan(environmentFor(phy)) }
+                null
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
                 Log.w(TAG, "configureScan failed; keeping the current PHY", failure)
-                _error.value = "The scan settings could not change (${failure.message ?: failure::class.java.simpleName})"
-                false
-            } finally {
-                reconfiguring = false
+                failure.message ?: failure::class.java.simpleName
             }
-            // The core's footer changed: every later start (also after a pause) uses the new PHY.
-            if (configured) footerCodedPhy = coded
-            when {
-                // The recording ended meanwhile: stopAndDrain already stopped everything.
-                !requested -> Unit
-                configured -> {
-                    stopScan()
-                    startScan()
-                }
-                requests.isActive -> scheduleRestart()
-                else -> startScan()
-            }
+            send(ScanEvent.Configured(phy, error))
         }
     }
 
-    private fun callback(generation: Long) = object : ScanCallback() {
+    /** Callbacks run on the main thread, like the actor; only the live generation's results count. */
+    private fun callback(generation: ScanGeneration) = object : ScanCallback() {
+        private fun isLive() = live?.first == generation
+
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
-            if (result != null && requests.accepts(generation)) deliver(result)
+            if (result != null && isLive()) deliver(result)
         }
 
         override fun onBatchScanResults(results: MutableList<ScanResult>?) {
-            if (requests.accepts(generation)) results?.forEach(::deliver)
+            if (isLive()) results?.forEach(::deliver)
         }
 
         override fun onScanFailed(errorCode: Int) {
-            if (requests.fail(generation)) defer("scan failed with $errorCode", retryMs = RETRY_MS)
+            if (!isLive()) return
+            live = null
+            send(ScanEvent.ScanFailed(generation, errorCode))
         }
     }
 
     private fun deliver(result: ScanResult) {
         val snapshot = ClockSnapshot(System.currentTimeMillis(), SystemClock.elapsedRealtimeNanos())
         val observation = toObservation(result, snapshot) ?: run {
-            oversizedDropped++
+            oversized.incrementAndGet()
             return
         }
         devices.put(observation.addr, result.device)
@@ -329,12 +296,9 @@ class BleScanner(
         context.unregisterReceiver(screenReceiver)
     }
 
-    private fun cancel(runnable: Runnable?) {
-        runnable?.let(main::removeCallbacks)
-    }
-
     companion object {
         private const val TAG = "BleScanner"
+        /** [ScanMachine.RESTART] and [ScanMachine.RETRY], for callers that need plain numbers. */
         const val RESTART_MS = 60_000L
         const val RETRY_MS = 1_000L
 
@@ -393,15 +357,18 @@ class BleScanner(
     }
 }
 
-/** A bounded map keeping the latest value per key, least recently written first out. Thread-safe. */
-class LatestByKey<K, V>(private val capacity: Int) {
-    private val entries = object : LinkedHashMap<K, V>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?) = size > capacity
-    }
+/**
+ * A bounded map keeping the latest value per key; past [capacity] the key written first is evicted. Lock-free: the
+ * scanner writes on the main thread, GATT reads from any thread.
+ */
+class LatestByKey<K : Any, V : Any>(private val capacity: Int) {
+    private val entries = ConcurrentHashMap<K, V>()
+    private val order = ConcurrentLinkedQueue<K>()
 
     fun put(key: K, value: V) {
-        synchronized(entries) { entries[key] = value }
+        if (entries.put(key, value) == null) order.add(key)
+        while (entries.size > capacity) order.poll()?.let(entries::remove) ?: break
     }
 
-    operator fun get(key: K): V? = synchronized(entries) { entries[key] }
+    operator fun get(key: K): V? = entries[key]
 }
