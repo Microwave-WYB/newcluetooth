@@ -30,12 +30,10 @@ class DataStoreSettings(
     context: Context,
     scope: CoroutineScope,
     private val appVersion: String,
-    private val store: DataStore<Preferences> = PreferenceDataStoreFactory.create(
-        migrations = listOf(SharedPreferencesMigration(context, V3_PREFS, setOf(USER_ID.name, WIFI_ONLY.name, CODED_PHY.name))),
-        scope = scope,
-        produceFile = { context.preferencesDataStoreFile(FILE) },
-    ),
 ) : SettingsStore {
+    // Private: no DataStore type is part of the public API, so callers need no DataStore dependency.
+    private val store: DataStore<Preferences> = open(context, scope)
+
     override val settings: StateFlow<Settings> =
         store.data.map(::toSettings).stateIn(scope, SharingStarted.Eagerly, Settings.defaults(appVersion))
 
@@ -70,6 +68,12 @@ class DataStoreSettings(
     }
 
     companion object {
+        private fun open(context: Context, scope: CoroutineScope): DataStore<Preferences> = PreferenceDataStoreFactory.create(
+            migrations = listOf(SharedPreferencesMigration(context, V3_PREFS, setOf(USER_ID.name, WIFI_ONLY.name, CODED_PHY.name))),
+            scope = scope,
+            produceFile = { context.preferencesDataStoreFile(FILE) },
+        )
+
         const val FILE = "cluetooth_settings"
         const val V3_PREFS = "cluetooth_prefs"
 
