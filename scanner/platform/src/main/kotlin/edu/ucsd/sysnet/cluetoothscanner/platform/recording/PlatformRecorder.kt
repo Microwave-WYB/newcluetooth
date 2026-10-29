@@ -1,26 +1,22 @@
 package edu.ucsd.sysnet.cluetoothscanner.platform.recording
 
-import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
+import android.util.Log
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
-import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
-import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** What the recorder needs of the BLE scanner (§4.1). */
@@ -67,12 +63,11 @@ fun interface RecordingGrants {
 /**
  * The process-wide [Recorder] (§4.4, docs `scanner/platform/FOREGROUND_SERVICE.md` §2–§4).
  *
- * - Start: grants, then the foreground service and its confirmation, then `core.startRecording`, then location and
- *   the scanner. A missing grant or a refused service leaves no session.
- * - Pause and stop drain the scanner before the core call; pause keeps the foreground service.
- * - Elapsed time always comes from the core's state, so paused time is excluded in one place.
- *
- * Transitions are serialized by one mutex; the core calls ([W] in §2) run on [io].
+ * The decisions are in [RecorderMachine]; this class is its runner. One actor in [scope] owns the [RecModel]: the
+ * public calls are requests with a one-shot reply, the scanner and core flows are signals, and each [RecEffect]
+ * (the foreground service, a core call on [io], the scanner, location) runs here and comes back as an event. Requests
+ * run one at a time; cancelling a caller only stops its wait, so a transition never stays half done. Any exception
+ * from a platform or core call becomes a failure event.
  */
 class PlatformRecorder(
     private val core: Deferred<CoreIngest>,
@@ -82,174 +77,150 @@ class PlatformRecorder(
     private val grants: RecordingGrants,
     private val environment: () -> ScanEnvironment,
     private val io: CoroutineDispatcher,
-    /** The process scope: transitions run here, so a cancelled caller never leaves one half done. */
+    /** The process scope: the actor runs here, so a cancelled caller never leaves a transition half done. */
     private val scope: CoroutineScope,
     /** `CoreQueries.events` `RecordingChanged` states, for the device count between transitions. */
     coreStates: Flow<CoreRecordingState>? = null,
 ) : Recorder {
-    private val mutex = Mutex()
     private val _state = MutableStateFlow(RecorderState.Idle)
     override val state: StateFlow<RecorderState> = _state.asStateFlow()
 
+    private sealed interface Message {
+        class Request(val event: RecEvent, val reply: CompletableDeferred<RecOutcome>) : Message
+        class Signal(val event: RecEvent) : Message
+    }
+
+    private val inbox = Channel<Message>(Channel.UNLIMITED)
+
     init {
-        scope.launch { scanner.deferred.collect { deferred -> _state.update { it.copy(scannerDeferred = deferred) } } }
-        scope.launch { scanner.dropped.collect { dropped -> _state.update { it.copy(dropped = dropped) } } }
-        scope.launch { scanner.error.collect { error -> if (error != null) _state.update { it.copy(error = error) } } }
-        if (coreStates != null) {
-            scope.launch {
-                coreStates.collect { core ->
-                    _state.update { if (it.sessionId == core.sessionId && it.phase.live) it.copy(deviceCount = core.deviceCount) else it }
-                }
-            }
-        }
+        scope.launch { scanner.deferred.collect { signal(RecEvent.ScannerDeferred(it)) } }
+        scope.launch { scanner.dropped.collect { signal(RecEvent.Dropped(it)) } }
+        scope.launch { scanner.error.collect { error -> error?.let { signal(RecEvent.ScannerError(it)) } } }
+        coreStates?.let { flow -> scope.launch { flow.collect { signal(RecEvent.CoreChanged(it)) } } }
+        scope.launch { actor() }
         // RecordingService reads the process recorder from here (notification actions, foreground confirmation).
         RecordingServiceLink.recorder = this
     }
 
     /** After a process restart (§4.4): adopt the core's state. `Core::open` has already closed a left-open session. */
-    suspend fun restore() = mutex.withLock {
-        val current = withContext(io) { core.await().recordingState() }
-        if (current.phase == RecordingPhase.Idle) return@withLock
-        _state.value = merge(current, error = null)
+    suspend fun restore() {
+        ask(RecEvent.Restore)
     }
 
-    override suspend fun start(): Result<String> = transition {
-        val current = _state.value
-        if (current.phase == Phase.Recording || current.phase == Phase.Paused) {
-            return@transition Result.success(requireNotNull(current.sessionId))
-        }
-        val missing = grants.missing()
-        if (missing.isNotEmpty()) {
-            return@transition fail(SecurityException("$MISSING_GRANTS: ${missing.joinToString()}"), MISSING_GRANTS)
-        }
-        _state.value = RecorderState.Idle.copy(phase = Phase.Starting, scannerDeferred = current.scannerDeferred, dropped = current.dropped)
-        if (!host.enterForeground()) {
-            return@transition fail(IllegalStateException(SERVICE_REFUSED), SERVICE_REFUSED)
-        }
-        val started = try {
-            withContext(io) {
-                val ingest = core.await()
-                try {
-                    ingest.startRecording(environment())
-                } catch (already: CoreException.AlreadyRecording) {
-                    requireNotNull(ingest.recordingState().sessionId) { "the core is recording without a session" }
+    override suspend fun start(): Result<String> = ask(Start).sessionResult()
+
+    override suspend fun pause() {
+        ask(RecEvent.Pause)
+    }
+
+    override suspend fun resume() {
+        ask(RecEvent.Resume)
+    }
+
+    override suspend fun stop(): Result<String> = ask(RecEvent.Stop).sessionResult()
+
+    private fun signal(event: RecEvent) {
+        inbox.trySend(Message.Signal(event))
+    }
+
+    private suspend fun ask(event: RecEvent): RecOutcome {
+        val reply = CompletableDeferred<RecOutcome>()
+        inbox.send(Message.Request(event, reply))
+        return reply.await()
+    }
+
+    private suspend fun actor() {
+        var model = RecModel()
+        for (message in inbox) {
+            val (first, reply) = when (message) {
+                is Message.Request -> (if (message.event === Start) RecEvent.Start(missingGrants()) else message.event) to message.reply
+                is Message.Signal -> message.event to null
+            }
+            val pending = ArrayDeque<RecEvent>().apply { add(first) }
+            while (pending.isNotEmpty()) {
+                val transition = RecorderMachine.reduce(model, pending.removeFirst())
+                model = transition.state
+                _state.value = model.public()
+                for (effect in transition.effects) {
+                    when (effect) {
+                        is RecEffect.Reply -> reply?.complete(effect.outcome)
+                        RecEffect.EnterForeground, RecEffect.LeaveForeground, RecEffect.CoreStart, RecEffect.CorePause,
+                        RecEffect.CoreResume, RecEffect.CoreStop, RecEffect.CoreRead, RecEffect.DrainScanner,
+                        RecEffect.StartScanner, RecEffect.StartLocation, RecEffect.StopLocation,
+                        -> execute(effect)?.let(pending::add)
+                    }
                 }
-                ingest.recordingState()
             }
-        } catch (cancelled: CancellationException) {
-            host.leaveForeground()
-            _state.value = RecorderState.Idle
-            throw cancelled
-        } catch (error: Exception) {
-            host.leaveForeground()
-            return@transition fail(error, "The recording could not start (${error.message ?: error::class.java.simpleName})")
+            // A request the machine left unanswered (never expected) must not hang its caller.
+            reply?.complete(RecOutcome.Failed(IllegalStateExceptionValue("the recorder did not answer")))
         }
-        location.startRecording()
-        scanner.start()
-        _state.value = merge(started, error = null)
-        Result.success(requireNotNull(started.sessionId))
     }
 
-    override suspend fun pause() = transition {
-        if (_state.value.phase != Phase.Recording) return@transition
-        scanner.stopAndDrain()
-        val paused = try {
-            withContext(io) {
-                val ingest = core.await()
-                ingest.pauseRecording()
-                ingest.recordingState()
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            // The core still records: collect again.
-            scanner.start()
-            _state.update { it.copy(error = "The recording could not pause (${error.message})") }
-            return@transition
+    /** Runs one effect; a result (or any failure, as a value) comes back as the next event. */
+    private suspend fun execute(effect: RecEffect): RecEvent? = when (effect) {
+        RecEffect.EnterForeground -> RecEvent.ForegroundEntered(attempt { host.enterForeground() } ?: false)
+        RecEffect.LeaveForeground -> attempt { host.leaveForeground() }.let { null }
+        RecEffect.CoreStart -> coreCall {
+            val ingest = core.await()
+            ingest.startRecording(environment())
+            RecEvent.CoreStarted(ingest.recordingState())
         }
-        location.stopRecording()
-        // The service stays in the foreground (owner decision "Pause"); it only drops the wake lock.
-        _state.value = merge(paused, error = null)
+        RecEffect.CorePause -> coreCall {
+            val ingest = core.await()
+            ingest.pauseRecording()
+            RecEvent.CorePaused(ingest.recordingState())
+        }
+        RecEffect.CoreResume -> coreCall {
+            val ingest = core.await()
+            ingest.resumeRecording()
+            RecEvent.CoreResumed(ingest.recordingState())
+        }
+        RecEffect.CoreStop -> coreCall { RecEvent.CoreStopped(SessionId(core.await().stopRecording())) }
+        RecEffect.CoreRead -> coreCall { RecEvent.CoreRead(core.await().recordingState()) }
+        RecEffect.DrainScanner -> attempt { scanner.stopAndDrain() }.let { null }
+        RecEffect.StartScanner -> attempt { scanner.start() }.let { null }
+        RecEffect.StartLocation -> attempt { location.startRecording() }.let { null }
+        RecEffect.StopLocation -> attempt { location.stopRecording() }.let { null }
+        is RecEffect.Reply -> null
     }
 
-    override suspend fun resume() = transition {
-        if (_state.value.phase != Phase.Paused) return@transition
-        val resumed = try {
-            withContext(io) {
-                val ingest = core.await()
-                ingest.resumeRecording()
-                ingest.recordingState()
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            _state.update { it.copy(error = "The recording could not resume (${error.message})") }
-            return@transition
-        }
-        location.startRecording()
-        scanner.start()
-        _state.value = merge(resumed, error = null)
+    private suspend fun coreCall(call: suspend () -> RecEvent): RecEvent = try {
+        withContext(io) { call() }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        RecEvent.CoreFailed(failure)
     }
 
-    override suspend fun stop(): Result<String> = transition {
-        val before = _state.value
-        if (before.phase != Phase.Recording && before.phase != Phase.Paused) {
-            return@transition Result.failure(CoreException.NotRecording())
-        }
-        _state.value = before.copy(phase = Phase.Stopping, runningSinceMs = null)
-        if (before.phase == Phase.Recording) scanner.stopAndDrain()
-        val stopped = try {
-            withContext(io) { core.await().stopRecording() }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            // Reconcile with what the core says: still open means the user can try again.
-            val after = runCatching { withContext(io) { core.await().recordingState() } }.getOrNull()
-            if (after != null && after.phase != RecordingPhase.Idle) {
-                if (after.phase == RecordingPhase.Recording) scanner.start()
-                _state.value = merge(after, error = "The recording could not stop (${error.message})")
-                return@transition Result.failure(error)
-            }
-            location.stopRecording()
-            host.leaveForeground()
-            _state.value = RecorderState.Idle.copy(sessionId = before.sessionId, error = "The recording could not stop (${error.message})")
-            return@transition Result.failure(error)
-        }
-        location.stopRecording()
-        // V-3: the UI stays on the session that just ended.
-        _state.value = RecorderState.Idle.copy(sessionId = stopped, deviceCount = before.deviceCount, dropped = before.dropped)
-        host.leaveForeground()
-        Result.success(stopped)
+    /** A platform call whose failure is logged and treated as "did not happen". */
+    private suspend fun <T> attempt(call: suspend () -> T): T? = try {
+        call()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        // android.util.Log is a stub that throws in JVM tests; logging must never turn a failure into a crash.
+        runCatching { Log.w(TAG, "recording step failed", failure) }
+        null
     }
 
-    /**
-     * Runs one transition under the mutex in the recorder's [scope]. Cancelling the caller only stops its wait: the
-     * transition always completes, so the core session and the foreground service never disagree.
-     */
-    private suspend fun <T> transition(block: suspend () -> T): T = scope.async { mutex.withLock { block() } }.await()
-
-    private fun merge(core: CoreRecordingState, error: String?): RecorderState = _state.value.copy(
-        phase = when (core.phase) {
-            RecordingPhase.Idle -> Phase.Idle
-            RecordingPhase.Recording -> Phase.Recording
-            RecordingPhase.Paused -> Phase.Paused
-        },
-        sessionId = core.sessionId,
-        activeBeforeMs = core.activeBeforeMs,
-        runningSinceMs = core.runningSinceMs,
-        deviceCount = core.deviceCount,
-        error = error,
-    )
-
-    private fun fail(error: Throwable, message: String): Result<String> {
-        _state.value = RecorderState.Idle.copy(error = message, scannerDeferred = _state.value.scannerDeferred, dropped = _state.value.dropped)
-        return Result.failure(error)
+    private fun missingGrants(): List<String> = try {
+        grants.missing()
+    } catch (failure: Exception) {
+        listOf(failure.message ?: "grants unavailable")
     }
 
-    private val Phase.live get() = this == Phase.Recording || this == Phase.Paused || this == Phase.Stopping
+    private fun RecOutcome.sessionResult(): Result<String> = when (this) {
+        is RecOutcome.Session -> Result.success(session.value)
+        is RecOutcome.Failed -> Result.failure(cause)
+        RecOutcome.Done -> Result.failure(IllegalStateExceptionValue("no session"))
+    }
 
     companion object {
-        const val MISSING_GRANTS = "Nearby devices and precise location are needed to record"
-        const val SERVICE_REFUSED = "Android did not allow the recording service to start"
+        private const val TAG = "PlatformRecorder"
+        const val MISSING_GRANTS = RecorderMachine.MISSING_GRANTS
+        const val SERVICE_REFUSED = RecorderMachine.SERVICE_REFUSED
+
+        /** The start request before the runner samples the grants. */
+        private val Start = RecEvent.Start(emptyList())
     }
 }

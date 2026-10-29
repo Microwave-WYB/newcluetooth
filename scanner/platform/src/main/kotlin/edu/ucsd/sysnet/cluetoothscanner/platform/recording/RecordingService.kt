@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.platform.R
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,11 +33,18 @@ import kotlinx.coroutines.withTimeoutOrNull
  * here, and [AndroidForegroundHost] waits here for the service's `startForeground`.
  */
 internal object RecordingServiceLink {
-    @Volatile
-    var recorder: Recorder? = null
+    private val recorderRef = AtomicReference<Recorder?>(null)
+    private val foregroundRef = AtomicReference<CompletableDeferred<Boolean>?>(null)
 
-    @Volatile
-    var foreground: CompletableDeferred<Boolean>? = null
+    /** The process recorder; written once at startup, read by the service on the main thread. Lock-free. */
+    var recorder: Recorder?
+        get() = recorderRef.get()
+        set(value) = recorderRef.set(value)
+
+    /** The confirmation the next `startForeground` completes. Lock-free. */
+    var foreground: CompletableDeferred<Boolean>?
+        get() = foregroundRef.get()
+        set(value) = foregroundRef.set(value)
 }
 
 /**
