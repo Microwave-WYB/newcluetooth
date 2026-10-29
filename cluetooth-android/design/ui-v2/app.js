@@ -37,6 +37,7 @@
     medical: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
     external: '<path d="M7 17 17 7M9 7h8v8"/>',
     close: '<path d="M6 6l12 12M18 6 6 18"/>',
+    filter: '<path d="M4 5h16l-6 7.5V18l-4 2v-7.5z"/>',
     locateOff: '<circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><path d="M4 4l16 16"/>',
     locate: '<circle cx="12" cy="12" r="7"/><circle class="solid" cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
     list: '<path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
@@ -112,9 +113,18 @@
     /** Chip and ChipRow. */
     chip: ({ label, on, action, value }) =>
       `<button class="chip ${on ? "on" : ""}" data-action="${action}" data-value="${esc(value)}" aria-pressed="${on}">${esc(label)}</button>`,
-    chipRow: (cats, selected, action, cls = "") =>
-      `<div class="chips ${cls}">${[{ id: "all", label: "All" }, ...cats]
-        .map((c) => UI.chip({ label: c.label, on: c.id === selected, action, value: c.id })).join("")}</div>`,
+    /** The Filter sheet's body: the presets as switches, Identification, the categories of the scope as checkbox
+     *  rows with their faceted counts (cats: [{ id, label, count }]; 0 is dimmed), and Clear. f: { presets, ident, cats }. */
+    filterSheet: (cats, f) => `<div class="filter-sheet">
+      ${PRESETS.map((p) => `<div class="item"><span class="item-text"><span class="item-title">${p.label}</span></span>${UI.switch(f.presets.includes(p.id), "filter-preset", p.id)}</div>`).join("")}
+      <div class="sect">Identification</div>
+      <div class="filter-seg">${UI.segmented([{ id: "any", label: "Any" }, { id: "identified", label: "Identified" }, { id: "unidentified", label: "Unidentified" }], f.ident, "filter-ident")}</div>
+      <div class="sect">Categories</div>
+      <div class="filter-list">${cats.map((c) => `
+      <button class="item filter-item ${c.count ? "" : "zero"}" role="checkbox" aria-checked="${f.cats.includes(c.id)}" data-action="filter-cat" data-value="${c.id}">
+        <span class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5 10 17l9-10"/></svg></span>
+        <span class="item-text"><span class="item-title">${esc(c.label)}</span></span><span class="item-end">${c.count}</span></button>`).join("")}
+      </div><div class="filter-foot"><button class="text-btn" data-action="filter-clear">Clear</button></div></div>`,
 
     /** Sparkline: the last minute, 30 samples. */
     sparkline: (h) => {
@@ -177,10 +187,12 @@
     /** DiscoverHead: the view switch (it shows the view it switches TO), then Nearby / All while recording, or
      *  This area / All for history and All sessions.
      */
-    discoverHead: ({ view, live, mode, hist = "all" }) => `${UI.iconButton({ name: view === "list" ? "grid" : "list", label: view === "list" ? "Show categories" : "Show the device list", action: "disc-view" })}
+    discoverHead: ({ view, live, mode, hist = "all", filters = 0 }) => `${UI.iconButton({ name: view === "list" ? "grid" : "list", label: view === "list" ? "Show categories" : "Show the device list", action: "disc-view" })}
          ${live ? UI.segmented([{ id: "nearby", label: "Nearby" }, { id: "all", label: "All" }], mode, "disc-mode")
            : UI.segmented([{ id: "area", label: "This area" }, { id: "all", label: "All" }], hist, "hist-mode")}
-         <span></span>`,
+         <span class="disc-filter">${UI.filterButton(filters)}</span>`,
+    /** FilterButton: the view switch's IconButton with a funnel; selected style and a count while filters are on. */
+    filterButton: (n) => `<button class="ib neutral filter-btn ${n ? "on" : ""}" data-action="filter-open" aria-label="Filter${n ? `, ${n} active` : ""}">${icon("filter")}${n ? `<span class="count-badge">${n}</span>` : ""}</button>`,
 
     /** ProductView: a product sheet's content; the background map shows the product's points. */
     productView: (p, rows) => `
@@ -294,6 +306,12 @@
   const ME = D.getMyLocation();
   const locationText = () => `${ME.lat.toFixed(5)}, ${ME.lon.toFixed(5)} ±${ME.accuracy} m`;
   const hiddenByFilter = (d) => S.settings.hideUnnamedApple && d.company === 76 && !d.name;
+  /** The preset filters (the Filter sheet's switches): curated, each a test on a device. */
+  const PRESETS = [
+    { id: "readable", label: "Readable", test: (d) => d.readable },     // its wiki page has a decoder
+    { id: "trackers", label: "Trackers", test: (d) => d.category === "trackers" },
+    { id: "vulnerable", label: "Vulnerable", test: (d) => d.vulnerable }, // its wiki page links a known vulnerability
+  ];
 
   // ---- Formatting ----
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -312,7 +330,6 @@
       <section class="sheet disc-sheet" aria-label="Discover" data-snaps="collapsed half full">
         <div class="handle"></div>
         <div class="disc-head" id="disc-head"></div>
-        <div class="disc-chips" id="disc-chips"></div>
         <div class="sheet-fade"></div>
         <div class="sheet-body" id="disc-body"></div>
       </section>
@@ -330,7 +347,8 @@
       <div class="search-bar-slot" id="search-bar"></div>
       <div class="search-area gone" id="search-area">${UI.chip({ label: "Search this area", on: false, action: "search-area" })}</div>
       <div id="pages"></div>
-      <div class="scrim" data-action="sheet-close"></div>`;
+      <div class="scrim" data-action="sheet-close"></div>
+      <div class="panel-more"><button class="panel-more-btn" data-action="panel-expand" aria-label="Expand the panel"><svg viewBox="0 0 36 8" aria-hidden="true"><path d="M2 1.5 18 6.5 34 1.5"/></svg></button></div>`;
   }
 
   /** The Discover sheet (the stack's root): categories or the device list (Nearby / All only while live). */
@@ -338,29 +356,28 @@
     const sheet = $(".disc-sheet", phone);
     const sess = S.session && D.getRecording(S.session);
     sheet.classList.toggle("open", !!sess);
+    phone.classList.toggle("has-panel", !!sess);
     if (!sess) return liftRecorder();
     const mode = S.live ? S.discoverMode : "all";
-    const head = $("#disc-head"), chips = $("#disc-chips"), body = $("#disc-body");
+    const head = $("#disc-head"), body = $("#disc-body");
     if (S.search) {
       // search state: the matched devices only, list view, "N results"
       const n = S.search.order.length, where = S.search.bbox ? " in this area" : "";
       head.innerHTML = `<span></span><span class="disc-title">${n} ${n === 1 ? "result" : "results"}${where}</span><span></span>`;
       head.dataset.sig = "search";
-      chips.innerHTML = "";
       body.innerHTML = n ? `<div class="rows">${resultRows()}</div>` : UI.noResults(!!S.search.bbox);
     } else {
     const sig = `${S.discView}|${S.live}`, seg = $(".seg", head);
     if (head.dataset.sig === sig && seg) setSegValue(seg, S.live ? mode : S.histMode);
     else { head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, hist: S.histMode }); head.dataset.sig = sig; }
+    $(".disc-filter", head).innerHTML = UI.filterButton(filterCount());
     if (S.discView === "list") {
-      chips.innerHTML = UI.chipRow(CATS, S.devCat, "dev-cat", "inline");
       body.innerHTML = `<div class="rows">${sessionRows(mode)}</div>`;
     } else {
-      chips.innerHTML = "";
-      const area = areaCounts();
+      const c = cardCounts();
       const groups = D.getProducts(mode, S.session)
-        .map((g) => ({ ...g, products: g.products.filter((p) => !area || area.count[p.id])
-          .map((p) => (area ? { ...p, count: area.count[p.id], inRange: Math.min(p.inRange, area.live[p.id] || 0) } : p)) }))
+        .map((g) => ({ ...g, products: g.products.filter((p) => (mode === "all" ? c.count[p.id] : c.live[p.id]))
+          .map((p) => ({ ...p, count: c.count[p.id], inRange: Math.min(p.inRange, c.live[p.id] || 0) })) }))
         .filter((g) => g.products.length);
       body.innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
     }
@@ -435,21 +452,26 @@
 
   // ---- List view: the session's devices (the old Scan list), in the order sorted once ----
   function sessionRows(mode) {
+    return listedDevices(mode).map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
+  }
+  /** The devices the list shows, in its order: This area, the display filter (G-12), Nearby (mode), the filters.
+   *  cats false leaves out the categories facet (the Filter sheet's counts, so a count is exactly the list after
+   *  checking that category). */
+  function listedDevices(mode, cats = true) {
     const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
     return (S.area ? S.areaOrder : S.order).map((a) => byAddr[a])
-      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat))
-      .map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
+      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && matchesFilter(d, cats));
   }
   // ---- "This area" (history and All sessions): the sheets list only devices whose point is in the viewport ----
   // It re-filters once each time the map comes to rest after the user dragged or zoomed it (not during the move,
   // not after the app's own camera moves). Rows still in view keep their order, rows that left hide, new ones append.
   const inArea = (addr) => !S.area || S.area.has(addr);
-  /** Per product, how many of the session's devices are in the area (null when This area is off). */
-  function areaCounts() {
-    if (!S.area) return null;
+  /** Per product, how many of the session's devices the cards count: in the area (when This area is on), not hidden
+   *  by the display filter (G-12), matching the filters. live: those not stale. */
+  function cardCounts() {
     const count = {}, live = {};
     for (const d of D.getSessionDevices(S.session)) {
-      if (!S.area.has(d.addr)) continue;
+      if (!inArea(d.addr) || hiddenByFilter(d) || !matchesFilter(d)) continue;
       const k = d.product || "unidentified";
       count[k] = (count[k] || 0) + 1;
       if (!d.stale) live[k] = (live[k] || 0) + 1;
@@ -571,7 +593,9 @@
 
   /** The main map: one instance for the whole app. A session shows its route and one point per device. */
   function createMainMap(container) {
-    const map = new maplibregl.Map({ container, style: MAP_STYLE(), attributionControl: false, center: ME.at, zoom: 16 });
+    // clickTolerance: a pointer that moves less than --drag-slop is a tap (a click, never a pan, so never a user move)
+    const map = new maplibregl.Map({ container, style: MAP_STYLE(), attributionControl: false, center: ME.at, zoom: 16,
+      clickTolerance: parseFloat(tok("--drag-slop")) || 8 });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
     container._map = map; // a handle for the screenshot tests
     const M = { sel: null, points: [], at: {}, ready: false, pending: [] };
@@ -591,11 +615,13 @@
         else map.setPaintProperty(layer, prop, value);
       }
     }
-    // taps: a point opens its device, a cluster zooms in, empty map clears the selection
+    // taps: a point opens its device, a cluster zooms in, a sighting of the selected device does nothing (for now),
+    // empty map clears the selection
     map.on("click", (e) => {
       const r = 8, box = [[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]];
-      const f = map.queryRenderedFeatures(box, { layers: ["clusters", "points"] })[0];
+      const f = map.queryRenderedFeatures(box, { layers: ["clusters", "points", "sightings"] })[0];
       if (!f) return Stack.entries.length > 1 ? Stack.pop() : M.clear(true);
+      if (f.layer.id === "sightings") return;
       if (f.properties.cluster) return M.zoomCluster(f.properties.cluster_id, f.geometry.coordinates);
       openDevice(f.properties.addr, false);
     });
@@ -698,7 +724,7 @@
     session: null, live: false, order: [], layout: null,
     recorder: "idle", paused: false, recMap: null,
     discoverMode: "nearby", discView: "categories",
-    devCat: "all", search: null, page: null, locZoomed: false, // search: { query, bbox, order, ref, moved, saved } in search state; page: the search page's scope
+    filter: null, search: null, page: null, locZoomed: false, // search: { query, bbox, order, ref, moved, saved } in search state; page: the search page's scope
     histMode: "all", area: null, areaOrder: [], // area: the devices in view while "This area" is on
     settings: { ...SETTINGS }, stack: [], map: null,
     ob: 0, obAuto: true, obAllowed: [false, false, false],
@@ -713,6 +739,7 @@
     const w = phone.clientWidth, mode = w >= parseFloat(tok("--bp-expanded")) ? "expanded" : w >= parseFloat(tok("--bp-medium")) ? "medium" : "compact";
     if (mode === S.layout) return;
     const wasCompact = S.layout === "compact";
+    if (mode === "compact") phone.classList.remove("panel-partial");
     S.layout = mode;
     phone.dataset.layout = mode;
     phone.classList.toggle("tablet", isTablet());
@@ -766,12 +793,31 @@
     S.histMode = "all"; S.area = null; S.areaOrder = []; // per session view
     if (S.search) { S.search = null; phone.classList.remove("searching"); $("#search-bar").innerHTML = ""; } // a new view leaves search
     S.order = id ? D.getSessionDevices(id).sort((a, b) => b.rssi - a.rssi).map((d) => d.addr) : []; // sorted once
+    S.filter = noFilter(); // per session view
     const sess = id && D.getRecording(id);
     S.map.setSession(sess, id ? sessionPoints() : []);
     renderDiscover();
     updateChrome();
     const r = $(".recorder", phone);
     $(".rec-meta", r).textContent = S.recorder === "idle" ? "" : `${D.getCurrentRecording().devices} devices · ${locationText()}`;
+  }
+  /** The filters: the presets (chip row and the sheet's switches), Identification and the categories (the sheet).
+   *  Presets combine with AND, the categories with any-of, and the three groups with AND. */
+  const noFilter = () => ({ presets: [], ident: "any", cats: [] });
+  const filterCount = () => S.filter.presets.length + (S.filter.ident !== "any") + S.filter.cats.length;
+  /** cats false: every filter but the categories facet (the Filter sheet's counts). */
+  function matchesFilter(d, cats = true) {
+    const f = S.filter;
+    return f.presets.every((id) => PRESETS.find((p) => p.id === id).test(d))
+      && (f.ident === "any" || (f.ident === "identified") === !!d.product)
+      && (!cats || !f.cats.length || f.cats.includes(d.category));
+  }
+  /** The Filter sheet's faceted counts: per category, the devices the list would show with every constraint but the
+   *  categories facet (presets, Identification, This area, Nearby, G-12): what checking that category gives. */
+  function facetCounts() {
+    const count = {};
+    for (const d of listedDevices(S.live ? S.discoverMode : "all", false)) count[d.category] = (count[d.category] || 0) + 1;
+    return count;
   }
   const sessionPoints = () => D.getSessionDevices(S.session).filter((d) => !S.search || S.search.order.includes(d.addr)).map((d) => ({ addr: d.addr, at: d.best, rssi: d.rssi, category: d.category, product: d.product || "unidentified" }));
 
@@ -841,7 +887,9 @@
   const sheetState = (sheet) => SNAP_STATES.find((st) => sheet.classList.contains(st)) || null;
   function setSheetState(sheet, state) {
     if (state === "dismissed") return Stack.pop();
-    if (isTablet() && state === "half") state = "full"; // the panel: open or collapsed
+    if (isTablet() && state === "half") state = "full"; // the panel: open or partial (its "collapsed")
+    // tablet: Partial is one state for the whole panel (every level, sessions and results alike)
+    if (isTablet() && sheet === Stack.top().el) phone.classList.toggle("panel-partial", state === "collapsed");
     SNAP_STATES.forEach((st) => sheet.classList.toggle(st, st === state));
     if (sheet === Stack.top().el) { couple(); updateScrim(); }
     liftRecorder();
@@ -851,6 +899,8 @@
   function couple(liveY) {
     const top = Stack.top().el, y = liveY != null ? liveY : offsetOf(top, sheetState(top));
     phone.classList.toggle("stacked", Stack.entries.length > 1);
+    // tablet: the whole panel is Partial exactly when the top level is "collapsed" (there is no header-only state)
+    if (isTablet()) phone.classList.toggle("panel-partial", sheetState(top) === "collapsed");
     Stack.entries.forEach((e) => {
       const below = e.el !== top;
       e.el.classList.toggle("following", below);
@@ -884,7 +934,7 @@
       const el = document.createElement("section");
       el.className = `sheet stack-sheet ${kind}-sheet`;
       el.dataset.snaps = "dismissed collapsed half full";
-      el.setAttribute("aria-label", kind === "device" ? "Device" : "Product");
+      el.setAttribute("aria-label", { device: "Device", product: "Product", filter: "Filter" }[kind]);
       el.style.zIndex = 81 + this.entries.length * 2;
       el.innerHTML = `<div class="handle"></div><div class="sheet-top"></div><div class="sheet-fade"></div><div class="sheet-body"></div>`;
       phone.append(el);
@@ -928,6 +978,7 @@
   /** The map shows what the top sheet is about: the session, a product's points, or a device's sightings. */
   function applyMap(entry, opening) {
     if (entry.kind === "discover") { S.map.setPoints(sessionPoints()); return; }
+    if (entry.kind === "filter") return; // the map stays as it is
     if (entry.kind === "product") {
       const pts = productPoints(D.getProduct(entry.props.id));
       S.map.setPoints(pts);
@@ -944,6 +995,22 @@
       top.innerHTML = UI.sheetTop(UI.deviceHead(d));
       body.innerHTML = UI.deviceBody(d, { tab: entry.props.tab, gatt: null, chartW: phone.clientWidth - 32 });
       $("#dev-tab", body).innerHTML = entry.props.tab === "adv" ? UI.advertising(d) : gattTabNow(d.addr);
+    } else if (entry.kind === "filter") {
+      const f = S.filter, fs = $(".filter-sheet", body), n = facetCounts();
+      if (!fs) {
+        top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">Filter</span>`);
+        body.innerHTML = UI.filterSheet(entry.props.cats.map((c) => ({ ...c, count: n[c.id] || 0 })), f);
+      } else {
+        fs.querySelectorAll('[data-action="filter-preset"]').forEach((b) => b.setAttribute("aria-checked", f.presets.includes(b.dataset.value)));
+        setSegValue($(".seg", fs), f.ident);
+        // counts change in place; a row at 0 stays where it is, dimmed (and can still be unchecked)
+        fs.querySelectorAll(".filter-item").forEach((b) => {
+          const k = n[b.dataset.value] || 0;
+          b.setAttribute("aria-checked", f.cats.includes(b.dataset.value));
+          b.classList.toggle("zero", !k);
+          $(".item-end", b).textContent = k;
+        });
+      }
     } else {
       const p = D.getProduct(entry.props.id);
       top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">${esc((CATS.find((c) => c.id === p.category) || { label: "Unidentified" }).label)}</span>`);
@@ -957,7 +1024,7 @@
     Stack.entries.forEach((e) => {
       const body = $(".sheet-body", e.el), sc = body.scrollTop;
       if (e.kind === "discover") renderDiscover();
-      else if (e.kind === "product") renderSheet(e);
+      else if (e.kind === "product" || e.kind === "filter") renderSheet(e);
       else return;
       body.scrollTop = sc;
     });
@@ -1008,7 +1075,7 @@
     if (!sheet || e.button > 0) return;
     const onHead = !!e.target.closest(".handle, .sheet-top, .disc-head");
     // touches on the Discover sheet's content are handled by the touch listeners below (native scrolling)
-    const body = e.pointerType !== "touch" && e.target.closest(".sheet-body, .disc-chips");
+    const body = e.pointerType !== "touch" && e.target.closest(".sheet-body");
     if (!onHead && !body) return;
     // The whole header drags the sheet, controls included: under --drag-slop it is a tap and the control works;
     // past it, vertically, it is a drag and the control does not fire. A mostly horizontal move is left alone.
@@ -1070,7 +1137,7 @@
   // (that lowers it). The decision is made on the first move, while touchmove can still be cancelled.
   phone.addEventListener("touchstart", (e) => {
     const sheet = e.target.closest(".sheet.open:not(.static)");
-    if (isTablet() || !sheet || e.touches.length > 1 || !e.target.closest(".sheet-body, .disc-chips")) return;
+    if (isTablet() || !sheet || e.touches.length > 1 || !e.target.closest(".sheet-body")) return;
     const scroller = $(".sheet-body", sheet), offs = snapOffsets(sheet), from = sheetState(sheet);
     const top = offs[offs.length - 1].y, bottom = offs[0].y;
     const t = e.touches[0], y0 = t.clientY, samples = [[performance.now(), y0]];
@@ -1113,7 +1180,7 @@
   let wheelLock = 0;
   phone.addEventListener("wheel", (e) => {
     const sheet = e.target.closest(".sheet.open:not(.static)");
-    if (isTablet() || !sheet || !e.target.closest(".sheet-body, .disc-chips, .disc-head, .sheet-top, .handle")) return;
+    if (isTablet() || !sheet || !e.target.closest(".sheet-body, .disc-head, .sheet-top, .handle")) return;
     const scroller = $(".sheet-body", sheet), st = sheetState(sheet);
     if (e.deltaY > 0 && st !== "full") { e.preventDefault(); if (Date.now() > wheelLock) { setSheetState(sheet, "full"); wheelLock = Date.now() + 400; } }
     else if (e.deltaY < 0 && scroller.scrollTop <= 0 && st !== "collapsed") { e.preventDefault(); if (Date.now() > wheelLock) { setSheetState(sheet, nextDown(sheet)); wheelLock = Date.now() + 400; } }
@@ -1316,9 +1383,25 @@
       const go = $(".gatt-go", tab);
       requestAnimationFrame(() => ACTIONS["gatt-go"](go)); // straight to the prompt
     },
-    "dev-cat": (el) => {
-      S.devCat = el.dataset.value;
-      renderDiscover();
+    // a preset (chip or switch) toggles; "All" clears every filter. Changes apply live.
+    "filter-preset": (el) => {
+      const id = el.dataset.value, p = S.filter.presets;
+      S.filter.presets = p.includes(id) ? p.filter((x) => x !== id) : [...p, id];
+      refreshSheets();
+    },
+    "filter-ident": (el) => { S.filter.ident = el.dataset.value; refreshSheets(); },
+    "filter-cat": (el) => {
+      const id = el.dataset.value, c = S.filter.cats;
+      S.filter.cats = c.includes(id) ? c.filter((x) => x !== id) : [...c, id];
+      refreshSheets();
+    },
+    "filter-clear": () => { S.filter = noFilter(); refreshSheets(); },
+    // the categories of the scope and their counts (without hidden devices), taken when the sheet opens
+    // the categories of the scope, ordered once by their faceted count when the sheet opens (rows never reorder)
+    "filter-open": () => {
+      const n = facetCounts();
+      Stack.push("filter", { cats: D.getCategoryCounts(S.session, { hideUnnamedApple: S.settings.hideUnnamedApple }).filter((c) => c.id !== "unidentified")
+        .map((c, i) => ({ ...c, i })).sort((a, b) => (n[b.id] || 0) - (n[a.id] || 0) || a.i - b.i) });
     },
     recorder: () => { if (S.recorder === "idle") startRecording(); },
     "recorder-open": () => { if (S.recorder === "capsule") setRecorder("panel"); },
@@ -1344,11 +1427,12 @@
       }, dir || 1);
     },
     // the view switch crossfades the content (and the chip row appearing or going)
-    "disc-view": () => swapContent([$("#disc-chips"), $("#disc-body")], () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; }, "fade"),
+    "disc-view": () => swapContent([$("#disc-body")], () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; }, "fade"),
     "search-open": () => (isTablet() ? $("#search-q").focus() : top() === "search" ? pop() : openSearchPage()), // phone, open: it is the page's Back
     "search-edit": () => openSearchPage(),
     "search-exit": () => exitSearch(),
     "search-area": () => searchThisArea(),
+    "panel-expand": () => setSheetState(Stack.top().el, "full"),
     locate: () => { S.map.locate(); S.locZoomed = false; $(".locate-btn", phone).classList.add("gone"); },
     "loc-pop": () => setLocPop(!$("#loc-pop").innerHTML),
     "loc-pop-close": () => setLocPop(false),
@@ -1528,9 +1612,10 @@
         ${cell("capsule, paused", UI.recorder({ state: "capsule", paused: true, time: "12:34", meta: "", cls: "static" }), "width: 280px; height: 90px")}
         ${cell("panel", UI.recorder({ state: "panel", paused: false, time: "12:34", meta: "26 devices · 32.88012, -117.23421 ±8 m", mapId: "g-rec-map", cls: "static" }), "width: 412px; height: 260px")}
       </div>
-      ${sect("ChipRow", ".chips / .chip · --chip-h, --chip-bg, --chip-fg, --chip-on-bg, --chip-on-fg")}
-      <div class="g-row">${cell("All selected", UI.chipRow(CATS.slice(0, 4), "all", "", "static"), "width: 412px; overflow: hidden")}
-        ${cell("Audio selected", UI.chipRow(CATS.slice(0, 4), "audio", "", "static"), "width: 412px; overflow: hidden")}</div>
+      ${sect("FilterButton", ".filter-btn (.ib) in the Discover header's right column · .on = --chip-on-bg; .count-badge --count-badge, --blue")}
+      <div class="g-row">${cell("off", UI.filterButton(0))}${cell("3 filters", UI.filterButton(3))}</div>
+      ${sect("Filter sheet", "switches (presets), .seg Identification, .filter-item (role checkbox) / .check · --check-size, --check-r, --chip-on-bg; .text-btn Clear")}
+      <div class="g-row">${cell("Trackers, Identified, Audio", `<section class="sheet static stack-sheet"><div class="handle"></div><div class="sheet-top">${UI.sheetTop(`<span class="sheet-kicker">Filter</span>`)}</div><div class="sheet-body">${UI.filterSheet(D.getCategoryCounts("all", { hideUnnamedApple: true }).filter((c) => c.id !== "unidentified"), { presets: ["trackers"], ident: "identified", cats: ["audio"] })}</div></section>`, "width: 412px; padding: 0")}</div>
       ${sect("DeviceRow", ".row · --row-h, --spark-w, --rssi-w, --rssi-strong/fair/weak, --dim")}
       <div class="g-row">
         ${cell("normal", UI.deviceRow(normal), "width: 412px; padding: 0")}
@@ -1593,7 +1678,7 @@
       ${sect("Discover sheet", ".disc-sheet · three snaps: collapsed (peek), --discover-sheet-half (67%), --discover-sheet-full; view switch shows the view it switches TO")}
       <div class="g-row">
         ${cell("live, categories", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: true, mode: "nearby" })}</div><div class="sheet-body">${UI.categorySection({ ...groups[1], products: groups[1].products.slice(0, 2) })}</div></section>`, "width: 412px; padding: 0")}
-        ${cell("live, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: true, mode: "all" })}</div><div class="disc-chips">${UI.chipRow(CATS, "all", "", "inline")}</div><div class="sheet-body"><div class="rows">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}</div></div></section>`, "width: 412px; padding: 0")}
+        ${cell("live, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: true, mode: "all" })}</div><div class="sheet-body"><div class="rows">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}</div></div></section>`, "width: 412px; padding: 0")}
         ${cell("history, categories: This area / All", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: false })}</div></section>`, "width: 412px; padding: 0")}
         ${cell("history, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: false })}</div></section>`, "width: 412px; padding: 0")}
         ${cell("product sheet", `<section class="sheet static stack-sheet"><div class="handle"></div><div class="sheet-top">${UI.sheetTop(`<span class="sheet-kicker">Lighting</span>`)}</div><div class="sheet-body">${UI.productView(D.getProduct("govee"), D.getProduct("govee").devices.slice(0, 2).map((d) => UI.deviceRow(d, { spark: false })).join(""))}</div></section>`, "width: 412px; padding: 0")}

@@ -179,8 +179,25 @@ function shadow(value, name) {
   return { x: px(m[1]), y: px(m[2]), blur: px(m[3]), spread: px(m[4] ?? "0"), color: m[5], argb: argb(m[5]) };
 }
 
-/** Values the layout computes at runtime (frame/window relative); the only "expression" forms accepted. */
-const RELATIVE = /^(-?\d*\.?\d+(cqw|cqh)|calc\(100% - -?\d*\.?\d+px\)|env\(safe-area-inset-top, 0px\)|calc\(env\(safe-area-inset-top, 0px\) \+ -?\d*\.?\d+px\))$/;
+/** A value the layout computes at runtime (relative to the frame or window): built only from calc/min/max/clamp,
+ *  env(safe-area-inset-*, <px>), numbers in px, cqw, cqh, % or unitless, and + - * / ( ). Anything else fails. */
+function isLayoutExpression(value) {
+  if (!/(cqw|cqh|%|env\()/.test(value)) return false;
+  const rest = value
+    .replace(/env\(safe-area-inset-(top|right|bottom|left), -?\d*\.?\d+px\)/g, " ")
+    .replace(/\b(calc|min|max|clamp)\(/g, "(")
+    .replace(/-?\d*\.?\d+(px|cqw|cqh|%)?/g, " ")
+    .replace(/[-+*/(),]/g, " ");
+  return rest.trim() === "" && balanced(value);
+}
+function balanced(value) {
+  let depth = 0;
+  for (const c of value) {
+    if (c === "(") depth++;
+    else if (c === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
 
 function typeOf(value, name) {
   if (argb(value)) return "color";
@@ -190,7 +207,7 @@ function typeOf(value, name) {
   if (/^cubic-bezier\(\s*[-\d.]+\s*,\s*[-\d.]+\s*,\s*[-\d.]+\s*,\s*[-\d.]+\s*\)$/.test(value)) return "easing";
   if (/^-?\d*\.?\d+px -?\d*\.?\d+px|^0 /.test(value) || /(^|\s)inset(\s|$)/.test(value)) return "shadow";
   if (/^[\w\s"'-]+(,[\w\s"'-]+)+$/.test(value) && /^--font/.test(name)) return "font";
-  if (RELATIVE.test(value)) return "expression";
+  if (isLayoutExpression(value)) return "expression";
   fail(`${name}: unrecognised value: ${value}`);
 }
 

@@ -25,21 +25,25 @@ defines how the app is cut into components, what crosses each boundary, and who 
 | List order | Lists keep a stable order as UI-side state of ordered keys (G-9). |
 | Scopes | Every session-scoped query takes a `Scope`, so multi-select and filters can come later (§2.1). |
 | Process | One process; no separate `:recorder` process (former open question Q2). |
-| Settings, storage | Settings gets a "Storage" group: usage breakdown, Export with a scope, and Delete local data (former Q3). |
+| Settings, storage | Settings gets a "Storage" group (SPEC O-1 items 8–11): usage breakdown, Export with a scope, and Delete local data. |
+| Delete | Un-uploaded data is kept until it has uploaded; losing it needs an explicit second confirmation (§2.8). |
 | SIG numbers | `sig-numbers.tsv` and its generator are copied from the PR #36 branch in B0 (former Q4). |
 | Pause | Pause stops scanning and the precise location request, keeps the foreground service, excludes paused time from the elapsed time, and resumes the same session (former Q5). |
-| Categories, filters | Categories are data-driven from the wiki (former Q1): a filter button in the Discover header, chips All / Readable / Trackers / Vulnerable, a Filter sheet (§2.2). |
-| Export | Three formats: raw Parquet v3 with gatt/v1 JSON, CSV converted directly from that Parquet, and an aggregated SQLite snapshot (§2.8). |
+| Categories, filters | Categories are data-driven from the wiki. Filtering lives only in the Discover header's filter button and the Filter sheet (SPEC D-1, D-3a); there is no chip row (§2.2). Trackers means `asset-tracker`. |
+| Icons | Category icons come from an app-side table of the 21 wiki categories to Material Symbols names, with a generic fallback. Product icons come from wiki pages, through Gitea #190 (§3.4). |
+| Export | Three formats: raw Parquet v3 with gatt/v1 JSON, CSV converted directly from that Parquet (with trailing `session_id` and `source_file` columns), and an aggregated SQLite snapshot (§2.8). |
 | Decoding | Decoding (`decoder.js` via QuickJS) is deferred to issue #39. v2.0 only carries the `readable` flag and an always-empty `decoded` field. |
 
-The owner will update SPEC for these rules:
+SPEC on `design/ui-v2-prototype` covers these decisions. This PR carries a copy synced at `9492e99`:
 
-- the Discover header filter button;
-- the C-3 chip row presets;
-- the Filter sheet;
-- the O-1 Storage group.
+- D-1, the header filter button;
+- D-3a, the Filter sheet (no chip row);
+- O-1 items 8–11, the Storage group;
+- T-2, the tablet panel's Open and Partial states;
+- the `getCategoryCounts` row in B.
 
-Where this document cites them as **SPEC-pending**, this document is the reference until SPEC changes.
+The copy is that commit's `cluetooth-android/design/ui-v2/` without `shots/`, plus the single-source map style refactor
+(`map-style.js`, `app.js`) and the generated `tokens.json` and `map-style.json`.
 
 Contents:
 
@@ -63,7 +67,7 @@ Contents:
 │        │                                                                                                │
 │   :chrome (C)        :sheets (D)          :map (E)           ← feature modules: never depend on each other│
 │   recorder, side-    sheet stack, Discover/ MapLibre, style                                             │
-│   bar, search, chip  product/device sheets, layers, camera,                                             │
+│   bar, search,       product/device sheets, layers, camera,                                             │
 │   row, settings,     Filter sheet          selection, area                                              │
 │   onboarding                                                                                            │
 │        └───────────────┬──────────────────────┘                                                         │
@@ -325,21 +329,26 @@ pub struct DeviceFilter {                       // filters only hide rows (G-9);
 #[derive(uniffi::Record)] pub struct DisplayFilter { pub hide_unnamed_apple: bool }
 ```
 
-The filter model (owner, SPEC-pending):
+The filter model (SPEC D-1, D-3):
 
-- **Discover header.** A filter button sits at the top-right of the Discover header and opens the **Filter sheet**,
-  which holds:
+- **Where filtering lives.** Only in the Discover header's filter button and the **Filter sheet** (D-3a); there is
+  no chip row. The sheet holds, in order:
+  - the Readable, Trackers and Vulnerable switches (AND-combined);
   - Identification: [Any | Identified | Unidentified];
-  - a Categories any-of checklist with counts (`category_counts`);
-  - the preset switches.
-- **List-view chip row.** It is exactly **All / Readable / Trackers / Vulnerable**, as AND-combined preset toggles.
-  All clears the presets.
+  - Categories, an any-of checklist;
+  - Clear.
+
+  Changes apply live, and the button shows a count badge while any filter is active.
+- **Faceted counts.** `category_counts` applies every other active constraint (the switches, Identification, the
+  area, Nearby and the Apple filter) but not the category facet, so a count always equals the resulting list
+  length.
 - **Product sheet.** An identified product sets `page`. The "Unidentified devices" card sets
   `identification = Unidentified`.
-- **Reset.** Filters reset when the scope changes (V-7).
+- **Reset.** Filters reset when the session view (scope) changes (V-7).
+- **Search ignores the filters.** In search state the UI queries with `{query, area}` only, and the saved filter
+  comes back unchanged when search ends (D-3a, Q-7).
 - **Apple filter.** Every list, count, `category_counts` result, map payload and delta respects the display filter
-  (G-12). The display filter is core state, set by `:platform` from the setting. It never affects ingest, Parquet or
-  upload.
+  (G-12). It is core state, set by `:platform` from the setting, and never affects ingest, Parquet or upload.
 
 ### 2.3 Lifecycle and recording
 
@@ -469,9 +478,9 @@ impl Core {
     pub async fn device_rows(&self, scope: Scope, keys: Vec<DeviceKey>) -> Result<Vec<DeviceRow>, CoreError>;
         // [P] ≤ 200 keys per call (LazyColumn paging), in the given order
     pub async fn category_counts(&self, scope: Scope, filter: DeviceFilter) -> Result<Vec<CategoryCount>, CoreError>;
-        // [V AreaKeys] every category present among the filtered devices, device_count desc then label;
-        //     facet semantics: computed with filter.categories ignored, so unchecked categories still show counts;
-        //     a device counts once in each category of its page
+        // [V AreaKeys] getCategoryCounts: every category present among the filtered devices, device_count desc then
+        //     label; faceted (D-3a): computed with filter.categories ignored, all other constraints applied, so a
+        //     count equals the list length after checking it; a device counts once in each category of its page
     pub async fn products(&self, scope: Scope, filter: DeviceFilter) -> Result<Vec<CategoryGroup>, CoreError>;
         // [V AreaProducts] getProducts: groups by the page's FIRST category, groups by device count desc,
         //     "unidentified" last as one card (D-2); filter.page is ignored
@@ -511,6 +520,7 @@ pub struct DeviceRow {                 // C-5
     pub traits: Vec<String>,           // the page's traits
     pub readable: bool,                // the page has a decoder.js
     pub vulnerable: bool,              // the page links a vulnerability page
+    pub icon: Option<String>,          // the page's product icon (asset path, §3.4); None → the category icon
     pub rssi: Option<i16>,             // live: current; frozen: strongest
     pub in_range: bool,                // live: not stale; frozen: true
     pub spark: Option<Vec<u8>>,        // live only: 30 × 2 s buckets (C-6)
@@ -518,7 +528,7 @@ pub struct DeviceRow {                 // C-5
 }
 #[derive(uniffi::Record)]
 pub struct ProductCard { pub id: String /* page id or "unidentified" */, pub title: String, pub kind: Option<PageKind>,
-    pub live: bool, pub count: u32, pub in_range: u32, pub last_seen_ms: i64 }
+    pub icon: Option<String>, pub live: bool, pub count: u32, pub in_range: u32, pub last_seen_ms: i64 }
 #[derive(uniffi::Record)] pub struct CategoryGroup { pub category: String, pub label: String, pub products: Vec<ProductCard> }
 // Cards inside a group come in bundle page order (the initial order); the UI keeps that and appends new ones (G-9).
 
@@ -527,9 +537,12 @@ pub struct ProductDetail {             // D-6, D-7
     pub page: Option<PageRef>, pub title: String, pub one_line: Option<String>,
     pub categories: Vec<String>, pub traits: Vec<String>, pub readable: bool,
     pub vulnerabilities: Vec<PageRef>, pub wiki_url: Option<String>,
+    pub icon: Option<String>, pub icon_credit: Option<IconCredit>,   // C-7/D-7 hero image; credit shown with it
     pub places: u32,                   // distinct z17 tiles of the devices' best points (scope, filter)
     pub last_seen_ms: Option<i64>, pub device_count: u32,
 }
+
+#[derive(uniffi::Record)] pub struct IconCredit { pub source: String, pub license: String, pub author: Option<String> }
 
 #[derive(uniffi::Enum)] pub enum AdvFormat { Legacy, Extended, Unknown }
 #[derive(uniffi::Record)] pub struct AdStructure { pub len: u8, pub ad_type: u8, pub data: Vec<u8> }
@@ -538,6 +551,7 @@ pub struct DeviceDetail {              // D-9, D-12; from the device's latest pa
     pub key: DeviceKey, pub addr: String, pub name: Option<String>,
     pub page: Option<PageRef>, pub categories: Vec<String>, pub traits: Vec<String>,
     pub readable: bool, pub vulnerable: bool, pub vulnerabilities: Vec<PageRef>, pub wiki_url: Option<String>,
+    pub icon: Option<String>,
     pub rssi: Option<i16>, pub in_range: bool, pub live: bool,
     pub connectable: Option<bool>, pub format: AdvFormat,
     pub company_id: Option<u16>, pub company_name: Option<String>, // D-12 Details "Company"
@@ -644,7 +658,7 @@ Failure mapping:
 | connect status 133 and others before connect | `ConnectionFailed` |
 | anything else | `Other{status}` |
 
-### 2.8 Storage, export, delete, upload (O-1 Storage group, SPEC-pending)
+### 2.8 Storage, export, delete, upload (SPEC O-1 items 8–11)
 
 ```rust
 #[derive(uniffi::Record)]
@@ -669,8 +683,9 @@ impl Core {
     pub async fn delete_local_data(&self, scope: Scope, include_unuploaded: bool) -> Result<DeleteOutcome, CoreError>;
     // [F]+[W] user-initiated only; refuses while recording if the scope contains the current session.
     //   Removes DB rows and the scope's archived plaintext (All: also pre-v2 files and sessions/*.json).
-    //   include_unuploaded = false: pending files stay queued and are removed right after upload (tombstones).
-    //   include_unuploaded = true: pending files are removed now and never uploaded.
+    //   include_unuploaded = false (the default): pending files stay queued and are removed right after upload
+    //     (tombstones), so nothing is lost.
+    //   include_unuploaded = true: pending files are removed now and never uploaded (second confirmation only).
     pub fn upload_status(&self) -> UploadStatus;                                   // [N]
     pub fn pending_uploads(&self) -> Vec<PendingUpload>;                           // [N] unchanged
     pub fn prepare_upload(&self, id: String) -> Result<PreparedUpload, CoreError>; // [F] unchanged: encrypts to upload-cache/
@@ -691,8 +706,13 @@ app version and `exported_at`.
 
 CSV rules:
 
-- **Columns.** The 18 Parquet v3 columns, in order, with `scanned_at_ms` (the original epoch milliseconds) inserted
-  right after `scanned_at`.
+- **Columns.** Every CSV has the same columns:
+  - the 18 Parquet v3 columns, in order, with `scanned_at_ms` (the original epoch milliseconds) inserted right after
+    `scanned_at`;
+  - then two trailing columns, always present:
+    - `session_id`, the session UUID (empty for a payload without a session);
+    - `source_file`, the Parquet file's path inside the ZIP's `scans/` tree, e.g.
+      `scans/<session>/<uuid>.parquet`.
 - **Values.**
   - `scanned_at` is ISO-8601 UTC with milliseconds (`2026-10-28T19:12:03.123Z`).
   - Binary (`raw`) is lowercase hex.
@@ -703,12 +723,15 @@ CSV rules:
 - **Files.** A one-session scope gives one CSV per Parquet file (`scans/<session>/<uuid>.csv`). A multi-session
   scope or `All` gives one concatenated `scans.csv` with a single header.
 
-Delete and pending data:
+Delete and pending data (O-1 item 11):
 
-- **The UI (SPEC-pending).** It asks for confirmation. When `pending_count > 0`, it shows an extra warning that
-  this data has not been uploaded. Confirming it calls `include_unuploaded = true`.
-- **The API** also offers `false`: keep the pending files until they upload. A future per-session delete would use
-  that.
+1. The user chooses the scope (one session or All), then confirms.
+2. **The default keeps un-uploaded data.** The call is `include_unuploaded = false`: un-uploaded files stay queued,
+   upload, and are removed afterwards.
+3. Only when `pending_count > 0` and the user explicitly confirms losing that data in a **second step** does the UI
+   call `include_unuploaded = true`.
+
+Export hands the ZIP to the system share sheet or saves it to Downloads (`ExportShare`, lane B).
 
 ### 2.9 Errors
 
@@ -730,7 +753,7 @@ pub enum CoreError {
 
 | SPEC B | Core / platform |
 |---|---|
-| `getCategories()` | `category_counts(scope, filter)` (data-driven; there is no fixed list) |
+| `getCategoryCounts(scope, opts)` | `category_counts(scope, filter)` (data-driven, faceted; there is no fixed list) |
 | `getRecordings()` / `getCurrentRecording()` | `sessions()` / `current_session()` + `recording_state()` |
 | `getRecording(id)` / `"all"` | `session_view(scope)` + `routes(scope, …)` + `map_points(scope, …)` |
 | `getAllSessionsView()` | `all_sessions_summary()` |
@@ -973,7 +996,11 @@ The exporter `cluetooth-android/tools/wiki-bundle` (lane A) reads a checkout and
     "contexts": [], "traits": ["identifier-in-name"],
     "rule": { /* rule.json, validated against rule.schema.json */ },   // null when the page has none
     "decoder": { "sha256": "…", "source": "<decoder.js verbatim>" },   // null when none
-    "vulnerabilities": ["vulnerability--cve-2026-18411"]               // pages referenced as kb:vulnerability/<key>
+    "vulnerabilities": ["vulnerability--cve-2026-18411"],              // pages referenced as kb:vulnerability/<key>
+    "icon": {                                                          // optional (Gitea #190); null when none
+      "asset": "wiki-icons/device--karr-bt.png",                       // copied by the exporter into app assets
+      "source": "https://…", "license": "CC-BY-4.0", "author": "…"
+    }
   }]
 }
 ```
@@ -986,6 +1013,9 @@ Exporter rules. Each failure exits non-zero and names the page:
 - `decoder.js` is bundled **verbatim** with its hash. v2.0 never executes it, and `decoder.tests.yaml` is not run
   (issue #39 adds both).
 - `label_zh` and `legacy-mapping.json` are dropped, since the UI is English only.
+- A page `icon` (Gitea #190) must have its file, a source and a licence. The exporter copies the file to
+  `app/src/main/assets/wiki-icons/<page id>.<ext>` and writes that asset path. Until #190 lands, every `icon` is
+  `null`.
 
 How the core uses the bundle:
 
@@ -994,12 +1024,30 @@ How the core uses the bundle:
   `readable = decoder != null`, the vulnerabilities, and the derived sets below.
 - **`readable`** is true when the matched page has a decoder.
 - **`vulnerable`** is true when the matched page has at least one vulnerability.
-- **`trackers`** is true when the matched page's categories contain one of `TRACKER_CATEGORIES = ["asset-tracker"]`.
-  That is one constant in the core (see §7 Q1).
+- **`trackers`** is true when the matched page's categories contain one of `TRACKER_CATEGORIES = ["asset-tracker"]`
+  (owner decision), one constant in the core.
 - **Filters** become page-id sets, so `categories`, `readable`, `trackers`, `vulnerable` and `identification` turn
   into `page_id IN rarray(:pages)` or `page_id IS NULL` (§3.6).
-- **Category labels** are the vocabulary titles. Category icons belong to the UI (`:designsystem`), with a generic
-  glyph for unmapped ids.
+- **Category labels** are the vocabulary titles.
+- **Icons.** Each row, card and detail carries the page's `icon` asset path, or `None`; the UI then falls back to the
+  category icon. Category icons are an app-side table in `:designsystem` (lane C), using Material Symbols names:
+
+| Category | Symbol | Category | Symbol |
+|---|---|---|---|
+| asset-tracker | `sell` | personal-care | `self_care` |
+| positioning-beacon | `sensors` | medical-device | `medical_services` |
+| fleet-telematics | `local_shipping` | reader-terminal | `point_of_sale` |
+| vehicle-equipment | `directions_car` | printer | `print` |
+| wearable | `watch` | power-energy | `bolt` |
+| audio-device | `headphones` | environmental-monitor | `thermostat` |
+| telephony | `call` | display | `tv` |
+| camera | `photo_camera` | input-peripheral | `keyboard` |
+| security-and-access | `lock` | sports-equipment | `fitness_center` |
+| lighting-control | `lightbulb` | traffic-control | `traffic` |
+| smart-appliance | `kitchen` | *(unidentified)* | `help` (C-17 circled question mark) |
+| *(any other id)* | `devices_other` (the generic fallback) | | |
+
+  A product with several categories uses its first category's icon. Lane C draws them in the C-17 stroke style.
 - **The wiki URL** is `https://wirelesswiki.org/p/<page id>`.
 
 ### 3.5 Page of a payload and of a device
@@ -1091,7 +1139,7 @@ reference host**: CachyOS on `cachyos`, 16 cores, 29 GB RAM, NVMe, release build
 | `products(All)`, unfiltered | `page_totals` | ≤ pages | 10 ms |
 | `products` / `category_counts` (All, area or filter) | R*Tree or `devices_page` → `GROUP BY page_id` | k | 3 µs × k (50 k: 150 ms; 300 k country view: ≈ 1 s, cancellable) |
 | `device_order(All)` | **index-only** scan of `devices_order` (with `shown`) | 600 k → 4.8 MB `LongArray` | 500 ms, once per view, only when list or search needs it |
-| `device_keys(All, chip/filter)` | index-only `devices_order` with `page_id IN …` | 600 k entries | 500 ms |
+| `device_keys(All, filter)` | index-only `devices_order` with `page_id IN …` | 600 k entries | 500 ms |
 | `device_keys(All, area)` | R*Tree + sort | k | 50 ms at 10 k |
 | `device_rows(200)`, `device`, `device_sightings` | PK and index lookups | small | 5–10 ms |
 | `search(All, q)` | `devices_named` + addr scan in Rust | 600 k | 300 ms (debounced 150 ms, superseded); with area ≤ 30 ms |
@@ -1228,7 +1276,7 @@ interface SettingsStore {       // DataStore "cluetooth_settings"; one-time Shar
     suspend fun update(transform: (Settings) -> Settings)
 }   // defaults: recordOnOpen = true, wifiOnlyUpload = false, scanCodedPhy = true, hideUnnamedApple = true
 interface Uploads { val status: StateFlow<UploadStatus>; fun uploadNow() }      // O-1 "Pending uploads"
-interface ExportShare { fun share(export: PreparedExport) }   // share sheet / SAF; acknowledges the export afterwards
+interface ExportShare { fun share(export: PreparedExport); suspend fun saveToDownloads(export: PreparedExport) }  // O-1 item 10; acknowledges after
 interface Permissions {
     val state: StateFlow<PermissionState>
     fun requestLauncherContract(): ActivityResultContract<Array<String>, Map<String, Boolean>>
@@ -1285,14 +1333,16 @@ data class SessionView(val scope: Scope, val live: Boolean, val sessionIds: List
 
 data class DeviceRow(val key: DeviceKey, val addr: String, val name: String?, val page: PageRef?,
                      val categories: List<String>, val traits: List<String>, val readable: Boolean,
-                     val vulnerable: Boolean, val rssi: Int?, val inRange: Boolean, val spark: ByteArray?,
+                     val vulnerable: Boolean, val icon: String?, val rssi: Int?, val inRange: Boolean, val spark: ByteArray?,
                      val best: GeoPoint?, val lastSeenMs: Long)
-data class ProductCard(val id: String, val title: String, val kind: PageKind?, val live: Boolean,
+data class ProductCard(val id: String, val title: String, val kind: PageKind?, val icon: String?, val live: Boolean,
                        val count: Int, val inRange: Int, val lastSeenMs: Long)
 data class CategoryGroup(val category: String, val label: String, val products: List<ProductCard>)
 data class ProductDetail(val page: PageRef?, val title: String, val oneLine: String?, val categories: List<String>,
                          val traits: List<String>, val readable: Boolean, val vulnerabilities: List<PageRef>,
-                         val wikiUrl: String?, val places: Int, val lastSeenMs: Long?, val deviceCount: Int)
+                         val wikiUrl: String?, val icon: String?, val iconCredit: IconCredit?,
+                         val places: Int, val lastSeenMs: Long?, val deviceCount: Int)
+data class IconCredit(val source: String, val license: String, val author: String?)
 enum class AdvFormat { Legacy, Extended, Unknown }
 data class AdStructure(val len: Int, val adType: Int, val data: ByteArray)
 data class DecoderOutput(val fields: List<DecodedField>)                     // always null in v2.0 (issue #39)
@@ -1302,7 +1352,7 @@ sealed interface FieldValue { data class Bool(val v: Boolean) : FieldValue; data
 data class DeviceDetail(val key: DeviceKey, val addr: String, val name: String?, val page: PageRef?,
                         val categories: List<String>, val traits: List<String>, val readable: Boolean,
                         val vulnerable: Boolean, val vulnerabilities: List<PageRef>, val wikiUrl: String?,
-                        val rssi: Int?, val inRange: Boolean, val live: Boolean, val connectable: Boolean?,
+                        val icon: String?, val rssi: Int?, val inRange: Boolean, val live: Boolean, val connectable: Boolean?,
                         val format: AdvFormat, val companyId: Int?, val companyName: String?, val serviceUuid: String?,
                         val txPower: Int?, val structures: List<AdStructure>, val tail: ByteArray?,
                         val decoded: DecoderOutput?, val lastSeenMs: Long)
@@ -1373,7 +1423,8 @@ data class CoverInsets(val top: Int, val bottom: Int, val left: Int, val right: 
 
 /** Search state (Q-5..Q-7); D owns the instance, C and E read it. */
 data class SearchState(val query: String, val area: Bbox?, val order: OrderedKeys,
-                       val reference: CameraSnapshot, val movedAway: Boolean)
+                       val reference: CameraSnapshot, val movedAway: Boolean,
+                       val savedFilter: DeviceFilter)   // search ignores filters; restored when search ends (D-3a)
 
 /** What D asks of the map (S-17, D-8, D-14, Q-5); E implements it, :app connects them. */
 interface MapRequests {
@@ -1384,7 +1435,7 @@ interface MapRequests {
     fun camera(): CameraSnapshot; fun restore(camera: CameraSnapshot)     // S-8
     fun setCover(insets: CoverInsets)
 }
-/** What the map reports (M-7, P-6, D-4, Q-6); :app routes them to D (sheets) and C (chips). */
+/** What the map reports (M-7, P-6, D-4, Q-6); :app routes them to D (sheets) and C (the "Search this area" chip). */
 interface MapEvents {
     fun onUserGestureStart()                                // P-6: D collapses the top sheet
     fun onCameraIdle(byUser: Boolean, viewport: Bbox, zoom: Double)
@@ -1413,21 +1464,22 @@ data class RecorderUi(val form: Form, val paused: Boolean, val elapsedMs: Long, 
 data class SessionsListState(val current: SessionSummary?, val all: AllSessionsSummary, val days: List<DayGroup>,
                              val selected: Scope?)          // v2.0: single selection only
 data class DayGroup(val label: String, val sessions: List<SessionSummary>)
-data class PresetChips(val readable: Boolean, val trackers: Boolean, val vulnerable: Boolean)   // C-3 (SPEC-pending)
 data class SearchPageState(val query: String, val area: Bbox?, val results: OrderedKeys?, val searchedEverywhere: Boolean)
 data class SettingsUi(val settings: Settings, val uploads: UploadStatus, val storage: StorageUi)
 data class StorageUi(val databaseBytes: Long, val rawFilesBytes: Long, val mapCacheBytes: Long?, val pendingCount: Int,
                      val exportScope: Scope, val exportFormat: ExportFormat?, val exporting: Boolean,
-                     val deleteConfirm: DeleteConfirm?)       // O-1 Storage group (SPEC-pending)
-enum class DeleteConfirm { Confirm, UnuploadedWarning }
+                     val deleteConfirm: DeleteConfirm?)       // O-1 items 8–11
+/** Confirm: the scope's deletion, keeping un-uploaded data; LoseUnuploaded: the explicit second step. */
+enum class DeleteConfirm { Confirm, LoseUnuploaded }
 data class OnboardingUi(val step: Int, val permissions: PermissionState, val userId: String,
                         val userIdValid: Boolean, val autoRecord: Boolean)
 
 // ---- :sheets (lane D) ----
-enum class SheetHeight { Collapsed, Half, Full, Dismissed }               // tablet: Open (= Full) / Collapsed
+enum class SheetHeight { Collapsed, Half, Full, Dismissed }               // phone (S-5)
+enum class PanelHeight { Open, Partial }                                  // tablet (T-2); a saved Collapsed maps to Partial
 sealed interface SheetKind { data object Discover : SheetKind; data class Product(val pageId: String?) : SheetKind
                              data class Device(val key: DeviceKey) : SheetKind; data object Filter : SheetKind }
-data class SheetEntry(val id: Long, val kind: SheetKind, val height: SheetHeight, val scroll: ScrollSnapshot,
+data class SheetEntry(val id: Long, val kind: SheetKind, val height: SheetHeight, val panel: PanelHeight, val scroll: ScrollSnapshot,
                       val camera: CameraSnapshot?, val content: SheetContentState)
 sealed interface SheetContentState {
     data class Discover(val view: View, val segment: Segment, val filter: DeviceFilter,   // filter incl. presets
@@ -1437,7 +1489,8 @@ sealed interface SheetContentState {
     data class Product(val detail: ProductDetail?, val order: OrderedKeys?) : SheetContentState
     data class Device(val detail: DeviceDetail?, val tab: Tab, val gatt: GattUi, val chart: LiveChart?) : SheetContentState {
         enum class Tab { Advertising, Gatt } }
-    data class Filter(val draft: DeviceFilter, val counts: List<CategoryCount>) : SheetContentState   // SPEC-pending
+    /** D-3a: changes apply live; rowOrder is fixed when the sheet opens; counts update in place (0 stays, dimmed). */
+    data class Filter(val rowOrder: List<String>, val counts: Map<String, Int>) : SheetContentState
 }
 data class AreaState(val bbox: Bbox, val order: OrderedKeys)
 sealed interface GattUi { data object Idle : GattUi; data object Confirm : GattUi
@@ -1513,8 +1566,7 @@ contracts. "I" is integration.
 | G-10, G-11, G-13 | D | none |
 | G-12 | A (core-side filter on every list, count and map) | B: setting → `set_display_filter`; C: Settings row |
 | G-14 | I (back dispatcher) | C: close popover, page, sidebar, recorder; D: `handleBack()` for sheets and search |
-| C-1 to C-17 | C | A: C-6 samples |
-| C-3 chip row (SPEC-pending: All / Readable / Trackers / Vulnerable) | C | D: applies the presets to the Discover filter |
+| C-1 to C-17 (C-17 incl. the category icon table, §3.4) | C | A: C-6 samples; A: page `icon` assets |
 | P-1, P-2, P-3 | I | C: FAB and float buttons; E: map |
 | P-4 | E | B: my location |
 | P-5 | E (button and placement) | B: status; C: popover content |
@@ -1523,9 +1575,8 @@ contracts. "I" is integration.
 | R-5 | C (tap behaviour) | E: `RouteMiniMap`; I: fit-route wiring |
 | S-1 to S-16 (incl. S-10a) | D | none |
 | S-17 | D (what the map shows) | E: executes `MapRequests` |
-| D-1, D-1a, D-2 to D-12 | D | A: data; C: chip row component (D-3) |
-| D-1 filter button (SPEC-pending) | D | none |
-| Filter sheet (SPEC-pending) | D | A: `category_counts`, filters |
+| D-1 (incl. the filter button and its count badge), D-1a, D-2 to D-12 | D | A: data |
+| D-3a Filter sheet | D | A: `category_counts`, filters, the page sets |
 | D-13 | D (state machine, UI) | B: `GattRunner`; A: stored result |
 | D-14 | D | E: camera |
 | M-1 to M-8, M-10, M-11 | E | A: points, routes, sightings |
@@ -1540,9 +1591,9 @@ contracts. "I" is integration.
 | V-2 to V-5 | I | C, D, E: render |
 | V-6 | I | B: setting and `Recorder` |
 | V-7 | I | D: stack and filter reset; E: refit |
-| O-1 (incl. Storage group, SPEC-pending) | C | B: settings, uploads, `ExportShare`; A: stats, export, delete; E: `MapCacheInfo` |
+| O-1 (incl. the Storage group, items 8–11) | C | B: settings, uploads, `ExportShare` (share sheet or Downloads); A: stats, export, delete; E: `MapCacheInfo` |
 | O-2 | C | B: permissions, Bluetooth, user id |
-| T-1, T-2, T-3 | D | none |
+| T-1, T-2 (Open/Partial; a user pan or zoom moves Open to Partial), T-3 | D | E: `onUserGestureStart`; I: wiring |
 | T-4, T-5, T-6, T-7 | C | none |
 | T-8 | E | none |
 | T-9 | I | D: panel state mapping |
@@ -1641,15 +1692,15 @@ contracts. "I" is integration.
 ### 6.4 Lane C: design system, components and chrome
 
 - **Scope.** The accountable rules in §6.1. That includes:
-  - the C-3 preset chip row (SPEC-pending);
-  - the O-1 Storage group screens (SPEC-pending): usage with the database / raw files / map cache breakdown,
-    Export with a scope (one session or All) and a format picker, and Delete local data with confirmation and the
-    un-uploaded warning.
-  - Category icons: a mapping from category id to icon, with a generic fallback, pending SPEC C-17.
+  - the O-1 Storage group (items 8–11): usage with the database / raw files / map cache breakdown, Export with a
+    scope (one session or All) and a format, and Delete local data with a scope, a confirmation, and the explicit
+    second step to lose un-uploaded data;
+  - the category icon table (§3.4), with page icons taking precedence;
+  - no chip row in Discover (C-3 is still used by "Search this area", Q-6).
   - **No multi-select UI.**
 - **Owns:** `cluetooth-android/designsystem/**` (generated `Tokens.kt`, Inter, icons from `app.js ICONS`,
   components, all UI strings), `chrome/**` and `gallery/…/lanes/CGallery.kt`.
-- **Provides:** `CluetoothTheme`, every C-n composable, `PresetChipRow`, `RecorderControl`, `Sidebar`, `SearchPage`,
+- **Provides:** `CluetoothTheme`, every C-n composable, `CategoryIcon(categoryId, pageIcon)`, `RecorderControl`, `Sidebar`, `SearchPage`,
   `SearchBar`, `SearchThisAreaChip`, `SettingsPage` (with `StorageGroup`), `Onboarding`, `LocationPopover`, and
   formatting helpers.
 - **Done when:**
@@ -1665,8 +1716,11 @@ contracts. "I" is integration.
 ### 6.5 Lane D: sheet system and contents
 
 - **Scope.** The accountable rules in §6.1. That includes:
-  - the Discover filter button and the **Filter sheet** (SPEC-pending): Identification, the Categories any-of
-    checklist with `category_counts`, and the preset switches;
+  - the D-1 filter button (count badge) and the **D-3a Filter sheet**: the Readable, Trackers and Vulnerable
+    switches, Identification, the Categories checklist with faceted `category_counts`, and Clear. Changes apply
+    live, and the row order is fixed while the sheet is open;
+  - search ignoring the filters and restoring them (`SearchState.savedFilter`);
+  - T-2 Open/Partial on the tablet, including a user pan moving Open to Partial;
   - P-6's collapse on `MapEvents.onUserGestureStart`;
   - the filter reset on scope change.
   - Scope-agnostic; **no multi-select UI.**
@@ -1684,7 +1738,9 @@ contracts. "I" is integration.
   - S-7 (hidden sheets are not composed);
   - S-12 and S-16;
   - the G-9 property tests (presets, categories and area only hide; appends only);
-  - the Filter sheet (counts, any-of, AND presets, reset on scope change);
+  - the Filter sheet: faceted counts equal the resulting list length, any-of categories, AND switches, Clear, fixed
+    row order with 0-count rows dimmed, reset on scope change, ignored and restored around search;
+  - T-2 Partial on user pan, and a restored Collapsed mapping to Partial;
   - the D-13 state machine, including cancel on pop;
   - the Q-7 restore;
   - P-6;
@@ -1742,7 +1798,7 @@ The integration owner owns `cluetooth-android/app/**` and `:ui-contract`.
 
 1. **Checks.** `mise run check` is green, and the APK is named `cluetooth-0.1.0-debug-<sha8>.apk`, never
    overwriting an existing file.
-2. **Rule by rule against the prototype**, plus the SPEC-pending rules against this document, at 412×915 and
+2. **Rule by rule against the prototype and SPEC** (as synced in this PR), at 412×915 and
    1024×768, light and dark, on the `cluetooth-test` AVD. Results go into
    `cluetooth-android/design/ui-v2/VERIFY.md`, and each list is watched for 60 s.
 3. **On the test phone** `R58M81J3YJV` and a Moto G-class phone:
@@ -1778,14 +1834,17 @@ Each lane merges into `feat/v2` through its own PR and never edits another lane'
 
 ## 7. Open questions
 
-| # | Question | Recommendation |
-|---|---|---|
-| Q1 | Which wiki categories count as "Trackers" for the preset? | `asset-tracker` only, as one core constant (`TRACKER_CATEGORIES`). `positioning-beacon` describes fixed beacons, not trackers. |
-| Q2 | Category icons: SPEC C-17 has 8 glyphs, and the wiki has 21 categories. | Map the closest ones (audio-device → headphones, lighting-control → bulb, environmental-monitor → thermometer, asset-tracker → tag, wearable → watch, vehicle-equipment/fleet-telematics → car, medical-device → medical) and use a generic device glyph for the rest, until the SPEC update names more icons. |
-| Q3 | A concatenated multi-session CSV loses which session and payload each row came from (the columns are exactly Parquet v3). | Allow two trailing columns, `session_id` and `payload_id`, in the concatenated file only. Otherwise accept the loss: the ZIP's manifest still lists the source files. |
+None are open. The former questions are now owner decisions, recorded at the top:
+
+- Trackers means `asset-tracker`.
+- Category icons use the §3.4 table.
+- The CSV always has `session_id` and `source_file`.
 
 Future notes:
 
 - A server-side database dashboard that reuses the HTML prototype is deferred until after a few Android iterations.
 - Advertisement decoding (`decoder.js` in rquickjs, the Decoded block, running `decoder.tests.yaml` in the bundle
   step) is newcluetooth issue #39.
+- Product icons on wiki pages are Gitea #190. The bundle and API fields exist already, and they stay `null` until it
+  lands.
+- Multi-select of sessions brings back a union cache (§3.7), with no API change.
