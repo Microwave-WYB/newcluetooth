@@ -3,7 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.map
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.Hit
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.CameraSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.map.style.SelectionProp
 
 /**

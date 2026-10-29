@@ -8,7 +8,7 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.ComponentActivity
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.DeviceAddr
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.CameraSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode

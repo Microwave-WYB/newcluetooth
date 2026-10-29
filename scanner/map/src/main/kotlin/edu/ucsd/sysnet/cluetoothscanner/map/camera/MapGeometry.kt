@@ -1,8 +1,8 @@
 package edu.ucsd.sysnet.cluetoothscanner.map.camera
 
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.CameraSnapshot
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.CoverInsets
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import kotlin.math.PI
 import kotlin.math.abs

@@ -23,7 +23,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.api.core.MapData
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapEvents
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
 import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.MyLocation
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
