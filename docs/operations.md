@@ -21,6 +21,9 @@
   forwards it to `127.0.0.1:15432` through `db.wirelesswiki.org` (Cloudflare Tunnel, TCP,
   behind an Access app for the owner and advisor); the first connection opens a browser login.
   Containers on the `newcluetooth_default` network reach it as `postgres` / `cluetooth-db`.
+  That tunnel route belongs to the fleet's cloudflared (`infra/fleet`,
+  `wirelesswiki-gitea-cloudflared-1`, which joins `newcluetooth_default`), not to this
+  project.
 - Blob mirror: `/data/newcluetooth/gcs-mirror`, a symlink to `/data/cluetooth/downloads`.
 - Secrets: compose secrets from `infra/data/secrets/` (`private-key.txt`,
   `service-account-key.json`; host-local and gitignored, formerly the root
@@ -291,6 +294,21 @@ delete and aborts the rollback.
 - `cluetooth-db` has `restart: unless-stopped` (set 2026-10-25 with
   `docker update --restart unless-stopped cluetooth-db`, no recreate, and in
   the compose file, now `infra/data/compose.yaml`). Before that it stayed down after a host reboot.
+
+## Opt-in services: pgweb and a separate db tunnel
+
+Neither runs today; both are profiles in `infra/data/compose.yaml`, so a plain
+`docker compose up -d` does not start them and does not need their secret files.
+
+- `pgweb` (`cluetooth-pgweb`, `sosedoff/pgweb:0.17.0`, `--readonly`) listens on simi's
+  loopback (`PGWEB_PORT`, default 8081). Its connection string is the secret file
+  `infra/data/secrets/pgweb-database-url` (mode 600, owned by `CLUETOOTH_HOST_UID`); use a
+  read-only role such as `wiki_ro`. Start: `docker compose --profile pgweb up -d pgweb`.
+  The owner's planned dashboard is Grafana at dash.wirelesswiki.org instead.
+- `db-tunnel` (`cluetooth-db-tunnel`, `cloudflare/cloudflared:2026.10.0`) would serve
+  `db.wirelesswiki.org` from its own tunnel, token in `infra/data/secrets/db-tunnel-token`.
+  Only after creating that tunnel and moving the db route off the fleet's tunnel:
+  `docker compose --profile db-tunnel up -d db-tunnel`.
 
 ## Roll back
 
