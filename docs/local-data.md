@@ -61,9 +61,9 @@ ones). All (rule, advertisement) pairs also run through
 `tests/python/reference_rules.py`, a verbatim copy of the Python evaluator with
 the SQL compiler removed, and the two must agree. Needs `python3` on `PATH`.
 
-## 2. Wiki bundle (`cluetooth-android/tools/wiki-bundle/`)
+## 2. Wiki bundle (`scanner/tools/wiki-bundle/`)
 
-`mise run //cluetooth-android:wiki-bundle` (`WIKI_DIR`, default
+`mise run //scanner:wiki-bundle` (`WIKI_DIR`, default
 `~/Projects/wiki-snapshot`) reads `wiki-content/<kind>--<slug>/index.md` front
 matter and `rule.json` and writes `app/src/main/assets/wiki-bundle.json`:
 
@@ -91,7 +91,7 @@ matter and `rule.json` and writes `app/src/main/assets/wiki-bundle.json`:
   by hand, so a changed bundle can never reuse a version). `rules_version` is a
   digest of the rules only: the app re-matches stored advertisements when it
   changes, not for a retitled page or a relabelled category.
-* `mise run //cluetooth-android:wiki-bundle-test` runs the exporter tests
+* `mise run //scanner:wiki-bundle-test` runs the exporter tests
   (Node's built-in runner; the only dependency is `yaml`, locked).
 
 ## 3. Local stores (`.../cluetoothscanner/local/`)

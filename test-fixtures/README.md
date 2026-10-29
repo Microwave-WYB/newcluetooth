@@ -8,5 +8,5 @@ Regenerate after an intended producer change:
 
 ```sh
 CLUETOOTH_UPDATE_FIXTURES=1 cargo test --manifest-path cluetooth-core/Cargo.toml --test producer_fixtures
-CLUETOOTH_UPDATE_FIXTURES=1 mise run //cluetooth-android:test
+CLUETOOTH_UPDATE_FIXTURES=1 mise run //scanner:test
 ```

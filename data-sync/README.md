@@ -55,7 +55,7 @@ Discovery deliberately performs a full `scans/` listing every cycle and skips on
 
 ## Local checks
 
-Use root `mise install`, then `mise run install` and `mise run //cluetooth-sync:check`.
+Use root `mise install`, then `mise run install` and `mise run //data-sync:check`.
 The test task prebuilds the Rust encryption example before pytest's bounded runtime
 interop test; direct pytest needs that prerequisite on mise's PATH too. Tests use
 synthetic keys and disposable local PostGIS, never production credentials/GCS.
@@ -69,7 +69,9 @@ WiGLE uploads read already-ingested minute rows from Postgres: one CSV row per
 minute, using that minute's best sample. Run a sync first, or run the upload
 against an existing database volume that already contains minutes.
 
-1. Copy the root environment template and fill in credentials:
+Run these commands from `infra/data/`, where the Compose file lives.
+
+1. Copy the environment template and fill in credentials:
 
    ```sh
    cp .env.example .env

@@ -200,7 +200,7 @@ Rules:
   attribute is read. The Android stack may still show a pairing dialog on an
   authentication failure and there is no public API to forbid it; the operator cancels it.
   The app's code never bonds. See `docs/recording-model.md` and the engine notes in
-  `cluetooth-android/README.md`.
+  `scanner/README.md`.
 
 ### Validation rules
 

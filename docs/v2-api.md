@@ -1,7 +1,7 @@
 # Cluetooth Android v2: frozen interface (step 0)
 
 This is the contract that the five v2 lanes build against. The product is defined by
-`cluetooth-android/design/ui-v2/SPEC.md` (rule IDs such as `S-8` refer to it) and the HTML prototype next to it. This file
+`scanner/design/ui-v2/SPEC.md` (rule IDs such as `S-8` refer to it) and the HTML prototype next to it. This file
 defines how the app is cut into components, what crosses each boundary, and who owns which files.
 
 - **Frozen** means a lane may not change a signature here on its own. A change needs a PR to this file that the owner
@@ -42,7 +42,7 @@ SPEC on `design/ui-v2-prototype` covers these decisions. This PR carries a copy 
 - T-2, the tablet panel's Open and Partial states;
 - the `getCategoryCounts` row in B.
 
-The copy is that commit's `cluetooth-android/design/ui-v2/` without `shots/`, plus the single-source map style refactor
+The copy is that commit's `scanner/design/ui-v2/` without `shots/`, plus the single-source map style refactor
 (`map-style.js`, `app.js`) and the generated `tokens.json` and `map-style.json`.
 
 Contents:
@@ -972,7 +972,7 @@ The source of truth is the Gitea repo `y2wei/wirelesswiki`, `main`, at `d1b543b`
 The page kinds that matter are **device, platform, identifier and vulnerability**. Organization and topic pages are
 not exported.
 
-The exporter `cluetooth-android/tools/wiki-bundle` (lane A) reads a checkout and writes
+The exporter `scanner/tools/wiki-bundle` (lane A) reads a checkout and writes
 `app/src/main/assets/wiki-bundle.json`:
 
 ```jsonc
@@ -1546,8 +1546,8 @@ The dependency rule:
   wire to `:core-fake`'s live simulator.
 - **During the lanes, the old `:app` (v3) stays untouched** and keeps building and checking.
 - `gradle/libs.versions.toml` is shared, with additive lines only.
-- Tokens and the map style come from `cluetooth-android/design/ui-v2/export.mjs` (`mise run
-  //cluetooth-android:design-export`; the `design-export-check` task runs in `check`). C and E generate code or
+- Tokens and the map style come from `scanner/design/ui-v2/export.mjs` (`mise run
+  //scanner:design-export`; the `design-export-check` task runs in `check`). C and E generate code or
   assets from the JSON at build time and never copy values by hand.
 
 ### 6.1 Rule ownership: one accountable lane per SPEC rule
@@ -1612,8 +1612,8 @@ contracts. "I" is integration.
     `None`.
 - **Owns:**
   - `cluetooth-core/**`;
-  - `cluetooth-android/core-api/**`, `core-fake/**` and `core-bridge/**`;
-  - `cluetooth-android/tools/wiki-bundle/**` and the `wiki-bundle.json` asset;
+  - `scanner/core-api/**`, `core-fake/**` and `core-bridge/**`;
+  - `scanner/tools/wiki-bundle/**` and the `wiki-bundle.json` asset;
   - the core parts of `docs/local-data.md` and `docs/payload-schema-v2.md` (loss window).
 - **Provides:** the §2 API, and `CoreQueries`, `CoreStorage` and `CoreIngest` in `:core-bridge`. The listener goes to
   a `MutableSharedFlow(extraBufferCapacity = 4)` with a blocking `emit` on `ct-notify`.
@@ -1659,9 +1659,9 @@ contracts. "I" is integration.
   - the notifications;
   - the first-launch cleanup (§1.5) and the legacy uploader.
 - **Owns:**
-  - `cluetooth-android/platform-api/**`, `platform-fake/**` and `platform/**`;
+  - `scanner/platform-api/**`, `platform-fake/**` and `platform/**`;
   - the `gallery/` shell and registry;
-  - `cluetooth-android/tools/sig-numbers.py` and `app/src/main/assets/sig-numbers.tsv`, copied in B0 from the
+  - `scanner/tools/sig-numbers.py` and `app/src/main/assets/sig-numbers.tsv`, copied in B0 from the
     PR #36 branch.
 - **Provides:** `Recorder`, `LocationStatusSource`, `SettingsStore`, `Uploads`, `ExportShare`, `Permissions`,
   `GattRunner`, and the lazily built `AppGraph` pieces.
@@ -1684,7 +1684,7 @@ contracts. "I" is integration.
     - Wi-Fi-only constraints;
     - grants checked before `startForeground` (a missing grant gives no service start and an error state);
     - pause keeping the foreground service;
-  - `mise run //cluetooth-android:check` is green;
+  - `mise run //scanner:check` is green;
   - the documented device smoke test passes: 10 min with the screen off and the task swiped away, then `am kill` →
     "Recording interrupted".
 - **Merge:** B0 after A0-api and U0 (day 1), then B.
@@ -1698,7 +1698,7 @@ contracts. "I" is integration.
   - the category icon table (§3.4), with page icons taking precedence;
   - no chip row in Discover (C-3 is still used by "Search this area", Q-6).
   - **No multi-select UI.**
-- **Owns:** `cluetooth-android/designsystem/**` (generated `Tokens.kt`, Inter, icons from `app.js ICONS`,
+- **Owns:** `scanner/designsystem/**` (generated `Tokens.kt`, Inter, icons from `app.js ICONS`,
   components, all UI strings), `chrome/**` and `gallery/…/lanes/CGallery.kt`.
 - **Provides:** `CluetoothTheme`, every C-n composable, `CategoryIcon(categoryId, pageIcon)`, `RecorderControl`, `Sidebar`, `SearchPage`,
   `SearchBar`, `SearchThisAreaChip`, `SettingsPage` (with `StorageGroup`), `Onboarding`, `LocationPopover`, and
@@ -1724,7 +1724,7 @@ contracts. "I" is integration.
   - P-6's collapse on `MapEvents.onUserGestureStart`;
   - the filter reset on scope change.
   - Scope-agnostic; **no multi-select UI.**
-- **Owns:** `cluetooth-android/sheets/**` and `gallery/…/lanes/DGallery.kt`.
+- **Owns:** `scanner/sheets/**` and `gallery/…/lanes/DGallery.kt`.
 - **Provides:** `SheetHost` (phone and tablet panel), `SheetStackController`, `SearchController`, `DiscoverSheet`,
   `ProductSheet`, `DeviceSheet` (no Decoded block in v2.0), `FilterSheet`, and `handleBack()`.
 - **Consumes:** `MapRequests` (`:ui-contract`), `CoreQueries` (`:core-fake`), `GattRunner` (`FakeGattRunner`) and
@@ -1754,7 +1754,7 @@ contracts. "I" is integration.
   - `MapCacheInfo` (the MapLibre ambient cache file size);
   - the R-5 mini map as a `MapSnapshotter` image (refreshed when the panel opens and every 10 s).
   - Scope-agnostic; **no multi-select UI.**
-- **Owns:** `cluetooth-android/map/**` (style assets generated from `map-style.json`) and
+- **Owns:** `scanner/map/**` (style assets generated from `map-style.json`) and
   `gallery/…/lanes/EGallery.kt`.
 - **Provides:** `CluetoothMap(state, events: MapEvents)`, the `MapRequests` implementation, `RouteMiniMap` and
   `MapCacheInfo`.
@@ -1779,7 +1779,7 @@ contracts. "I" is integration.
 
 ### 6.7 Integration (after A, B, C, D and E)
 
-The integration owner owns `cluetooth-android/app/**` and `:ui-contract`.
+The integration owner owns `scanner/app/**` and `:ui-contract`.
 
 1. **The new `:app`.**
    - `CluetoothApplication` with the lazy `AppGraph`, where the core opens on IO;
@@ -1800,7 +1800,7 @@ The integration owner owns `cluetooth-android/app/**` and `:ui-contract`.
    overwriting an existing file.
 2. **Rule by rule against the prototype and SPEC** (as synced in this PR), at 412×915 and
    1024×768, light and dark, on the `cluetooth-test` AVD. Results go into
-   `cluetooth-android/design/ui-v2/VERIFY.md`, and each list is watched for 60 s.
+   `scanner/design/ui-v2/VERIFY.md`, and each list is watched for 60 s.
 3. **On the test phone** `R58M81J3YJV` and a Moto G-class phone:
    - a 30 min recording with the screen off and the task swiped away;
    - `logcat -b crash` is empty;

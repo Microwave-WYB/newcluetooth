@@ -12,15 +12,19 @@
 ## Where things are
 
 - Host: `ssh simi` (jumps through trolley).
-- Compose project `newcluetooth`: `/home/y2wei/Projects/newcluetooth`.
+- Compose project `newcluetooth`: `/home/y2wei/Projects/newcluetooth`. The Compose
+  file is `infra/data/compose.yaml`; run the `docker compose` commands below from
+  `infra/data/`, which is also where Compose reads `.env`. Up to `a6bfcf6` the file
+  and `.env` were at the checkout root.
 - Database container: `cluetooth-db`. Data is at `/data/newcluetooth/postgres-data`.
   Port 5432 is published on simi's loopback only. From elsewhere, `mise run db:connect`
   forwards it to `127.0.0.1:15432` through `db.wirelesswiki.org` (Cloudflare Tunnel, TCP,
   behind an Access app for the owner and advisor); the first connection opens a browser login.
   Containers on the `newcluetooth_default` network reach it as `postgres` / `cluetooth-db`.
 - Blob mirror: `/data/newcluetooth/gcs-mirror`, a symlink to `/data/cluetooth/downloads`.
-- Secrets: compose secrets from `./secrets/`, mounted only into sync containers.
-  Never print or copy them.
+- Secrets: compose secrets from `infra/data/secrets/` (`private-key.txt`,
+  `service-account-key.json`; host-local and gitignored, formerly the root
+  `secrets/`), mounted only into sync containers. Never print or copy them.
 - Disk: `/` on simi is nearly full (100% on 2026-10-25). Keep backups and
   build contexts on `/data`.
 
@@ -286,12 +290,13 @@ delete and aborts the rollback.
   it stopped across reboots until it is started again.
 - `cluetooth-db` has `restart: unless-stopped` (set 2026-10-25 with
   `docker update --restart unless-stopped cluetooth-db`, no recreate, and in
-  `compose.yaml`). Before that it stayed down after a host reboot.
+  the compose file, now `infra/data/compose.yaml`). Before that it stayed down after a host reboot.
 
 ## Roll back
 
 1. `docker compose stop sync-continuous`.
-2. `git checkout 4220a1b` (the previous deploy) and rebuild the image.
+2. `git checkout 4220a1b` (the previous deploy) and rebuild the image. That
+   commit predates `infra/data/`, so run Compose from the checkout root there.
 3. The additive migrations (`20260805233000`, `20261025093000`) can stay. To
    remove them:
 

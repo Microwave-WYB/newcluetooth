@@ -319,10 +319,10 @@ start the sync. Also still open from the survey: the 29 pending legacy objects
 ## How to run tests
 
 ```sh
-cd cluetooth-sync
+cd data-sync
 uv run --locked ruff check . && uv run --locked ruff format --check . && uv run --locked basedpyright
 uv run --locked pytest -q --deselect tests/test_rust_encryption_compatibility.py   # fast
-cd .. && mise run //cluetooth-sync:test   # full, builds the Rust interop example
+cd .. && mise run //data-sync:test   # full, builds the Rust interop example
 ```
 
 Tests use testcontainers (`postgis/postgis:18-3.6`) and mise's `dbmate`. Do not

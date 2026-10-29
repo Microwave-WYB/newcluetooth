@@ -20,7 +20,7 @@ Maps Compose renders only Rust-derived local route and observation overlays. No 
 
 ## v3 UI previews
 
-`app/src/main/.../ui/v3/` holds the v3 Compose screens (scan, device detail, nearby, recordings, maps) built on plain UI state classes in `ui/v3/model/` and fake data in `FakeData`; nothing there is wired to the repository, GATT engine or MapLibre yet. `app/src/screenshotTest/` renders every screen in light and dark at phone size with the Compose Preview Screenshot Testing plugin. Run `mise run //cluetooth-android:ui-shots /some/dir` to write the PNGs and an `index.html` gallery; layoutlib needs JDK 21, so the task selects `temurin-21` (`mise install java@temurin-21`). The reference PNGs under `app/src/screenshotTestDebug/` are build output and are git-ignored. These tasks are not part of `mise run check`.
+`app/src/main/.../ui/v3/` holds the v3 Compose screens (scan, device detail, nearby, recordings, maps) built on plain UI state classes in `ui/v3/model/` and fake data in `FakeData`; nothing there is wired to the repository, GATT engine or MapLibre yet. `app/src/screenshotTest/` renders every screen in light and dark at phone size with the Compose Preview Screenshot Testing plugin. Run `mise run //scanner:ui-shots /some/dir` to write the PNGs and an `index.html` gallery; layoutlib needs JDK 21, so the task selects `temurin-21` (`mise install java@temurin-21`). The reference PNGs under `app/src/screenshotTestDebug/` are build output and are git-ignored. These tasks are not part of `mise run check`.
 
 ### v3 UI wiring
 
@@ -58,14 +58,14 @@ AGP 8.10 requires JDK **17**, Gradle 8.11.1 (the retained wrapper), SDK platform
 3. Install only the host SDK packages first. Native prerequisites are a separate opt-in:
 
    ```sh
-   mise run //cluetooth-android:sdk-install        # platform35/build-tools35.0.0 only; no license acceptance
+   mise run //scanner:sdk-install           # platform35/build-tools35.0.0 only; no license acceptance
    # Only for a later explicitly requested native ABI build:
-   mise run //cluetooth-android:native-sdk-install # NDK27.2.12479018
-   mise run //cluetooth-core:native-install       # all four Rust targets + locked cargo-ndk4.1.2
+   mise run //scanner:native-sdk-install    # NDK27.2.12479018
+   mise run //cluetooth-core:native-install # all four Rust targets + locked cargo-ndk4.1.2
    ```
 
    Host JVM compilation needs SDK platform/build-tools but not the NDK/ABI build. Missing licenses/packages are real blockers; do not skip tests or point at production resources to work around them. `local.properties` is optional when mise supplies `ANDROID_HOME`; keep any local override untracked.
-4. Run `mise run //cluetooth-android:check`. Host tasks compile real generated UniFFI/Kotlin, execute JVM tests and run lint with `abortOnError = true`. They use `-PcluetoothHostChecks=true`, which leaves Google Services unapplied only for a nonempty request containing exactly `:app:testDebugUnitTest` and/or `:app:lintDebug`; other selectors or flag values fail before execution. Only `:app:buildCluetoothCoreAndroid` is excluded. Simply excluding the Google Services task breaks AGP's generated-resource provider. No Firebase resources, ABI packaging, APK, device install or app startup occur; compilation/tests/lint are not skipped. Product tasks apply Google Services normally. Host success is not native/APK/device validation.
+4. Run `mise run //scanner:check`. Host tasks compile real generated UniFFI/Kotlin, execute JVM tests and run lint with `abortOnError = true`. They use `-PcluetoothHostChecks=true`, which leaves Google Services unapplied only for a nonempty request containing exactly `:app:testDebugUnitTest` and/or `:app:lintDebug`; other selectors or flag values fail before execution. Only `:app:buildCluetoothCoreAndroid` is excluded. Simply excluding the Google Services task breaks AGP's generated-resource provider. No Firebase resources, ABI packaging, APK, device install or app startup occur; compilation/tests/lint are not skipped. Product tasks apply Google Services normally. Host success is not native/APK/device validation.
 
 ### Firebase client configuration and environments
 
@@ -75,7 +75,7 @@ The retained debug application ID is `edu.ucsd.sysnet.cluetoothscanner.debug`. T
 
 User-supplied client JSON may be committed after verifying its type, package and intended environment; narrowly adjust only the intended config path. Never commit service-account credentials, private encryption keys, signing keys/keystores, local properties, generated builds or IDE state.
 
-From `cluetooth-android/`, run `mise exec -- ./gradlew --offline --no-daemon --max-workers=2 :app:verifyFirebaseConfigs` to process both configs and assert the selected config, package, registered App ID, project/number and generated bucket resources against independent expected values. This task only depends on `processDebugGoogleServices` and `processReleaseGoogleServices`; it does not compile native/app code, package release, launch an app or call Firebase APIs. Debug must generate App ID `1:952828187654:android:24c3c17e0c06adbeb81f87` and bucket `cluetooth-1da02-debug`; release must retain App ID `1:952828187654:android:9a76ce60006c562cb81f87` and bucket `cluetooth-1da02.firebasestorage.app`.
+From `scanner/`, run `mise exec -- ./gradlew --offline --no-daemon --max-workers=2 :app:verifyFirebaseConfigs` to process both configs and assert the selected config, package, registered App ID, project/number and generated bucket resources against independent expected values. This task only depends on `processDebugGoogleServices` and `processReleaseGoogleServices`; it does not compile native/app code, package release, launch an app or call Firebase APIs. Debug must generate App ID `1:952828187654:android:24c3c17e0c06adbeb81f87` and bucket `cluetooth-1da02-debug`; release must retain App ID `1:952828187654:android:9a76ce60006c562cb81f87` and bucket `cluetooth-1da02.firebasestorage.app`.
 
 The private bucket does **not** prove SDK uploads are authorized: Firebase bucket registration, Storage rules and upload authentication are deferred. Debug still uses Firebase project `cluetooth-1da02`, so this is bucket separation, **not full environment isolation**. Host checks leave Google Services unapplied and share `app/build` with product builds; they are not evidence of packaged Firebase configuration. Verify genuine APK resources separately before any explicitly authorized device/network operation.
 
@@ -93,10 +93,10 @@ Never add these values or the keystore to this repository. Host JVM tests need n
 ## Build and runtime boundaries
 
 ```sh
-mise run //cluetooth-core:bindings        # generated host UniFFI Kotlin
-mise run native-check                    # API-24 native ABIs, no APK (default arm64-v8a)
-mise run //cluetooth-android:build        # product debug APKs, matching .debug client required
-mise run //cluetooth-android:build-release # product release APKs, unsigned without signing values
+mise run //cluetooth-core:bindings # generated host UniFFI Kotlin
+mise run native-check              # API-24 native ABIs, no APK (default arm64-v8a)
+mise run //scanner:build           # product debug APKs, matching .debug client required
+mise run //scanner:build-release   # product release APKs, unsigned without signing values
 ```
 
 The Gradle equivalents remain `:app:generateCluetoothCoreBindings`, `:app:buildCluetoothCoreAndroid`, `:app:prepareCluetoothCoreAndroid`, `:app:assembleDebug`, and `:app:assembleRelease`. Kotlin compilation depends on binding generation; JNI merge/package tasks depend on the native build. Generated inputs cannot silently be omitted from product builds. Bindings go to `app/build/generated/source/uniffi`; stripped native libraries go to `app/build/generated/jniLibs`. All native targets/tool versions are checked before building; no ABI is silently skipped.
@@ -105,4 +105,4 @@ Payload rotation (5 minutes, 10 MiB, 100k rows) is set in Kotlin in `core/Payloa
 
 Only `arm64-v8a` is built by default for both debug and release. Opt in to more ABIs (e.g. emulators) with `-PcluetoothAbis=arm64-v8a,x86_64` or `CLUETOOTH_ABIS=arm64-v8a,x86_64` (any of `arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`); the same list drives the native build and the APK splits. Every requested ABI must be built and packaged; the build fails otherwise. One APK per requested ABI, no universal APK. Host JVM tests do not assert packaged libraries, installation, API-24 loading or on-device behavior.
 
-**Device smoke is opt-in only:** `mise run //cluetooth-android:device-smoke` refuses unless `CLUETOOTH_ALLOW_DEVICE_SMOKE=1` is set. It installs and launches test/app components. Although the smoke-test body uses synthetic local data, `CluetoothApplication.onCreate` schedules uploads, so the complete instrumentation run is **not guaranteed network-free**. A separately reviewed non-production/offline app and device/network setup is required before opting in; the existing production client config does not satisfy that requirement. Never use this task in default checks, and do not infer it is safe merely from its test source. This integration does not perform device operations.
+**Device smoke is opt-in only:** `mise run //scanner:device-smoke` refuses unless `CLUETOOTH_ALLOW_DEVICE_SMOKE=1` is set. It installs and launches test/app components. Although the smoke-test body uses synthetic local data, `CluetoothApplication.onCreate` schedules uploads, so the complete instrumentation run is **not guaranteed network-free**. A separately reviewed non-production/offline app and device/network setup is required before opting in; the existing production client config does not satisfy that requirement. Never use this task in default checks, and do not infer it is safe merely from its test source. This integration does not perform device operations.

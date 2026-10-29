@@ -22,17 +22,17 @@ separate from the user's global toolchains. Android SDK packages/licenses live
 in that project's `android-sdk/`, not mise's shared command-line-tools install
 or an existing Android Studio SDK. The Gradle wrapper remains authoritative;
 no system Gradle is required. See [core](cluetooth-core/README.md) and
-[Android setup](cluetooth-android/README.md) for explicit SDK/NDK prerequisites.
+[Android setup](scanner/README.md) for explicit SDK/NDK prerequisites.
 
 ## Check boundaries
 
 ```sh
-mise run check                        # sequential heavyweight host stages
-mise run //cluetooth-core:check        # fmt, strict clippy, Rust tests
-mise run //cluetooth-android:check     # genuine Kotlin/UniFFI compilation, JVM tests, strict lint
-mise run //cluetooth-sync:check        # Python lint/types + all fixture/DB/interoperability tests
-mise run native-check                 # separate API-24 native build (arm64-v8a; CLUETOOTH_ABIS to add more)
-mise run //cluetooth-android:build     # separate product debug APK build; no install/launch
+mise run check                  # sequential heavyweight host stages
+mise run //cluetooth-core:check # fmt, strict clippy, Rust tests
+mise run //scanner:check        # genuine Kotlin/UniFFI compilation, JVM tests, strict lint
+mise run //data-sync:check      # Python lint/types + all fixture/DB/interoperability tests
+mise run native-check           # separate API-24 native build (arm64-v8a; CLUETOOTH_ABIS to add more)
+mise run //scanner:build        # separate product debug APK build; no install/launch
 ```
 
 Host Android tasks use guarded `-PcluetoothHostChecks=true` to leave Google
@@ -47,7 +47,7 @@ build the Rust encryption example outside the test's 120-second execution
 limit; its deterministic key is synthetic and Cargo uses mise's PATH.
 Standalone `uv run pytest` needs that explicit prerequisite too.
 
-Python packages remain locked in `cluetooth-sync/uv.lock`. DB tests create
+Python packages remain locked in `data-sync/uv.lock`. DB tests create
 local disposable PostGIS containers and run dbmate from mise's PATH; no
 production URL, auth, or cloud objects are needed. Production sync's Docker
 image remains Python-only (`uv sync --frozen --no-dev`); it does not run tests
@@ -70,12 +70,12 @@ see Android docs. Default checks never install/launch an app or upload data.
 Mise installs gcloud via `vfox:mise-plugins/vfox-gcloud`, pinned to 587.0.0.
 `mise exec -- gcloud --version` and `mise exec -- gcloud help` require no auth.
 
-`mise run //cluetooth-sync:sync -- --help` invokes the local sync CLI. To run an
+`mise run //data-sync:sync -- --help` invokes the local sync CLI. To run an
 actual sync, explicitly provide `CLUETOOTH_DATABASE_URL`, `CLUETOOTH_BUCKET`,
 `CLUETOOTH_PRIVATE_KEY_PATH` (absolute local path) and optionally
 `GOOGLE_APPLICATION_CREDENTIALS` (absolute service-account file path),
 `CLUETOOTH_PREFIX`, `CLUETOOTH_MIRROR_DIR`, or `CLUETOOTH_MAX_BLOBS` in your own
-environment. Keep credentials in gitignored `secrets/`, not mise config.
+environment. Keep credentials in gitignored `infra/data/secrets/`, not mise config.
 Running sync without `--help` can access GCS/Postgres. Production Compose is
 separate; do not use it as test infrastructure. Historical `scans/schema=v2/`
 objects are intentionally rejected, preserved, and require a separate migration
