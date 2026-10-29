@@ -1,6 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.map.camera
 
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatus
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 
 /**
  * P-4 and P-5, as the prototype's updateLocate:

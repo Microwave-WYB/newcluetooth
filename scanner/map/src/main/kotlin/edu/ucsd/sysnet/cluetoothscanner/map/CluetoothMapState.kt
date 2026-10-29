@@ -15,7 +15,7 @@ import edu.ucsd.sysnet.cluetoothscanner.map.stub.CoverInsets
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatusSource
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.api.core.MapData
 import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapEvents
 import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode

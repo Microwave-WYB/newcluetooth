@@ -5,23 +5,12 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
-import kotlinx.coroutines.flow.StateFlow
 
 /*
- * TEMPORARY. Until :ui-contract (U0) and :platform-api (B0) merge, these are verbatim copies of the frozen types in
- * docs/v2-api.md §5 that :map uses, and only those. When they land, this file is deleted and the imports switch to
- * edu.ucsd.sysnet.cluetoothscanner.api.platform / .ui.contract.
+ * TEMPORARY. Until :ui-contract (U0) merges, these are verbatim copies of the frozen §5.3 types that :map uses, and
+ * only those. When it lands, this file is deleted and the imports switch to edu.ucsd.sysnet.cluetoothscanner.ui.contract.
  * Nothing here is a design decision of lane E; do not extend it beyond the contract.
  */
-
-// ---- :platform-api (§5.2) ----
-
-data class LocationStatus(val state: State, val warn: Boolean, val ageMin: Int? = null, val action: Action? = null) {
-    enum class State { Ok, Denied, Off, Waiting, Stale }
-    enum class Action { Allow, TurnOn }
-}
-data class MyLocation(val at: GeoPoint, val accuracyM: Double, val ageMs: Long)
-interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLocation: StateFlow<MyLocation?> }
 
 // ---- :ui-contract (§5.3) ----
 
