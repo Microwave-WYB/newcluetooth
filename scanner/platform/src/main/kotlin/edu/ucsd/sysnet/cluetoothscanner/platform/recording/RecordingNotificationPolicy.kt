@@ -22,7 +22,9 @@ internal object RecordingNotificationPolicy {
     fun elapsedMs(state: RecorderState, nowMs: Long) =
         state.activeBeforeMs + (state.runningSinceMs?.let { (nowMs - it).coerceAtLeast(0) } ?: 0)
 
-    fun title(state: RecorderState) = when {
+    /** [storageFreeBytes] is non-null while the recording is paused because storage is full (R-10). */
+    fun title(state: RecorderState, storageFreeBytes: Long? = null) = when {
+        storageFreeBytes != null -> "Recording paused: storage is full"
         state.phase == Phase.Starting -> "Starting recording"
         state.phase == Phase.Stopping -> "Saving recording"
         state.phase == Phase.Paused -> "Recording paused"
@@ -31,7 +33,9 @@ internal object RecordingNotificationPolicy {
     }
 
     /** The line under [title]: "12:34 · 26 devices", so the notification reads "Recording · 12:34 · 26 devices" (§4.4). */
-    fun text(state: RecorderState, nowMs: Long): String {
+    fun text(state: RecorderState, nowMs: Long, storageFreeBytes: Long? = null): String {
+        // R-10: what to do, and the free space the core reported.
+        if (storageFreeBytes != null) return "Free up space to continue · ${megabytes(storageFreeBytes)} free"
         val seconds = elapsedMs(state, nowMs) / 1_000
         val clock = if (seconds >= 3_600) {
             "%d:%02d:%02d".format(seconds / 3_600, seconds % 3_600 / 60, seconds % 60)
@@ -41,6 +45,8 @@ internal object RecordingNotificationPolicy {
         val devices = if (state.deviceCount == 1) "1 device" else "%,d devices".format(Locale.US, state.deviceCount)
         return "$clock · $devices"
     }
+
+    private fun megabytes(bytes: Long) = "%,d MB".format(Locale.US, bytes.coerceAtLeast(0) / 1_000_000)
 
     /** Pause while recording, Resume while paused, nothing while starting or stopping. Stop is always offered when live. */
     fun pauseAction(state: RecorderState): Action? = when (state.phase) {
@@ -58,8 +64,8 @@ internal object RecordingNotificationPolicy {
         private var lastAtMs = Long.MIN_VALUE
         private var lastKey: Any? = null
 
-        fun shouldUpdate(state: RecorderState, elapsedRealtimeMs: Long): Boolean {
-            val key = state.phase to state.scannerDeferred
+        fun shouldUpdate(state: RecorderState, elapsedRealtimeMs: Long, storageFull: Boolean = false): Boolean {
+            val key = Triple(state.phase, state.scannerDeferred, storageFull)
             if (key == lastKey && elapsedRealtimeMs - lastAtMs < UPDATE_INTERVAL_MS) return false
             lastKey = key
             lastAtMs = elapsedRealtimeMs

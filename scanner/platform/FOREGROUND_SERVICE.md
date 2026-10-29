@@ -74,6 +74,19 @@ core is ready (the splash holds until then).
 - Elapsed time comes from the core's `RecordingState` (`active_before_ms` + `now − running_since_ms`). The Recorder
   never keeps its own clock (v3 did), so the paused time is excluded in exactly one place.
 
+**Storage full (SPEC R-10).** When the core reports `CoreEvent.StorageFull { freeBytes }`, it has stopped writing
+and paused the recording itself (the session stays open). The Recorder gets it as an event
+(`RecEvent.StorageFull`, the `storageFull` port of `PlatformRecorder`), never as a flag:
+
+1. Drain the scanner and stop the RECORDING location request; no `core.pauseRecording()` (the core already paused).
+2. Read the core's state, so the elapsed time stops where the core stopped.
+3. The phase is `StorageFull(session, freeBytes)`: public `Paused`. The service **stays in the foreground** without
+   the wake lock, and the notification reads "Recording paused: storage is full" / "Free up space to continue ·
+   N MB free", with Resume and Stop.
+4. Nothing scans until Resume. Resume takes the normal path (`core.resumeRecording()`, location, the scanner); the
+   core refuses while free space is below the floor, and the recording then stays paused for storage. Stop works as
+   from a pause.
+
 ## 4. Stop (R-7)
 
 1. Set `Stopping`. Stop the scanner, wait for the fence and flush the batcher, as for pause.
