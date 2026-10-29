@@ -90,7 +90,8 @@ class BleScanner(
     /** One message per event; [done] completes true once the actor executed its effects, false if it never will. */
     private class Message(val event: ScanEvent, val done: CompletableDeferred<Boolean>? = null)
 
-    private val inbox = Channel<Message>(Channel.UNLIMITED)
+    /** A message the actor will never run (it ended, even one it was handed but not yet run) releases its waiter. */
+    private val inbox = Channel<Message>(Channel.UNLIMITED, onUndeliveredElement = { it.done?.complete(false) })
 
     /** Every coroutine this runner launches carries it: an escaped exception becomes the scanner's error. */
     private val guard = failureHandler(TAG) { failure -> _error.value = "The scanner stopped (${failure.describe()})" }
@@ -126,9 +127,9 @@ class BleScanner(
                 message.done?.complete(true)
             }
         }.invokeOnCompletion {
-            // The actor is gone (failed or its scope ended): release everyone waiting on it.
-            inbox.close()
-            while (true) inbox.tryReceive().getOrNull()?.done?.complete(false) ?: break
+            // The actor is gone (failed or its scope ended): cancelling the inbox closes it and releases everyone
+            // waiting on a message in it.
+            inbox.cancel()
         }
     }
 
@@ -414,4 +415,7 @@ class LatestByKey<K : Any, V : Any>(private val capacity: Int) {
     }
 
     operator fun get(key: K): V? = entries.computeIfPresent(key) { _, entry -> Entry(entry.value, clock.incrementAndGet()) }?.value
+
+    /** The value without counting as use (tests check recency without changing it). */
+    internal fun peek(key: K): V? = entries[key]?.value
 }

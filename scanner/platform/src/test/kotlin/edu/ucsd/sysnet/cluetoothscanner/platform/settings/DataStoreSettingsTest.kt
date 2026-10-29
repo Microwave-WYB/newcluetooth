@@ -3,6 +3,8 @@ package edu.ucsd.sysnet.cluetoothscanner.platform.settings
 import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -80,8 +82,8 @@ class DataStoreSettingsTest {
     fun `an invalid user id is refused and nothing is written`() = runBlocking {
         val store = DataStoreSettings(context, scope, "0.1.0")
         store.update { it.copy(userId = "ok1") }
-        val refused = runCatching { store.update { it.copy(userId = "Not Valid", recordOnOpen = false) } }
-        assertTrue(refused.exceptionOrNull() is IllegalArgumentException)
+        val refused = store.update { it.copy(userId = "Not Valid", recordOnOpen = false) }
+        assertEquals(PlatformResult.Err(PlatformError.InvalidUserId("Not Valid")), refused)
         val settings = store.loaded()
         assertEquals("ok1", settings.userId)
         assertTrue(settings.recordOnOpen)

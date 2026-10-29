@@ -3,6 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.platform.recording
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
@@ -40,7 +41,7 @@ class RecorderMachineTest {
 
         private fun flaky() = random != null && random.nextInt(100) < failRate
 
-        private fun coreState() = CoreRecordingState(corePhase, coreSession, 0, 0, null, 26, 0.0)
+        fun coreState() = CoreRecordingState(corePhase, coreSession, 0, 0, null, 26, 0.0)
 
         /** Sends one request and runs every effect until the machine settles; returns its replies. */
         fun request(event: RecEvent): List<RecOutcome> {
@@ -174,6 +175,7 @@ class RecorderMachineTest {
         assertEquals(Phase.Paused, public.phase)
         assertEquals("s1", public.sessionId)
         assertEquals(150_000_000L, sim.model.storageFullBytes())
+        assertEquals(RecorderState.PauseReason.StorageFull(150_000_000), public.pause)
         assertTrue(public.error.orEmpty().startsWith(RecorderMachine.STORAGE_FULL))
         // Pause and Start change nothing.
         sim.request(RecEvent.Pause)
@@ -197,6 +199,7 @@ class RecorderMachineTest {
         assertEquals(RecPhase.Live(SessionId("s1"), paused = false), sim.model.phase)
         assertTrue(sim.scanning && sim.locating)
         assertEquals(null, sim.model.storageFullBytes())
+        assertEquals(null, sim.model.public().pause)
     }
 
     @Test
@@ -291,7 +294,7 @@ class RecorderMachineTest {
 
     @Test
     fun `an adoption whose read fails keeps the unknown session's service, and the core naming it adopts it (#70 review)`() {
-        val adopting = RecModel(phase = RecPhase.AdoptingCore)
+        val adopting = RecModel(phase = RecPhase.AdoptingCore(collecting = false))
         val failed = RecorderMachine.reduce(adopting, RecEvent.CoreFailed(CoreException.Io("read")))
         assertEquals(RecPhase.Unidentified, failed.state.phase)
         assertEquals(Phase.Recording, failed.state.public().phase)
@@ -302,6 +305,20 @@ class RecorderMachineTest {
         assertEquals(RecPhase.Live(SessionId("x"), paused = false), named.state.phase)
         val stopped = RecorderMachine.reduce(failed.state, RecEvent.Stop)
         assertEquals("an unidentified session can be stopped", listOf(RecEffect.DrainScanner, RecEffect.CoreStop), stopped.effects)
+    }
+
+    @Test
+    fun `an unidentified recording that adopts a paused session stops collecting (#70 re-review)`() {
+        val unidentified = RecModel(phase = RecPhase.Unidentified)
+        val paused = CoreRecordingState(RecordingPhase.Paused, "x", 0, 0, null, 3, 0.0)
+        val signalled = RecorderMachine.reduce(unidentified, RecEvent.CoreChanged(paused))
+        assertEquals(RecPhase.Live(SessionId("x"), paused = true), signalled.state.phase)
+        assertEquals(listOf(RecEffect.DrainScanner, RecEffect.StopLocation), signalled.effects)
+        // The same through a start that reads the core.
+        val adopting = RecorderMachine.reduce(RecorderMachine.reduce(unidentified, RecEvent.Start(emptyList())).state, RecEvent.CoreRead(paused))
+        assertEquals(RecPhase.Live(SessionId("x"), paused = true), adopting.state.phase)
+        assertTrue(RecEffect.DrainScanner in adopting.effects && RecEffect.StopLocation in adopting.effects)
+        assertFalse(RecEffect.StartScanner in adopting.effects)
     }
 
     @Test
@@ -432,8 +449,17 @@ class RecorderMachineTest {
                         if (recording) fullUntilResume = true
                     }
                     1 -> sim.coreFull = false
+                    // The core's RecordingChanged signal, with its true state.
+                    2, 3 -> assertTrue("a signal is not answered", sim.request(RecEvent.CoreChanged(sim.coreState())).isEmpty())
                 }
-                val request = when (random.nextInt(6)) {
+                // A session the machine does not know (left open, as after a crash), recording or paused; the user
+                // then starts, so the machine adopts it or, when it cannot read it, keeps it Unidentified.
+                val leftOpen = sim.model.phase is RecPhase.Idle && sim.corePhase == RecordingPhase.Idle && random.nextInt(10) == 0
+                if (leftOpen) {
+                    sim.corePhase = if (random.nextBoolean()) RecordingPhase.Recording else RecordingPhase.Paused
+                    sim.coreSession = "left$step"
+                }
+                val request = if (leftOpen) RecEvent.Start(emptyList()) else when (random.nextInt(6)) {
                     0, 1 -> RecEvent.Start(if (random.nextInt(10) == 0) listOf("p") else emptyList())
                     2 -> RecEvent.Pause
                     3 -> RecEvent.Resume
@@ -443,8 +469,21 @@ class RecorderMachineTest {
                 sim.refuseForeground = random.nextInt(10) == 0
                 sim.failReadAfterStart = random.nextInt(4) == 0
                 val replies = sim.request(request)
+                if (leftOpen && sim.model.phase is RecPhase.Idle) {
+                    // The start was refused before it could adopt the left session: it stays with the core until
+                    // the next Core::open closes it, which the simulator does now.
+                    sim.corePhase = RecordingPhase.Idle
+                    sim.coreSession = null
+                }
                 val where = "seed $seed step $step $request: ${sim.model} core=${sim.corePhase}/${sim.coreSession} full=${sim.coreFull}"
                 assertEquals("exactly one reply; $where", 1, replies.size)
+                val shown = sim.model.public()
+                assertEquals("a pause reason exactly while paused; $where", shown.phase == Phase.Paused, shown.pause != null)
+                assertEquals(
+                    "the reason is storage full exactly in the storage-full phase; $where",
+                    sim.model.phase is RecPhase.StorageFull,
+                    shown.pause is RecorderState.PauseReason.StorageFull,
+                )
                 // After StorageFull nothing scans until a Resume (or the recording ended).
                 if (request == RecEvent.Resume || sim.model.phase is RecPhase.Idle) fullUntilResume = false
                 if (fullUntilResume) {
@@ -480,7 +519,7 @@ class RecorderMachineTest {
                         assertFalse("no scan while storage is full; $where", sim.scanning)
                         assertFalse("no location while storage is full; $where", sim.locating)
                     }
-                    RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted, RecPhase.AdoptingCore,
+                    RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted, is RecPhase.AdoptingCore,
                     RecPhase.Restoring, is RecPhase.RestoreForeground, is RecPhase.Pausing, is RecPhase.Resuming,
                     is RecPhase.ResumingFromFull, is RecPhase.Stopping, is RecPhase.Reconciling,
                     -> fail("a request left the machine unsettled; $where")

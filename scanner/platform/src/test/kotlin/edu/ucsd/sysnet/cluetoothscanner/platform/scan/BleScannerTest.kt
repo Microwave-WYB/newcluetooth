@@ -12,6 +12,7 @@ import android.content.Intent
 import android.os.Looper
 import java.time.Duration
 import java.util.concurrent.Executor
+import kotlin.concurrent.thread
 import androidx.test.core.app.ApplicationProvider
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
@@ -320,6 +321,19 @@ class BleScannerTest {
         CoroutineScope(Dispatchers.Main.immediate).launch { outcome = scanner.drain() }
         idle()
         assertTrue(outcome is DrainOutcome.Failed)
+    }
+
+    @Test
+    fun `drains waiting on the actor are released when it ends, not left to their timeout (#70 re-review)`() {
+        // From another thread, so the actor (main looper, paused) has not run them yet when it ends.
+        val outcomes = java.util.concurrent.ConcurrentLinkedQueue<DrainOutcome>()
+        val drains = List(2) { thread { kotlinx.coroutines.runBlocking { outcomes += scanner.drain() } } }
+        Thread.sleep(200) // both Stop messages are in the inbox
+        scope.cancel()
+        idle()
+        drains.forEach { it.join(2_000) }
+        assertEquals("both released well before the 5 s bound", 2, outcomes.size)
+        assertTrue(outcomes.all { it is DrainOutcome.Failed })
     }
 
     @Test

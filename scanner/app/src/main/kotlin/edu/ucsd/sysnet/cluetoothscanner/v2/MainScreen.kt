@@ -241,6 +241,14 @@ fun MainScreen(vm: MainViewModel) {
                 ),
             )
         }
+
+        // a failure the user must see (an export, the onboarding save, a launch): over everything, above the nav bar
+        ui.notice?.let { n ->
+            NoticeBanner(
+                n, onRetry = { dispatch(MainEvent.RetryNotice) }, onDismiss = { dispatch(MainEvent.DismissNotice) },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = nav),
+            )
+        }
     }
 }
 

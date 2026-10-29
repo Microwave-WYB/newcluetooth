@@ -67,7 +67,7 @@ class ScanIngest(
         scope.launch(dispatcher + failureHandler(TAG)) { consume() }.invokeOnCompletion {
             // The consumer is gone (failed or cancelled): close the flush queue and release every waiting flush.
             flushes.close()
-            while (true) flushes.tryReceive().getOrNull()?.completeExceptionally(IllegalStateException("the batcher stopped")) ?: break
+            while (true) flushes.tryReceive().getOrNull()?.completeExceptionally(BatcherStopped()) ?: break
         }
     }
 
@@ -78,13 +78,24 @@ class ScanIngest(
 
     /**
      * Returns true once everything [offer]ed before this call has reached the core (or was dropped as rejected);
-     * false when that did not happen within [timeoutMs] or the batcher had stopped. Never throws.
+     * false when that did not happen within [timeoutMs] or the batcher had stopped. Never throws, except the
+     * caller's own cancellation, which it passes on.
      */
     suspend fun flush(timeoutMs: Long = FLUSH_TIMEOUT_MS): Boolean {
         val done = CompletableDeferred<Unit>()
         if (flushes.trySend(done).isFailure) return false
-        return withTimeoutOrNull(timeoutMs) { runCatching { done.await() }.isSuccess } ?: false
+        return withTimeoutOrNull(timeoutMs) {
+            try {
+                done.await()
+                true
+            } catch (stopped: BatcherStopped) {
+                false
+            }
+        } ?: false
     }
+
+    /** How the batcher releases a flush it will never finish; a value, completed into the flush's deferred. */
+    private class BatcherStopped : IllegalStateException("the batcher stopped")
 
     private sealed interface Next {
         data class Observation(val value: ScanObservationInput) : Next
@@ -149,7 +160,7 @@ class ScanIngest(
             done.complete(Unit)
         } finally {
             // A no-op after the completion above; releases the waiter when the consumer is cancelled or failed.
-            done.completeExceptionally(IllegalStateException("the batcher stopped"))
+            done.completeExceptionally(BatcherStopped())
         }
     }
 

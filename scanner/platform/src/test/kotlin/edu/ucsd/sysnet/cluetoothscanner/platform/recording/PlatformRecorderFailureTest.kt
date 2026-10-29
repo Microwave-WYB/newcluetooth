@@ -4,9 +4,16 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import edu.ucsd.sysnet.cluetoothscanner.platform.TestCoreIngest
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.async
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +22,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -102,7 +110,7 @@ class PlatformRecorderFailureTest {
     fun `a foreground host that throws is a refused service, with no session`() = runTest {
         hostThrows = true
         val recorder = recorder()
-        assertTrue(recorder.start().isFailure)
+        assertTrue((recorder.start() is PlatformResult.Err))
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertEquals(RecordingPhase.Idle, core.phase)
     }
@@ -111,7 +119,7 @@ class PlatformRecorderFailureTest {
     fun `a location call that throws is reported and the recording goes on`() = runTest {
         locationThrows = true
         val recorder = recorder()
-        assertEquals("s1", recorder.start().getOrNull())
+        assertEquals(PlatformResult.Ok("s1"), recorder.start())
         assertEquals(Phase.Recording, recorder.state.value.phase)
         assertTrue(recorder.state.value.error != null)
     }
@@ -120,7 +128,7 @@ class PlatformRecorderFailureTest {
     fun `a core that failed to open fails the start and leaves the service`() = runTest {
         val broken = CompletableDeferred<CoreIngest>().apply { completeExceptionally(IllegalStateException("core failed to open")) }
         val recorder = recorder(broken)
-        assertTrue(recorder.start().isFailure)
+        assertTrue((recorder.start() is PlatformResult.Err))
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertTrue("the service was left", !foreground)
     }
@@ -129,7 +137,7 @@ class PlatformRecorderFailureTest {
     fun `a state read that throws after a successful start keeps the session, its service and the scan (#70 review)`() = runTest {
         readThrows = true
         val recorder = recorder()
-        assertEquals("s1", recorder.start().getOrNull())
+        assertEquals(PlatformResult.Ok("s1"), recorder.start())
         assertEquals(Phase.Recording, recorder.state.value.phase)
         assertTrue(foreground)
         assertEquals(1, scannerStarts)
@@ -139,9 +147,9 @@ class PlatformRecorderFailureTest {
     @Test
     fun `a drain that fails stops its batch, yet the stop still reaches the core (#70 review)`() = runTest {
         val recorder = recorder()
-        assertEquals("s1", recorder.start().getOrNull())
+        assertEquals(PlatformResult.Ok("s1"), recorder.start())
         drainFails = true
-        assertEquals("s1", recorder.stop().getOrNull())
+        assertEquals(PlatformResult.Ok("s1"), recorder.stop())
         assertEquals(RecordingPhase.Idle, core.phase)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertTrue("the service was left", !foreground)
@@ -150,7 +158,7 @@ class PlatformRecorderFailureTest {
     @Test
     fun `R-10 a StorageFull event pauses the recording, keeps the service, and Resume goes through the core`() = runTest {
         val recorder = recorder()
-        assertEquals("s1", recorder.start().getOrNull())
+        assertEquals(PlatformResult.Ok("s1"), recorder.start())
         core.full = true
         core.phase = RecordingPhase.Paused // the core paused itself
         storageFull.emit(150_000_000)
@@ -158,16 +166,53 @@ class PlatformRecorderFailureTest {
         assertEquals(Phase.Paused, recorder.state.value.phase)
         assertEquals(1, drains)
         assertTrue("the service stays", foreground)
-        assertEquals(150_000_000L, recorder.storageFullBytes.value)
-        assertEquals(recorder.storageFullBytes, RecordingServiceLink.storageFull)
+        assertEquals(RecorderState.PauseReason.StorageFull(150_000_000), recorder.state.value.pause)
 
         recorder.resume()
         assertEquals("refused while full", Phase.Paused, recorder.state.value.phase)
+        assertTrue(recorder.state.value.pause is RecorderState.PauseReason.StorageFull)
         assertEquals(1, scannerStarts)
         core.full = false
         recorder.resume()
         assertEquals(Phase.Recording, recorder.state.value.phase)
         assertEquals(2, scannerStarts)
-        assertEquals(null, recorder.storageFullBytes.value)
+        assertEquals("the dialog can close: no longer paused for storage", null, recorder.state.value.pause)
+    }
+
+    @Test
+    fun `requests waiting on the recorder end Err when its actor ends, never hang (#80 review)`() = runTest {
+        val owner = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        val recorder = PlatformRecorder(
+            core = CompletableDeferred<CoreIngest>(core),
+            scanner = object : RecordingScanner {
+                override val deferred = MutableStateFlow(false)
+                override val dropped = MutableStateFlow(0L)
+                override val error = MutableStateFlow<String?>(null)
+                override fun start() = Unit
+                override suspend fun stopAndDrain() = Unit
+            },
+            location = object : RecordingLocation {
+                override fun startRecording() = Unit
+                override fun stopRecording() = Unit
+            },
+            host = object : ForegroundHost {
+                override suspend fun enterForeground(): Boolean = awaitCancellation() // Android never confirms
+                override fun leaveForeground() = Unit
+            },
+            grants = { emptyList() },
+            environment = { ScanEnvironment("m", "15", 35, "0.1.0", true, true, 1650, "all_supported", false) },
+            io = StandardTestDispatcher(testScheduler),
+            scope = owner,
+        )
+        val running = async { recorder.start() } // the actor runs it, waiting for the service
+        val queued = async { recorder.pause() } // still in the inbox
+        runCurrent()
+        assertFalse(running.isCompleted || queued.isCompleted)
+        owner.cancel()
+        runCurrent()
+        assertTrue("the request it was running is answered", running.await() is PlatformResult.Err)
+        assertTrue("the queued request is answered", queued.await() is PlatformResult.Err)
+        assertTrue("a request after the end is answered at once", recorder.stop() is PlatformResult.Err)
     }
 }
+

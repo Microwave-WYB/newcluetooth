@@ -11,6 +11,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -150,6 +151,23 @@ class ScanIngestTest {
         assertFalse(waiting.await())
         assertFalse(ingest.flush())
         assertEquals(0L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `a cancelled caller of flush is cancelled, not answered false (#70 re-review)`() = runTest {
+        refuse = { CoreException.Backpressure() }
+        val ingest = ingest()
+        ingest.offer(observation(1))
+        var after = false
+        val caller = launch {
+            ingest.flush()
+            after = true
+        }
+        runCurrent()
+        caller.cancel()
+        runCurrent()
+        assertTrue(caller.isCancelled)
+        assertFalse("nothing after flush runs in a cancelled caller", after)
     }
 
     @Test

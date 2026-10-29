@@ -80,9 +80,9 @@ and paused the recording itself (the session stays open). The Recorder gets it a
 
 1. Drain the scanner and stop the RECORDING location request; no `core.pauseRecording()` (the core already paused).
 2. Read the core's state, so the elapsed time stops where the core stopped.
-3. The phase is `StorageFull(session, freeBytes)`: public `Paused`. The service **stays in the foreground** without
-   the wake lock, and the notification reads "Recording paused: storage is full" / "Free up space to continue ·
-   N MB free", with Resume and Stop.
+3. The phase is `StorageFull(session, freeBytes)`: public `Paused` with `pause = StorageFull(freeBytes)`. The
+   service **stays in the foreground** without the wake lock, and the notification reads "Recording paused: storage
+   is full" / "Free up space to continue · N MB free", with Resume and Stop.
 4. Nothing scans until Resume. Resume takes the normal path (`core.resumeRecording()`, location, the scanner); the
    core refuses while free space is below the floor, and the recording then stays paused for storage. Stop works as
    from a pause.

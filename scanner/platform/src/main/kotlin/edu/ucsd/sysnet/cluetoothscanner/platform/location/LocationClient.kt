@@ -29,6 +29,8 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.LocationSettingsRequest
 import com.google.android.gms.location.Priority
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.MyLocation
@@ -123,9 +125,9 @@ class LocationClient(
     override fun stopRecording() = send(LocEvent.Recording(false))
 
     /** P-5 "Turn on": the Play services settings dialog, else the system location settings. */
-    override fun turnOn(activity: ComponentActivity) {
+    override fun turnOn(activity: ComponentActivity): PlatformResult<Unit> {
         if (!playServices()) return openLocationSettings(activity)
-        try {
+        return try {
             val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LocationProfile.RECORDING.intervalMs).build()
             val settings = LocationSettingsRequest.Builder().addLocationRequest(request).setAlwaysShow(true).build()
             LocationServices.getSettingsClient(activity).checkLocationSettings(settings)
@@ -133,17 +135,22 @@ class LocationClient(
                     val resolved = (error as? ResolvableApiException)?.let {
                         runCatching { it.startResolutionForResult(activity, TURN_ON_REQUEST) }.isSuccess
                     } ?: false
+                    // Asynchronous: a fallback that fails here can only be logged.
                     if (!resolved) openLocationSettings(activity)
                 }
+            PlatformResult.Ok(Unit)
         } catch (failure: Exception) {
             log("Location settings check failed", failure)
             openLocationSettings(activity)
         }
     }
 
-    private fun openLocationSettings(activity: ComponentActivity) {
-        runCatching { activity.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
-            .onFailure { log("No location settings screen", it) }
+    private fun openLocationSettings(activity: ComponentActivity): PlatformResult<Unit> = try {
+        activity.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        PlatformResult.Ok(Unit)
+    } catch (failure: RuntimeException) {
+        log("No location settings screen", failure)
+        PlatformResult.Err(PlatformError.Unavailable(failure.message ?: failure::class.java.simpleName))
     }
 
     private fun send(event: LocEvent) {

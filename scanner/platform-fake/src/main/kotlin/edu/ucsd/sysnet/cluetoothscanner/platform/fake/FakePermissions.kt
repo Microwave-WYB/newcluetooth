@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContract
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Perm
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PermissionState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions
@@ -56,12 +57,14 @@ class FakePermissions(
         return names.associateWith { true }
     }
 
-    override fun openAppSettings() {
+    override fun openAppSettings(): PlatformResult<Unit> {
         openAppSettingsCalls++
+        return PlatformResult.Ok(Unit)
     }
 
-    override fun requestEnableBluetooth(activity: ComponentActivity) {
+    override fun requestEnableBluetooth(activity: ComponentActivity): PlatformResult<Unit> {
         _state.update { it.copy(bluetoothOn = true) }
+        return PlatformResult.Ok(Unit)
     }
 
     private fun Perm.granted() = if (this == Perm.NotRequired) this else Perm.Granted

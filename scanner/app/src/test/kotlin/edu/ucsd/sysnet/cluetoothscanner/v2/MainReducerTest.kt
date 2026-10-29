@@ -7,6 +7,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionView
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Perm
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PermissionState
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
 import edu.ucsd.sysnet.cluetoothscanner.chrome.DeleteConfirm
@@ -301,17 +302,43 @@ class MainFailureTest {
         assertEquals(0L, failed(MainUiState(), MainTask.Effect(MainEffect.LoadStorage)).state.storage?.databaseBytes)
     }
 
-    @Test fun aFailedExportStopsExporting() {
+    @Test fun aFailedExportStopsExportingAndSaysSo() {
         val exporting = MainUiState().on(MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)),
-            MainEvent.EditStorage { it.copy(exportFormat = ExportFormat.Csv) }, MainEvent.Export(toDownloads = false))
+            MainEvent.EditStorage { it.copy(exportFormat = ExportFormat.Csv) }, MainEvent.Export(toDownloads = true))
         assertEquals(true, exporting.storage?.exporting)
-        assertEquals(false, failed(exporting, MainTask.Effect(MainEffect.Export(Scope.All, ExportFormat.Csv, false))).state.storage?.exporting)
+        val failed = reduce(exporting, MainEvent.Failed(MainTask.Effect(MainEffect.Export(Scope.All, ExportFormat.Csv, true)), PlatformFailure(PlatformError.Io("disk full"))))
+        assertEquals(false, failed.state.storage?.exporting)
+        assertEquals("not ExportFinished: it says it failed", Notice("Export failed: disk full"), failed.state.notice)
+        assertTrue(failed.effects.isEmpty())
+    }
+
+    @Test fun aFailedOnboardingSaveKeepsTheOnboardingAndOffersRetry() {
+        val ob = MainUiState().on(MainEvent.SettingsLoaded(settings(done = false), perms), MainEvent.EditOnboarding { it.copy(userId = "x7") })
+        val save = MainEffect.SaveOnboarding("x7", ob.onboarding?.ui?.autoRecord ?: true)
+        val failed = reduce(ob, MainEvent.Failed(MainTask.Effect(save), PlatformFailure(PlatformError.Io("settings not written")))).state
+        assertEquals("the onboarding stays open", ob.onboarding, failed.onboarding)
+        assertEquals(Notice("Could not save the settings: settings not written", retry = save), failed.notice)
+        val retried = reduce(failed, MainEvent.RetryNotice)
+        assertNull(retried.state.notice)
+        assertEquals(listOf<MainEffect>(save), retried.effects)
+    }
+
+    @Test fun failedLaunchesAndPlatformCallsTheUserAskedForShowTheirError() {
+        val error = PlatformFailure(PlatformError.Unavailable("No activity found"))
+        for (task in listOf(MainTask.Effect(MainEffect.OpenAppSettings), MainTask.Effect(MainEffect.UploadNow), MainTask.Launch)) {
+            val failed = reduce(MainUiState(), MainEvent.Failed(task, error)).state
+            assertEquals("$task", Notice("No activity found"), failed.notice)
+            assertNull("$task: a plain notice has no retry", failed.notice?.retry)
+            assertNull("$task: Dismiss closes it", failed.on(MainEvent.DismissNotice).notice)
+            assertEquals("$task: Retry without a retry only closes it", Step(failed.copy(notice = null)), reduce(failed, MainEvent.RetryNotice))
+        }
+        assertEquals("a thrown failure shows its own message", Notice("boom"), failed(MainUiState(), MainTask.Launch).state.notice)
     }
 
     @Test fun otherFailuresLeaveTheStateAlone() {
         val s = MainUiState(scope = sessionA, searchQuery = "tile").on(MainEvent.OpenSearch)
         listOf(MainTask.View(s.viewKey), MainTask.Sessions, MainTask.CoreEvents, MainTask.Platform,
-            MainTask.Effect(MainEffect.SaveOnboarding("x", true)), MainTask.Effect(MainEffect.SheetsBack),
+            MainTask.Effect(MainEffect.SheetsBack),
             MainTask.Effect(MainEffect.Delete(Scope.All, false)), MainTask.Effect(MainEffect.StartRecording),
         ).forEach { assertEquals(Step(s), failed(s, it)) }
         s.searchKey?.let { assertEquals(Step(s), failed(s, MainTask.Search(it))) }

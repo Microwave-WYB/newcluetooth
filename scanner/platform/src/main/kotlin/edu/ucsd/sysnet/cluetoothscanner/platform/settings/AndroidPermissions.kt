@@ -16,6 +16,8 @@ import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Perm
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PermissionState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions
@@ -85,7 +87,7 @@ class AndroidPermissions(
             }
         }
 
-    override fun openAppSettings() {
+    override fun openAppSettings(): PlatformResult<Unit> = launch {
         context.startActivity(
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
@@ -93,13 +95,20 @@ class AndroidPermissions(
     }
 
     /** O-2 step 2: the system enable dialog; without `BLUETOOTH_CONNECT` (API 31+) the Bluetooth settings instead. */
-    override fun requestEnableBluetooth(activity: ComponentActivity) {
+    override fun requestEnableBluetooth(activity: ComponentActivity): PlatformResult<Unit> {
         lastActivity = WeakReference(activity)
-        try {
-            activity.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
-        } catch (_: SecurityException) {
-            activity.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+        return when (val asked = launch { activity.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) }) {
+            is PlatformResult.Ok -> asked
+            is PlatformResult.Err -> launch { activity.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
         }
+    }
+
+    /** An activity launch: no activity for the intent, or a refusal, is [PlatformError.Unavailable], never a throw. */
+    private fun launch(start: () -> Unit): PlatformResult<Unit> = try {
+        start()
+        PlatformResult.Ok(Unit)
+    } catch (failure: RuntimeException) {
+        PlatformResult.Err(PlatformError.Unavailable(failure.message ?: failure::class.java.simpleName))
     }
 
     /** Every permission of the three O-2 groups that is not granted. */
