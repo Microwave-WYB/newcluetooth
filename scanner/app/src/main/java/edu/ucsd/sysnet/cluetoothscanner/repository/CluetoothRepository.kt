@@ -235,7 +235,7 @@ class CluetoothRepository(
             return ObservationAdmission.REJECTED_DEGRADED
         }
         // Only rows the core admitted enter the minute history, so both views agree. Payloads and the
-        // in-range view come from the live stream instead (see CluetoothApplication).
+        // in-range view come from the live stream instead (see V3CluetoothApplication).
         localData.onRecordedAdvertisement(observation.addr, observation.rssi, observation.raw, observation.scannedAtMs)
         if (retained >= ingressHighWatermark) {
             pauseIngress()

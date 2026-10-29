@@ -30,6 +30,7 @@ androidxTestRunner = "1.6.2"
 # v2 test stack (lane C): Robolectric for every v2 module's JVM tests, Roborazzi for screenshots.
 robolectric = "4.16.1"
 datastore = "1.1.7"
+coreSplashscreen = "1.0.1"
 androidxTestCore = "1.6.1"
 roborazzi = "1.50.0"
 
@@ -73,6 +74,7 @@ androidx-metrics-performance = { group = "androidx.metrics", name = "metrics-per
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 androidx-ui-text = { group = "androidx.compose.ui", name = "ui-text" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 roborazzi = { group = "io.github.takahirom.roborazzi", name = "roborazzi", version.ref = "roborazzi" }
 roborazzi-compose = { group = "io.github.takahirom.roborazzi", name = "roborazzi-compose", version.ref = "roborazzi" }

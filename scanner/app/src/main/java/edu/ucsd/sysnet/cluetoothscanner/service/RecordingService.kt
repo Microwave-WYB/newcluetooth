@@ -15,8 +15,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
-import edu.ucsd.sysnet.cluetoothscanner.MainActivity
+import edu.ucsd.sysnet.cluetoothscanner.V3CluetoothApplication
+import edu.ucsd.sysnet.cluetoothscanner.V3MainActivity
 import edu.ucsd.sysnet.cluetoothscanner.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +37,7 @@ class RecordingService : Service() {
     private var lastNotificationAtMs = 0L
 
     private val controller: RecordingController
-        get() = (application as CluetoothApplication).recordingController
+        get() = (application as V3CluetoothApplication).recordingController
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -139,7 +139,7 @@ class RecordingService : Service() {
         val open = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            Intent(this, V3MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -186,7 +186,7 @@ internal class AndroidRecordingHost(private val context: Context) : RecordingHos
             ContextCompat.startForegroundService(context, Intent(context, RecordingService::class.java))
         } catch (error: Exception) {
             Log.w("RecordingService", "Foreground service not started; recording continues in the process", error)
-            (context.applicationContext as? CluetoothApplication)?.recordingController?.reportServiceFailure(
+            (context.applicationContext as? V3CluetoothApplication)?.recordingController?.reportServiceFailure(
                 "The recording service could not start (${error.message ?: error::class.java.simpleName}); " +
                     "recording continues only while the app stays open",
             )

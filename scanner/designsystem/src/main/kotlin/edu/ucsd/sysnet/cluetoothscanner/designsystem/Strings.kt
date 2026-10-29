@@ -232,6 +232,10 @@ object Strings {
     const val RecordAutomaticallySub = "You can turn this off in Settings."
     const val MissingTitle = "Cluetooth needs one more thing"
 
+    // ---- App (integration) ----
+    /** §1.2.2: the core could not open its data (the error class and message follow, then Try again). */
+    const val CoreOpenFailed = "Cluetooth could not open its data"
+
     // ---- Notifications (B) ----
     /** "Recording · 12:34 · 26 devices". */
     fun recordingNotification(elapsed: String, devices: Int) = "Recording · $elapsed · ${devices(devices)}"

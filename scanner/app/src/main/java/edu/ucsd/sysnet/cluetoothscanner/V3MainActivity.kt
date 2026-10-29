@@ -54,7 +54,7 @@ import java.time.Instant
 import java.util.UUID
 import java.util.Locale
 
-class MainActivity : ComponentActivity() {
+class V3MainActivity : ComponentActivity() {
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         val bluetoothManager = getSystemService(BluetoothManager::class.java)
@@ -117,10 +117,10 @@ class MainActivity : ComponentActivity() {
         var showPermissionRationale by remember { mutableStateOf(false) }
         var showUserIdDialog by remember { mutableStateOf(DeviceIdManager.getUserId(context) == null) }
 
-        val repository = remember { (application as CluetoothApplication).repository }
+        val repository = remember { (application as V3CluetoothApplication).repository }
         val serviceScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
-        val cluetoothApplication = remember { application as CluetoothApplication }
-        // Process-owned (see CluetoothApplication) so a recording outlives this Activity.
+        val cluetoothApplication = remember { application as V3CluetoothApplication }
+        // Process-owned (see V3CluetoothApplication) so a recording outlives this Activity.
         val locationService = cluetoothApplication.locationService
         val uploadService = remember { UploadService(context) }
         val storageService = remember { StorageService(context, serviceScope, uploadService) }
@@ -516,7 +516,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        private const val TAG = "MainActivity"
+        private const val TAG = "V3MainActivity"
     }
 }
 

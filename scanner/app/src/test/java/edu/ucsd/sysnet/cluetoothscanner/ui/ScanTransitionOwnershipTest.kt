@@ -13,13 +13,13 @@ class ScanTransitionOwnershipTest {
             "edu/ucsd/sysnet/cluetoothscanner/ui/ScanViewModel.kt",
         ).readText()
         val activity = mainSource(
-            "edu/ucsd/sysnet/cluetoothscanner/MainActivity.kt",
+            "edu/ucsd/sysnet/cluetoothscanner/V3MainActivity.kt",
         ).readText()
         val service = mainSource(
             "edu/ucsd/sysnet/cluetoothscanner/service/BleScanService.kt",
         ).readText()
         val application = mainSource(
-            "edu/ucsd/sysnet/cluetoothscanner/CluetoothApplication.kt",
+            "edu/ucsd/sysnet/cluetoothscanner/V3CluetoothApplication.kt",
         ).readText()
 
         assertFalse(viewModel.contains("bleScanService.startScanning()"))

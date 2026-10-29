@@ -10,7 +10,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import edu.ucsd.sysnet.cluetoothscanner.MainActivity
+import edu.ucsd.sysnet.cluetoothscanner.V3MainActivity
 import edu.ucsd.sysnet.cluetoothscanner.R
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewayScanSession
 import edu.ucsd.sysnet.cluetoothscanner.core.GatewaySessionStatus
@@ -57,7 +57,7 @@ internal class InterruptedRecordingNotifier(private val context: Context) {
         val open = PendingIntent.getActivity(
             context,
             0,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            Intent(context, V3MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         manager.notify(

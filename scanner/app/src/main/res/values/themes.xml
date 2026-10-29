@@ -2,4 +2,10 @@
 <resources>
 
     <style name="Theme.CluetoothScanner" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- v2: the system splash, held until the core is ready (§1.2); then the plain theme (Compose draws the rest). -->
+    <style name="Theme.Cluetooth.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/cluetooth_bg</item>
+        <item name="postSplashScreenTheme">@style/Theme.CluetoothScanner</item>
+    </style>
 </resources>

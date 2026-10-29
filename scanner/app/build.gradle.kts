@@ -78,8 +78,8 @@ android {
         applicationId = "edu.ucsd.sysnet.cluetoothscanner"
         minSdk = 24
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.1.0"
+        versionCode = 13
+        versionName = "0.2.0"
         buildConfigField("boolean", "V2_UPLOADER_ENABLED", v2UploaderEnabled.toString())
         buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
         manifestPlaceholders["CLUETOOTH_MAPS_API_KEY"] = mapsApiKey
@@ -136,7 +136,6 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDir(layout.buildDirectory.dir("generated/source/uniffi"))
-            jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs"))
         }
     }
 
@@ -221,21 +220,12 @@ val generateCluetoothCoreBindings by tasks.registering(Exec::class) {
     outputs.dir(layout.buildDirectory.dir("generated/source/uniffi"))
 }
 
-val buildCluetoothCoreAndroid by tasks.registering(Exec::class) {
+// v2: libcluetooth_core.so (v3 and v2 bindings in one library) is built and packaged by :core-bridge. This name
+// stays as an alias so the host check tasks' `-x :app:buildCluetoothCoreAndroid` keeps working.
+val buildCluetoothCoreAndroid by tasks.registering {
     group = "rust"
-    description = "Build the requested Rust Android ABIs (default arm64-v8a, see cluetoothAbis) at API 24; fails if any is missing"
-    workingDir(cluetoothCoreDirectory)
-    environment("CLUETOOTH_ABIS", cluetoothCoreAbis.joinToString(","))
-    inputs.property("cluetoothAbis", cluetoothCoreAbis.joinToString(","))
-    commandLine(
-        "bash",
-        "scripts/build-android.sh",
-        layout.buildDirectory.dir("generated/jniLibs").get().asFile.absolutePath,
-    )
-    inputs.files(cluetoothCoreInputs)
-    inputs.file(rootProject.layout.projectDirectory.file("../mise.toml"))
-    inputs.file(cluetoothCoreDirectory.file("scripts/build-android.sh"))
-    outputs.dir(layout.buildDirectory.dir("generated/jniLibs"))
+    description = "Alias of :core-bridge:buildCluetoothCoreAndroid (the one libcluetooth_core.so)"
+    dependsOn(":core-bridge:buildCluetoothCoreAndroid")
 }
 
 // Releases since 0.0.5 only upload through the Rust v2 Parquet path; the legacy
@@ -246,11 +236,6 @@ if (!v2UploaderEnabled) {
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     dependsOn(generateCluetoothCoreBindings)
-}
-tasks.matching { task ->
-    task.name.startsWith("merge") && task.name.endsWith("JniLibFolders")
-}.configureEach {
-    dependsOn(buildCluetoothCoreAndroid)
 }
 
 val prepareCluetoothCoreAndroid by tasks.registering {
@@ -286,6 +271,20 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    // v2 (integration step 1, docs/v2-api.md §6.7.1). The core is bound in one place, v2/CoreBinding.kt.
+    implementation(project(":core-api"))
+    implementation(project(":ui-contract"))
+    implementation(project(":designsystem"))
+    implementation(project(":chrome"))
+    implementation(project(":sheets"))
+    implementation(project(":map"))
+    implementation(project(":platform-api"))
+    implementation(project(":platform"))
+    implementation(project(":core-bridge")) // only v2/CoreBinding.kt names it; it packages libcluetooth_core.so
+    implementation(project(":platform-fake")) // only v2/PlatformPlaceholders.kt may use it (until #53 and the GATT/upload/export pieces)
+    implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.datastore.preferences) // DataStoreSettings exposes DataStore in its constructor; :platform has it as implementation
+
 
     implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
     implementation("com.google.firebase:firebase-storage")
@@ -336,6 +335,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":core-fake")) // CoreOpenerTest's opened core
     // JVM stand-in for Android's SQLite in the local-data tests
     testImplementation(libs.sqlite.jdbc)
     androidTestImplementation(libs.androidx.junit)
