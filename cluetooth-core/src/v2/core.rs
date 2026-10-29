@@ -24,11 +24,13 @@ use crate::{LocationFix, PendingUpload, PreparedUpload, ScanEnvironment, ScanObs
 use super::catalog::Catalog;
 use super::db;
 use super::error::CoreError;
-use super::keys::key_of;
+use super::keys::{addr_of as key_addr, key_of};
 use super::live::{self, LiveState};
 use super::query::{self, Ctx};
 use super::store::{Obs, RoutePoint, Store, haversine_m};
 use super::types::*;
+use super::{adv, gatt_view, store};
+use rusqlite::OptionalExtension;
 
 pub const API_VERSION: u32 = 8;
 
@@ -169,6 +171,8 @@ fn coalesce(mut a: LiveDelta, b: LiveDelta) -> LiveDelta {
 pub struct Core {
     config: CoreConfig,
     catalog: Arc<Catalog>,
+    /// `filesDir/cluetooth-core` (§1.5).
+    data_dir: std::path::PathBuf,
     writer: Mutex<Writer>,
     reader: Mutex<Connection>,
     display: Mutex<DisplayFilter>,
@@ -259,6 +263,7 @@ impl Core {
             listener,
             notify: Mutex::new(notify),
             catalog,
+            data_dir: dir.to_path_buf(),
             config,
         }))
     }
@@ -382,6 +387,91 @@ impl Core {
             Ok(()) => {}
         }
         result
+    }
+
+    /// §2.4 `gatt_target`: the device's latest sighting, pending first, then the DB.
+    fn gatt_target_of(&self, key: DeviceKey) -> Result<Option<GattTarget>, CoreError> {
+        let w = lock(&self.writer);
+        let session_id = w.recording.as_ref().map(|r| r.uuid.clone());
+        let addr_type = |t: Option<i64>| match t {
+            Some(0) => Some("public".to_owned()),
+            Some(1) => Some("random".to_owned()),
+            _ => None,
+        };
+        let pending = w.recording.as_ref().and_then(|r| {
+            r.pending
+                .iter()
+                .filter(|o| o.addr == key)
+                .max_by_key(|o| o.at_ms)
+        });
+        if let Some(o) = pending {
+            let named: Option<String> = w
+                .store
+                .conn
+                .query_row("SELECT name FROM devices WHERE addr = ?1", [key], |r| {
+                    r.get(0)
+                })
+                .optional()?
+                .flatten();
+            return Ok(Some(GattTarget {
+                addr: key_addr(key),
+                addr_type: addr_type(o.addr_type.map(i64::from)),
+                name: adv::payload_fields(&adv::split(&o.raw))
+                    .local_name
+                    .or(named),
+                trigger_raw: o.raw.clone(),
+                trigger_rssi: o.rssi,
+                trigger_scanned_at_ms: o.at_ms,
+                trigger_is_legacy: o.is_legacy,
+                trigger_primary_phy: o.primary_phy,
+                trigger_secondary_phy: o.secondary_phy,
+                trigger_adv_sid: o.adv_sid,
+                session_id,
+            }));
+        }
+        let conn = &w.store.conn;
+        let latest = conn
+            .query_row(
+                "SELECT payload_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, rssi_max, last_seen_ms
+                 FROM sighting_minutes WHERE addr = ?1 ORDER BY last_seen_ms DESC, id DESC LIMIT 1",
+                [key],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, i64>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, Option<i16>>(6)?,
+                        r.get::<_, i64>(7)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((payload, at, legacy, primary, secondary, sid, rssi, seen)) = latest else {
+            return Ok(None);
+        };
+        let opt = |v: i64| (v >= 0).then_some(v as i32);
+        let name: Option<String> = conn
+            .query_row("SELECT name FROM devices WHERE addr = ?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .flatten();
+        Ok(Some(GattTarget {
+            addr: key_addr(key),
+            addr_type: addr_type(Some(at)),
+            name,
+            trigger_raw: store::payload_raw(conn, payload)?,
+            trigger_rssi: rssi,
+            trigger_scanned_at_ms: seen,
+            trigger_is_legacy: (legacy >= 0).then_some(legacy == 1),
+            trigger_primary_phy: opt(primary),
+            trigger_secondary_phy: opt(secondary),
+            trigger_adv_sid: opt(sid),
+            session_id,
+        }))
     }
 
     #[cfg(test)]
@@ -697,13 +787,27 @@ impl Core {
     }
 
     /// [P] The trigger advertisement from the device's latest payload.
-    pub async fn gatt_target(&self, _key: DeviceKey) -> Option<GattTarget> {
-        None
+    /// The address and type come from the latest sighting, the current recording's uncommitted ones included.
+    /// `None` for a device the core has never seen.
+    pub async fn gatt_target(&self, key: DeviceKey) -> Option<GattTarget> {
+        self.gatt_target_of(key).ok().flatten()
     }
 
-    /// [W] Validates gatt/v1 and stores it.
-    pub fn ingest_gatt(&self, _gatt_v1_json: String) -> Result<GattView, CoreError> {
-        Err(not_yet("ingest_gatt"))
+    /// [W] Validates gatt/v1 (unchanged), writes `pending/gatt/v1` (plaintext), fills the gatt tables, and returns
+    /// the view. Saving the same object again is idempotent.
+    pub fn ingest_gatt(&self, gatt_v1_json: String) -> Result<GattView, CoreError> {
+        let file = crate::gatt::save(&self.data_dir, gatt_v1_json.as_bytes())?;
+        let (view, _) = gatt_view::view(&self.catalog, &gatt_v1_json)?;
+        {
+            let mut w = lock(&self.writer);
+            let tx = w.store.conn.transaction()?;
+            gatt_view::store(&tx, &gatt_v1_json)?;
+            tx.commit()?;
+        }
+        if !file.archived {
+            self.emit(CoreEvent::UploadNeeded);
+        }
+        Ok(view)
     }
 
     // ---- §2.5 queries ----
@@ -832,8 +936,7 @@ impl Core {
 
     /// [P] D-13.7.
     pub async fn device_gatt(&self, key: DeviceKey) -> Result<Option<GattView>, CoreError> {
-        let _ = key;
-        Ok(None)
+        self.read(|c, _| gatt_view::latest(c, &self.catalog, key))
     }
 
     /// [V Search] Q-1/Q-2; `None` for a blank query; `device_order` order.
