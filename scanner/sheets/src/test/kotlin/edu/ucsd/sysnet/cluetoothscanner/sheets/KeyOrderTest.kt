@@ -53,4 +53,39 @@ class KeyOrderTest {
         }
         for ((v, snapshot) in versions) assertArrayEquals(snapshot, v.toLongArray())
     }
+
+    /** Bytes this thread allocated so far (HotSpot's per-thread counter; reflective, the unit tests compile against android.jar). */
+    private fun allocated(): Long {
+        val bean = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null)
+        val counter = Class.forName("com.sun.management.ThreadMXBean").getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
+        return counter.invoke(bean, Thread.currentThread().id) as Long
+    }
+
+    @Test
+    fun `600k keys stay within about 9 MB, with no boxing`() {
+        val n = 600_000
+        val rnd = Random(5)
+        val input = LongArray(n) { rnd.nextLong() }
+        val before = allocated()
+        val order = KeyOrder.of(input)
+        val built = allocated() - before
+        // keys 4.8 MB + a 2^20-slot int index 4.2 MB; a HashMap<Long, Int> index alone is 35-40 MB
+        assertTrue("footprint ${order.footprintBytes()}", order.footprintBytes() <= 9_100_000)
+        assertTrue("allocated $built", built < 12_000_000)
+        // incremental appends (the live path) double the buffers, so at most twice that
+        var live = KeyOrder.Empty
+        val startLive = allocated()
+        for (i in 0 until n step 1000) live = live.append(input.copyOfRange(i, i + 1000))
+        assertTrue("footprint ${live.footprintBytes()}", live.footprintBytes() <= 18_000_000)
+        assertTrue("allocated ${allocated() - startLive}", allocated() - startLive < 40_000_000)
+        // and still exact
+        assertEquals(n, order.size)
+        assertArrayEquals(input, order.toLongArray())
+        assertArrayEquals(input, live.toLongArray())
+        for (i in 0 until n step 997) assertTrue(input[i] in order && input[i] in live)
+        repeat(1000) { assertFalse(rnd.nextLong() in order) }
+        val probe = DeviceKeys(LongArray(5000) { input[rnd.nextInt(n)] }, 0)
+        val wanted = probe.keys.toHashSet()
+        assertArrayEquals(input.filter { it in wanted }.toLongArray(), order.visible(probe))
+    }
 }
