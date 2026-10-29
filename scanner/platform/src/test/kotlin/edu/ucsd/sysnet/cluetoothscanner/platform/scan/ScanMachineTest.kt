@@ -291,4 +291,26 @@ class ScanMachineTest {
         const val SEEDS = 200
         const val STEPS = 400
     }
+
+    @Test
+    fun `a startScan that throws in the runner retries like a refused start`() {
+        val sim = Sim()
+        sim.send(ScanEvent.Start)
+        val started = sim.log.filterIsInstance<ScanEffect.StartScan>().single()
+        sim.active.clear()
+        sim.send(ScanEvent.EffectFailed(started, "DeadObjectException"))
+        assertTrue(sim.state.phase is ScanPhase.Waiting)
+        assertTrue(TimerKind.Retry in sim.timers)
+        sim.advance(ScanMachine.RETRY.value)
+        assertEquals(1, sim.active.size)
+    }
+
+    @Test
+    fun `a receiver registration that throws is reported, the session goes on`() {
+        val sim = Sim()
+        sim.send(ScanEvent.Start)
+        sim.send(ScanEvent.EffectFailed(ScanEffect.RegisterReceivers, "SecurityException"))
+        assertTrue(sim.state.phase is ScanPhase.Scanning)
+        assertTrue(sim.state.error != null)
+    }
 }

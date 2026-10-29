@@ -4,6 +4,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -95,6 +96,11 @@ class GattDiscoveryManager(
      */
     private val activeId = AtomicReference<String?>(null)
     private val retryJob = AtomicReference<Job?>(null)
+
+    /** Every coroutine the manager launches carries it: an escaped exception ends a running discovery's UI state. */
+    private val guard = failureHandler("GattDiscoveryManager") {
+        if (_state.value is GattUiState.Running) _state.value = GattUiState.Idle
+    }
     private val _state = MutableStateFlow<GattUiState>(GattUiState.Idle)
     val state: StateFlow<GattUiState> = _state.asStateFlow()
 
@@ -104,7 +110,7 @@ class GattDiscoveryManager(
     /** [start] returning the discovery's job (null when one is already running); [state] ends Finished or Idle. */
     fun launch(request: GattStartRequest): Job? {
         if (!slot.compareAndSet(Slot.Free, Slot.Starting)) return null
-        return scope.launch {
+        return scope.launch(guard) {
             try {
                 execute(request)
             } finally {
@@ -145,13 +151,13 @@ class GattDiscoveryManager(
             return
         }
         // Earlier results the store never accepted get another try, without delaying this run.
-        scope.launch { flushPending() }
+        scope.launch(guard) { flushPending() }
         activeId.set(request.id)
         putQueued(request.id, interruptedJson(request, startedAt, GattStage.CONNECT))
 
         // The queue entry follows the stage, not every read: one write per stage change.
         val stages = Channel<GattStage>(Channel.CONFLATED)
-        val marker = scope.launch {
+        val marker = scope.launch(guard) {
             for (stage in stages) {
                 if (activeId.get() == request.id) putQueued(request.id, interruptedJson(request, startedAt, stage))
             }
@@ -275,7 +281,7 @@ class GattDiscoveryManager(
     private fun scheduleRetry() {
         val existing = retryJob.get()
         if (existing?.isActive == true) return
-        val loop = scope.launch(start = CoroutineStart.LAZY) {
+        val loop = scope.launch(guard, start = CoroutineStart.LAZY) {
             var wait = retryFirstMs
             while (true) {
                 delay(wait)

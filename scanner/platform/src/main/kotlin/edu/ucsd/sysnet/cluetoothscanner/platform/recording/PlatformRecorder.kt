@@ -6,6 +6,8 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
+import edu.ucsd.sysnet.cluetoothscanner.platform.describe
+import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -16,6 +18,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -92,12 +95,15 @@ class PlatformRecorder(
 
     private val inbox = Channel<Message>(Channel.UNLIMITED)
 
+    /** Every coroutine this runner launches carries it: an escaped exception becomes the recorder's error. */
+    private val guard = failureHandler(TAG) { failure -> _state.update { it.copy(error = "The recorder stopped (${failure.describe()})") } }
+
     init {
-        scope.launch { scanner.deferred.collect { signal(RecEvent.ScannerDeferred(it)) } }
-        scope.launch { scanner.dropped.collect { signal(RecEvent.Dropped(it)) } }
-        scope.launch { scanner.error.collect { error -> error?.let { signal(RecEvent.ScannerError(it)) } } }
-        coreStates?.let { flow -> scope.launch { flow.collect { signal(RecEvent.CoreChanged(it)) } } }
-        scope.launch { actor() }
+        scope.launch(guard) { scanner.deferred.collect { signal(RecEvent.ScannerDeferred(it)) } }
+        scope.launch(guard) { scanner.dropped.collect { signal(RecEvent.Dropped(it)) } }
+        scope.launch(guard) { scanner.error.collect { error -> error?.let { signal(RecEvent.ScannerError(it)) } } }
+        coreStates?.let { flow -> scope.launch(guard) { flow.collect { signal(RecEvent.CoreChanged(it)) } } }
+        scope.launch(guard) { actor() }
         // RecordingService reads the process recorder from here (notification actions, foreground confirmation).
         RecordingServiceLink.recorder = this
     }
@@ -147,7 +153,7 @@ class PlatformRecorder(
                         RecEffect.EnterForeground, RecEffect.LeaveForeground, RecEffect.CoreStart, RecEffect.CorePause,
                         RecEffect.CoreResume, RecEffect.CoreStop, RecEffect.CoreRead, RecEffect.DrainScanner,
                         RecEffect.StartScanner, RecEffect.StartLocation, RecEffect.StopLocation,
-                        -> execute(effect)?.let(pending::add)
+                        -> runEffect(effect)?.let(pending::add)
                     }
                 }
             }
@@ -156,51 +162,43 @@ class PlatformRecorder(
         }
     }
 
-    /** Runs one effect; a result (or any failure, as a value) comes back as the next event. */
-    private suspend fun execute(effect: RecEffect): RecEvent? = when (effect) {
-        RecEffect.EnterForeground -> RecEvent.ForegroundEntered(attempt { host.enterForeground() } ?: false)
-        RecEffect.LeaveForeground -> attempt { host.leaveForeground() }.let { null }
-        RecEffect.CoreStart -> coreCall {
-            val ingest = core.await()
-            ingest.startRecording(environment())
-            RecEvent.CoreStarted(ingest.recordingState())
-        }
-        RecEffect.CorePause -> coreCall {
-            val ingest = core.await()
-            ingest.pauseRecording()
-            RecEvent.CorePaused(ingest.recordingState())
-        }
-        RecEffect.CoreResume -> coreCall {
-            val ingest = core.await()
-            ingest.resumeRecording()
-            RecEvent.CoreResumed(ingest.recordingState())
-        }
-        RecEffect.CoreStop -> coreCall { RecEvent.CoreStopped(SessionId(core.await().stopRecording())) }
-        RecEffect.CoreRead -> coreCall { RecEvent.CoreRead(core.await().recordingState()) }
-        RecEffect.DrainScanner -> attempt { scanner.stopAndDrain() }.let { null }
-        RecEffect.StartScanner -> attempt { scanner.start() }.let { null }
-        RecEffect.StartLocation -> attempt { location.startRecording() }.let { null }
-        RecEffect.StopLocation -> attempt { location.stopRecording() }.let { null }
-        is RecEffect.Reply -> null
-    }
-
-    private suspend fun coreCall(call: suspend () -> RecEvent): RecEvent = try {
-        withContext(io) { call() }
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: Exception) {
-        RecEvent.CoreFailed(failure)
-    }
-
-    /** A platform call whose failure is logged and treated as "did not happen". */
-    private suspend fun <T> attempt(call: suspend () -> T): T? = try {
-        call()
+    /** The one wrapper every effect goes through: any exception becomes a typed [RecEvent.EffectFailed]. */
+    private suspend fun runEffect(effect: RecEffect): RecEvent? = try {
+        execute(effect)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: Exception) {
         // android.util.Log is a stub that throws in JVM tests; logging must never turn a failure into a crash.
-        runCatching { Log.w(TAG, "recording step failed", failure) }
-        null
+        runCatching { Log.w(TAG, "recording step $effect failed", failure) }
+        RecEvent.EffectFailed(effect, failure)
+    }
+
+    /** Runs one effect; its result comes back as the next event. Core calls run on [io]. */
+    private suspend fun execute(effect: RecEffect): RecEvent? = when (effect) {
+        RecEffect.EnterForeground -> RecEvent.ForegroundEntered(host.enterForeground())
+        RecEffect.LeaveForeground -> host.leaveForeground().let { null }
+        RecEffect.CoreStart -> withContext(io) {
+            val ingest = core.await()
+            ingest.startRecording(environment())
+            RecEvent.CoreStarted(ingest.recordingState())
+        }
+        RecEffect.CorePause -> withContext(io) {
+            val ingest = core.await()
+            ingest.pauseRecording()
+            RecEvent.CorePaused(ingest.recordingState())
+        }
+        RecEffect.CoreResume -> withContext(io) {
+            val ingest = core.await()
+            ingest.resumeRecording()
+            RecEvent.CoreResumed(ingest.recordingState())
+        }
+        RecEffect.CoreStop -> withContext(io) { RecEvent.CoreStopped(SessionId(core.await().stopRecording())) }
+        RecEffect.CoreRead -> withContext(io) { RecEvent.CoreRead(core.await().recordingState()) }
+        RecEffect.DrainScanner -> scanner.stopAndDrain().let { null }
+        RecEffect.StartScanner -> scanner.start().let { null }
+        RecEffect.StartLocation -> location.startRecording().let { null }
+        RecEffect.StopLocation -> location.stopRecording().let { null }
+        is RecEffect.Reply -> null
     }
 
     private fun missingGrants(): List<String> = try {

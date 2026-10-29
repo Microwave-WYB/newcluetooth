@@ -4,6 +4,7 @@ import android.util.Log
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
+import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -61,7 +62,8 @@ class ScanIngest(
     private val flushes = Channel<CompletableDeferred<Unit>>(Channel.UNLIMITED)
 
     init {
-        scope.launch(dispatcher) { consume() }
+        // The consumer catches every core failure itself; the handler only keeps an escape off the main thread.
+        scope.launch(dispatcher + failureHandler(TAG)) { consume() }
     }
 
     /** From the scan callback (main thread): never blocks. */

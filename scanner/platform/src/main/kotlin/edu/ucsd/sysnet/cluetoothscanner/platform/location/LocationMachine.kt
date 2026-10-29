@@ -34,15 +34,22 @@ internal object LocationMachine {
                     want()
                 }
                 LocEvent.Tick -> evaluate()
-                is LocEvent.RegistrationFailed -> {
-                    val request = state.request as? LocRequest.Active ?: return
-                    if (request.registration?.id != event.id) return
-                    // A fused request can fail after the runner kept its listener: drop it, the next tick registers anew.
-                    effects += LocEffect.Unregister(event.id)
-                    state = state.copy(request = request.copy(registration = null))
+                is LocEvent.RegistrationFailed -> registrationFailed(event.id)
+                is LocEvent.EffectFailed -> when (val effect = event.effect) {
+                    is LocEffect.Register -> registrationFailed(effect.id)
+                    // Unregistering, ticking or the core failing changes no decision; the next event re-evaluates.
+                    is LocEffect.Unregister, LocEffect.StartTicking, LocEffect.StopTicking, is LocEffect.Ingest, LocEffect.ClearCore -> Unit
                 }
                 is LocEvent.Fixed -> fixed(event.id, event.fix)
             }
+        }
+
+        /** A fused request can fail after the runner kept its listener: drop it, the next tick registers anew. */
+        private fun registrationFailed(id: RegistrationId) {
+            val request = state.request as? LocRequest.Active ?: return
+            if (request.registration?.id != id) return
+            effects += LocEffect.Unregister(id)
+            state = state.copy(request = request.copy(registration = null))
         }
 
         private fun want() {
@@ -170,6 +177,9 @@ internal sealed interface LocEvent {
     data object Tick : LocEvent
     data class RegistrationFailed(val id: RegistrationId) : LocEvent
     data class Fixed(val id: RegistrationId, val fix: FixReading) : LocEvent
+
+    /** The runner could not execute [effect] (any exception, as a value). */
+    data class EffectFailed(val effect: LocEffect) : LocEvent
 }
 
 internal sealed interface LocEffect {

@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.platform.R
+import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -54,7 +55,7 @@ internal object RecordingServiceLink {
  * and the service follows [Recorder.state] until it is Idle.
  */
 class RecordingService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + failureHandler(TAG))
     private val throttle = RecordingNotificationPolicy.Throttle()
     private var wakeLock: PowerManager.WakeLock? = null
     private var wakeLockWanted = false
@@ -97,18 +98,27 @@ class RecordingService : Service() {
     }
 
     override fun onDestroy() {
-        releaseWakeLock()
+        android("releasing the wake lock") { releaseWakeLock() }
         scope.cancel()
         super.onDestroy()
     }
 
-    private fun follow(state: RecorderState) {
+    /** Every Android call of the service goes through here: a failure is logged, never a crash. */
+    private fun android(what: String, call: () -> Unit) {
+        try {
+            call()
+        } catch (failure: Exception) {
+            runCatching { Log.w(TAG, "$what failed", failure) }
+        }
+    }
+
+    private fun follow(state: RecorderState) = android("following the recorder") {
         if (!RecordingNotificationPolicy.serviceNeeded(state)) {
             releaseWakeLock()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             inForeground = false
             stopSelf()
-            return
+            return@android
         }
         applyWakeLock(state)
         if (inForeground && throttle.shouldUpdate(state, SystemClock.elapsedRealtime())) {
@@ -117,7 +127,7 @@ class RecordingService : Service() {
     }
 
     private fun enterForeground(state: RecorderState): Boolean {
-        createChannel(this)
+        android("creating the notification channel") { createChannel(this) }
         val types = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         } else {

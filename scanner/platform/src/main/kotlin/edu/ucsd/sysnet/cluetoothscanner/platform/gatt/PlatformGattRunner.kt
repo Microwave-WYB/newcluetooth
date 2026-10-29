@@ -61,9 +61,17 @@ class PlatformGattRunner(
         // One discovery at a time: a new collection cancels the previous run's own job, never its collector.
         var last: GattView? = null
         val run = launch(start = CoroutineStart.LAZY) {
-            run(key) {
+            val emit: suspend (GattView) -> Unit = {
                 last = it
                 send(it)
+            }
+            try {
+                run(key, emit)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Never expected (every platform call is a value): the collector still gets a final view.
+                emit(failedBeforeConnect("", key, nowMs(), GattFailure.ConnectionFailed))
             }
         }
         val previous = latest.getAndSet(run)

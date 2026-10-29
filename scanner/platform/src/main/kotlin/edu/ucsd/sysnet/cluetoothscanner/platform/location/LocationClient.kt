@@ -32,6 +32,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.MyLocation
+import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.RecordingLocation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -78,6 +79,9 @@ class LocationClient(
 
     private val inbox = Channel<LocEvent>(Channel.UNLIMITED)
 
+    /** Every coroutine this runner launches carries it: an escaped exception leaves the status as it was. */
+    private val guard = failureHandler(TAG)
+
     // ---- Owned by the actor (main thread) ----
     private val registrations = mutableMapOf<RegistrationId, Listener>()
     private var ticker: Job? = null
@@ -101,17 +105,17 @@ class LocationClient(
     }
 
     init {
-        scope.launch(Dispatchers.Main.immediate) {
+        scope.launch(Dispatchers.Main.immediate + guard) {
             var state = LocState()
             for (event in inbox) {
                 val transition = LocationMachine.reduce(state, event, env())
                 state = transition.state
                 _status.value = state.status
                 _myLocation.value = state.shown
-                transition.effects.forEach(::execute)
+                transition.effects.forEach(::runEffect)
             }
         }
-        scope.launch(Dispatchers.Main.immediate) { uiStarted.collect { send(LocEvent.UiStarted(it)) } }
+        scope.launch(Dispatchers.Main.immediate + guard) { uiStarted.collect { send(LocEvent.UiStarted(it)) } }
     }
 
     override fun startRecording() = send(LocEvent.Recording(true))
@@ -161,6 +165,18 @@ class LocationClient(
         false
     }
 
+    /** The one wrapper every effect goes through: any exception becomes a typed [LocEvent.EffectFailed]. */
+    private fun runEffect(effect: LocEffect) {
+        try {
+            execute(effect)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            log("effect $effect failed", failure)
+            send(LocEvent.EffectFailed(effect))
+        }
+    }
+
     private fun execute(effect: LocEffect) {
         when (effect) {
             is LocEffect.Register -> register(effect.id, effect.profile)
@@ -172,7 +188,7 @@ class LocationClient(
                     )
                 }.onFailure { log("Providers receiver not registered", it) }
                 ticker?.cancel()
-                ticker = scope.launch(Dispatchers.Main.immediate) {
+                ticker = scope.launch(Dispatchers.Main.immediate + guard) {
                     while (isActive) {
                         delay(STATUS_TICK_MS)
                         send(LocEvent.Tick)
@@ -190,7 +206,7 @@ class LocationClient(
     }
 
     private fun toCore(call: (CoreIngest) -> Unit) {
-        scope.launch {
+        scope.launch(guard) {
             try {
                 call(core.await())
             } catch (cancelled: CancellationException) {
@@ -285,7 +301,7 @@ class LocationClient(
         /** True while any activity of the process is started (the "UI is started" of §4.2). */
         fun processStarted(scope: CoroutineScope): StateFlow<Boolean> {
             val started = MutableStateFlow(false)
-            scope.launch(Dispatchers.Main.immediate) {
+            scope.launch(Dispatchers.Main.immediate + failureHandler(TAG)) {
                 ProcessLifecycleOwner.get().lifecycle.currentStateFlow
                     .map { it.isAtLeast(Lifecycle.State.STARTED) }
                     .collect { started.value = it }

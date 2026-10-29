@@ -163,4 +163,15 @@ class LocationMachineTest {
         const val SEEDS = 200
         const val STEPS = 300
     }
+
+    @Test
+    fun `a registration that throws in the runner is retried, not leaked`() {
+        val sim = Sim()
+        sim.send(LocEvent.Recording(true))
+        val id = sim.current() ?: RegistrationId(0)
+        sim.send(LocEvent.EffectFailed(LocEffect.Register(id, LocationProfile.RECORDING)))
+        assertTrue("unregistered", sim.registrations.isEmpty())
+        sim.send(LocEvent.Tick)
+        assertEquals(LocationProfile.RECORDING, sim.registrations.values.single())
+    }
 }

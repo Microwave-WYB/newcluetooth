@@ -1,20 +1,26 @@
 package edu.ucsd.sysnet.cluetoothscanner.platform.settings
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.SharedPreferencesMigration
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.SettingsStore
+import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.plus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -34,14 +40,33 @@ class DataStoreSettings(
     // Private: no DataStore type is part of the public API, so callers need no DataStore dependency.
     private val store: DataStore<Preferences> = open(context, scope)
 
+    /** A file that cannot be read (corrupt, I/O) reads as the defaults instead of failing the flow. */
+    private val data = store.data.catch { failure ->
+        runCatching { Log.w(TAG, "settings unreadable; using the defaults", failure) }
+        emit(emptyPreferences())
+    }
+
     override val settings: StateFlow<Settings> =
-        store.data.map(::toSettings).stateIn(scope, SharingStarted.Eagerly, Settings.defaults(appVersion))
+        data.map(::toSettings).stateIn(scope + failureHandler(TAG), SharingStarted.Eagerly, Settings.defaults(appVersion))
 
     /** The stored settings, after the first read (and the one-time migration). */
-    suspend fun loaded(): Settings = toSettings(store.data.first())
+    suspend fun loaded(): Settings = toSettings(data.first())
 
     /** A user id that breaks the O-2 rule is refused ([IllegalArgumentException]); nothing is written then. */
     override suspend fun update(transform: (Settings) -> Settings) {
+        try {
+            write(transform)
+        } catch (refused: IllegalArgumentException) {
+            throw refused
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            // A failed write (I/O) leaves the stored settings, and so the shown ones, unchanged.
+            runCatching { Log.w(TAG, "settings not written", failure) }
+        }
+    }
+
+    private suspend fun write(transform: (Settings) -> Settings) {
         store.edit { prefs ->
             val next = transform(toSettings(prefs))
             val userId = next.userId
@@ -72,6 +97,8 @@ class DataStoreSettings(
     }
 
     companion object {
+        private const val TAG = "DataStoreSettings"
+
         private fun open(context: Context, scope: CoroutineScope): DataStore<Preferences> = PreferenceDataStoreFactory.create(
             migrations = listOf(SharedPreferencesMigration(context, V3_PREFS, setOf(USER_ID.name, WIFI_ONLY.name, CODED_PHY.name))),
             scope = scope,

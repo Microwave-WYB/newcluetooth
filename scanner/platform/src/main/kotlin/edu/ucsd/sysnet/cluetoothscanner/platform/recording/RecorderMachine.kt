@@ -47,6 +47,23 @@ internal object RecorderMachine {
                 is RecEvent.Dropped -> state = state.copy(dropped = event.dropped)
                 is RecEvent.ScannerError -> state = state.copy(error = event.message)
                 is RecEvent.CoreChanged -> coreChanged(event.core)
+                is RecEvent.EffectFailed -> effectFailed(event.effect, event.cause)
+            }
+        }
+
+        /**
+         * The runner could not execute [effect]: a failed foreground entry is a refusal, a failed core call is a core
+         * failure (with its reconciliation), and a failed scanner or location step is reported.
+         */
+        private fun effectFailed(effect: RecEffect, cause: Throwable) {
+            when (effect) {
+                RecEffect.EnterForeground -> foreground(entered = false)
+                RecEffect.CoreStart, RecEffect.CorePause, RecEffect.CoreResume, RecEffect.CoreStop, RecEffect.CoreRead ->
+                    coreFailed(cause)
+                RecEffect.LeaveForeground, RecEffect.DrainScanner, RecEffect.StartScanner, RecEffect.StartLocation,
+                RecEffect.StopLocation,
+                -> state = state.copy(error = "A recording step failed (${cause.message ?: cause::class.java.simpleName})")
+                is RecEffect.Reply -> Unit
             }
         }
 
@@ -355,6 +372,9 @@ internal sealed interface RecEvent {
     data class Dropped(val dropped: Long) : RecEvent
     data class ScannerError(val message: String) : RecEvent
     data class CoreChanged(val core: CoreRecordingState) : RecEvent
+
+    /** The runner could not execute [effect] (any exception, as a value). */
+    data class EffectFailed(val effect: RecEffect, val cause: Throwable) : RecEvent
 }
 
 internal sealed interface RecEffect {

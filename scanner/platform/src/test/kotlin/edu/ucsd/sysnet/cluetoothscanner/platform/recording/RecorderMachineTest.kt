@@ -259,4 +259,23 @@ class RecorderMachineTest {
         const val SEEDS = 200
         const val STEPS = 300
     }
+
+    @Test
+    fun `an effect that throws in the runner is a typed failure, never a crash`() {
+        val starting = RecorderMachine.reduce(RecModel(), RecEvent.Start(emptyList())).state
+        val refused = RecorderMachine.reduce(starting, RecEvent.EffectFailed(RecEffect.EnterForeground, IllegalStateException("not allowed")))
+        assertEquals(RecPhase.Idle(lastSession = null), refused.state.phase)
+        assertEquals(RecorderMachine.SERVICE_REFUSED, refused.state.error)
+        assertTrue(refused.effects.single() is RecEffect.Reply)
+
+        val coreStarting = starting.copy(phase = RecPhase.StartingCore)
+        val coreFailed = RecorderMachine.reduce(coreStarting, RecEvent.EffectFailed(RecEffect.CoreStart, RuntimeException("binding")))
+        assertTrue("the service is left", RecEffect.LeaveForeground in coreFailed.effects)
+        assertEquals(RecPhase.Idle(lastSession = null), coreFailed.state.phase)
+
+        val live = RecModel(phase = RecPhase.Live(SessionId("s1"), paused = false))
+        val locationFailed = RecorderMachine.reduce(live, RecEvent.EffectFailed(RecEffect.StartLocation, SecurityException("revoked")))
+        assertEquals("the recording goes on", live.phase, locationFailed.state.phase)
+        assertTrue(locationFailed.state.error != null)
+    }
 }

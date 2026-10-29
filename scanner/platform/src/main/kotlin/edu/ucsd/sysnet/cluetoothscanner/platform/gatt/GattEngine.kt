@@ -61,7 +61,8 @@ class GattEngine(
                 while (pending.isNotEmpty()) {
                     when (val effect = pending.removeFirst()) {
                         is EngineEffect.Finish -> return effect.result
-                        is EngineEffect.Progress -> onProgress(effect.progress)
+                        // The progress callback is the caller's; its failure must not end the discovery.
+                        is EngineEffect.Progress -> runCatching { onProgress(effect.progress) }
                         is EngineEffect.Connect -> {
                             val opened = (call(null) { linkFactory.connect { event -> inbox.trySend(EngineInput.Link(effect.attempt, event)) } } as? Call.Ok)?.value
                             link = opened

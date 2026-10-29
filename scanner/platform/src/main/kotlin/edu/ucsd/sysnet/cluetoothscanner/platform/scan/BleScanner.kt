@@ -22,6 +22,8 @@ import androidx.core.content.ContextCompat
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
+import edu.ucsd.sysnet.cluetoothscanner.platform.describe
+import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.RecordingScanner
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -89,6 +91,9 @@ class BleScanner(
 
     private val inbox = Channel<Message>(Channel.UNLIMITED)
 
+    /** Every coroutine this runner launches carries it: an escaped exception becomes the scanner's error. */
+    private val guard = failureHandler(TAG) { _error.value = "The scanner stopped (${it.describe()})" }
+
     // ---- Owned by the actor (main thread) ----
     private var live: Pair<ScanGeneration, ScanCallback>? = null
     private val timers = mutableMapOf<TimerKind, Job>()
@@ -109,14 +114,14 @@ class BleScanner(
     }
 
     init {
-        scope.launch(Dispatchers.Main.immediate) {
+        scope.launch(Dispatchers.Main.immediate + guard) {
             var state = ScanState()
             for (message in inbox) {
                 val transition = ScanMachine.reduce(state, message.event, env())
                 state = transition.state
                 _deferred.value = state.deferred
                 _error.value = state.error
-                transition.effects.forEach(::execute)
+                transition.effects.forEach(::runEffect)
                 message.done?.complete(Unit)
             }
         }
@@ -138,7 +143,7 @@ class BleScanner(
      * the only public way to get an environment, so a new recording can never start on the previous one's PHY.
      */
     fun environment(): ScanEnvironment {
-        val phy = Phy.of(codedPhy())
+        val phy = Phy.of(runCatching { codedPhy() }.getOrDefault(true))
         send(ScanEvent.FooterDeclared(phy))
         return environmentFor(phy)
     }
@@ -169,6 +174,11 @@ class BleScanner(
         null
     }
 
+    private fun log(message: String, failure: Throwable) {
+        runCatching { Log.w(TAG, message, failure) }
+    }
+
+    /** Sampling the facts never throws: a failing read counts as Bluetooth off, the setting at its default (on), the screen on. */
     private fun env(): ScanEnv {
         val adapter = adapter()
         val radio = try {
@@ -183,9 +193,21 @@ class BleScanner(
         return ScanEnv(
             now = ElapsedMs(SystemClock.elapsedRealtime()),
             radio = radio,
-            wanted = Phy.of(codedPhy()),
-            screenOn = context.getSystemService(PowerManager::class.java)?.isInteractive ?: true,
+            wanted = Phy.of(runCatching { codedPhy() }.getOrDefault(true)),
+            screenOn = runCatching { context.getSystemService(PowerManager::class.java)?.isInteractive }.getOrNull() ?: true,
         )
+    }
+
+    /** The one wrapper every effect goes through: any exception becomes a typed [ScanEvent.EffectFailed]. */
+    private fun runEffect(effect: ScanEffect) {
+        try {
+            execute(effect)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            log("effect $effect failed", failure)
+            send(ScanEvent.EffectFailed(effect, failure.describe()))
+        }
     }
 
     private fun execute(effect: ScanEffect) {
@@ -196,7 +218,7 @@ class BleScanner(
             is ScanEffect.StopScan -> stopScan(effect.generation)
             is ScanEffect.Arm -> {
                 timers.remove(effect.kind)?.cancel()
-                timers[effect.kind] = scope.launch(Dispatchers.Main.immediate) {
+                timers[effect.kind] = scope.launch(Dispatchers.Main.immediate + guard) {
                     delay(effect.delay.value)
                     send(ScanEvent.TimerFired(effect.kind, effect.token))
                 }
@@ -215,7 +237,7 @@ class BleScanner(
             if (scanner == null) "no Bluetooth LE scanner" else null
         } catch (failure: Exception) {
             // SecurityException, DeadObjectException, IllegalStateException...: a typed failure event, never a crash.
-            failure.message ?: failure::class.java.simpleName
+            failure.describe()
         }
         if (failure != null) {
             live = null
@@ -230,20 +252,20 @@ class BleScanner(
         try {
             adapter()?.bluetoothLeScanner?.stopScan(callback)
         } catch (failure: Exception) {
-            Log.w(TAG, "stopScan failed", failure)
+            log("stopScan failed", failure)
         }
     }
 
     private fun configure(phy: Phy) {
-        scope.launch(Dispatchers.Main.immediate) {
+        scope.launch(Dispatchers.Main.immediate + guard) {
             val error = try {
                 withContext(io) { core.await().configureScan(environmentFor(phy)) }
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                Log.w(TAG, "configureScan failed; keeping the current PHY", failure)
-                failure.message ?: failure::class.java.simpleName
+                log("configureScan failed; keeping the current PHY", failure)
+                failure.describe()
             }
             send(ScanEvent.Configured(phy, error))
         }

@@ -42,6 +42,18 @@ internal object ScanMachine {
                 is ScanEvent.TimerFired -> timer(event.kind, event.token)
                 ScanEvent.ScreenOn -> screenOn()
                 is ScanEvent.Configured -> configured(event.phy, event.error)
+                is ScanEvent.EffectFailed -> effectFailed(event.effect, event.message)
+            }
+        }
+
+        /** An effect threw in the runner: a failed start retries like a refused one; anything else is reported. */
+        private fun effectFailed(effect: ScanEffect, message: String) {
+            when (effect) {
+                is ScanEffect.StartScan -> failed(effect.generation, "startScan failed: $message")
+                is ScanEffect.Configure -> configured(effect.phy, message)
+                ScanEffect.RegisterReceivers, ScanEffect.UnregisterReceivers, is ScanEffect.StopScan, is ScanEffect.Arm,
+                is ScanEffect.Cancel,
+                -> state = state.copy(error = "The scanner hit a problem ($message)")
             }
         }
 
@@ -299,6 +311,9 @@ internal sealed interface ScanEvent {
 
     /** `configureScan(phy)` finished; [error] is null on success. */
     data class Configured(val phy: Phy, val error: String?) : ScanEvent
+
+    /** The runner could not execute [effect] (any exception, as a value). */
+    data class EffectFailed(val effect: ScanEffect, val message: String) : ScanEvent
 }
 
 internal sealed interface ScanEffect {
