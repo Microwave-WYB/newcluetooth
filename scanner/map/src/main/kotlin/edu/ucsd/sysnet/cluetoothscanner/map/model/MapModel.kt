@@ -11,6 +11,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.MyLocation
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.LocateModel
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.MoveClassifier
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.MoveTracking
+import edu.ucsd.sysnet.cluetoothscanner.map.camera.RouteEnds
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.Hit
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapStyleSpec
@@ -123,11 +124,24 @@ sealed interface PointsState {
 }
 
 /**
- * A route held by the runner as an append-only point list under [base]; the state only knows its length and ends,
- * so a live delta appends its new points ([MapEffect.AppendRoute]) instead of copying the route.
+ * A route held by the runner as an append-only point list under [base]; the state only knows its length, its ends
+ * and how far it got from its first point ([farthestFromStartM], for M-8's stationary rule), so a live delta appends
+ * its new points ([MapEffect.AppendRoute]) instead of copying the route.
  */
-data class RouteLine(val base: PayloadId, val length: Int, val start: GeoPoint?, val end: GeoPoint?) {
-    fun appended(points: List<GeoPoint>) = copy(length = length + points.size, start = start ?: points.firstOrNull(), end = points.lastOrNull() ?: end)
+data class RouteLine(val base: PayloadId, val length: Int, val start: GeoPoint?, val end: GeoPoint?, val farthestFromStartM: Double) {
+    fun appended(points: List<GeoPoint>): RouteLine {
+        val first = start ?: points.firstOrNull() ?: return this
+        return copy(
+            length = length + points.size, start = first, end = points.lastOrNull() ?: end,
+            farthestFromStartM = maxOf(farthestFromStartM, RouteEnds.farthestFrom(first, points)),
+        )
+    }
+
+    companion object {
+        /** The line for a route the runner stores under [base]. */
+        fun of(base: PayloadId, points: List<GeoPoint>) =
+            RouteLine(base, points.size, points.firstOrNull(), points.lastOrNull(), RouteEnds.farthestFromFirst(points))
+    }
 }
 
 /** The session view's facts the map needs (SessionView, §5.1); its route is held by the runner. */

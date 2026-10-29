@@ -31,6 +31,7 @@ import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapEffect
 import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapEvent
 import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapReducer
 import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapState
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniTarget
 import edu.ucsd.sysnet.cluetoothscanner.map.model.SnapshotterId
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
@@ -121,7 +122,7 @@ private class MiniMapRunner(private val context: android.content.Context, privat
                 val options = MapSnapshotter.Options(f.widthDp.toInt(), f.heightDp.toInt())
                     .withPixelRatio(f.density)
                     .withLogo(false)
-                    .withStyleBuilder(miniMapStyle(spec, f.theme, effect.target.route, f.baseStyleJson))
+                    .withStyleBuilder(miniMapStyle(spec, f.theme, effect.target, f.baseStyleJson))
                     .withCameraPosition(position(effect.target.camera))
                 options.showAttribution = false
                 snapshotter = MapSnapshotter(context, options)
@@ -130,7 +131,7 @@ private class MiniMapRunner(private val context: android.content.Context, privat
             is MiniMapEffect.Update -> guarded(effect.id) {
                 val s = snapshotter ?: return@guarded
                 (s.getSource("route") as? GeoJsonSource)?.setGeoJson(GeoJson.routes(listOf(effect.target.route)))
-                (s.getSource("ends") as? GeoJsonSource)?.setGeoJson(GeoJson.ends(effect.target.route, spec.endProperties))
+                (s.getSource("ends") as? GeoJsonSource)?.setGeoJson(endsJson(spec, effect.target))
                 s.setCameraPosition(position(effect.target.camera))
             }
             is MiniMapEffect.Start -> guarded(effect.id) {
@@ -170,11 +171,16 @@ private class MiniMapRunner(private val context: android.content.Context, privat
 internal fun miniMapCamera(route: List<GeoPoint>, fallback: GeoPoint?, widthDp: Float, heightDp: Float) =
     MiniMapReducer.camera(route, fallback, widthDp, heightDp)
 
-private fun miniMapStyle(spec: MapStyleSpec, theme: MapTheme, route: List<GeoPoint>, baseStyleJson: String?): Style.Builder {
-    if (baseStyleJson != null) return Style.Builder().fromJson(miniMapStyleJson(baseStyleJson, spec, theme, route))
+/** M-8: the target's Start and End, or none when the reducer hid them (the session barely moved). */
+private fun endsJson(spec: MapStyleSpec, target: MiniTarget) =
+    if (target.showEnds) GeoJson.ends(target.route, spec.endProperties) else GeoJson.EMPTY
+
+private fun miniMapStyle(spec: MapStyleSpec, theme: MapTheme, target: MiniTarget, baseStyleJson: String?): Style.Builder {
+    val route = target.route
+    if (baseStyleJson != null) return Style.Builder().fromJson(miniMapStyleJson(baseStyleJson, spec, theme, target))
     val builder = Style.Builder().fromUri(spec.baseStyleUrl(theme))
     builder.withSource(GeoJsonSource("route", GeoJson.routes(listOf(route))))
-    builder.withSource(GeoJsonSource("ends", GeoJson.ends(route, spec.endProperties)))
+    builder.withSource(GeoJsonSource("ends", endsJson(spec, target)))
     StyleInstaller.layers(spec.miniMapLayers(theme)).forEach(builder::withLayer)
     return builder
 }
@@ -184,12 +190,13 @@ private fun miniMapStyle(spec: MapStyleSpec, theme: MapTheme, route: List<GeoPoi
  * style inside its constructor and then adds builder sources through a native peer that does not exist yet
  * ("invalid native peer"), so with a JSON base nothing goes through the builder.
  */
-internal fun miniMapStyleJson(baseStyleJson: String, spec: MapStyleSpec, theme: MapTheme, route: List<GeoPoint>): String {
+internal fun miniMapStyleJson(baseStyleJson: String, spec: MapStyleSpec, theme: MapTheme, target: MiniTarget): String {
+    val route = target.route
     val base = Json.parseToJsonElement(baseStyleJson).jsonObject
     fun source(geojson: String) = JsonObject(mapOf("type" to JsonPrimitive("geojson"), "data" to Json.parseToJsonElement(geojson)))
     val sources = JsonObject((base["sources"]?.jsonObject ?: JsonObject(emptyMap())) + mapOf(
         "route" to source(GeoJson.routes(listOf(route))),
-        "ends" to source(GeoJson.ends(route, spec.endProperties)),
+        "ends" to source(endsJson(spec, target)),
     ))
     val layers = JsonArray((base["layers"]?.jsonArray ?: JsonArray(emptyList())) + spec.miniMapLayers(theme))
     return JsonObject(base + mapOf("sources" to sources, "layers" to layers)).toString()
