@@ -12,7 +12,8 @@
 # names they already have.
 #
 # Secrets: files in FLEET_SECRETS_DIR (default ~/.config/cluetooth-fleet/secrets, mode 600),
-# outside the repo. API keys are mounted only into keyproxy. The research agent gets no keys.
+# outside the repo. API keys are mounted only into keyproxy; the research agent gets no keys,
+# and its two scan-database URLs arrive as files, not environment variables.
 # Host-specific, non-secret settings come from .env next to this file (see .env.example).
 
 services:
@@ -39,9 +40,10 @@ services:
       GITEA__ui__DEFAULT_THEME: github-auto
     volumes:
       # Gitea's data (repos, sqlite, the theme CSS) and app.ini (with its generated secrets)
-      # stay on the host. simi: GITEA_HOST_DIR=/data/services/wirelesswiki/gitea
-      - ${GITEA_HOST_DIR:-${HOME}/.local/share/cluetooth-fleet/gitea}/data:/var/lib/gitea
-      - ${GITEA_HOST_DIR:-${HOME}/.local/share/cluetooth-fleet/gitea}/config:/etc/gitea
+      # stay on the host. No default: a wrong path would start an empty Gitea.
+      # simi: GITEA_HOST_DIR=/data/services/wirelesswiki/gitea
+      - ${GITEA_HOST_DIR:?set GITEA_HOST_DIR in infra/fleet/.env}/data:/var/lib/gitea
+      - ${GITEA_HOST_DIR:?set GITEA_HOST_DIR in infra/fleet/.env}/config:/etc/gitea
     networks: [wirelesswiki]
 
   cloudflared:
@@ -117,23 +119,18 @@ services:
     environment:
       GITEA_URL: http://gitea:3000
       GITEA_USER: ${GITEA_BOT_USER:-wiki-bot}
-      GITEA_REPOS: ${GITEA_REPOS:-y2wei/wirelesswiki}
+      # Account protection; each can be switched off (see keyproxy/README.md).
+      WIGLE_DAILY_BUDGET_ENABLED: ${WIGLE_DAILY_BUDGET_ENABLED:-true}
       WIGLE_DAILY_BUDGET: ${WIGLE_DAILY_BUDGET:-100}
       WIGLE_RESERVE: ${WIGLE_RESERVE:-10}
-      WIGLE_PER_CALLER_DAILY: ${WIGLE_PER_CALLER_DAILY:-0}
+      ANDROZOO_RATE_LIMIT_ENABLED: ${ANDROZOO_RATE_LIMIT_ENABLED:-true}
       ANDROZOO_MIN_INTERVAL_SECONDS: ${ANDROZOO_MIN_INTERVAL_SECONDS:-10}
-      ANDROZOO_DAILY_LIMIT: ${ANDROZOO_DAILY_LIMIT:-200}
-      ANDROZOO_GP_METADATA: ${ANDROZOO_GP_METADATA:-0}
       STATE_FILE: /var/lib/keyproxy/counters.json
       LOG_FILE: /var/lib/keyproxy/requests.log
     secrets: [gitea-token, wigle-api-key, androzoo-api-key]
     volumes:
       - keyproxy-state:/var/lib/keyproxy
-    # default = research-agent_default, shared with the agent; wirelesswiki reaches Gitea.
     networks: [default, wirelesswiki]
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
 
   research-agent:
     profiles: [agent]
@@ -142,9 +139,9 @@ services:
     build: ./agent-image
     image: ${RESEARCH_AGENT_IMAGE:-research-agent:dev}
     init: false              # tini is the entrypoint
-    # Harness credentials only (Paseo password, scan DB URLs; see README.md). The entrypoint
-    # refuses to start if a Gitea, WiGLE, AndroZoo or GitHub key is set here. `docker compose
-    # config` prints env_file values: use `mise run fleet:config` (--no-env-resolution).
+    # PASEO_PASSWORD only, if set. The entrypoint refuses to start if a Gitea, WiGLE,
+    # AndroZoo or GitHub key is set here. `docker compose config` prints env_file values: use
+    # `mise run fleet:config` (--no-env-resolution).
     env_file:
       - path: ${FLEET_SECRETS_DIR:-${HOME}/.config/cluetooth-fleet/secrets}/agent-runtime.env
         required: false
@@ -153,7 +150,7 @@ services:
       PASEO_RELAY_ENABLED: ${PASEO_RELAY_ENABLED:-false}
       KEYPROXY_URL: http://keyproxy:8080
       GITEA_URL: http://keyproxy:8080/gitea
-      GITEA_REPO: ${GITEA_REPOS:-y2wei/wirelesswiki}
+      GITEA_REPO: ${GITEA_REPO:-y2wei/wirelesswiki}
       WIGLE_BASE_URL: http://keyproxy:8080/wigle
     ports:
       - "127.0.0.1:${PASEO_HOST_PORT:-6768}:6767"
@@ -163,9 +160,23 @@ services:
       - mise-data:/opt/mise
       # The bottom-line rules, outside the agents' reach. The entrypoint reads them first.
       - ./policy:/etc/research-agent/policy:ro
+    # The scan-database URLs as files at the paths wiki-sql and wigle read, so `env` never
+    # shows them. fleet.sh reads them from the secrets dir for this compose call only; compose
+    # copies them in, owned by the agent user, mode 400.
+    secrets:
+      - source: wiki-db-url
+        target: /home/agent/.config/wiki-db/url
+        uid: "1001"
+        gid: "1001"
+        mode: 0400
+      - source: wigle-db-url
+        target: /home/agent/.config/wigle/db-url
+        uid: "1001"
+        gid: "1001"
+        mode: 0400
     depends_on: [keyproxy]
-    # Not on the wirelesswiki network: Gitea only through keyproxy. scandb reaches cluetooth-db.
-    networks: [default, scandb]
+    # As on simi today: wirelesswiki (Gitea), scandb (cluetooth-db), default (keyproxy).
+    networks: [default, wirelesswiki, scandb]
     # A runaway job must hit this limit, not take the host (Gitea, the scan DB) down with it.
     mem_limit: ${AGENT_MEM_LIMIT:-40g}
     memswap_limit: ${AGENT_MEM_LIMIT:-40g}
@@ -210,3 +221,9 @@ secrets:
     file: ${FLEET_SECRETS_DIR:-${HOME}/.config/cluetooth-fleet/secrets}/androzoo-api-key
   cloudflared-tunnel-token:
     file: ${FLEET_SECRETS_DIR:-${HOME}/.config/cluetooth-fleet/secrets}/cloudflared-tunnel-token
+  # From the files wiki-db-url / wigle-db-url, read by fleet.sh (a file secret would keep the
+  # host file's 600 owner and be unreadable for the agent user).
+  wiki-db-url:
+    environment: FLEET_WIKI_DB_URL
+  wigle-db-url:
+    environment: FLEET_WIGLE_DB_URL
