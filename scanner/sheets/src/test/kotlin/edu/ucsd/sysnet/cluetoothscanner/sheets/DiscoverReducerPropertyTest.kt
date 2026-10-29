@@ -16,25 +16,34 @@ import kotlin.random.Random
 /**
  * Fixed-seed random event sequences through the pure [reduceDiscover]. A synchronous in-test runner answers the query
  * effects from a fixed device set, and delivers the answers later, in random order, so stale answers happen.
+ *
+ * Like the core, which answers in current-RSSI order, every answer comes in its own shuffled order, never the UI's
+ * fixed one: so "the order ∩ the answer" differs from "the answer", and rows that skip the intersection fail.
  */
 class DiscoverReducerPropertyTest {
     private class Dev(val key: Long, val at: GeoPoint, val name: String, val inRange: Boolean)
 
     private class World(rnd: Random) {
+        /** Shuffles every answer (the core's order drifts with RSSI); separate, so the event stream stays the same. */
+        private val drift = Random(rnd.nextInt())
+
         val devices = (1L..120L).map { k ->
             Dev(k, GeoPoint(rnd.nextDouble(0.0, 2.0), rnd.nextDouble(0.0, 2.0)), listOf("qt", "lamp", "band", "tag").random(rnd) + k, rnd.nextBoolean())
         }.toMutableList()
+
+        /** The first sort: its own order too. */
+        fun order(): LongArray = devices.map { it.key }.shuffled(drift).toLongArray()
 
         fun keys(filter: DeviceFilter): DeviceKeys = DeviceKeys(
             devices.filter { d ->
                 (filter.area?.let { d.at.lon in it.west..it.east && d.at.lat in it.south..it.north } ?: true) &&
                     (!filter.inRangeOnly || d.inRange) && (!filter.readable || d.key % 3 == 0L)
-            }.map { it.key }.toLongArray(),
+            }.map { it.key }.shuffled(drift).toLongArray(),
             0,
         )
 
         fun search(query: String, area: Bbox?): DeviceKeys =
-            DeviceKeys(keys(DeviceFilter(area = area)).keys.filter { k -> devices.first { it.key == k }.name.contains(query) }.toLongArray(), 0)
+            DeviceKeys(keys(DeviceFilter(area = area)).keys.filter { k -> devices.first { it.key == k }.name.contains(query) }.shuffled(drift).toLongArray(), 0)
     }
 
     private fun sessionOrder(s: DiscoverState): LongArray =
@@ -101,7 +110,7 @@ class DiscoverReducerPropertyTest {
                 // the runner: answers are computed now and delivered later, in any order
                 for (effect in step.effects) when (effect) {
                     DiscoverEffect.LoadOrder -> pending +=
-                        if (orderFailures-- > 0) DiscoverEvent.OrderFailed("closed") else DiscoverEvent.OrderLoaded(world.devices.map { it.key }.toLongArray())
+                        if (orderFailures-- > 0) DiscoverEvent.OrderFailed("closed") else DiscoverEvent.OrderLoaded(world.order())
                     is DiscoverEffect.LoadArea -> {
                         areaAsked[effect.version] = effect.bbox
                         pending += DiscoverEvent.AreaLoaded(effect.version, effect.bbox, world.keys(DeviceFilter(area = effect.bbox)))
