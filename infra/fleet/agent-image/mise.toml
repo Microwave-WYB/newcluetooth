@@ -68,7 +68,7 @@ find "$HOME/.agents/skills" "$HOME/.claude/skills" -depth -type d -empty -delete
 '''
 
 [tasks."setup:pi"]
-description = "pi: settings (packages), built-in MCP config, global AGENTS.md"
+description = "pi: settings (packages), built-in MCP config (the entrypoint writes the global AGENTS.md: policy first)"
 depends = ["setup:tools"]
 run = '''
 #!/usr/bin/env bash
@@ -83,7 +83,7 @@ stow --restow --no-folding -v -t "$HOME" pi
 '''
 
 [tasks."setup:claude"]
-description = "Claude Code: CLAUDE.md, user-level Playwright MCP server"
+description = "Claude Code: user-level Playwright MCP server (the entrypoint links CLAUDE.md)"
 depends = ["setup:tools"]
 run = '''
 #!/usr/bin/env bash

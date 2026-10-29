@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
-# System layer only. Tools and configuration come from `mise install && mise run setup`,
-# the same command that sets up a plain Linux host.
+# The research agent image. System layer only: tools and configuration come from
+# `mise install && mise run setup`, the same command that sets up a plain Linux host.
+# The image and the container hold no API keys: Gitea, WiGLE and AndroZoo go through
+# keyproxy (infra/fleet/keyproxy), and the fleet policy is mounted read-only at
+# /etc/research-agent/policy (the entrypoint refuses to start without it).
 # node:22-trixie-slim (Debian 13.7; blutter needs g++ 13+), pinned by digest.
 FROM node:22-trixie-slim@sha256:8eb619e402eaede1748a3c8173bffab391592812e85136452f781741c7242ddf
 
@@ -58,7 +61,7 @@ RUN mise trust && mise install --locked && mise run setup
 # (a copy, so /opt/research-agent stays the project root for its tasks); the wiki repo's
 # mise.toml on main, with the agents' own tools, is the global config above it.
 USER root
-RUN mkdir -p /etc/mise && cp /opt/research-agent/mise.toml /etc/mise/config.toml
+RUN mkdir -p /etc/mise /etc/research-agent/policy && cp /opt/research-agent/mise.toml /etc/mise/config.toml
 USER agent
 ENV MISE_GLOBAL_CONFIG_FILE=/workspace/wirelesswiki/mise.toml
 
@@ -67,7 +70,11 @@ ENV PASEO_HOME=/home/agent/.paseo \
     PASEO_RELAY_ENABLED=false \
     PI_SKIP_VERSION_CHECK=1 \
     DISABLE_AUTOUPDATER=1 \
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    KEYPROXY_URL=http://keyproxy:8080 \
+    GITEA_URL=http://keyproxy:8080/gitea \
+    GITEA_REPO=y2wei/wirelesswiki \
+    WIGLE_BASE_URL=http://keyproxy:8080/wigle
 WORKDIR /workspace
 # /opt/mise is a volume too: tools the wiki repo adds survive a new image.
 VOLUME ["/home/agent", "/workspace", "/opt/mise"]

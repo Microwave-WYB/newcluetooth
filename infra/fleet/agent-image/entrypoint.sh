@@ -1,14 +1,57 @@
 #!/bin/sh
 # The home is a volume, so link the managed configuration into it at every start
-# (picks up a new image), then run the command. Nothing else in the home is touched.
+# (picks up a new image), then run the command.
 set -eu
+
+# 1. The fleet policy comes first. It is mounted read-only from the owner's infra repo
+#    (infra/fleet/policy); without it the agents do not start.
+policy_dir="${FLEET_POLICY_DIR:-/etc/research-agent/policy}"
+if ! ls "$policy_dir"/*.md >/dev/null 2>&1; then
+  echo "entrypoint: no fleet policy in $policy_dir (mount infra/fleet/policy read-only); refusing to start" >&2
+  exit 1
+fi
+policy=$(cat "$policy_dir"/*.md)
+
+# 2. This container holds no keys: keyed services go through keyproxy. Refuse to start if one
+#    was passed in anyway (variable names only are printed, never values).
+forbidden=""
+for v in GITEA_TOKEN GH_TOKEN GITHUB_TOKEN WIGLE_API_KEY WIGLE_API_NAME WIGLE_API_TOKEN ANDROZOO_API_KEY ANDROZOO_APIKEY; do
+  eval "val=\${$v:-}"
+  if [ -n "$val" ]; then forbidden="$forbidden $v"; fi
+done
+if [ -n "$forbidden" ]; then
+  echo "entrypoint: keys must not be set in this container:$forbidden (they belong to keyproxy); refusing to start" >&2
+  exit 1
+fi
+unset val
+
 cd /opt/research-agent
 # Don't let this task install the global config's tools first; that happens in the background below.
 MISE_TASK_RUN_AUTO_INSTALL=false mise run setup:home >/dev/null
+
+# Global instructions for pi and Claude Code: the policy first, then the agent instructions.
+mkdir -p "$HOME/.pi/agent" "$HOME/.claude"
+rm -f "$HOME/.pi/agent/AGENTS.md" "$HOME/.claude/CLAUDE.md"
+printf '%s\n\n---\n\n' "$policy" > "$HOME/.pi/agent/AGENTS.md"
+cat /opt/research-agent/AGENTS.md >> "$HOME/.pi/agent/AGENTS.md"
+chmod 444 "$HOME/.pi/agent/AGENTS.md"
+ln -s "$HOME/.pi/agent/AGENTS.md" "$HOME/.claude/CLAUDE.md"
+# Recipes for Gitea through keyproxy; older prompts point at /workspace/GITEA.md.
+ln -sfn /opt/research-agent/GITEA.md /workspace/GITEA.md
+
+# Credentials left in the home volume by the pre-keyproxy setup are removed (names only logged).
+for f in "$HOME/.git-credentials" "$HOME/.config/wigle/api-key" "$HOME/.config/gh/hosts.yml"; do
+  if [ -e "$f" ]; then rm -f "$f" && echo "entrypoint: removed stale credential file $f" >&2; fi
+done
+
 git config --global user.name "${GIT_AUTHOR_NAME:-wirelesswiki research agent}"
 git config --global user.email "${GIT_AUTHOR_EMAIL:-research-agent@users.noreply.github.com}"
-if [ -n "${GH_TOKEN:-}" ]; then gh auth setup-git >/dev/null 2>&1 || true; fi
-# Claude Code and pi write into ~/.claude.json and settings; the MCP entry was added at build.
+git config --global --unset-all credential.helper 2>/dev/null || true
+# Existing clones use http://gitea:3000/; send them through keyproxy, which adds the token.
+git config --global --unset-all url."${KEYPROXY_URL:-http://keyproxy:8080}/gitea/".insteadOf 2>/dev/null || true
+git config --global url."${KEYPROXY_URL:-http://keyproxy:8080}/gitea/".insteadOf "http://gitea:3000/"
+git config --global http."${KEYPROXY_URL:-http://keyproxy:8080}/".extraHeader "X-Caller: git"
+
 # The agents' tools come from the wiki repo's mise.toml (the global config). Install them in the
 # background so the daemon starts at once; meanwhile a shim installs a missing tool on first use.
 if [ -f /workspace/wirelesswiki/mise.toml ]; then

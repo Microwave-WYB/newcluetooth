@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   run, buildParams, paramsHash, normalizeEndpoint, classify, computeQuota, collectorRecord, escapeNul, MAX_RESULTS_PER_PAGE, EXIT, openPgStore,
+  callApi, loadApiKey,
 } from "../wigle.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -329,5 +330,25 @@ describe("postgres integration", { skip: !dockerOk ? "docker unavailable" : !pgA
     const days = await store.dailyCounts(100000);
     assert.equal(days.find((d) => d.day === "2026-01-14").ok, 1);
     assert.equal(days.find((d) => d.day === "2026-01-15").ok, 1);
+  });
+});
+
+describe("behind keyproxy", () => {
+  test("no key is needed when WIGLE_BASE_URL points at the proxy", () => {
+    if (fs.existsSync(path.join(os.homedir(), ".config/wigle/api-key"))) return; // a local key file wins
+    assert.equal(loadApiKey({ WIGLE_BASE_URL: "http://keyproxy:8080/wigle" }), null);
+    assert.throws(() => loadApiKey({}), /no WiGLE API key/);
+  });
+
+  test("without a key no Authorization header is sent; the caller goes in X-Caller", async () => {
+    let seen;
+    const fetchImpl = async (url, init) => {
+      seen = { url, headers: init.headers };
+      return { status: 200, text: async () => "{}" };
+    };
+    await callApi({ endpoint: "/api/v2/bluetooth/search", params: { name: "x" }, apiKey: null, caller: "root:task-7", baseUrl: "http://keyproxy:8080/wigle", fetchImpl });
+    assert.equal(seen.url, "http://keyproxy:8080/wigle/api/v2/bluetooth/search?name=x");
+    assert.equal(seen.headers.Authorization, undefined);
+    assert.equal(seen.headers["X-Caller"], "root:task-7");
   });
 });

@@ -32,10 +32,12 @@ class FakeGitea {
     this.feedStatus = null;    // force this status on the feed
     this.postStatus = null;    // force this status on POST
     this.cap = 50;             // server-side maximum page size
-    this.token = TOKEN;
+    this.token = TOKEN;         // null: accept requests without a token, as keyproxy does
+    this.headers = [];
     this.server = http.createServer(async (req, res) => {
       const u = new URL(req.url, "http://x");
       this.requests.push([req.method, u.pathname + u.search]);
+      this.headers.push(req.headers);
       let raw = "";
       for await (const c of req) raw += c;
       const reply = (status, body) => {
@@ -43,7 +45,7 @@ class FakeGitea {
         res.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(b) });
         res.end(b);
       };
-      if (req.headers.authorization !== "token " + this.token) return reply(401, { message: "bad token" });
+      if (this.token !== null && req.headers.authorization !== "token " + this.token) return reply(401, { message: "bad token" });
       const p = u.pathname.slice("/api/v1".length);
       if (req.method === "GET" && p === "/user") return reply(200, { login: BOT });
       if (req.method === "GET" && p === `/repos/${REPO}/activities/feeds`) {
@@ -453,5 +455,19 @@ on = ["comment_issue"]
     assert.deepEqual({ ...t.ack }, { enabled: true, on: ["comment_issue"] });
     assert.throws(() => parseToml("a = 1\na = 2"), /duplicate/);
     assert.throws(() => parseToml("a = 1.5"), /unsupported/);
+  });
+});
+
+describe("behind keyproxy", () => {
+  test('token_env = "none" sends no token and labels requests with X-Caller', async () => {
+    server.token = null;
+    const out = new Sink(), err = new Sink();
+    const code = await main(["--config", config('token_env = "none"'), "--once"], { env: {}, out, err, signals: false });
+    assert.equal(code, 0, err.text);
+    assert.ok(server.headers.length > 0);
+    for (const h of server.headers) {
+      assert.equal(h.authorization, undefined);
+      assert.equal(h["x-caller"], "gitea-watch");
+    }
   });
 });

@@ -329,7 +329,9 @@ export class Gitea {
 
   /** Returns [status, parsed JSON or null]. Throws Fatal on 401/403, Transient on I/O errors. */
   async request(method, apiPath, body) {
-    const headers = { Authorization: "token " + this.token, Accept: "application/json" };
+    // No token behind keyproxy (token_env = "none"): the proxy adds it.
+    const headers = { Accept: "application/json", "X-Caller": "gitea-watch" };
+    if (this.token) headers.Authorization = "token " + this.token;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     let status, raw;
     try {
@@ -433,7 +435,7 @@ export class Watcher {
 
   log(msg) {
     // The token is never part of a message we build; scrub anyway.
-    this.err.write("gitea-watch: " + String(msg).replaceAll(this.token, "***") + "\n");
+    this.err.write("gitea-watch: " + (this.token ? String(msg).replaceAll(this.token, "***") : String(msg)) + "\n");
   }
 
   emit(rec) {
@@ -595,8 +597,8 @@ export async function main(argv, io = {}) {
     err.write(`gitea-watch: ${e.message}\n`);
     return 2;
   }
-  const token = env[cfg.token_env] ?? "";
-  if (!token) {
+  const token = cfg.token_env === "none" ? "" : env[cfg.token_env] ?? "";
+  if (!token && cfg.token_env !== "none") {
     err.write(`gitea-watch: environment variable ${cfg.token_env} is not set\n`);
     return 2;
   }

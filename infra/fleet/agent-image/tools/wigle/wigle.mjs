@@ -108,22 +108,29 @@ export function classify({ status, text, networkError }) {
 
 // ---------- API call ----------
 
+/** The key, or null behind keyproxy (WIGLE_BASE_URL set, no key): the proxy adds it. */
 export function loadApiKey(env = process.env) {
   let k = env.WIGLE_API_KEY;
   if (!k) {
     try { k = readFileSync(`${homedir()}/.config/wigle/api-key`, "utf8"); } catch { /* handled below */ }
   }
   k = (k || "").trim().replace(/^Basic\s+/i, "");
-  if (!k) throw new Error("no WiGLE API key (WIGLE_API_KEY or ~/.config/wigle/api-key)");
+  if (!k && env.WIGLE_BASE_URL) return null;
+  if (!k) throw new Error("no WiGLE API key (WIGLE_API_KEY or ~/.config/wigle/api-key), and no WIGLE_BASE_URL proxy");
   return k;
 }
 
-export async function callApi({ endpoint, params, cursor, apiKey, baseUrl = API_BASE, timeoutMs = 900_000, fetchImpl = fetch }) {
+export async function callApi({ endpoint, params, cursor, apiKey, caller, baseUrl = API_BASE, timeoutMs = 900_000, fetchImpl = fetch }) {
   const q = new URLSearchParams(params);
   if (cursor) q.set("searchAfter", cursor);
   try {
     const res = await fetchImpl(`${baseUrl}${endpoint}?${q}`, {
-      headers: { Authorization: `Basic ${apiKey}`, Accept: "application/json", "User-Agent": "wigle-cli/1 (research-agent; no automatic retries)" },
+      headers: {
+        ...(apiKey ? { Authorization: `Basic ${apiKey}` } : {}),
+        ...(caller ? { "X-Caller": caller } : {}),
+        Accept: "application/json",
+        "User-Agent": "wigle-cli/1 (research-agent; no automatic retries)",
+      },
       redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -206,7 +213,7 @@ export async function searchOnce(ctx, { endpoint, params, cursor, caller }) {
   const prior = await ctx.store.findPrior({ endpoint, params_hash: hash, search_after: cursor });
   if (prior) ctx.notice(`wigle: notice: identical query+cursor archived before as id ${prior.id} on ${new Date(prior.called_at).toISOString()}`);
   const calledAt = new Date();
-  const res = await callApi({ endpoint, params, cursor, apiKey: ctx.apiKey, baseUrl: ctx.baseUrl, timeoutMs: ctx.timeoutMs, fetchImpl: ctx.fetchImpl });
+  const res = await callApi({ endpoint, params, cursor, apiKey: ctx.apiKey, caller, baseUrl: ctx.baseUrl, timeoutMs: ctx.timeoutMs, fetchImpl: ctx.fetchImpl });
   const c = classify(res);
   const id = await ctx.store.insert({
     endpoint, params, params_hash: hash, search_after: cursor, next_search_after: c.next, total: c.total,
