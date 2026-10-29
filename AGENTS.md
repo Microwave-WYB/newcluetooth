@@ -394,6 +394,7 @@ These rules come from the owner. Every change to `cluetooth-android/app/.../ui/`
 **Maps**
 - Map pages have no top app bar, so the map fills the screen under the status bar. System back leaves the page. The page title (for example the recording time, distance and device count) goes in the sheet's peek header.
 - The map sheet never covers the whole map. Fully expanded, it stops at about 60% of the screen height, so the map always stays visible above it.
+- A finished recording's map is a frozen snapshot: no live RSSI, no new devices and no re-sorting. Only the map of the recording in progress updates. It refreshes RSSI in place and appends new devices; it re-sorts only on an explicit user action, like every other list.
 - The density (heat) layer is on by default. It is drawn with circles; `HeatmapLayer` crashes on the Adreno 640 test phone, so do not use it.
 
 **Filters**

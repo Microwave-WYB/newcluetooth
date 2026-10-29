@@ -149,7 +149,7 @@ Each component is built once. Its size, color and state rules come from these to
 - **C-13 Section label.** 12.5/18 `--t3`, padding 16 16 4.
 - **C-14 BlinkingDot.** 8 dp `--rec` circle, blinking at 1 s with a step (hard on/off). Paused, it is a static `--t3`
   dot.
-- **C-15 Handle.** A 36 × 4 dp `--div` pill, centered in a dedicated 24 dp handle zone (`--handle-zone`) at the top of
+- **C-15 Handle.** A 36 × 4 dp `--div` pill, centered in a dedicated 14 dp handle zone (`--handle-zone`) at the top of
   every phone sheet. The header row starts below that zone. It is hidden on tablet, which has no handle zone.
 - **C-16 SheetFade.** While a sheet's content is scrolled away from the top, a 24 dp gradient from the sheet
   background to transparent shows just under the header. It fades out over `--t-fast` at scroll 0 and takes no
@@ -240,10 +240,10 @@ Each component is built once. Its size, color and state rules come from these to
   - `--sheet-radius` = `--edge` + `--rb`/2 = 34 dp.
   - The corner buttons (the view switch at top-left, the X at top-right) are 40 dp. Their center x is 34 dp from the
     sheet's side, equal to the center x of ☰ and of search above them.
-  - Vertically they sit below the handle zone: center depth = `--handle-zone` + 34 = 58 dp. So they are horizontally
+  - Vertically they sit below the handle zone: center depth = `--handle-zone` + 34 = 48 dp. So they are horizontally
     aligned with the corner arc but deliberately not vertically concentric with it (owner decision: room for the
     handle).
-- **S-3 Header row.** One height, `--sheet-header-h` = 40 dp, on one center line at depth 58 dp on phone (S-2) and 30 dp
+- **S-3 Header row.** One height, `--sheet-header-h` = 40 dp, on one center line at depth 48 dp on phone (S-2) and 30 dp
   on tablet (T-3). The view
   switch, the X, the segmented control, and every header title ("N results", the product sheet's category) use it.
 - **S-4 Stack.**
@@ -253,7 +253,7 @@ Each component is built once. Its size, color and state rules come from these to
     level 2.
   - A device opened while a device sheet is on top replaces it, at the same level and height.
 - **S-5 Snap states.**
-  - Collapsed is the peek: the handle zone plus the header row, about 88 dp, measured as the header's bottom.
+  - Collapsed is the peek: the handle zone plus the header row, about 78 dp, measured as the header's bottom.
   - Half is 67% of the screen height.
   - Full stops just below the top row (the screen height minus `--top-zone` = `--edge` + 44 + `--edge`), so ☰ and
     search stay visible and tappable.
