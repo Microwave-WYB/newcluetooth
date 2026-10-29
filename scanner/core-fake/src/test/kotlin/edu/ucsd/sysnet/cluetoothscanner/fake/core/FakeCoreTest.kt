@@ -125,20 +125,16 @@ class FakeCoreTest {
     @Test
     fun facetCountEqualsListLengthPerCategoryAndSwitch() = runTest {
         val c = core(FakeDemo.Recording)
-        val switches = mapOf(
-            "none" to DeviceFilter(), "readable" to DeviceFilter(readable = true),
-            "trackers" to DeviceFilter(trackers = true), "vulnerable" to DeviceFilter(vulnerable = true),
-        )
-        for (scope in listOf(Scope.All, Scope.session("r1"), c.initialScope!!)) {
-            for ((name, base) in switches) {
-                val counts = c.categoryCounts(scope, base).associate { it.category to it.deviceCount }
-                assertTrue("$scope $name has a category", counts.isNotEmpty())
-                for (category in FakeCatalog.CATEGORIES.map { it.id }) {
-                    val list = c.deviceKeys(scope, base.copy(categories = setOf(category))).keys.size
-                    assertEquals("$scope $name $category", list, counts[category] ?: 0)
-                }
-            }
-        }
+        val scopes = listOf(Scope.All, Scope.session("r1"), c.initialScope!!)
+        assertEquals(emptyList<String>(), CoreContracts.facetCountsEqualListLength(c, scopes, FakeCatalog.CATEGORIES.map { it.id }))
+    }
+
+    /** The shared G-9 and Q-1 contracts (also run against the real core in :core-bridge). */
+    @Test
+    fun sharedContracts() = runTest {
+        val c = core(FakeDemo.Recording)
+        assertEquals(emptyList<String>(), CoreContracts.filtersOnlyHide(c, listOf(Scope.All, Scope.session("r1"), c.initialScope!!)))
+        assertEquals(emptyList<String>(), CoreContracts.searchKeepsOrder(c, Scope.All, "govee"))
     }
 
     /** §2.2: Unidentified with any page constraint is empty; presets AND. */
