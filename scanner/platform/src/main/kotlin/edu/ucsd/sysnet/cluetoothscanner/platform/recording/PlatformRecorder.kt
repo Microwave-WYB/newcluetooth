@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,7 +79,8 @@ class PlatformRecorder(
     private val grants: RecordingGrants,
     private val environment: () -> ScanEnvironment,
     private val io: CoroutineDispatcher,
-    scope: CoroutineScope,
+    /** The process scope: transitions run here, so a cancelled caller never leaves one half done. */
+    private val scope: CoroutineScope,
     /** `CoreQueries.events` `RecordingChanged` states, for the device count between transitions. */
     coreStates: Flow<CoreRecordingState>? = null,
 ) : Recorder {
@@ -96,6 +98,8 @@ class PlatformRecorder(
                 }
             }
         }
+        // RecordingService reads the process recorder from here (notification actions, foreground confirmation).
+        RecordingServiceLink.recorder = this
     }
 
     /** After a process restart (§4.4): adopt the core's state. `Core::open` has already closed a left-open session. */
@@ -105,18 +109,18 @@ class PlatformRecorder(
         _state.value = merge(current, error = null)
     }
 
-    override suspend fun start(): Result<String> = mutex.withLock {
+    override suspend fun start(): Result<String> = transition {
         val current = _state.value
         if (current.phase == Phase.Recording || current.phase == Phase.Paused) {
-            return@withLock Result.success(requireNotNull(current.sessionId))
+            return@transition Result.success(requireNotNull(current.sessionId))
         }
         val missing = grants.missing()
         if (missing.isNotEmpty()) {
-            return@withLock fail(SecurityException("$MISSING_GRANTS: ${missing.joinToString()}"), MISSING_GRANTS)
+            return@transition fail(SecurityException("$MISSING_GRANTS: ${missing.joinToString()}"), MISSING_GRANTS)
         }
         _state.value = RecorderState.Idle.copy(phase = Phase.Starting, scannerDeferred = current.scannerDeferred, dropped = current.dropped)
         if (!host.enterForeground()) {
-            return@withLock fail(IllegalStateException(SERVICE_REFUSED), SERVICE_REFUSED)
+            return@transition fail(IllegalStateException(SERVICE_REFUSED), SERVICE_REFUSED)
         }
         val started = try {
             withContext(io) {
@@ -134,7 +138,7 @@ class PlatformRecorder(
             throw cancelled
         } catch (error: Exception) {
             host.leaveForeground()
-            return@withLock fail(error, "The recording could not start (${error.message ?: error::class.java.simpleName})")
+            return@transition fail(error, "The recording could not start (${error.message ?: error::class.java.simpleName})")
         }
         location.startRecording()
         scanner.start()
@@ -142,8 +146,8 @@ class PlatformRecorder(
         Result.success(requireNotNull(started.sessionId))
     }
 
-    override suspend fun pause() = mutex.withLock {
-        if (_state.value.phase != Phase.Recording) return@withLock
+    override suspend fun pause() = transition {
+        if (_state.value.phase != Phase.Recording) return@transition
         scanner.stopAndDrain()
         val paused = try {
             withContext(io) {
@@ -157,15 +161,15 @@ class PlatformRecorder(
             // The core still records: collect again.
             scanner.start()
             _state.update { it.copy(error = "The recording could not pause (${error.message})") }
-            return@withLock
+            return@transition
         }
         location.stopRecording()
         // The service stays in the foreground (owner decision "Pause"); it only drops the wake lock.
         _state.value = merge(paused, error = null)
     }
 
-    override suspend fun resume() = mutex.withLock {
-        if (_state.value.phase != Phase.Paused) return@withLock
+    override suspend fun resume() = transition {
+        if (_state.value.phase != Phase.Paused) return@transition
         val resumed = try {
             withContext(io) {
                 val ingest = core.await()
@@ -176,17 +180,17 @@ class PlatformRecorder(
             throw cancelled
         } catch (error: Exception) {
             _state.update { it.copy(error = "The recording could not resume (${error.message})") }
-            return@withLock
+            return@transition
         }
         location.startRecording()
         scanner.start()
         _state.value = merge(resumed, error = null)
     }
 
-    override suspend fun stop(): Result<String> = mutex.withLock {
+    override suspend fun stop(): Result<String> = transition {
         val before = _state.value
         if (before.phase != Phase.Recording && before.phase != Phase.Paused) {
-            return@withLock Result.failure(CoreException.NotRecording())
+            return@transition Result.failure(CoreException.NotRecording())
         }
         _state.value = before.copy(phase = Phase.Stopping, runningSinceMs = null)
         if (before.phase == Phase.Recording) scanner.stopAndDrain()
@@ -200,12 +204,12 @@ class PlatformRecorder(
             if (after != null && after.phase != RecordingPhase.Idle) {
                 if (after.phase == RecordingPhase.Recording) scanner.start()
                 _state.value = merge(after, error = "The recording could not stop (${error.message})")
-                return@withLock Result.failure(error)
+                return@transition Result.failure(error)
             }
             location.stopRecording()
             host.leaveForeground()
             _state.value = RecorderState.Idle.copy(sessionId = before.sessionId, error = "The recording could not stop (${error.message})")
-            return@withLock Result.failure(error)
+            return@transition Result.failure(error)
         }
         location.stopRecording()
         // V-3: the UI stays on the session that just ended.
@@ -213,6 +217,12 @@ class PlatformRecorder(
         host.leaveForeground()
         Result.success(stopped)
     }
+
+    /**
+     * Runs one transition under the mutex in the recorder's [scope]. Cancelling the caller only stops its wait: the
+     * transition always completes, so the core session and the foreground service never disagree.
+     */
+    private suspend fun <T> transition(block: suspend () -> T): T = scope.async { mutex.withLock { block() } }.await()
 
     private fun merge(core: CoreRecordingState, error: String?): RecorderState = _state.value.copy(
         phase = when (core.phase) {

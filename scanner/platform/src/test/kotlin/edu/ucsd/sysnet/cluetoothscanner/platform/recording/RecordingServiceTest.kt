@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -131,5 +132,38 @@ class RecordingServiceTest {
         ).create().startCommand(0, 1).get()
         assertTrue(shadowOf(service).isStoppedBySelf)
         assertEquals(null, shadowOf(service).lastForegroundNotification)
+    }
+
+    @Test
+    fun `with no recorder linked, a start is refused and the service leaves at once`() {
+        RecordingServiceLink.recorder = null
+        val service = started()
+        assertTrue(RecordingServiceLink.foreground!!.isCompleted)
+        assertFalse("no recorder: no confirmation, so no session starts", RecordingServiceLink.foreground!!.getCompleted())
+        assertTrue(shadowOf(service).isForegroundStopped)
+        assertTrue(shadowOf(service).isStoppedBySelf)
+    }
+
+    @Test
+    fun `the wake lock is acquired only on entering a collecting state, so its 12 h bound holds`() {
+        val service = started()
+        state.value = state.value.copy(phase = Phase.Recording, sessionId = "s1", runningSinceMs = 0)
+        idle()
+        val first = ShadowPowerManager.getLatestWakeLock()
+        assertTrue(first.isHeld)
+        // The bound expires (simulated): later updates of the same recording must not renew it.
+        first.release()
+        for (count in 1..5) {
+            state.value = state.value.copy(deviceCount = count)
+            idle()
+        }
+        assertFalse(service.holdsWakeLock)
+        assertSame(first, ShadowPowerManager.getLatestWakeLock())
+        // A resume is a new entry: it acquires again.
+        state.value = state.value.copy(phase = Phase.Paused, runningSinceMs = null)
+        idle()
+        state.value = state.value.copy(phase = Phase.Recording, runningSinceMs = 10)
+        idle()
+        assertTrue(service.holdsWakeLock)
     }
 }

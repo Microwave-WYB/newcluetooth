@@ -20,6 +20,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -28,6 +29,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -99,6 +101,8 @@ class PlatformRecorderTest {
     private var missing = emptyList<String>()
     private var foregroundAllowed = true
     private var inForeground = false
+    private var foregroundGate: CompletableDeferred<Unit>? = null
+    private var drainGate: CompletableDeferred<Unit>? = null
 
     private val scanner = object : RecordingScanner {
         override val deferred = this@PlatformRecorderTest.deferred
@@ -109,6 +113,7 @@ class PlatformRecorderTest {
 
         override suspend fun stopAndDrain() {
             log += "scanner.drain"
+            drainGate?.await()
         }
     }
     private val location = object : RecordingLocation {
@@ -123,6 +128,7 @@ class PlatformRecorderTest {
     private val host = object : ForegroundHost {
         override suspend fun enterForeground(): Boolean {
             log += "host.enter"
+            foregroundGate?.await()
             inForeground = foregroundAllowed
             return foregroundAllowed
         }
@@ -274,5 +280,47 @@ class PlatformRecorderTest {
         val recorder = recorder()
         recorder.restore()
         assertEquals(Phase.Idle, recorder.state.value.phase)
+    }
+
+    @Test
+    fun `the recorder registers itself for RecordingService`() = runTest {
+        val recorder = recorder()
+        assertSame(recorder, RecordingServiceLink.recorder)
+    }
+
+    @Test
+    fun `a cancelled caller never leaves a start half done`() = runTest {
+        foregroundGate = CompletableDeferred()
+        val recorder = recorder()
+        val caller = launch { recorder.start() }
+        runCurrent()
+        assertEquals(Phase.Starting, recorder.state.value.phase)
+        caller.cancel()
+        runCurrent()
+        // The service confirms after the UI gave up waiting: the transition still completes.
+        foregroundGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("host.enter", "core.start", "location.start", "scanner.start"), log)
+        assertEquals(Phase.Recording, recorder.state.value.phase)
+        assertTrue("the open session keeps its foreground service", inForeground)
+        assertEquals(RecordingPhase.Recording, core.phase)
+    }
+
+    @Test
+    fun `a cancelled caller never leaves a stop half done`() = runTest {
+        val recorder = recorder()
+        recorder.start()
+        log.clear()
+        drainGate = CompletableDeferred()
+        val caller = launch { recorder.stop() }
+        runCurrent()
+        assertEquals(Phase.Stopping, recorder.state.value.phase)
+        caller.cancel()
+        drainGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("scanner.drain", "core.stop", "location.stop", "host.leave"), log)
+        assertEquals(Phase.Idle, recorder.state.value.phase)
+        assertEquals(RecordingPhase.Idle, core.phase)
+        assertFalse(inForeground)
     }
 }

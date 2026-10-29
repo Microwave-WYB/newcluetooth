@@ -49,6 +49,7 @@ class RecordingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val throttle = RecordingNotificationPolicy.Throttle()
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLockWanted = false
     private var observing = false
     private var inForeground = false
 
@@ -59,9 +60,14 @@ class RecordingService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 // Enter the foreground before anything else: the 5 s deadline never waits for the core.
+                // startForeground must follow startForegroundService even when there is nothing to record.
                 val entered = enterForeground(recorder?.state?.value ?: RecorderState.Idle)
-                RecordingServiceLink.foreground?.complete(entered)
-                if (!entered) {
+                // Without a linked recorder the service cannot follow a recording: refuse, so no session starts.
+                val confirmed = entered && recorder != null
+                RecordingServiceLink.foreground?.complete(confirmed)
+                if (!confirmed) {
+                    if (entered) ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                    inForeground = false
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -121,12 +127,17 @@ class RecordingService : Service() {
     }
 
     private fun applyWakeLock(state: RecorderState) {
-        if (!RecordingNotificationPolicy.wakeLockNeeded(state)) {
+        val needed = RecordingNotificationPolicy.wakeLockNeeded(state)
+        val entering = needed && !wakeLockWanted
+        wakeLockWanted = needed
+        if (!needed) {
             releaseWakeLock()
             return
         }
-        if (wakeLock?.isHeld == true) return
-        // Re-acquired on every resume, so a long recording renews its 12 h bound.
+        // Acquired only on entering a collecting state (start, resume, Bluetooth back, the seal after a pause), never
+        // on the updates in between, so the 12 h bound holds; a resume renews it.
+        if (!entering) return
+        releaseWakeLock()
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "cluetooth:recording")
             .apply {
