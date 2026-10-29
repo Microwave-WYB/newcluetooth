@@ -1,6 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.fake.core
 
-/** SPEC Q-1: `data.js` `matchDevice`, mirrored exactly (the Rust core runs the same \u00A72.11 vectors). */
+/** SPEC Q-1: `data.js` `matchDevice`, mirrored exactly (the Rust core runs the same §2.11 vectors). */
 object MatchDevice {
     /** JS `String.prototype.trim`: WhiteSpace and LineTerminator code points. */
     private fun isJsSpace(c: Char): Boolean = when (c) {

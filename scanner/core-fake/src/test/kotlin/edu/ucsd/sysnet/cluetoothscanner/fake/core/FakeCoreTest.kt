@@ -215,6 +215,20 @@ class FakeCoreTest {
         assertEquals(c.deviceKeys(Scope.session("bulk"), DeviceFilter(trackers = true)).keys.size, filtered.count)
     }
 
+    /** §2.5: `addr` is the uppercase colon MAC; the viewport is padded by a quarter of its size on each side. */
+    @Test
+    fun mapPointsAddrAndPadding() = runTest {
+        val c = core()
+        val view = Bbox(-117.236, 32.878, -117.232, 32.882)
+        val data = c.mapPoints(Scope.All, DeviceFilter(), view, 16.0)
+        val addrs = Regex("\"addr\":\"([^\"]*)\"").findAll(data.geojson).map { it.groupValues[1] }.toList()
+        assertEquals(data.count, addrs.size)
+        assertTrue(addrs.all { it.matches(Regex("([0-9A-F]{2}:){5}[0-9A-F]{2}")) })
+        val padded = Bbox(-117.237, 32.877, -117.231, 32.883)
+        val rows = c.deviceKeys(Scope.All, DeviceFilter(area = padded)).keys
+        assertEquals(rows.size, data.count)
+    }
+
     /** §2.6: deltas at 1 Hz with increasing seq, an append every 5 s, staleness flips; pause ends them. */
     @Test
     fun liveSimulator() = runTest {

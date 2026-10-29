@@ -493,8 +493,8 @@ impl Core {
     pub async fn search(&self, scope: Scope, query: String, area: Option<Bbox>) -> Result<Option<DeviceKeys>, CoreError>;
         // [V Search] Q-1/Q-2; None for a blank query; device_order order
     pub async fn map_points(&self, scope: Scope, filter: DeviceFilter, viewport: Bbox, zoom: f64) -> Result<MapData, CoreError>;
-        // [V MapPoints] "devices"/"density" for the viewport (+50 %), never the whole scope (§3.7);
-        //     filter.query limits it to search matches (Q-5)
+        // [V MapPoints] "devices"/"density" for the viewport (+50 %: the bbox padded by a quarter of its width
+        //     and height on each side), never the whole scope (§3.7); filter.query limits it to search matches (Q-5)
 }
 #[uniffi::export] pub fn match_device(query: String, name: Option<String>, addr: String) -> bool;  // [N] Q-1, pure
 ```
@@ -571,6 +571,9 @@ pub struct DeviceDetail {              // D-9, D-12; from the device's latest pa
 #[derive(uniffi::Record)] pub struct MapData { pub mode: MapMode, pub count: u32, pub geojson: String, pub seq: u64 }
 // geojson: Points {addr, rssi}; Cells {point_count, point_count_abbreviated}
 ```
+
+In every `MapData.geojson`, the feature property `addr` is the uppercase colon form `AA:BB:CC:DD:EE:FF`, the same as
+`DeviceRow.addr` and `data.js`.
 
 Encoding of `spark` and `samples`:
 
