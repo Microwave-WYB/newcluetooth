@@ -67,15 +67,18 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
  */
 @Composable
 fun MainScreen(vm: MainViewModel) {
-    val ready by vm.ready.collectAsState()
     val ui by vm.ui.collectAsState()
+    val viewData by vm.view.collectAsState()
+    val searchResults by vm.search.collectAsState()
+    val sessionsList by vm.sessions.collectAsState()
     val rec by vm.recorder.collectAsState()
     val settings by vm.settings.collectAsState()
     val location by vm.location.collectAsState()
     val myLocation by vm.graph.location.myLocation.collectAsState()
     val coreState by vm.coreState.collectAsState()
     (coreState as? CoreState.Failed)?.let { CoreErrorScreen(it.error, vm::retryCore); return }
-    val r = ready ?: return
+    val r = ui.ready ?: return
+    val dispatch = vm::dispatch
     val density = LocalDensity.current
     val nav = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
     val status = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
@@ -85,23 +88,29 @@ fun MainScreen(vm: MainViewModel) {
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CluetoothTheme.colors.bg)) {
         val layout = LayoutMode.of(maxWidth.value)
-        SideEffect { vm.setLayout(layout) }
+        SideEffect { if (ui.layout != layout) dispatch(MainEvent.SetLayout(layout)) }
         val tablet = layout.tablet
         val hasSession = ui.scope != null
-        val live = ui.view?.live == true
-        val form = vm.recorderForm(rec, ui.recorderPanelOpen)
+        val view = shownView(ui, viewData)
+        val route = shownRoute(ui, viewData)
+        val live = view?.live == true
+        val form = recorderForm(rec.phase, ui.recorderPanelOpen)
         val recorderUi = RecorderUi(form, rec.phase == RecorderState.Phase.Paused, rememberElapsedMs(rec.activeBeforeMs, rec.runningSinceMs),
-            rec.deviceCount, myLocation?.let { FixSummary(it.at.lat, it.at.lon, it.accuracyM, it.ageMs) }, ui.route)
+            rec.deviceCount, myLocation?.let { FixSummary(it.at.lat, it.at.lon, it.accuracyM, it.ageMs) }, route)
         val recorderActions = remember(vm) {
-            RecorderActions(vm::startRecording.let { f -> { f(); Unit } }, { vm.setRecorderPanel(true) }, { vm.setRecorderPanel(false) },
-                { vm.pause(); Unit }, { vm.resume(); Unit }, { vm.stop(); Unit }, vm::fitRoute)
+            RecorderActions({ dispatch(MainEvent.StartRecording) }, { dispatch(MainEvent.SetRecorderPanel(true)) },
+                { dispatch(MainEvent.SetRecorderPanel(false)) }, { dispatch(MainEvent.PauseRecording) }, { dispatch(MainEvent.ResumeRecording) },
+                { dispatch(MainEvent.StopRecording) }, { dispatch(MainEvent.FitRoute) })
         }
         // lane D's sheets for the shown scope (V-7: a new scope starts them fresh)
         val sheets = ui.scope?.let { scope ->
-            rememberSheetsState(scope, live, ui.view?.routesFaint ?: (scope.sessions == SessionScope.All), r.core.queries,
+            rememberSheetsState(scope, live, view?.routesFaint ?: (scope.sessions == SessionScope.All), r.core.queries,
                 vm.graph.gattRunner, r.map, reducedMotion = CluetoothTheme.motion.reduced)
         }
-        DisposableEffect(sheets) { vm.sheets = sheets; onDispose { if (vm.sheets === sheets) vm.sheets = null } }
+        DisposableEffect(sheets) {
+            sheets?.let { dispatch(MainEvent.SheetsAttached(it)) }
+            onDispose { sheets?.let { dispatch(MainEvent.SheetsDetached(it)) } }
+        }
         // P-3: the FAB sits above the root's collapsed peek (and the navigation bar); a rising sheet covers it
         val rootPeekPx = sheets?.stack?.root?.peek?.takeUnless { it.isNaN() }
         val sheetCover = if (sheets != null && !tablet) with(density) { (rootPeekPx ?: PlaceholderPeek.toPx()).toDp() } + nav else 0.dp
@@ -115,10 +124,10 @@ fun MainScreen(vm: MainViewModel) {
             )
         }
         val miniMap: @Composable (Modifier) -> Unit = { m ->
-            RouteMiniMap(ui.route, myLocation?.at, m, dark = CluetoothTheme.isDark)
+            RouteMiniMap(route, myLocation?.at, m, dark = CluetoothTheme.isDark)
         }
         val sessions = @Composable { m: Modifier ->
-            ui.sessions?.let { SessionsList(it, vm::selectScope, vm::openSettings, m, tablet = tablet, bottomInset = if (tablet) 0.dp else nav) }
+            shownSessions(ui, sessionsList)?.let { SessionsList(it, { sc -> dispatch(MainEvent.SelectScope(sc)) }, { dispatch(MainEvent.OpenSettings) }, m, tablet = tablet, bottomInset = if (tablet) 0.dp else nav) }
         }
 
         val mainLayers = @Composable {
@@ -127,14 +136,16 @@ fun MainScreen(vm: MainViewModel) {
             val recH = if (form == RecorderUi.Form.Panel) RecorderGeometry.panelHeight(true) else Tokens.fab
             LocateControl(
                 mapUi, if (tablet) LocatePlacement.Tablet(recH) else LocatePlacement.Phone(sheetCover),
-                onLocate = r.map::locate, onWarning = { vm.setLocationPopover(!ui.locationPopoverOpen) },
+                onLocate = r.map::locate, onWarning = { dispatch(MainEvent.SetLocationPopover(!ui.locationPopoverOpen)) },
             )
             if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, miniMap = miniMap)
             // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
             if (sheets != null && !(tablet && ui.sidebarOpen)) SheetsLayer(sheets, tablet)
             if (tablet && ui.sidebarOpen) SessionsPanel { sessions(Modifier) }
             if (form != RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
-            if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, vm::locationFix) { vm.setLocationPopover(false) }
+            if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, { dispatch(MainEvent.LocationFix(it)) }) {
+                dispatch(MainEvent.SetLocationPopover(false))
+            }
         }
         // tablet: the floating pieces stay inside the system bars; the map runs full-bleed behind them (P-1)
         val safe = if (tablet) Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars) else Modifier.fillMaxSize()
@@ -145,41 +156,49 @@ fun MainScreen(vm: MainViewModel) {
             }
         }
 
+        val searchShown = shownSearch(ui, searchResults)
+        val searchRows = searchShown?.second.orEmpty()
         val topState = TopChromeState(
             hasSession = hasSession, sidebarOpen = ui.sidebarOpen && !tablet, recorderPanelOpen = form == RecorderUi.Form.Panel && !tablet,
-            recording = rec.phase != RecorderState.Phase.Idle, page = ui.search.takeIf { ui.page == Page.SearchPage },
+            recording = rec.phase != RecorderState.Phase.Idle, page = searchShown?.first,
             searchQuery = sheets?.discover?.search?.query?.takeIf { sheets.searching } ?: ui.searchQuery?.takeIf { sheets?.searching != false },
             showSearchThisArea = sheets?.searchMovedAway == true,
         )
         val topActions = remember(vm) {
-            TopChromeActions(vm::toggleSidebar, vm::openSearch, vm::closePage, vm::setQuery, vm::pick, vm::searchEverywhere,
-                vm::openSearch, vm::exitSearch, vm::searchThisArea)
+            TopChromeActions(
+                { dispatch(MainEvent.ToggleSidebar) }, { dispatch(MainEvent.OpenSearch) }, { dispatch(MainEvent.ClosePage) },
+                { q -> dispatch(MainEvent.SetQuery(q)) }, { k -> dispatch(MainEvent.Pick(k)) }, { dispatch(MainEvent.SearchEverywhere) },
+                { dispatch(MainEvent.OpenSearch) }, { dispatch(MainEvent.ExitSearch) }, { dispatch(MainEvent.SearchThisArea) },
+            )
         }
         if (tablet) {
             main()
-            TabletTopChrome(modifier = Modifier.windowInsetsPadding(WindowInsets.systemBars), sessionsOpen = ui.sidebarOpen, query = ui.search?.query ?: ui.searchQuery.orEmpty(),
-                resultsOpen = ui.page == Page.SearchPage, page = ui.search, rows = ui.searchRows, live = live,
+            TabletTopChrome(modifier = Modifier.windowInsetsPadding(WindowInsets.systemBars), sessionsOpen = ui.sidebarOpen, query = ui.searchPage?.query ?: ui.searchQuery.orEmpty(),
+                resultsOpen = ui.searchPage != null, page = searchShown?.first, rows = searchRows, live = live,
                 actions = topActions.forTablet(vm), showSearchThisArea = sheets?.searchMovedAway == true)
         } else {
-            PhoneSidebarLayout(ui.sidebarOpen, vm::closeSidebar, sidebar = { m -> sessions(m) }) { main() }
-            PhoneTopChrome(topState, topActions, ui.searchRows, live, statusInset = status)
+            PhoneSidebarLayout(ui.sidebarOpen, { dispatch(MainEvent.CloseSidebar) }, sidebar = { m -> sessions(m) }) { main() }
+            PhoneTopChrome(topState, topActions, searchRows, live, statusInset = status)
         }
 
         // O-1: Settings over everything
         ui.storage?.let { st ->
             val shown = ui.scope?.takeIf { it.sessions is SessionScope.Sessions }
             val label = (shown?.sessions as? SessionScope.Sessions)?.ids?.firstOrNull()?.let { id ->
-                ui.sessions?.let { s -> (listOfNotNull(s.current) + s.days.flatMap { it.sessions }).firstOrNull { it.id == id }?.label() }
+                sessionsList?.let { s -> (listOfNotNull(s.current) + s.days.flatMap { it.sessions }).firstOrNull { it.id == id }?.label() }
             }
             SettingsPage(
                 ui.page == Page.Settings, SettingsUi(settings, vm.graph.uploads.status.collectAsState().value, st),
                 SettingsActions(
-                    onBack = vm::closePage, onSettings = { vm.updateSettings(it) }, onUploadNow = vm.graph.uploads::uploadNow,
-                    onExportScope = { s -> vm.editStorage { it.copy(exportScope = s) } }, onExportFormat = { f -> vm.editStorage { it.copy(exportFormat = f) } },
-                    onShare = { vm.export(false) }, onSaveToDownloads = { vm.export(true) },
-                    onDeleteScope = { s -> vm.editStorage { it.copy(deleteScope = s) } },
-                    onDeleteRequest = { vm.editStorage { it.copy(deleteConfirm = edu.ucsd.sysnet.cluetoothscanner.chrome.DeleteConfirm.Confirm) } },
-                    onDeleteConfirm = vm::deleteConfirmed, onDelete = { vm.delete(it) }, onDeleteCancel = { vm.editStorage { it.copy(deleteConfirm = null) } },
+                    onBack = { dispatch(MainEvent.ClosePage) }, onSettings = { dispatch(MainEvent.UpdateSettings(it)) },
+                    onUploadNow = vm.graph.uploads::uploadNow,
+                    onExportScope = { s -> dispatch(MainEvent.EditStorage { it.copy(exportScope = s) }) },
+                    onExportFormat = { f -> dispatch(MainEvent.EditStorage { it.copy(exportFormat = f) }) },
+                    onShare = { dispatch(MainEvent.Export(toDownloads = false)) }, onSaveToDownloads = { dispatch(MainEvent.Export(toDownloads = true)) },
+                    onDeleteScope = { s -> dispatch(MainEvent.EditStorage { it.copy(deleteScope = s) }) },
+                    onDeleteRequest = { dispatch(MainEvent.EditStorage { it.copy(deleteConfirm = edu.ucsd.sysnet.cluetoothscanner.chrome.DeleteConfirm.Confirm) }) },
+                    onDeleteConfirm = { dispatch(MainEvent.DeleteConfirmed) }, onDelete = { dispatch(MainEvent.Delete(it)) },
+                    onDeleteCancel = { dispatch(MainEvent.EditStorage { it.copy(deleteConfirm = null) }) },
                 ),
                 sessionLabel = label, sessionScope = if (label != null) shown else null, statusInset = status, bottomInset = nav,
             )
@@ -188,13 +207,17 @@ fun MainScreen(vm: MainViewModel) {
         // O-2: onboarding on first launch
         ui.onboarding?.let { ob ->
             Onboarding(
-                ob, ui.onboardingSteps,
+                ob.ui, ob.steps,
                 OnboardingActions(
-                    onRequest = { which: OnboardingPermission -> vm.request(which) }, onOpenSettings = vm.graph.permissions::openAppSettings,
-                    onEnableBluetooth = vm::enableBluetooth, onUserId = { id -> vm.editOnboarding { it.copy(userId = id, userIdValid = edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings.isValidUserId(id)) } },
-                    onAutoRecord = { v -> vm.editOnboarding { it.copy(autoRecord = v) } },
-                    onBack = { vm.editOnboarding { it.copy(step = it.step - 1) } }, onNext = { vm.editOnboarding { it.copy(step = it.step + 1) } },
-                    onDone = { vm.finishOnboarding() },
+                    onRequest = { which: OnboardingPermission -> dispatch(MainEvent.RequestPermission(which)) },
+                    onOpenSettings = vm.graph.permissions::openAppSettings, onEnableBluetooth = { dispatch(MainEvent.EnableBluetooth) },
+                    onUserId = { id ->
+                        dispatch(MainEvent.EditOnboarding { it.copy(userId = id, userIdValid = edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings.isValidUserId(id)) })
+                    },
+                    onAutoRecord = { v -> dispatch(MainEvent.EditOnboarding { it.copy(autoRecord = v) }) },
+                    onBack = { dispatch(MainEvent.EditOnboarding { it.copy(step = it.step - 1) }) },
+                    onNext = { dispatch(MainEvent.EditOnboarding { it.copy(step = it.step + 1) }) },
+                    onDone = { dispatch(MainEvent.FinishOnboarding) },
                 ),
                 statusInset = status, bottomInset = nav,
             )
@@ -204,8 +227,11 @@ fun MainScreen(vm: MainViewModel) {
 
 /** Tablet: the field types into the search; clearing it leaves (T-5). */
 private fun TopChromeActions.forTablet(vm: MainViewModel) = TopChromeActions(
-    onMenu, onSearchOpen = {}, onSearchBack = vm::closePage,
-    onQueryChange = { q -> if (vm.ui.value.page != Page.SearchPage) vm.openSearch(); if (q.isEmpty()) vm.closePage() else vm.setQuery(q) },
+    onMenu, onSearchOpen = {}, onSearchBack = { vm.dispatch(MainEvent.ClosePage) },
+    onQueryChange = { q ->
+        if (vm.ui.value.searchPage == null) vm.dispatch(MainEvent.OpenSearch)
+        vm.dispatch(if (q.isEmpty()) MainEvent.ClosePage else MainEvent.SetQuery(q))
+    },
     onPick, onSearchEverywhere, onBarEdit, onBarExit, onSearchThisArea,
 )
 
