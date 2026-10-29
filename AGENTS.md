@@ -39,10 +39,17 @@ The design goal is:
   - The production data stack: `compose.yaml` (postgres, migrate, sync,
     sync-continuous, wigle-upload; project name pinned to `newcluetooth`),
     `.env.example`, the PostGIS image (`postgres/`) and the host-local,
-    gitignored `secrets/` mount point. Run `docker compose` from here; see
+    gitignored `secrets/` mount point. Opt-in profiles `pgweb` and `db-tunnel` (not
+    running today). Run `docker compose` from here; see
     `docs/operations.md`.
 - `infra/fleet/`
-  - Placeholder for the planned research agent fleet.
+  - The research agent fleet: `compose.yaml` (Gitea, runners, its Cloudflare tunnel;
+    keyproxy and the research agent, as compose projects `wirelesswiki-gitea` and
+    `research-agent`), `keyproxy/` (Node, the only holder of the Gitea/WiGLE/AndroZoo keys,
+    whitelisted endpoints only), `agent-image/`, the read-only `policy/` and `fleet.sh`.
+    Run it with `mise run fleet:secrets` / `fleet:up`; secrets live in
+    `~/.config/cluetooth-fleet/secrets`, never in the repo or the agent container. See
+    `infra/fleet/README.md`.
 
 Payload contracts: `docs/payload-schema-v2.md` (identity, batching, upload
 state), `docs/payload-schema-v3.md` (scan v3 columns/footer and `gatt/v1`).
