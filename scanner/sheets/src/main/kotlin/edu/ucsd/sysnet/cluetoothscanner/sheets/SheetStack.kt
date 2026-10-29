@@ -25,23 +25,31 @@ class SheetStackHooks(
     val onRemoved: (SheetEntry) -> Unit = {},
 )
 
-/** Why a sheet pops (S-8). Every path pops exactly one level; only a drag release reveals without easing. */
-enum class PopReason { Close, Back, Scrim, EmptyMap, Drag }
+/**
+ * One level of the stack, as the UI holds it: a stable handle whose logical state ([height], [panel], [camera]) is
+ * read from the controller's immutable [StackState], plus the execution-layer state the runner and the composition
+ * own: the animated offset, the drag session, the measured header and the composed lists with their saved scroll.
+ */
+class SheetEntry internal constructor(val id: Long, val kind: SheetKind, private val owner: SheetStackController, private val initial: Level) {
+    private val level: Level get() = owner.state.levelOf(SheetId(id)) ?: initial
 
-/** One level of the stack. [height] and [panel] are its saved states while it is hidden (S-7). */
-class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight, panel: PanelHeight) {
-    var height by mutableStateOf(height)
-        internal set
-    var panel by mutableStateOf(panel)
-        internal set
+    /** The saved phone height (S-5, S-7). */
+    val height: SheetHeight get() = level.height
+
+    /** The tablet panel state (T-2). */
+    var panel: PanelHeight
+        get() = level.panel
+        internal set(value) = owner.dispatch(StackEvent.SetPanel(SheetId(id), value))
+
+    /** The camera saved when this level was covered (S-8). */
+    val camera: CameraSnapshot? get() = level.camera
+
     /** The main list's saved scroll (S-8, G-10); other lists of the sheet keep theirs under their own key. */
     var scroll: ScrollSnapshot
         get() = scrolls[MAIN_LIST] ?: ScrollSnapshot()
         internal set(value) {
             scrolls[MAIN_LIST] = value
         }
-    var camera: CameraSnapshot? = null
-        internal set
 
     /** The measured bottom of the header (S-5 peek), px from the sheet's top; NaN until laid out. */
     var peek by mutableFloatStateOf(Float.NaN)
@@ -101,7 +109,9 @@ class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight, panel: 
 }
 
 /**
- * The sheet stack (S-4..S-9, S-11, S-12, P-6, T-1, T-2, T-9). Level 1 is the root and never closes.
+ * The sheet stack's runner (S-4..S-9, S-11, S-12, P-6, T-1, T-2, T-9). The logic is [reduceStack] over one
+ * immutable [state]; this class turns calls into [StackEvent]s, executes the [StackEffect]s (offset animations,
+ * the hooks) and feeds animation ends back as events. It owns the per-level [SheetEntry] handles.
  *
  * Only the top sheet is composed (S-7), apart from two transitions: while a pushed sheet slides in, the sheet below
  * stays drawn under it ([below]); while a popped sheet slides out, it stays drawn over the revealed one ([leaving]).
@@ -115,16 +125,16 @@ class SheetStackController(
     root: SheetKind = SheetKind.Discover,
     rootHeight: SheetHeight = SheetHeight.Collapsed,
 ) {
-    private var nextId = 1L
+    /** The stack's whole logical state. */
+    var state by mutableStateOf(StackState.initial(root, rootHeight))
+        private set
 
-    var entries by mutableStateOf(listOf(SheetEntry(nextId++, root, rootHeight, rootHeight.toPanel())))
-        private set
-    var below by mutableStateOf<SheetEntry?>(null)
-        private set
-    var leaving by mutableStateOf<List<SheetEntry>>(emptyList())
-        private set
-    var tablet by mutableStateOf(false)
-        private set
+    private val handles = HashMap<Long, SheetEntry>()
+
+    val entries: List<SheetEntry> get() = state.levels.map(::handle)
+    val below: SheetEntry? get() = (state.transition as? StackTransition.SlidingIn)?.under?.let(state::levelOf)?.let(::handle)
+    val leaving: List<SheetEntry> get() = (state.transition as? StackTransition.SlidingOut)?.leaving.orEmpty().map(::handle)
+    val tablet: Boolean get() = state.tablet
 
     /** Screen facts, px (set by the host on every layout). */
     var screenHeight by mutableFloatStateOf(0f)
@@ -132,12 +142,12 @@ class SheetStackController(
     private var density = 1f
     private var bottomInset = 0f
 
-    val top: SheetEntry get() = entries.last()
-    val root: SheetEntry get() = entries.first()
+    val top: SheetEntry get() = handle(state.top)
+    val root: SheetEntry get() = handle(state.root)
     val rendered: List<SheetEntry> get() = listOfNotNull(below) + top + leaving
 
     /** S-9: only while a pushed sheet is at Full, never on the tablet panel. */
-    val scrimVisible: Boolean get() = !tablet && entries.size > 1 && top.height == SheetHeight.Full
+    val scrimVisible: Boolean get() = state.scrimVisible
 
     fun setScreen(heightPx: Float, density: Float, bottomInsetPx: Float) {
         screenHeight = heightPx
@@ -160,7 +170,7 @@ class SheetStackController(
     /** The sheet's top edge now. */
     fun offsetOf(entry: SheetEntry): Float = entry.liveOffset ?: geometry(entry).offsetOf(entry.height)
 
-    fun isPushed(entry: SheetEntry) = entry !== root
+    fun isPushed(entry: SheetEntry) = entry.id != state.root.id.raw
 
     // ---- Stack ----
 
@@ -168,45 +178,19 @@ class SheetStackController(
     fun push(kind: SheetKind): SheetEntry {
         val under = top
         under.scroll = under.scrollReader?.invoke() ?: under.scroll
-        under.camera = hooks.camera()
-        stop(under)
-        under.liveOffset = null
-        val entry = SheetEntry(
-            nextId++, kind,
-            if (under.height == SheetHeight.Full) SheetHeight.Full else SheetHeight.Half,
-            PanelHeight.Open,
-        )
-        leaving.forEach(::stop)
-        leaving = emptyList()
-        entries = entries + entry
-        if (tablet) {
-            below = null
-        } else {
-            below = under
-            entry.liveOffset = geometry(entry).dismissed
-            animate(entry, geometry(entry).offsetOf(entry.height), metrics.pageMs) { settled(entry) }
-        }
-        hooks.onTopChanged(entry, true)
-        return entry
+        dispatch(StackEvent.Push(kind, hooks.camera()))
+        return top
     }
 
     /** S-4: a device opened while a device sheet is on top replaces it, at the same level and height. */
     fun replaceTop(kind: SheetKind): SheetEntry {
-        val old = top
-        check(isPushed(old)) { "the root is never replaced" }
-        stop(old)
-        val entry = SheetEntry(nextId++, kind, old.height, old.panel)
-        entry.peek = old.peek
-        entries = entries.dropLast(1) + entry
-        below = null // S-7: the replacement rests at once, whatever the slide-in was doing
-        hooks.onRemoved(old)
-        hooks.onTopChanged(entry, true)
-        return entry
+        dispatch(StackEvent.ReplaceTop(kind))
+        return top
     }
 
     /** Opens a device: replacing a device sheet on top, otherwise pushing one (S-4). */
     fun openDevice(key: DeviceKey): SheetEntry =
-        if (top.kind is SheetKind.Device) replaceTop(SheetKind.Device(key)) else push(SheetKind.Device(key))
+        if (state.top.kind is SheetKind.Device) replaceTop(SheetKind.Device(key)) else push(SheetKind.Device(key))
 
     /**
      * S-8: pops exactly one level. The revealed sheet gets back its saved height, scroll, view and filters, and the
@@ -215,44 +199,13 @@ class SheetStackController(
      * Collapsed it shows at its saved height at once while the popped one slides out.
      */
     fun pop(reason: PopReason): Boolean {
-        if (entries.size < 2) return false
-        val out = top
-        val at = offsetOf(out)
-        stop(out)
-        out.liveOffset = at
-        entries = entries.dropLast(1)
-        below = null
-        val revealed = top
-        hooks.onRemoved(out)
-        if (tablet) {
-            revealed.liveOffset = null
-        } else {
-            leaving = listOf(out) + leaving
-            if (reason == PopReason.Drag) {
-                revealed.liveOffset = null
-            } else {
-                revealed.liveOffset = at
-                animate(revealed, geometry(revealed).offsetOf(revealed.height), metrics.pageMs) {
-                    revealed.liveOffset = null
-                }
-            }
-            animate(out, geometry(out).dismissed, metrics.pageMs) { leaving = leaving - out }
-        }
-        revealed.camera?.let(hooks.restoreCamera)
-        hooks.onTopChanged(revealed, false)
-        return true
+        val before = state.pushed.size
+        dispatch(StackEvent.Pop(reason))
+        return state.pushed.size < before
     }
 
     /** V-7: a new session view goes back to the root alone. */
-    fun reset() {
-        val removed = entries.drop(1)
-        (removed + leaving).forEach(::stop)
-        entries = listOf(root)
-        below = null
-        leaving = emptyList()
-        removed.forEach(hooks.onRemoved)
-        root.liveOffset = null
-    }
+    fun reset() = dispatch(StackEvent.Reset)
 
     /** G-14: Back pops the top pushed sheet; false when only the root is left. */
     fun handleBack(): Boolean = pop(PopReason.Back)
@@ -260,72 +213,25 @@ class SheetStackController(
     // ---- Heights ----
 
     /** Moves the top sheet to [height] (Dismissed pops it). On tablet it only records the phone height. */
-    fun setHeight(entry: SheetEntry, height: SheetHeight) {
-        if (tablet) {
-            // The panel has its own state (T-2); the phone height is only kept for going back to phone (T-9).
-            if (height != SheetHeight.Dismissed) entry.height = height
-            return
-        }
-        if (height == SheetHeight.Dismissed) {
-            if (entry === top && isPushed(entry)) pop(PopReason.Drag) else setHeight(entry, SheetHeight.Collapsed)
-            return
-        }
-        entry.height = height
-        if (entry !== top) return
-        animate(entry, geometry(entry).offsetOf(height), metrics.pageMs) { settled(entry) }
-    }
+    fun setHeight(entry: SheetEntry, height: SheetHeight) = dispatch(StackEvent.SetHeight(SheetId(entry.id), height))
 
     /** S-11, T-2: a tap on the handle or header background. */
-    fun tapHeader(entry: SheetEntry) {
-        if (entry !== top) return
-        if (tablet) {
-            entry.panel = if (entry.panel == PanelHeight.Open) PanelHeight.Partial else PanelHeight.Open
-            return
-        }
-        val next =
-            if (entry.height == SheetHeight.Collapsed) geometry(entry).step(entry.height, up = true, pushed = isPushed(entry))
-            else SheetHeight.Collapsed
-        setHeight(entry, next)
-    }
+    fun tapHeader(entry: SheetEntry) = dispatch(StackEvent.TapHeader(SheetId(entry.id)))
 
     /** S-12: a header control of the root used while it is Collapsed also raises it to Half. */
-    fun onRootHeaderControl() {
-        if (!tablet && entries.size == 1 && root.height == SheetHeight.Collapsed) setHeight(root, SheetHeight.Half)
-    }
+    fun onRootHeaderControl() = dispatch(StackEvent.RootHeaderControl)
 
     /** P-6, T-2: the user started panning or zooming the map. App camera moves never call this. */
-    fun onMapUserGesture() {
-        val entry = top
-        if (tablet) {
-            entry.panel = PanelHeight.Partial
-            return
-        }
-        if (entry.drag?.mode == SheetDrag.Mode.Sheet) return
-        if (entry.height != SheetHeight.Collapsed) setHeight(entry, SheetHeight.Collapsed)
-    }
+    fun onMapUserGesture() = dispatch(StackEvent.MapUserGesture(dragging = top.drag?.mode == SheetDrag.Mode.Sheet))
 
     /** T-2: the Partial panel's chevron. */
-    fun expandPanel() {
-        top.panel = PanelHeight.Open
-    }
+    fun expandPanel() = dispatch(StackEvent.ExpandPanel)
 
     /**
      * T-9 and back. Phone to tablet opens every level. Tablet to phone keeps the panel's choice: Partial comes back
      * Collapsed and Open comes back Full, as the prototype does.
      */
-    fun setLayout(tablet: Boolean) {
-        if (tablet == this.tablet) return
-        (entries + leaving).forEach(::stop)
-        below = null
-        leaving = emptyList()
-        entries.forEach { it.liveOffset = null }
-        if (tablet) {
-            entries.forEach { it.panel = PanelHeight.Open }
-        } else {
-            entries.forEach { it.height = if (it.panel == PanelHeight.Partial) SheetHeight.Collapsed else SheetHeight.Full }
-        }
-        this.tablet = tablet
-    }
+    fun setLayout(tablet: Boolean) = dispatch(StackEvent.SetLayout(tablet))
 
     // ---- Gestures (phone) ----
 
@@ -355,7 +261,7 @@ class SheetStackController(
     internal fun dragMove(entry: SheetEntry, x: Float, y: Float, timeMs: Long): Boolean {
         val drag = entry.drag ?: return false
         if (!drag.move(x, y, timeMs)) return false
-        below = null // S-7: once the top sheet is dragged nothing below it is drawn
+        dispatch(StackEvent.DragStarted(SheetId(entry.id))) // S-7: once dragged, nothing below the top is drawn
         entry.liveOffset = drag.offset
         return true
     }
@@ -370,14 +276,10 @@ class SheetStackController(
         val drag = entry.drag ?: return null
         entry.drag = null
         val release = drag.release()
-        val target = release.target
-        when {
-            target != null -> {
-                if (release.contentFling != 0f) entry.content?.let { c -> scope.launch { c.fling(release.contentFling) } }
-                setHeight(entry, target)
-            }
-            entry.dragInterrupted || entry.liveOffset != null -> setHeight(entry, entry.height)
+        if (release.target != null && release.contentFling != 0f) {
+            entry.content?.let { c -> scope.launch { c.fling(release.contentFling) } }
         }
+        dispatch(StackEvent.Released(SheetId(entry.id), release.target, resettle = entry.dragInterrupted || entry.liveOffset != null))
         entry.dragInterrupted = false
         return release
     }
@@ -392,15 +294,50 @@ class SheetStackController(
 
     private val wheel = WheelGate(metrics.wheelLockMs)
 
-    // ---- Internals ----
+    // ---- Runner ----
 
-    /**
-     * S-7: the top sheet came to rest. Whatever path settled it (the slide-in, or a touch, P-6, the wheel or a
-     * header tap that cancelled the slide-in), nothing below it stays drawn.
-     */
-    private fun settled(entry: SheetEntry) {
-        entry.liveOffset = null
-        if (entry === top) below = null
+    /** Reduces [event] and executes its effects in order. */
+    internal fun dispatch(event: StackEvent) {
+        val step = reduceStack(state, event)
+        if (step.state !== state) state = step.state
+        step.effects.forEach(::execute)
+        prune()
+    }
+
+    private fun handle(level: Level): SheetEntry = handles.getOrPut(level.id.raw) { SheetEntry(level.id.raw, level.kind, this, level) }
+
+    private fun handleOf(id: SheetId): SheetEntry? = handles[id.raw] ?: state.levelOf(id)?.let(::handle)
+
+    /** Handles of levels that are neither in the stack nor sliding out are no longer needed. */
+    private fun prune() {
+        val live = (state.levels + (state.transition as? StackTransition.SlidingOut)?.leaving.orEmpty()).map { it.id.raw }.toSet()
+        handles.keys.retainAll(live)
+    }
+
+    private fun execute(effect: StackEffect) {
+        when (effect) {
+            is StackEffect.Stop -> handles[effect.id.raw]?.let(::stop)
+            is StackEffect.Rest -> handles[effect.id.raw]?.liveOffset = null
+            is StackEffect.Pin -> handleOf(effect.id)?.let { it.liveOffset = offsetOf(it) }
+            is StackEffect.SlideIn -> handleOf(effect.id)?.let { e ->
+                e.liveOffset = geometry(e).dismissed
+                animate(e, geometry(e).offsetOf(e.height), StackEvent.Settled(effect.id))
+            }
+            is StackEffect.Ease -> handleOf(effect.id)?.let { e -> animate(e, geometry(e).offsetOf(e.height), StackEvent.Settled(effect.id)) }
+            is StackEffect.Reveal -> handleOf(effect.id)?.let { e ->
+                handles[effect.from.raw]?.let { from -> e.liveOffset = offsetOf(from) }
+                animate(e, geometry(e).offsetOf(e.height), StackEvent.Settled(effect.id))
+            }
+            is StackEffect.SlideOut -> handleOf(effect.id)?.let { e -> animate(e, geometry(e).dismissed, StackEvent.SlidOut(effect.id)) }
+            is StackEffect.Inherit -> {
+                val from = handles[effect.from.raw]
+                val to = handleOf(effect.to)
+                if (from != null && to != null) to.peek = from.peek
+            }
+            is StackEffect.RestoreCamera -> hooks.restoreCamera(effect.camera)
+            is StackEffect.TopChanged -> handleOf(effect.id)?.let { hooks.onTopChanged(it, effect.opening) }
+            is StackEffect.Removed -> hooks.onRemoved(handles[effect.level.id.raw] ?: handle(effect.level))
+        }
     }
 
     private fun defaultPeek() = (metrics.handleZone.value + metrics.headerHeight.value + 2 * metrics.edge.value) * density
@@ -410,15 +347,15 @@ class SheetStackController(
         entry.animation = null
     }
 
-    private fun animate(entry: SheetEntry, to: Float, durationMs: Int, done: () -> Unit) {
+    private fun animate(entry: SheetEntry, to: Float, done: StackEvent) {
         stop(entry)
         val from = offsetOf(entry)
         entry.liveOffset = from
-        val ms = if (metrics.reducedMotion) 0 else durationMs
+        val ms = if (metrics.reducedMotion) 0 else metrics.pageMs
         entry.animation = scope.launch {
             animator.animate(from, to, ms) { entry.liveOffset = it }
             entry.liveOffset = to
-            done()
+            dispatch(done)
         }
     }
 }
