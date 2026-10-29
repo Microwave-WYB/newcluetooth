@@ -7,8 +7,10 @@
 !.env.example
 
 # Local secrets and downloaded blob cache
-secrets/*
-!secrets/.gitignore
+infra/data/secrets/*
+!infra/data/secrets/.gitignore
+# Pre-restructure location; existing checkouts may still hold the key files there.
+/secrets/
 downloads/
 
 # Compose preview screenshots (rendered by mise run //cluetooth-android:ui-shots)
