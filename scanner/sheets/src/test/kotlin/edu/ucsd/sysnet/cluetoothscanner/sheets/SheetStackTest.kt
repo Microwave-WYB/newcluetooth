@@ -8,6 +8,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -75,6 +76,69 @@ class SheetStackTest {
         advanceUntilIdle()
         assertEquals(listOf(p), s.rendered)
         assertEquals(Collapsed, root.height)      // its state is kept while hidden
+    }
+
+    @Test
+    fun `S-7 a tap that cancels the slide-in settles the pushed sheet and hides the sheet below`() = runTest {
+        val s = stack()
+        val root = s.root
+        val p = s.push(product)
+        runCurrent() // sliding in
+        s.beginDrag(p, DragRegion.Content, 200f, 700f, 0)
+        assertTrue(s.endDrag(p)!!.tap)
+        assertEquals(listOf(root, p), s.rendered) // still settling
+        advanceUntilIdle()
+        assertEquals(Half, p.height)
+        assertEquals(s.geometry(p).half, s.offsetOf(p), 0f)
+        assertEquals(listOf(p), s.rendered)
+    }
+
+    @Test
+    fun `S-7 a native-scroll touch that cancels the slide-in settles the pushed sheet and hides the sheet below`() = runTest {
+        val s = stack(rootHeight = Full)
+        val p = s.push(product) // over Full: opens at Full
+        p.content = FakeContent()
+        advanceTimeBy(300) // almost in: within half a px of Full is "at Full"
+        p.liveOffset = s.geometry(p).full
+        s.beginDrag(p, DragRegion.Content, 200f, 700f, 0)
+        assertFalse(s.dragMove(p, 200f, 650f, 16)) // up at Full with content at its top: native scroll
+        assertEquals(SheetDrag.Mode.Native, p.drag!!.mode)
+        s.endDrag(p)
+        advanceUntilIdle()
+        assertEquals(listOf(p), s.rendered)
+    }
+
+    @Test
+    fun `S-7 P-6 a user map gesture during the slide-in collapses the pushed sheet and hides the sheet below`() = runTest {
+        val s = stack(rootHeight = Half)
+        val p = s.push(product)
+        runCurrent()
+        s.onMapUserGesture()
+        advanceUntilIdle()
+        assertEquals(Collapsed, p.height)
+        assertEquals(listOf(p), s.rendered)
+        assertEquals(Half, s.root.height) // the hidden sheet keeps its own state
+    }
+
+    @Test
+    fun `S-7 the wheel, a header tap or a replacing device during the slide-in also hide the sheet below`() = runTest {
+        val s = stack()
+        val p = s.push(product)
+        runCurrent()
+        assertTrue(s.onWheel(p, 1f, 0))
+        advanceUntilIdle()
+        assertEquals(listOf(p), s.rendered)
+
+        val d = s.openDevice(1)
+        runCurrent()
+        s.tapHeader(d)
+        advanceUntilIdle()
+        assertEquals(listOf(d), s.rendered)
+
+        s.openDevice(2)
+        runCurrent()
+        val d2 = s.openDevice(3) // replaces the sliding device sheet
+        assertEquals(listOf(d2), s.rendered)
     }
 
     @Test

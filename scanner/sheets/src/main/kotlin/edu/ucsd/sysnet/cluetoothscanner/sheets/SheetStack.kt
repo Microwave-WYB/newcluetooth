@@ -141,10 +141,7 @@ internal class SheetStackController(
         } else {
             below = under
             entry.liveOffset = geometry(entry).dismissed
-            animate(entry, geometry(entry).offsetOf(entry.height), metrics.pageMs) {
-                entry.liveOffset = null
-                if (below === under) below = null
-            }
+            animate(entry, geometry(entry).offsetOf(entry.height), metrics.pageMs) { settled(entry) }
         }
         hooks.onTopChanged(entry, true)
         return entry
@@ -158,6 +155,7 @@ internal class SheetStackController(
         val entry = SheetEntry(nextId++, kind, old.height, old.panel)
         entry.peek = old.peek
         entries = entries.dropLast(1) + entry
+        below = null // S-7: the replacement rests at once, whatever the slide-in was doing
         hooks.onRemoved(old)
         hooks.onTopChanged(entry, true)
         return entry
@@ -230,7 +228,7 @@ internal class SheetStackController(
         }
         entry.height = height
         if (entry !== top) return
-        animate(entry, geometry(entry).offsetOf(height), metrics.pageMs) { entry.liveOffset = null }
+        animate(entry, geometry(entry).offsetOf(height), metrics.pageMs) { settled(entry) }
     }
 
     /** S-11, T-2: a tap on the handle or header background. */
@@ -351,6 +349,15 @@ internal class SheetStackController(
     private val wheel = WheelGate(metrics.wheelLockMs)
 
     // ---- Internals ----
+
+    /**
+     * S-7: the top sheet came to rest. Whatever path settled it (the slide-in, or a touch, P-6, the wheel or a
+     * header tap that cancelled the slide-in), nothing below it stays drawn.
+     */
+    private fun settled(entry: SheetEntry) {
+        entry.liveOffset = null
+        if (entry === top) below = null
+    }
 
     private fun defaultPeek() = (metrics.handleZone.value + metrics.headerHeight.value + 2 * metrics.edge.value) * density
 
