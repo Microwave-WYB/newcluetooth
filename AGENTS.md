@@ -46,7 +46,7 @@ The design goal is:
   - The research agent fleet: `compose.yaml` (Gitea, runners, its Cloudflare tunnel;
     keyproxy and the research agent, as compose projects `wirelesswiki-gitea` and
     `research-agent`), `keyproxy/` (Node, the only holder of the Gitea/WiGLE/AndroZoo keys,
-    whitelisted endpoints only), `agent-image/`, the read-only `policy/` and `fleet.sh`.
+    which it adds to every request; config-driven services), `agent-image/`, the read-only `policy/` and `fleet.sh`.
     Run it with `mise run fleet:secrets` / `fleet:up`; secrets live in
     `~/.config/cluetooth-fleet/secrets`, never in the repo or the agent container. See
     `infra/fleet/README.md`.

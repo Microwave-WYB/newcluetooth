@@ -12,15 +12,17 @@ if ! ls "$policy_dir"/*.md >/dev/null 2>&1; then
 fi
 policy=$(cat "$policy_dir"/*.md)
 
-# 2. This container holds no keys: keyed services go through keyproxy. Refuse to start if one
-#    was passed in anyway (variable names only are printed, never values).
+# 2. This container holds no keys: keyed services go through keyproxy, and the scan-database
+#    URLs come as files (~/.config/wiki-db/url, ~/.config/wigle/db-url) so `env` cannot print
+#    them. Refuse to start if one was passed in the environment by mistake (variable names
+#    only are printed, never values).
 forbidden=""
-for v in GITEA_TOKEN GH_TOKEN GITHUB_TOKEN WIGLE_API_KEY WIGLE_API_NAME WIGLE_API_TOKEN ANDROZOO_API_KEY ANDROZOO_APIKEY; do
+for v in GITEA_TOKEN GH_TOKEN GITHUB_TOKEN WIGLE_API_KEY WIGLE_API_NAME WIGLE_API_TOKEN ANDROZOO_API_KEY ANDROZOO_APIKEY WIKI_DB_URL WIGLE_DB_URL; do
   eval "val=\${$v:-}"
   if [ -n "$val" ]; then forbidden="$forbidden $v"; fi
 done
 if [ -n "$forbidden" ]; then
-  echo "entrypoint: keys must not be set in this container:$forbidden (they belong to keyproxy); refusing to start" >&2
+  echo "entrypoint: must not be set in this container's environment:$forbidden (keys belong to keyproxy, DB URLs in files); refusing to start" >&2
   exit 1
 fi
 unset val
@@ -34,7 +36,6 @@ mkdir -p "$HOME/.pi/agent" "$HOME/.claude"
 rm -f "$HOME/.pi/agent/AGENTS.md" "$HOME/.claude/CLAUDE.md"
 printf '%s\n\n---\n\n' "$policy" > "$HOME/.pi/agent/AGENTS.md"
 cat /opt/research-agent/AGENTS.md >> "$HOME/.pi/agent/AGENTS.md"
-chmod 444 "$HOME/.pi/agent/AGENTS.md"
 ln -s "$HOME/.pi/agent/AGENTS.md" "$HOME/.claude/CLAUDE.md"
 # Recipes for Gitea through keyproxy; older prompts point at /workspace/GITEA.md.
 ln -sfn /opt/research-agent/GITEA.md /workspace/GITEA.md
@@ -47,7 +48,8 @@ done
 git config --global user.name "${GIT_AUTHOR_NAME:-wirelesswiki research agent}"
 git config --global user.email "${GIT_AUTHOR_EMAIL:-research-agent@users.noreply.github.com}"
 git config --global --unset-all credential.helper 2>/dev/null || true
-# Existing clones use http://gitea:3000/; send them through keyproxy, which adds the token.
+# Existing clones use http://gitea:3000/; send them through keyproxy, which adds the token
+# (without it Gitea would answer every unauthenticated git request with "not found").
 git config --global --unset-all url."${KEYPROXY_URL:-http://keyproxy:8080}/gitea/".insteadOf 2>/dev/null || true
 git config --global url."${KEYPROXY_URL:-http://keyproxy:8080}/gitea/".insteadOf "http://gitea:3000/"
 git config --global http."${KEYPROXY_URL:-http://keyproxy:8080}/".extraHeader "X-Caller: git"

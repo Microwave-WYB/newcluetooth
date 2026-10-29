@@ -8,6 +8,6 @@ protected_refs = ["main"]            # commits pushed to these branches are repo
 # page_size = 50                     # feed page size (Gitea caps it by [api] MAX_RESPONSE_ITEMS)
 
 [ack]
-enabled  = false                     # keyproxy does not allow reactions; true needs a direct token
+enabled  = true
 reaction = "eyes"                    # must be in the list Gitea's [ui] REACTIONS allows
 on       = ["comment_issue", "comment_pull"]   # optionally add create_issue, create_pull_request

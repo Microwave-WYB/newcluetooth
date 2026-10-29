@@ -15,37 +15,40 @@ or the agent container.
 compose.yaml   gitea, cloudflared, runner-1..4 (project wirelesswiki-gitea);
                keyproxy, research-agent (project research-agent)
 fleet.sh       what the mise tasks run (simi has no mise: run ./fleet.sh <command> there)
-keyproxy/      the only holder of API keys; whitelisted endpoints only (see keyproxy/README.md)
+keyproxy/      the only holder of API keys; adds them to every request (see keyproxy/README.md)
 agent-image/   the research-agent image (moved from wirelesswiki agent-env a8bfee0)
 policy/        the bottom-line rules, mounted read-only; the agent entrypoint reads them first
 runner/        the Gitea Actions runner image (host mode, no Docker socket)
 .env.example   host settings, no secrets
 ```
 
-## Trust boundaries
+## What protects what
+
+The guardrails here catch honest mistakes; they are not built to stop a deliberate act.
 
 - **The agent container holds no API keys.** No `GITEA_TOKEN`, no WiGLE or AndroZoo key, no
-  GitHub token. It knows only `http://keyproxy:8080`. It is not on the `wirelesswiki` network,
-  so it cannot reach Gitea directly; git's `http://gitea:3000/` is rewritten to the proxy. The
-  entrypoint refuses to start if a key variable is set, and deletes credential files left in
-  the home volume by the old setup (`~/.git-credentials`, `~/.config/wigle/api-key`,
-  `~/.config/gh/hosts.yml`).
-- **keyproxy** reads the keys from `/run/secrets/*` (compose file secrets, mounted only into
-  keyproxy) and allows: WiGLE Bluetooth search under a daily budget with a 10-call reserve;
-  one-at-a-time, rate-limited AndroZoo APK downloads by sha256 (gp-metadata only if enabled);
-  Gitea reads, comments, issue creation, PR creation from `task/*`, and git fetch plus pushes
-  to `refs/heads/task/*` only. No merge, reviews, branch protection, settings or admin. Every
-  request is logged (caller, endpoint, params, status) with secrets scrubbed. `X-Caller` is
-  for logs and budgets only, **not** authorisation.
-- **The policy** (`policy/POLICY.md`) is mounted read-only at `/etc/research-agent/policy`.
-  The entrypoint will not start without it and writes it at the top of the global
-  `AGENTS.md`/`CLAUDE.md` that pi and Claude Code load, ahead of the agent instructions.
-- **Known exceptions** (still in the agent container): `agent-runtime.env` with the scan
-  database URLs (`WIKI_DB_URL`, read-only role `wiki_ro`; `WIGLE_DB_URL`, insert/select role
-  `wigle_writer` for the WiGLE call archive) and, if set, `PASEO_PASSWORD`; and the harnesses'
-  own login state in the `agent-home` volume (Claude Code's OAuth login, Paseo's relay keys).
-  On simi every model-provider key in the old `.env` is empty. Moving the DB credentials
-  behind a proxy is follow-up work.
+  GitHub token: it calls `http://keyproxy:8080/<service>/`. The entrypoint refuses to start if
+  a key or DB URL is set in its environment by mistake, deletes credential files the old setup
+  left in the home volume (`~/.git-credentials`, `~/.config/wigle/api-key`,
+  `~/.config/gh/hosts.yml`) and rewrites git's `http://gitea:3000/` to the proxy.
+- **keyproxy** has one job: it reads the keys from `/run/secrets/*` and adds them to every
+  request under its prefixes, whatever the path or method. It does not restrict operations.
+  It keeps two switchable account-protection limits (a WiGLE daily budget, one AndroZoo
+  request at a time), logs every request with secrets scrubbed, and scrubs error bodies. See
+  `keyproxy/README.md`. `X-Caller` labels the log, nothing more.
+- **The policy** (`policy/POLICY.md`, short) is mounted read-only at
+  `/etc/research-agent/policy`. The entrypoint will not start without it and writes it at the
+  top of the global `AGENTS.md`/`CLAUDE.md`. Rules such as "agents do not merge" are written
+  rules there, not enforced by the proxy.
+- **Scan database URLs** (`wiki-db-url`, `wigle-db-url`) arrive as files at
+  `~/.config/wiki-db/url` and `~/.config/wigle/db-url` (mode 400, owned by the agent user),
+  where `wiki-sql` and `wigle` read them, so `env` never prints them. They are still
+  credentials inside the container (roles `wiki_ro`, read-only, and `wigle_writer`,
+  insert/select on the WiGLE archive).
+- **Known exceptions:** those two DB URLs; `PASEO_PASSWORD` in the environment if set
+  (`agent-runtime.env`); and the harnesses' login state in the `agent-home` volume (Claude
+  Code's OAuth login, Paseo's relay keys). On simi every model-provider key in the old `.env`
+  is empty.
 
 ## Secrets
 
@@ -60,12 +63,17 @@ them and prints names, modes and `empty` only.
 | `androzoo-api-key` | yes (may be empty) | keyproxy | AndroZoo API key; empty disables AndroZoo |
 | `cloudflared-tunnel-token` | yes | cloudflared | tunnel token for git.wirelesswiki.org and db.wirelesswiki.org |
 | `gitea-runner-registration-token` | no | `fleet:register-runners` only | runner registration token, for registering new runners once |
-| `agent-runtime.env` | no | research-agent | `KEY=value` lines: `WIKI_DB_URL`, `WIGLE_DB_URL`, `PASEO_PASSWORD`. Must not contain `GITEA_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `WIGLE_API_*`, `ANDROZOO_*` (checked) |
+| `wiki-db-url` | no | research-agent, as `~/.config/wiki-db/url` | scan DB URL for `wiki-sql` (role `wiki_ro`) |
+| `wigle-db-url` | no | research-agent, as `~/.config/wigle/db-url` | scan DB URL for `wigle`'s call archive (role `wigle_writer`) |
+| `agent-runtime.env` | no | research-agent, environment | `PASEO_PASSWORD=...` only. Must not contain `GITEA_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `WIGLE_API_*`, `ANDROZOO_*`, `WIKI_DB_URL`, `WIGLE_DB_URL` (checked) |
 
 keyproxy and cloudflared run as `FLEET_UID:FLEET_GID` (the invoking user, set by `fleet.sh`),
-so 600 files are readable by them and by nothing else. `docker compose config` would print
-`agent-runtime.env` values; use `mise run fleet:config`, which renders with
-`--no-env-resolution`.
+so 600 files are readable by them. The two DB URL files are read by `fleet.sh` and handed to
+compose for the agent project only; compose copies them into the container, owned by the
+agent user. `docker compose config` would print `agent-runtime.env` values; use
+`mise run fleet:config`, which renders with `--no-env-resolution`. Always drive the agent
+project through `fleet.sh` (or the mise tasks): a plain `docker compose` call would give the
+agent empty DB URL files.
 
 ## Deploy (fresh host)
 
@@ -81,14 +89,18 @@ so 600 files are readable by them and by nothing else. `docker compose config` w
    ```
    then `mise run fleet:secrets` until it passes.
 3. Host settings: `cp infra/fleet/.env.example infra/fleet/.env` and set at least
-   `GITEA_HOST_DIR` (where Gitea's `data/` and `config/` live), `GITEA_UID`/`GITEA_GID`,
-   `PASEO_RELAY_ENABLED` and `WIGLE_DAILY_BUDGET` (the account's real daily limit).
+   `GITEA_HOST_DIR` (where Gitea's `data/` and `config/` live; required, there is no default),
+   `GITEA_UID`/`GITEA_GID`, `PASEO_RELAY_ENABLED` and `WIGLE_DAILY_BUDGET` (the account's real
+   daily limit). For a new Gitea create `$GITEA_HOST_DIR/data` and `$GITEA_HOST_DIR/config`;
+   `fleet:up` refuses a directory without them, and refuses to recreate an existing
+   `wirelesswiki-gitea-gitea-1` that mounts a different directory.
 4. The scan database network: start `infra/data` first (project `newcluetooth`), or let
    `fleet:up` create an empty `newcluetooth_default`.
-5. `mise run fleet:up`. It checks the secrets, creates the external networks `wirelesswiki`
-   and `newcluetooth_default` if missing, builds the research-agent image if missing (~13 GB,
-   zstd layers through `agent-image/build-image.sh`), starts the Gitea project, then builds
-   keyproxy and starts the agent project.
+5. `mise run fleet:up`. It checks the secrets and `GITEA_HOST_DIR`, creates the external
+   networks `wirelesswiki` and `newcluetooth_default` if missing, starts the Gitea project,
+   builds the research-agent image if missing (~13 GB, zstd layers through
+   `agent-image/build-image.sh`), then builds keyproxy and starts the agent project.
+   (`infra/fleet/fleet.sh up gitea` or `up agent` starts one group.)
 6. A fresh Gitea: create the admin and the `wiki-bot` user (bot token: `write:repository`,
    `write:issue`, `read:user`; no admin), the `y2wei/wirelesswiki` repo with branch protection
    on `main` (no pushes; merge whitelist of humans only; required approvals), write the bot
@@ -97,7 +109,7 @@ so 600 files are readable by them and by nothing else. `docker compose config` w
    `mise run fleet:register-runners`.
 7. The Cloudflare side (tunnel routes, Access apps) is configured in the dashboard, not here.
 
-Day to day: `fleet:status` (containers, keyproxy health, today's WiGLE budget),
+Day to day: `fleet:status` (containers, keyproxy health, the rate limits),
 `fleet:logs <service>`, `fleet:down` (containers only; volumes and host data stay),
 `fleet:build`, `fleet:test` (keyproxy and agent tool tests).
 
@@ -159,7 +171,8 @@ so the new containers pick up the old state. Do it with the owner present.
    sed -n 's/^WIGLE_API_KEY=//p' $S/research-agent/.env > wigle-api-key
    sed -n 's/^TUNNEL_TOKEN=//p'  $S/gitea/.env          > cloudflared-tunnel-token
    sed -n 's/^GITEA_RUNNER_REGISTRATION_TOKEN=//p' $S/gitea/runner.env > gitea-runner-registration-token
-   grep -E '^(WIKI_DB_URL|WIGLE_DB_URL)=' $S/research-agent/.env > agent-runtime.env
+   sed -n 's/^WIKI_DB_URL=//p'  $S/research-agent/.env > wiki-db-url
+   sed -n 's/^WIGLE_DB_URL=//p' $S/research-agent/.env > wigle-db-url
    : > androzoo-api-key    # until the owner has an AndroZoo key
    cd /data/services/wirelesswiki/newcluetooth && infra/fleet/fleet.sh secrets
    ```
@@ -178,8 +191,7 @@ so the new containers pick up the old state. Do it with the owner present.
 
 7. Rename (do not delete) `/data/services/wirelesswiki/gitea/compose.yaml` to
    `compose.yaml.pre-fleet`, so nobody brings the old definition back by accident.
-8. From `infra/fleet`: `docker compose -p wirelesswiki-gitea --profile gitea up -d --no-build`.
-   Compose recreates gitea, cloudflared (now reading the token from a file) and the runners
+8. `infra/fleet/fleet.sh up gitea`. Compose recreates gitea, cloudflared (now reading the token from a file) and the runners
    on the same bind mounts and volumes.
 9. Check: `https://git.wirelesswiki.org` loads, `mise run db:connect` reaches Postgres through
    `db.wirelesswiki.org`, the four runners are idle-online in Gitea's admin page and a CI run
@@ -190,22 +202,23 @@ so the new containers pick up the old state. Do it with the owner present.
 10. Tell root (Paseo) to finish or pause, and to stop `gitea-watch`.
 11. Rename `/data/services/wirelesswiki/research-agent/compose.yaml` and
     `compose.override.yaml` to `*.pre-fleet`.
-12. From `infra/fleet`: `docker compose -p research-agent --profile agent up -d --no-build`.
-    The agent container is recreated without any key variables, with the policy mounted, on
-    `research-agent_default` (with keyproxy) and `newcluetooth_default`. On first start its
+12. `infra/fleet/fleet.sh up agent`. The agent container is recreated without any key
+    variables, with the policy mounted and the DB URLs as files, on `research-agent_default`
+    (with keyproxy), `wirelesswiki` and `newcluetooth_default`, as today. On first start its
     entrypoint deletes `~/.git-credentials` and `~/.config/wigle/api-key` from the home
     volume (it logs the file names).
 13. Check (counts and names only):
-    `docker exec research-agent-research-agent-1 sh -c 'env | grep -cE "^(GITEA_TOKEN|WIGLE_API_KEY)="'`
-    prints 0; `git -C /workspace/wirelesswiki fetch` works; `wigle search bluetooth/search
-    name=...` works and appears in `fleet:logs keyproxy`; a push to `main` is rejected; the
+    `docker exec research-agent-research-agent-1 sh -c 'env | grep -cE "^(GITEA_TOKEN|WIGLE_API_KEY|WIKI_DB_URL|WIGLE_DB_URL)="'`
+    prints 0; `wiki-sql "select 1"` works; `git -C /workspace/wirelesswiki fetch` works;
+    `wigle search bluetooth/search name=...` works and appears in `fleet:logs keyproxy`; the
     Paseo app reconnects and root's session is still there.
-14. Root restarts `gitea-watch` with `gitea_url = "http://keyproxy:8080/gitea"`,
-    `token_env = "none"` and `[ack] enabled = false` (keyproxy does not allow reactions).
+14. Root restarts `gitea-watch` with `gitea_url = "http://keyproxy:8080/gitea"` and
+    `token_env = "none"`.
 
 **Rollback** (any step; volumes and host data are never removed)
 
-- Gitea: `docker compose -p wirelesswiki-gitea --profile gitea down` from `infra/fleet`,
+- Gitea: `infra/fleet/fleet.sh` has no per-group down; use `docker compose -p
+  wirelesswiki-gitea --profile gitea down` from `infra/fleet` (needs `GITEA_HOST_DIR` set),
   rename `compose.yaml.pre-fleet` back, `docker tag wirelesswiki-runner:pre-fleet
   wirelesswiki-runner:0.6.1`, `docker compose up -d` in `/data/services/wirelesswiki/gitea`.
 - Agent: `docker compose -p research-agent --profile agent down` from `infra/fleet`,
@@ -220,7 +233,8 @@ backups stay until the fleet has run cleanly for a while.
 
 ## Secret rotation after the migration
 
-Rotate once keyproxy is the only holder, so the new values never reach the agent container:
+Rotate once keyproxy is the only holder, so the new values never reach the agent container.
+Run the transcript search in step 3 first, while the old values are still on hand.
 
 1. **GITEA_TOKEN (wiki-bot): must rotate.** It has been printed before. Create a new token
    for `wiki-bot` with scopes `write:repository`, `write:issue`, `read:user` (write it straight
@@ -231,13 +245,29 @@ Rotate once keyproxy is the only holder, so the new values never reach the agent
    through the proxy, then delete every older `wiki-bot` token in Gitea.
 2. **WiGLE API key: rotate.** It sat in the agent's environment, where any agent could read
    it. Regenerate it in the WiGLE account, update `wigle-api-key`, restart keyproxy.
-3. **Any key that ever appeared in agent output.** Search the agents' transcripts and notes
-   for each current secret without printing it, file names only, e.g.
-   `docker run --rm -v research-agent_agent-home:/h:ro -v research-agent_agent-workspace:/w:ro -v ~/.config/cluetooth-fleet/secrets:/s:ro busybox sh -c 'for f in /s/*; do grep -rlF -f "$f" /h /w; done'`.
-   Candidates: the scan DB passwords of `wiki_ro` and `wigle_writer` (`ALTER ROLE ...
-   PASSWORD`, then update `agent-runtime.env`), the Gitea admin token in `.admin-token`, the
-   tunnel token (rotate in the Cloudflare dashboard), the runner registration token (reset
-   in Gitea). Rotate every one that turns up.
+3. **Any key that ever appeared in agent output.** Search **before** rotating anything (the
+   search needs the old values), file names only, with a temporary pattern file of bare
+   values:
+   ```sh
+   P=$(mktemp -d) && chmod 700 "$P"; umask 077
+   S=~/.config/cluetooth-fleet/secrets
+   cat $S/gitea-token $S/wigle-api-key $S/androzoo-api-key $S/cloudflared-tunnel-token > "$P/patterns"
+   echo >> "$P/patterns"
+   # bare passwords from the DB URLs (postgres://user:PASSWORD@host/db)
+   sed -E -n 's#^[a-z]+://[^:/@]+:([^@]+)@.*#\1#p' $S/wiki-db-url $S/wigle-db-url >> "$P/patterns"
+   sudo cat /data/services/wirelesswiki/gitea/.admin-token >> "$P/patterns"; echo >> "$P/patterns"
+   sed -n 's/^GITEA_RUNNER_REGISTRATION_TOKEN=//p' /data/services/wirelesswiki/gitea/runner.env >> "$P/patterns"
+   sed -i '/^$/d' "$P/patterns"
+   docker run --rm -v research-agent_agent-home:/h:ro -v research-agent_agent-workspace:/w:ro \
+     -v "$P":/p:ro busybox grep -rlF -f /p/patterns /h /w
+   rm -rf "$P"
+   ```
+   It prints only the names of files that contain a value. Do it after the cutover but before
+   step 1, while the old values are still in the secrets dir; it also covers the WiGLE and
+   Gitea tokens rotated anyway. For each value found, rotate it: the DB roles with `ALTER ROLE
+   ... PASSWORD` (then update `wiki-db-url`/`wigle-db-url` and `fleet.sh up agent`), the
+   admin token in Gitea, the tunnel token in the Cloudflare dashboard, the runner
+   registration token in Gitea.
 4. Separately tracked: the `cluetooth` database password committed in
    `infra/data/compose.yaml` (GitHub Microwave-WYB/newcluetooth#22).
 
@@ -251,11 +281,11 @@ working material, so everything gets the strict human-approval rule. The plan is
 - **`research-runtime`**: the agents' notes, tools (`mise.toml`), skills (`.agents/skills`) and
   prompts. Agents may merge their own PRs there once CI passes (tests, lint, a secret scan, and
   a check that nothing outside the allowed paths changed), and a scheduled workflow sends the
-  owner a **daily digest** of everything merged. keyproxy would get one more route: merge,
-  for `research-runtime` only, forwarded only when the PR's combined commit status is
-  `success`, on top of Gitea's own required checks. This policy stays in this repo, never in
-  `research-runtime`.
+  owner a **daily digest** of everything merged. Gitea's branch protection on
+  `research-runtime` (required status checks) is what holds a merge until CI passes; keyproxy
+  already passes merges through. The policy stays in this repo, never in `research-runtime`.
 
 Steps when it happens: create `research-runtime`, move skills, tools config and notes out of
 `wiki`, point the agent image's `MISE_GLOBAL_CONFIG_FILE` and skills path at its checkout,
-add it to `GITEA_REPOS`, add the merge route and its tests, and add the digest workflow.
+set its branch protection, change the policy's merge rule for it, and add the digest
+workflow.
