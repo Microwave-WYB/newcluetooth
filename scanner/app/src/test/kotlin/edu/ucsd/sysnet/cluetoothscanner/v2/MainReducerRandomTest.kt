@@ -32,7 +32,13 @@ class MainReducerRandomTest {
         0 -> MainEvent.SettingsLoaded(settings(done = nextBoolean(), userId = listOf(null, "ab1", "BAD").random(this)), perms)
         1 -> MainEvent.PermissionsChanged(perms.copy(bluetoothOn = nextBoolean()))
         2 -> MainEvent.LaunchFactsRead(LaunchFacts(listOf(null, "a", "b").random(this), nextBoolean(), nextInt(3)))
-        3, 4, 5 -> MainEvent.RecorderChanged(Phase.entries.random(this))
+        3, 4, 5 -> Phase.entries.random(this).let { phase ->
+            // RecorderState.pause is non-null exactly while paused
+            val pause = if (phase != Phase.Paused) null
+            else listOf(edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.User,
+                edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFull(nextLong(0, 300_000_000))).random(this)
+            MainEvent.RecorderChanged(phase, pause)
+        }
         6 -> MainEvent.RecordingStarted(listOf("a", "b").random(this))
         7 -> MainEvent.StorageLoaded(StorageFacts(nextLong(100), nextLong(100), null, nextInt(3)))
         8 -> MainEvent.ExportFinished
@@ -114,6 +120,13 @@ class MainReducerRandomTest {
                 // the recorder: the mirror follows the phase; the panel exists only while recording
                 if (e is MainEvent.RecorderChanged) check("mirror", (n.recorder is RecorderMirror.Idle) == (e.phase == Phase.Idle))
                 if (n.recorderPanelOpen) check("panel while idle", n.recorder is RecorderMirror.Active)
+                // R-10: the mirror follows the storage pause, and the dialog never outlives it
+                if (e is MainEvent.RecorderChanged) {
+                    val storage = e.pause is edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFull
+                    (n.recorder as? RecorderMirror.Active)?.let { check("storage pause mirror", it.pausedForStorage == storage) }
+                    if ((s.recorder as? RecorderMirror.Active)?.pausedForStorage == true && !storage) check("dialog outlived the storage pause", n.storageFull == null)
+                    if (storage && s.storageFull == null && (s.recorder as? RecorderMirror.Active)?.pausedForStorage != true) check("storage pause without the dialog", n.storageFull != null)
+                }
                 // search: work only on an open page in a view; the page draws exactly while open
                 n.searchKey?.let { check("search key", n.scope != null && n.searchPage != null && it.view == n.viewKey) }
                 check("search page drawn", (shownSearch(n, null) != null) == (n.searchPage != null))
@@ -184,7 +197,7 @@ class MainReducerRandomTest {
             BackTarget.Page -> s.copy(page = null)
             BackTarget.PushedSheet, BackTarget.Leave -> s
             BackTarget.Sidebar -> s.copy(sidebarOpen = false)
-            BackTarget.RecorderPanel -> s.copy(recorder = RecorderMirror.Active(panelOpen = false))
+            BackTarget.RecorderPanel -> s.copy(recorder = (s.recorder as RecorderMirror.Active).copy(panelOpen = false))
             BackTarget.SearchState -> s.copy(searchQuery = null)
         }
         check("back to $target changed more than that layer", n == expected)

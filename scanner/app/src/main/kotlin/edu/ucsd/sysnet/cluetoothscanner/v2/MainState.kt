@@ -79,7 +79,8 @@ sealed interface SheetsLink {
 /** The recorder as the screen mirrors it (V-3, R-4): the panel exists only while a recording is active. */
 sealed interface RecorderMirror {
     data object Idle : RecorderMirror
-    data class Active(val panelOpen: Boolean) : RecorderMirror
+    /** [pausedForStorage]: R-10's pause (`RecorderState.pause` is StorageFull), which the storage-full dialog follows. */
+    data class Active(val panelOpen: Boolean, val pausedForStorage: Boolean = false) : RecorderMirror
 }
 
 /** O-2: the onboarding page and the steps it was opened with. */
@@ -191,7 +192,8 @@ sealed interface MainEvent {
     data class SettingsLoaded(val settings: Settings, val permissions: PermissionState) : MainEvent
     data class PermissionsChanged(val permissions: PermissionState) : MainEvent
     data class LaunchFactsRead(val facts: LaunchFacts) : MainEvent
-    data class RecorderChanged(val phase: RecorderState.Phase) : MainEvent
+    /** The recorder's phase and, while paused, why (`RecorderState.pause`). */
+    data class RecorderChanged(val phase: RecorderState.Phase, val pause: RecorderState.PauseReason? = null) : MainEvent
     data class RecordingStarted(val sessionId: String) : MainEvent
     data class StorageLoaded(val facts: StorageFacts) : MainEvent
     data object ExportFinished : MainEvent
@@ -309,6 +311,9 @@ data class Step(val state: MainUiState, val effects: List<MainEffect> = emptyLis
 private fun MainUiState.only() = Step(this)
 private fun MainUiState.with(vararg effects: MainEffect) = Step(this, effects.toList())
 
+/** [next] after this: its state, and both steps' effects in order. */
+private operator fun Step.plus(next: Step) = Step(next.state, effects + next.effects)
+
 /** The pure transition function of the main screen. */
 fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     // §1.2.2 then V-6: the screen is linked (a stale attempt's link is dropped); the launch flow starts once
@@ -352,11 +357,23 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     ).let { if (e.scope != null) it.with(MainEffect.LoadSessions) else it.only() }
     is MainEvent.RecorderChanged -> {
         val idle = e.phase == RecorderState.Phase.Idle
-        val next = if (idle) RecorderMirror.Idle else RecorderMirror.Active(s.recorderPanelOpen)
-        val base = s.copy(recorder = next)
+        val storagePause = e.pause as? RecorderState.PauseReason.StorageFull
+        val wasStoragePause = (s.recorder as? RecorderMirror.Active)?.pausedForStorage == true
+        val next = if (idle) RecorderMirror.Idle else RecorderMirror.Active(s.recorderPanelOpen, storagePause != null)
+        val mirrored = s.copy(recorder = next)
+        val base = when {
+            // R-10: the storage pause ended (a Resume the core accepted, from the app or the notification, or a Stop)
+            wasStoragePause && storagePause == null -> Step(mirrored.copy(storageFull = null))
+            // R-10: the recorder paused for storage; the dialog opens on its free space unless the core's event did
+            storagePause != null && !wasStoragePause && s.storageFull == null -> Step(
+                mirrored.copy(storageFull = StorageFullState(Bytes(storagePause.freeBytes), ReclaimRead.Reading, emptySet(), CleanupStep.Choosing(null))),
+                listOf(MainEffect.LoadReclaimable),
+            )
+            else -> mirrored.only()
+        }
         // V-3: after Stop the UI stays on the session that just ended, now frozen (re-selected, so re-read)
         val stopped = s.recorder is RecorderMirror.Active && idle
-        if (stopped && s.scope != null) reduce(base, MainEvent.SelectScope(s.scope)) else base.only()
+        if (stopped && s.scope != null) base + reduce(base.state, MainEvent.SelectScope(s.scope)) else base
     }
     // R-2 / V-2: the new current session
     is MainEvent.RecordingStarted -> reduce(s, MainEvent.SelectScope(Scope.session(e.sessionId)))
@@ -513,7 +530,7 @@ private const val SAVE_FAILED = "Could not save the settings"
 /** R-4: the panel opens and closes only while a recording is active. */
 private fun withPanel(s: MainUiState, open: Boolean): MainUiState = when (s.recorder) {
     RecorderMirror.Idle -> s
-    is RecorderMirror.Active -> s.copy(recorder = RecorderMirror.Active(open))
+    is RecorderMirror.Active -> s.copy(recorder = s.recorder.copy(panelOpen = open))
 }
 
 /**

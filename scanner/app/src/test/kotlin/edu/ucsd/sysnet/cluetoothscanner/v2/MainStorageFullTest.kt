@@ -167,3 +167,73 @@ class MainStorageFullTest {
         assertNull(port.run(setOf(Cleanup.UploadedRaw)).freedTotal)
     }
 }
+
+/**
+ * R-10 with the recorder's own pause (`RecorderState.pause`): the dialog closes as soon as the storage pause ends,
+ * whether by Resume in the app, Resume from the notification or Stop, and opens on it if the core's event hasn't.
+ * The events are the ones the runner derives from [FakeRecorder.state].
+ */
+class MainStoragePauseTest {
+    private val fake = edu.ucsd.sysnet.cluetoothscanner.platform.fake.FakeRecorder(onStart = { "a" }, onStop = { "a" }, nowMs = { 0L })
+
+    /** What the runner dispatches for the recorder's current state. */
+    private fun MainUiState.follow(): MainUiState = fake.state.value.let { on(MainEvent.RecorderChanged(it.phase, it.pause)) }
+
+    private suspend fun recording(): MainUiState {
+        fake.start()
+        return MainUiState(scope = sessionA).follow()
+    }
+
+    @Test fun aStoragePauseOpensTheDialogAndAResumeClosesIt() = runTest {
+        val rec = recording()
+        fake.storageFull(150_000_000)
+        val step = reduce(rec, fake.state.value.let { MainEvent.RecorderChanged(it.phase, it.pause) })
+        assertEquals(Bytes(150_000_000), step.state.storageFull?.free)
+        assertEquals(RecorderMirror.Active(panelOpen = false, pausedForStorage = true), step.state.recorder)
+        assertEquals(listOf(MainEffect.LoadReclaimable), step.effects)
+        // a Resume from the notification: the app did nothing, the recorder's state is all it sees
+        fake.resume()
+        val resumed = step.state.follow()
+        assertNull(resumed.storageFull)
+        assertEquals(RecorderMirror.Active(panelOpen = false, pausedForStorage = false), resumed.recorder)
+    }
+
+    @Test fun aStopEndsTheStoragePauseAndClosesTheDialog() = runTest {
+        val rec = recording()
+        fake.storageFull(150_000_000)
+        val paused = rec.follow()
+        fake.stop()
+        val stopped = reduce(paused, fake.state.value.let { MainEvent.RecorderChanged(it.phase, it.pause) })
+        assertNull(stopped.state.storageFull)
+        assertEquals(RecorderMirror.Idle, stopped.state.recorder)
+        // V-3 still re-reads the ended session
+        assertEquals(paused.epoch.next(), stopped.state.epoch)
+    }
+
+    @Test fun theCoresEventOpensItFirstAndThePauseKeepsIt() = runTest {
+        val rec = recording().on(MainEvent.StorageFull(Bytes(120_000_000)))
+        fake.storageFull(150_000_000)
+        val paused = rec.follow()
+        // already open: the pause doesn't reopen it or reset its state
+        assertEquals(rec.storageFull, paused.storageFull)
+        fake.resume()
+        assertNull(paused.follow().storageFull)
+    }
+
+    @Test fun aUserPauseNeitherOpensNorClosesIt() = runTest {
+        val rec = recording()
+        fake.pause()
+        assertNull(rec.follow().storageFull)
+        // the dialog the core's event opened stays through a pause that is not the storage one
+        val open = rec.on(MainEvent.StorageFull(Bytes(1)))
+        fake.resume()
+        assertEquals(open.storageFull, open.follow().storageFull)
+    }
+
+    @Test fun thePanelKeepsTheStoragePause() = runTest {
+        val rec = recording()
+        fake.storageFull(150_000_000)
+        val paused = rec.follow().on(MainEvent.SetRecorderPanel(true), MainEvent.SetRecorderPanel(false))
+        assertEquals(RecorderMirror.Active(panelOpen = false, pausedForStorage = true), paused.recorder)
+    }
+}
