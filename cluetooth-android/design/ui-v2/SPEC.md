@@ -288,6 +288,10 @@ Each component is built once. Its size, color and state rules come from these to
   so there is no jump when the drag begins. When the content scrolls, as in S-13, the sum of the sheet movement and
   the content scroll equals the finger movement. Note that the web prototype does not track exactly 1:1; follow this
   rule, not the prototype, here.
+  - Why the prototype lags: its `couple()` clears the dragged sheet's "dragging" flag on every move, which re-enables
+    the sheet's transform transition. The sheet then chases the finger at 0.33 to 0.8 of its movement.
+  - The Android rule: while a pointer is down, the dragged sheet's offset is set directly from the finger. The sheets
+    below are coupled to that same offset with no animation. Snap animation runs only after release.
 - **S-11 Tap on the handle or header background.** From Collapsed it goes up one state; from any other state it goes to
   Collapsed.
 - **S-12 Header controls raise the root.** Tapping any control in the Discover sheet's header while it is Collapsed
