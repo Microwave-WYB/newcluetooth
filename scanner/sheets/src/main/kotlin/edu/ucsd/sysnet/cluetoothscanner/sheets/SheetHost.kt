@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -78,8 +79,10 @@ fun PhoneSheetHost(
         val density = LocalDensity.current
         val heightPx = constraints.maxHeight.toFloat()
         val bottomInset = WindowInsets.navigationBars.getBottom(density).toFloat()
-        SideEffect { controller.setScreen(heightPx, density.density, bottomInset) }
-        val sheetHeight = maxHeight - metrics.topZone
+        // the phone's top row sits below the status bar (the app is edge to edge); Full sits below that row (S-5)
+        val topInset = WindowInsets.statusBars.getTop(density).toFloat()
+        SideEffect { controller.setScreen(heightPx, density.density, bottomInset, topInset) }
+        val sheetHeight = maxHeight - metrics.topZone - with(density) { topInset.toDp() }
         val top = controller.top
         val scrimAlpha by animateFloatAsState(
             if (controller.scrimVisible) 1f else 0f,

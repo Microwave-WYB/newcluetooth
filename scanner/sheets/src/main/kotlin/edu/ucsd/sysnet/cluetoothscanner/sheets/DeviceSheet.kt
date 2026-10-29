@@ -41,6 +41,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -77,6 +79,7 @@ internal object DeviceTags {
     const val CANCEL = "gatt-cancel"
     const val TRY_AGAIN = "gatt-try-again"
     const val NOTE = "gatt-note"
+    fun rawLen(header: Boolean) = if (header) "raw-len-head" else "raw-len"
     fun step(kind: GattStepKind) = "gatt-step-${kind.name}"
 }
 
@@ -246,10 +249,18 @@ private fun SheetSect(text: String) {
 }
 
 @Composable
-private fun RawTable(d: DeviceDetail) {
+internal fun RawTable(d: DeviceDetail) {
     val c = CluetoothTheme.colors
     val shape = RoundedCornerShape(Css.Raw.borderRadius)
     val style = CluetoothTheme.type.sub.copy(fontSize = Css.Raw.fontSize.sp, lineHeight = Css.Raw.lineHeight.sp)
+    val head = style.copy(fontWeight = FontWeight(Css.Raw_Th.fontWeight.toInt()))
+    // D-12: Len and Type are 44 and 56 dp, or wider when the header (in this font and size) needs it, as a table
+    // column grows to fit an unbreakable word; every row uses the same widths, so the columns line up
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val pad = Css.Raw_Td.padding.left * 2
+    val lenW = with(density) { maxOf(Css.Raw_ColLen.width, measurer.measure(Strings.Len, head, softWrap = false).size.width.toDp() + pad) }
+    val typeW = with(density) { maxOf(Css.Raw_ColType.width, measurer.measure(Strings.Type, head, softWrap = false).size.width.toDp() + pad) }
     Column(
         Modifier
             .padding(horizontal = Css.Raw.margin.left)
@@ -257,23 +268,23 @@ private fun RawTable(d: DeviceDetail) {
             .clip(shape)
             .border(Css.Raw.borderLengths[0], c.div, shape),
     ) {
-        RawRow(Strings.Len, Strings.Type, Strings.Data, style.copy(fontWeight = FontWeight(Css.Raw_Th.fontWeight.toInt())), header = true)
+        RawRow(Strings.Len, Strings.Type, Strings.Data, head, header = true, lenW, typeW)
         for (s in d.structures) {
-            RawRow(s.len.toString(), Format.adType(s.adType), Format.hex(s.data), style, header = false)
+            RawRow(s.len.toString(), Format.adType(s.adType), Format.hex(s.data), style, header = false, lenW, typeW)
         }
-        d.tail?.let { RawRow("", "", Format.hex(it), style, header = false) }
+        d.tail?.let { RawRow("", "", Format.hex(it), style, header = false, lenW, typeW) }
     }
 }
 
 @Composable
-private fun RawRow(len: String, type: String, data: String, style: androidx.compose.ui.text.TextStyle, header: Boolean) {
+private fun RawRow(len: String, type: String, data: String, style: androidx.compose.ui.text.TextStyle, header: Boolean, lenW: Dp, typeW: Dp) {
     val c = CluetoothTheme.colors
     val pad = Css.Raw_Td.padding
     Column {
         if (!header) Box(Modifier.fillMaxWidth().height(Css.Raw_Td.borderTopLengths[0]).background(c.div))
         Row(Modifier.fillMaxWidth().background(if (header) c.fill2 else c.panel)) {
-            Text(len, Modifier.width(Css.Raw_ColLen.width).padding(horizontal = pad.left, vertical = pad.top), style = style.tabular())
-            Text(type, Modifier.width(Css.Raw_ColType.width).padding(horizontal = pad.left, vertical = pad.top), style = style.tabular())
+            Text(len, Modifier.width(lenW).padding(horizontal = pad.left, vertical = pad.top).testTag(DeviceTags.rawLen(header)), style = style.tabular(), maxLines = 1, softWrap = false)
+            Text(type, Modifier.width(typeW).padding(horizontal = pad.left, vertical = pad.top), style = style.tabular(), maxLines = 1, softWrap = false)
             // G-3: the raw data column is the one place with the code font; it breaks anywhere
             val dataStyle = if (header) style else CluetoothTheme.type.code.copy(fontSize = style.fontSize, lineHeight = style.lineHeight)
             Text(data.breakAnywhere(), Modifier.weight(1f).padding(horizontal = pad.left, vertical = pad.top), style = dataStyle, color = if (header) c.t1 else c.t2)

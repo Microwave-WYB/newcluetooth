@@ -135,8 +135,11 @@ class SheetStackController(
     val leaving: List<SheetEntry> get() = (state.transition as? StackTransition.SlidingOut)?.leaving.orEmpty().map(::handle)
     val tablet: Boolean get() = state.tablet
 
-    /** Screen facts, px, as one value (set by the host on every layout). */
-    private data class Screen(val height: Float = 0f, val density: Float = 1f, val bottomInset: Float = 0f)
+    /**
+     * Screen facts, px, as one value (set by the host on every layout). [topInset] is the status bar the phone's top
+     * row sits below (the sheets are drawn edge to edge), so Full stays below that row (S-5).
+     */
+    private data class Screen(val height: Float = 0f, val density: Float = 1f, val bottomInset: Float = 0f, val topInset: Float = 0f)
 
     private var screen by mutableStateOf(Screen())
 
@@ -149,8 +152,8 @@ class SheetStackController(
     /** S-9: only while a pushed sheet is at Full, never on the tablet panel. */
     val scrimVisible: Boolean get() = state.scrimVisible
 
-    fun setScreen(heightPx: Float, density: Float, bottomInsetPx: Float) {
-        screen = Screen(heightPx, density, bottomInsetPx)
+    fun setScreen(heightPx: Float, density: Float, bottomInsetPx: Float, topInsetPx: Float = 0f) {
+        screen = Screen(heightPx, density, bottomInsetPx, topInsetPx)
     }
 
     private val density: Float get() = screen.density
@@ -159,7 +162,7 @@ class SheetStackController(
         val peek = if (entry.peek.isNaN()) defaultPeek() else entry.peek
         return SheetGeometry(
             screenHeight = screen.height,
-            topZone = metrics.topZone.value * density,
+            topZone = screen.topInset + metrics.topZone.value * density, // S-5: Full below the status bar and the top row
             peek = peek,
             bottomInset = screen.bottomInset,
             halfFraction = metrics.halfFraction,

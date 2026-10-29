@@ -28,8 +28,14 @@ internal fun <T> Loaded<T>.valueOrNull(): T? = when (this) {
 }
 
 /** The product sheet (D-6, D-7): its detail, and its devices in the session order (G-9). */
-internal data class ProductContent(val detail: Loaded<ProductDetail> = Loaded.Pending, val keys: LongArray = LongArray(0)) {
+internal data class ProductContent(
+    val detail: Loaded<ProductDetail> = Loaded.Pending,
+    val keys: LongArray = LongArray(0),
+    /** D-6: the header's category label. */
+    val title: String = "",
+) {
     fun withDetail(detail: Outcome<ProductDetail?>) = copy(detail = loadedOf(detail))
+    fun withTitle(title: String) = copy(title = title)
     fun withKeys(keys: LongArray) = copy(keys = keys)
 }
 
