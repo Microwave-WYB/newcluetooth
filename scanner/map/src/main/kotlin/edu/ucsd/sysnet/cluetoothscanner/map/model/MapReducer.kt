@@ -36,7 +36,7 @@ object MapReducer {
     /** Cells are re-aggregated per zoom; Points cluster natively and reload only outside the loaded area. */
     const val CELLS_RELOAD_DZ = 0.5
     /** The sources Trim drops: the large, re-queryable ones. */
-    val TRIMMED_SOURCES = setOf(Source.Devices, Source.Density, Source.Cells, Source.Sightings)
+    val TRIMMED_SOURCES: Set<Source<*>> = setOf(Source.Devices, Source.Density, Source.Cells, Source.Sightings)
 
     fun reduce(state: MapState, event: MapEvent): Step {
         val b = Builder(state)
@@ -211,10 +211,19 @@ object MapReducer {
         b.moveCamera(MapGeometry.centerFor(me.at, zoom, MapGeometry.locatePadding(b.state.cover)), LOCATE_EASE)
     }
 
+    /**
+     * §1.2.5: drop the point data while hidden. The state forgets it (no replay); the runner forgets its GeoJSON
+     * ([MapEffect.DropSources]) and the map's sources are emptied, so no copy is kept; a refill asks the core again.
+     */
     private fun trim(b: Builder) {
         val session = b.state.session
+        b.effects += MapEffect.DropSources(TRIMMED_SOURCES)
+        b.onMap(MapEffect.SetSource(Source.Devices, SourceData.Empty))
+        b.onMap(MapEffect.SetSource(Source.Density, SourceData.Empty))
+        b.onMap(MapEffect.SetSource(Source.Cells, SourceData.Empty))
+        b.onMap(MapEffect.SetSource(Source.Sightings, SourceData.Empty))
         b.state = b.state.copy(
-            sources = b.state.sources - TRIMMED_SOURCES,
+            sources = b.state.sources.without(TRIMMED_SOURCES),
             memory = Memory.Trimmed,
             session = if (session is Session.Showing) session.copy(points = PointsState.Unrequested) else session,
         )
@@ -319,7 +328,7 @@ object MapReducer {
         b.requestPoints(force = true)
     }
 
-    private fun endsOf(route: RouteLine): SourceData {
+    private fun endsOf(route: RouteLine): SourceData.EndsData {
         val start = route.start
         val end = route.end
         return if (route.length > 1 && start != null && end != null) SourceData.Ends(start, end) else SourceData.Empty
@@ -343,9 +352,9 @@ object MapReducer {
 
         fun newRequest(): RequestId = RequestId(state.nextRequest).also { state = state.copy(nextRequest = state.nextRequest + 1) }
 
-        fun setSource(source: Source, data: SourceData) {
+        fun <D : SourceData> setSource(source: Source<D>, data: D) {
             if (state.sources[source] == data) return
-            state = state.copy(sources = state.sources + (source to data))
+            state = state.copy(sources = state.sources.with(source, data))
             onMap(MapEffect.SetSource(source, data))
         }
 

@@ -51,6 +51,8 @@ class MapReducerFuzzTest {
         private var maxRequest = 0L
         /** A gesture started since the last idle notice. */
         private var gestureSinceIdle = false
+        /** The newest map_points request the reducer asked for. */
+        private var newestPoints: RequestId? = null
 
         private val center = GeoPoint(-117.234, 32.88)
         private val scopes = listOf(Scope.All, Scope.session("a"), Scope.session("b"))
@@ -125,7 +127,7 @@ class MapReducerFuzzTest {
                         ViewInfo(rnd.nextBoolean(), listOf(pick(listOf("a", "b"))), if (rnd.nextBoolean()) bbox() else null, route)
                     },
                 )
-                24, 25 -> MapEvent.PointsLoaded(request(), pick(MapMode.entries), payload())
+                24, 25 -> MapEvent.PointsLoaded(newestPoints?.takeIf { rnd.nextBoolean() } ?: request(), pick(MapMode.entries), payload())
                 26 -> MapEvent.RoutesLoaded(request(), payload())
                 27 -> MapEvent.SightingsLoaded(request(), payload())
                 28 -> MapEvent.FocusResolved(request(), point(), rnd.nextDouble(3.0, 19.0))
@@ -162,7 +164,23 @@ class MapReducerFuzzTest {
                 assertEquals((showing?.selection as? Selection.Device)?.key, q.key)
             }
 
-            // 4. every payload a source shows was handed in by an event; routes grow only by their new points
+            // 4a. the point sources only ever take the payload of the newest points request
+            for (source in listOf(Source.Devices, Source.Cells, Source.Density)) {
+                val now = after.sources[source]
+                if (now is SourceData.Stored && now != before.sources[source]) {
+                    assertTrue("$source took $now from $event", event is MapEvent.PointsLoaded && event.payload == now.id)
+                    assertEquals("$source took a stale points result", newestPoints, (event as? MapEvent.PointsLoaded)?.request)
+                }
+            }
+            step.effects.filterIsInstance<MapEffect.LoadPoints>().lastOrNull()?.let { newestPoints = it.request }
+
+            // 4b. after a trim the point data is gone from the state, and the runner is told to forget it
+            if (event == MapEvent.Trim) {
+                for (source in MapReducer.TRIMMED_SOURCES) assertTrue("$source kept after Trim", source !in after.sources)
+                assertTrue(step.effects.any { it is MapEffect.DropSources && it.sources == MapReducer.TRIMMED_SOURCES })
+            }
+
+            // 4c. every payload a source shows was handed in by an event; routes grow only by their new points
             for (data in after.sources.values) when (data) {
                 is SourceData.Stored -> assertTrue("unknown payload $data", data.id in issuedPayloads)
                 is SourceData.Line -> assertTrue("unknown route $data", data.route.base in issuedPayloads)
@@ -209,7 +227,7 @@ class MapReducerFuzzTest {
 
             // 9. the first-run location shows only while no scope is shown
             if (showing != null && event is MapEvent.LocationChanged) {
-                assertTrue(step.effects.none { it is MapEffect.SetSource && it.source == Source.Me })
+                assertTrue(step.effects.none { it is MapEffect.SetSource<*> && it.source == Source.Me })
             }
         }
     }

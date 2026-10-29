@@ -39,23 +39,61 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 /** Uptime, for the fling continuation (MoveTracking). */
 @JvmInline value class UptimeMs(val value: Long)
 
-/** The GeoJSON sources of map-style.json, plus `cells`. */
-enum class Source(val id: String) {
-    Route("route"), Ends("ends"), Density("density"), Devices("devices"), Sightings("sightings"), Me("me"),
-    Cells(MapStyleSpec.CELLS),
+/**
+ * What a source shows. Only small values live here; points, cells, routes and sightings are [Stored]. Each source
+ * accepts only its own kind ([RouteData], [EndsData], [PointsData], [MeData]), so a pairing such as the location on
+ * the devices source does not compile.
+ */
+sealed interface SourceData {
+    sealed interface RouteData : SourceData
+    sealed interface EndsData : SourceData
+    sealed interface PointsData : SourceData
+    sealed interface MeData : SourceData
+
+    data object Empty : RouteData, EndsData, PointsData, MeData
+    /** A payload the runner holds (map points or cells, the faint routes, a device's sightings). */
+    data class Stored(val id: PayloadId) : RouteData, PointsData
+    /** The one-session route; its points stay in the runner (see [RouteLine]). */
+    data class Line(val route: RouteLine) : RouteData
+    /** M-8 Start and End. */
+    data class Ends(val start: GeoPoint, val end: GeoPoint) : EndsData
+    /** M-9 the user's location. */
+    data class Me(val at: GeoPoint) : MeData
 }
 
-/** What a source shows. Only small values live here; points, cells, routes and sightings are [Stored]. */
-sealed interface SourceData {
-    data object Empty : SourceData
-    /** A payload the runner holds (map points or cells, the faint routes, a device's sightings). */
-    data class Stored(val id: PayloadId) : SourceData
-    /** The one-session route; its points stay in the runner (see [RouteLine]). */
-    data class Line(val route: RouteLine) : SourceData
-    /** M-8 Start and End. */
-    data class Ends(val start: GeoPoint, val end: GeoPoint) : SourceData
-    /** M-9 the user's location. */
-    data class Me(val at: GeoPoint) : SourceData
+/** The GeoJSON sources of map-style.json, plus `cells`, each typed by the data it accepts. */
+sealed class Source<D : SourceData>(val id: String) {
+    /** [data] as this source's kind, or null when it is another kind. */
+    abstract fun accept(data: SourceData): D?
+
+    data object Route : Source<SourceData.RouteData>("route") { override fun accept(data: SourceData) = data as? SourceData.RouteData }
+    data object Ends : Source<SourceData.EndsData>("ends") { override fun accept(data: SourceData) = data as? SourceData.EndsData }
+    data object Density : Source<SourceData.PointsData>("density") { override fun accept(data: SourceData) = data as? SourceData.PointsData }
+    data object Devices : Source<SourceData.PointsData>("devices") { override fun accept(data: SourceData) = data as? SourceData.PointsData }
+    data object Sightings : Source<SourceData.PointsData>("sightings") { override fun accept(data: SourceData) = data as? SourceData.PointsData }
+    data object Me : Source<SourceData.MeData>("me") { override fun accept(data: SourceData) = data as? SourceData.MeData }
+    data object Cells : Source<SourceData.PointsData>(MapStyleSpec.CELLS) { override fun accept(data: SourceData) = data as? SourceData.PointsData }
+}
+
+/**
+ * What each source shows, as far as the state knows; a source missing here was dropped (Trim) and is not replayed.
+ * Built only through [with], which pairs a source with its own kind of data.
+ */
+class Sources private constructor(private val map: Map<Source<*>, SourceData>) {
+    operator fun <D : SourceData> get(source: Source<D>): D? = map[source]?.let(source::accept)
+    operator fun contains(source: Source<*>) = source in map
+    fun <D : SourceData> with(source: Source<D>, data: D) = Sources(map + (source to data))
+    fun without(sources: Set<Source<*>>) = Sources(map - sources)
+    val values: Collection<SourceData> get() = map.values
+    val entries: Set<Map.Entry<Source<*>, SourceData>> get() = map.entries
+
+    override fun equals(other: Any?) = other is Sources && other.map == map
+    override fun hashCode() = map.hashCode()
+    override fun toString() = "Sources($map)"
+
+    companion object {
+        val None = Sources(emptyMap())
+    }
 }
 
 enum class StyleState { Loading, Ready }
@@ -136,7 +174,7 @@ data class MapState(
     val surface: SurfaceState,
     val pending: CameraIntent?,
     val session: Session,
-    val sources: Map<Source, SourceData>,
+    val sources: Sources,
     val cover: CoverInsets,
     val moves: MoveTracking,
     val locate: LocateModel,
@@ -151,7 +189,7 @@ data class MapState(
             surface = SurfaceState.Detached(CameraSnapshot(GeoPoint(0.0, 0.0), 1.0)),
             pending = null,
             session = Session.None(located = false),
-            sources = emptyMap(),
+            sources = Sources.None,
             cover = CoverInsets(0, 0, 0, 0),
             moves = MoveTracking.Initial,
             locate = LocateModel(),
@@ -216,9 +254,11 @@ enum class QueryKind { View, Points, Routes, Sightings, Focus }
 sealed interface MapEffect {
     /** A MapLibre call: issued only while the style is ready. */
     sealed interface OnMap : MapEffect
-    data class SetSource(val source: Source, val data: SourceData) : OnMap
+    data class SetSource<D : SourceData>(val source: Source<D>, val data: D) : OnMap
     /** After a style load every source is empty again: set them all, whatever MapLibre last held. */
-    data class ReplaySources(val sources: Map<Source, SourceData>) : OnMap
+    data class ReplaySources(val sources: Sources) : OnMap
+    /** §1.2.5 Trim: empty these sources on the map (when it can take it) and forget their GeoJSON in the runner. */
+    data class DropSources(val sources: Set<Source<*>>) : MapEffect
     data class ApplySelection(val key: DeviceKey?) : OnMap
     data class SetRouteOpacity(val faint: Boolean) : OnMap
     data class Move(val camera: CameraSnapshot, val duration: Millis) : OnMap

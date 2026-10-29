@@ -89,7 +89,7 @@ class CluetoothMapState(
     private val payloads = HashMap<PayloadId, Payload>()
     private var nextPayload = 1L
     /** What each source last received, so an unchanged payload is not parsed again (a replay always sets). */
-    private val applied = HashMap<Source, String>()
+    private val applied = HashMap<Source<*>, String>()
     private val route = RouteGeoJson()
     private val running = HashMap<QueryKind, Job>()
 
@@ -228,6 +228,16 @@ class CluetoothMapState(
     /** The current state (tests). */
     internal val state: MapState get() = model
 
+    /** The GeoJSON this runner still holds per source and per payload (tests: Trim keeps none of the point data). */
+    internal fun retainedJson(): Map<String, Int> =
+        applied.entries.associate { (s, json) -> "applied ${s.id}" to json.length } +
+            payloads.entries.associate { (id, p) ->
+                "payload ${id.value}" to when (p) {
+                    is Payload.Json -> p.json.length
+                    is Payload.Points -> p.points.size
+                }
+            }
+
     override fun onStyleLoaded() {
         styleLoads++
         dispatch(MapEvent.StyleLoaded)
@@ -237,12 +247,13 @@ class CluetoothMapState(
 
     private fun execute(effect: MapEffect) {
         when (effect) {
-            is MapEffect.SetSource -> setSource(effect.source, effect.data, force = false)
+            is MapEffect.SetSource<*> -> setSource(effect.source, effect.data, force = false)
             is MapEffect.ReplaySources -> {
                 // a (re)loaded style starts with every source empty: forget what the old one held
                 applied.clear()
-                for ((source, data) in effect.sources) setSource(source, data, force = true)
+                for ((source, data) in effect.sources.entries) setSource(source, data, force = true)
             }
+            is MapEffect.DropSources -> applied.keys.removeAll(effect.sources)
             is MapEffect.ApplySelection -> surface?.applySelection(style.selection(effect.key?.let(DeviceAddr::addrOf)))
             is MapEffect.SetRouteOpacity ->
                 surface?.setRouteOpacity(if (effect.faint) style.routeOpacityAllSessions else style.routeOpacitySession)
@@ -291,7 +302,7 @@ class CluetoothMapState(
         }
     }
 
-    private fun setSource(source: Source, data: SourceData, force: Boolean) {
+    private fun setSource(source: Source<*>, data: SourceData, force: Boolean) {
         val json = when (data) {
             SourceData.Empty -> GeoJson.EMPTY
             is SourceData.Stored -> (payloads[data.id] as? Payload.Json)?.json ?: return dispatch(missing(data.id))
