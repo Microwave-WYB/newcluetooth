@@ -363,6 +363,66 @@ class GattDiscoveryManagerTest {
         val json = Json.parseToJsonElement(manager.interruptedJson(request, startedAt, GattStage.READ)).jsonObject
         assertEquals(json.getValue("started_at").jsonPrimitive.content, json.getValue("ended_at").jsonPrimitive.content)
     }
+
+    @Test
+    fun `a cancel while the discovery is starting means it never connects (#70 review)`() = runTest {
+        val store = MemoryStore().apply { idGate = CompletableDeferred() }
+        val pending = MemoryPending()
+        val manager = manager(store, pending)
+        val factory = FakeFactory(attempts = arrayOf(Cooperative))
+        val ticket = manager.supersede(start(factory))
+        runCurrent()
+        assertTrue("admitted, still minting its id", ticket.admitted.isCompleted && !ticket.ended.isCompleted)
+        manager.cancel(ticket)
+        store.idGate?.complete(Unit)
+        runCurrent()
+        assertEquals(TicketEnd.NoResult, ticket.ended.await())
+        assertTrue("nothing connected", factory.links.isEmpty())
+        assertTrue("nothing queued or stored", pending.map.isEmpty() && store.saved.isEmpty())
+        assertEquals(GattUiState.Idle, manager.state.value)
+        assertTrue("admission is free again", manager.start(start(FakeFactory(attempts = arrayOf(Cooperative)))))
+        runCurrent()
+    }
+
+    @Test
+    fun `a superseding start cancels the running discovery and runs after it ended (#70 review)`() = runTest {
+        val store = MemoryStore()
+        val pending = MemoryPending()
+        val manager = manager(store, pending)
+        val first = FakeFactory(attempts = arrayOf(hanging))
+        val running = manager.supersede(start(first))
+        advanceTimeBy(500)
+        runCurrent()
+        val waiting = manager.supersede(start(FakeFactory(attempts = arrayOf(Cooperative))))
+        val second = FakeFactory(attempts = arrayOf(Cooperative))
+        val replacing = manager.supersede(start(second))
+        assertFalse("the replaced one never runs", waiting.admitted.await())
+        assertEquals(TicketEnd.NoResult, waiting.ended.await())
+        runCurrent()
+        val firstEnd = running.ended.await() as TicketEnd.Finished
+        assertEquals(GattOutcome.CANCELLED, firstEnd.state.result.outcome)
+        assertTrue(running.superseded.isCompleted)
+        assertEquals("the first link was closed before the next", 1, first.links.single().closes)
+        assertTrue(replacing.admitted.await())
+        runCurrent()
+        assertEquals(GattOutcome.COMPLETE, (replacing.ended.await() as TicketEnd.Finished).state.result.outcome)
+        assertEquals(1, second.links.size)
+    }
+
+    @Test
+    fun `a cancel of a waiting discovery drops it, and the running one goes on`() = runTest {
+        val manager = manager(MemoryStore(), MemoryPending())
+        val running = manager.supersede(start(FakeFactory(attempts = arrayOf(hanging))))
+        runCurrent()
+        val waiting = manager.supersede(start(FakeFactory(attempts = arrayOf(Cooperative))))
+        manager.cancel(waiting)
+        assertFalse(waiting.admitted.await())
+        runCurrent()
+        // The superseding start already cancelled the running one; it ends as cancelled and nothing follows.
+        assertEquals(GattOutcome.CANCELLED, (running.ended.await() as TicketEnd.Finished).state.result.outcome)
+        assertTrue(manager.start(start(FakeFactory(attempts = arrayOf(Cooperative)))))
+        runCurrent()
+    }
 }
 
 class FilePendingDiscoveryStoreTest {

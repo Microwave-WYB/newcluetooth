@@ -8,9 +8,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -26,8 +24,10 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GattTarget as CoreGattTarget
  *   give a failed Connecting step ([GattRunner.GATT_UNAVAILABLE], [GattRunner.GATT_NO_TARGET]); nothing connects.
  * - Progress views follow the engine stages ([GattStepTracker]); the final view is what `core.ingestGatt` returned.
  *   If the core could not store it, the result stays in the `gatt-pending` queue (retried) and [resultView] is shown.
- * - One discovery at a time: a new collection cancels the running one and starts after it wound down. Cancelling
- *   the collector cancels the discovery (D-13.8), which is still saved as `cancelled` and never shown.
+ * - One discovery at a time, ordered by the manager's admission ([GattAdmission]): a collection that passed the
+ *   preconditions cancels the running discovery and starts after it ended; the earlier collector ends on a final
+ *   view. Cancelling the collector cancels its discovery (D-13.8): a running one is still saved as `cancelled` and
+ *   never shown, one that is still starting never connects, and one that waits never runs.
  * - It works with or without a recording; the target's session id comes from the core.
  */
 class PlatformGattRunner(
@@ -41,7 +41,7 @@ class PlatformGattRunner(
     private val location: () -> GattLocation? = { null },
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : GattRunner {
-    /** Views the core returned, by discovery id; cleared when a run ends. Copy-on-write, lock-free. */
+    /** Views the core returned, by discovery id; removed when the run ended. Copy-on-write, lock-free. */
     private val stored = AtomicReference<Map<String, GattView>>(emptyMap())
 
     private val discoveries: GattDiscoveryManager = manager(object : GattStore {
@@ -51,58 +51,40 @@ class PlatformGattRunner(
             stored.updateAndGet { it + (view.discoveryId to view) }
         }
     })
-    /** The latest run; each run cancels its predecessor and waits for it to wind down before it starts. */
-    private val latest = AtomicReference<Job?>(null)
-
-    /** App start: store what process death or a failed save left in the queue (§4.3). */
-    suspend fun recover() = discoveries.recoverStale()
-
     override fun discover(key: DeviceKey): Flow<GattView> = channelFlow {
-        // One discovery at a time: a new collection cancels the previous run's own job, never its collector.
-        var last: GattView? = null
-        val run = launch(start = CoroutineStart.LAZY) {
-            val emit: suspend (GattView) -> Unit = {
-                last = it
-                send(it)
-            }
-            try {
-                run(key, emit)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                // Never expected (every platform call is a value): the collector still gets a final view.
-                emit(failedBeforeConnect("", key, nowMs(), GattFailure.ConnectionFailed))
-            }
-        }
-        val previous = latest.getAndSet(run)
-        previous?.cancel()
-        // One at a time without a lock: this run starts only after its predecessor (and so every earlier one) ended.
-        // The wait itself is not cancellable, so a run superseded while waiting still ends after its predecessor.
-        val starter = launch {
-            withContext(NonCancellable) { previous?.join() }
-            run.start()
-        }
-        // Join the starter first: joining a lazy job would start it before its predecessor ended.
-        starter.join()
-        run.join()
-        // Superseded by a newer discovery: the last view is final, so this collector never spins (§4.3).
-        if (run.isCancelled) supersededView(last, key, nowMs())?.let { send(it) }
-    }
-
-    private suspend fun run(key: DeviceKey, emit: suspend (GattView) -> Unit) {
         val startedMs = nowMs()
         fun fail(failure: GattFailure) = failedBeforeConnect("", key, startedMs, failure)
-        if (!(platform { available() } ?: false)) return emit(fail(GattFailure.Other(GattRunner.GATT_UNAVAILABLE)))
-        val target = platform { withContext(io) { core.await().gattTarget(key) } }
-            ?: return emit(fail(GattFailure.Other(GattRunner.GATT_NO_TARGET)))
-        val link = platform { links(target) } ?: return emit(fail(GattFailure.Other(GattRunner.GATT_UNAVAILABLE)))
-        discoveries.dismissResult()
-        val job = discoveries.launch(GattStartRequest(target.toEngineTarget(), target.sessionId, location(), link))
-            ?: return emit(fail(GattFailure.ConnectionFailed))
-        val tracker = GattStepTracker()
-        var finished = false
         try {
-            coroutineScope {
+            run(key, startedMs, ::fail) { send(it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Never expected (every platform call is a value): the collector still gets a final view.
+            send(fail(GattFailure.ConnectionFailed))
+        }
+    }
+
+    private suspend fun run(key: DeviceKey, startedMs: Long, fail: (GattFailure) -> GattView, send: suspend (GattView) -> Unit) {
+        if (!(platform { available() } ?: false)) return send(fail(GattFailure.Other(GattRunner.GATT_UNAVAILABLE)))
+        val target = platform { withContext(io) { core.await().gattTarget(key) } }
+            ?: return send(fail(GattFailure.Other(GattRunner.GATT_NO_TARGET)))
+        val link = platform { links(target) } ?: return send(fail(GattFailure.Other(GattRunner.GATT_UNAVAILABLE)))
+        // One discovery at a time, ordered by the manager's admission: a new collection cancels the running
+        // discovery and starts after it ended; the earlier collector ends on a final view, it is not cancelled.
+        val ticket = discoveries.supersede(GattStartRequest(target.toEngineTarget(), target.sessionId, platform { location() }, link))
+        var last: GattView? = null
+        val emit: suspend (GattView) -> Unit = {
+            last = it
+            send(it)
+        }
+        try {
+            if (!ticket.admitted.await()) {
+                // Replaced by a newer discovery before it ran.
+                superseded(last, key)?.let { emit(it) }
+                return
+            }
+            val tracker = GattStepTracker()
+            val end = coroutineScope {
                 val progress = launch {
                     discoveries.state.collect { state ->
                         if (state is GattUiState.Running) {
@@ -110,26 +92,35 @@ class PlatformGattRunner(
                         }
                     }
                 }
-                job.join()
-                progress.cancel()
+                ticket.ended.await().also { progress.cancel() }
             }
-            finished = true
-            when (val end = discoveries.state.value) {
-                is GattUiState.Finished -> emit(stored.get()[end.result.request.id] ?: resultView(end.result, key))
-                // No discovery identity: nothing connected.
-                else -> emit(fail(GattFailure.ConnectionFailed))
+            val wasSuperseded = ticket.superseded.isCompleted
+            when (end) {
+                is TicketEnd.Finished -> {
+                    val result = end.state.result
+                    if (wasSuperseded && result.outcome == GattOutcome.CANCELLED) {
+                        superseded(last, key)?.let { emit(it) }
+                    } else {
+                        emit(stored.get()[result.request.id] ?: resultView(result, key))
+                    }
+                }
+                // Superseded before it connected, or no discovery identity: nothing connected.
+                TicketEnd.NoResult ->
+                    if (wasSuperseded) superseded(last, key)?.let { emit(it) } else emit(fail(GattFailure.ConnectionFailed))
             }
         } finally {
-            if (!finished) {
-                // D-13.8: the collector went away; the engine stops and the result is stored as cancelled.
-                withContext(NonCancellable) {
-                    discoveries.cancel()
-                    job.join()
-                }
+            withContext(NonCancellable) {
+                // D-13.8: the collector went away; the engine stops and the result is stored as cancelled (a
+                // discovery still starting never connects, a waiting one never runs).
+                if (!ticket.ended.isCompleted) discoveries.cancel(ticket)
+                val end = ticket.ended.await()
+                if (end is TicketEnd.Finished) stored.updateAndGet { it - end.state.result.request.id }
             }
-            stored.set(emptyMap())
         }
     }
+
+    /** The final view of a superseded run, so its collector never spins (§4.3); null when [last] already was. */
+    private fun superseded(last: GattView?, key: DeviceKey) = supersededView(last, key, nowMs())
 
     /** A platform or core call whose failure is a value (null), never a throw out of the flow. */
     private suspend fun <T> platform(call: suspend () -> T): T? = try {

@@ -13,6 +13,7 @@ import org.junit.Test
 
 /** The recorder's pure reducer against a simulated core and platform, without coroutines or Android. */
 class RecorderMachineTest {
+    /** Runs effects like [PlatformRecorder]: a failed effect stops its batch and comes back as [RecEvent.EffectFailed]. */
     private class Sim(val random: Random? = null, val failRate: Int = 0) {
         var model = RecModel()
         var corePhase = RecordingPhase.Idle
@@ -22,8 +23,17 @@ class RecorderMachineTest {
         var scanning = false
         var locating = false
         var refuseForeground = false
+
+        /** `recordingState()` fails right after a successful start (the #70 review's partial start). */
+        var failReadAfterStart = false
+        private var justStarted = false
         val log = mutableListOf<String>()
         val replies = mutableListOf<RecOutcome>()
+
+        private sealed interface Result {
+            data class Done(val event: RecEvent?) : Result
+            data class Failed(val cause: Throwable) : Result
+        }
 
         private fun flaky() = random != null && random.nextInt(100) < failRate
 
@@ -36,47 +46,55 @@ class RecorderMachineTest {
             while (pending.isNotEmpty()) {
                 val transition = RecorderMachine.reduce(model, pending.removeFirst())
                 model = transition.state
-                for (effect in transition.effects) {
+                for ((index, effect) in transition.effects.withIndex()) {
                     log += effect::class.simpleName.orEmpty()
-                    execute(effect)?.let(pending::add)
+                    when (val result = execute(effect)) {
+                        is Result.Done -> result.event?.let(pending::add)
+                        is Result.Failed -> {
+                            pending.addFirst(RecEvent.EffectFailed(effect, result.cause, transition.effects.drop(index + 1)))
+                            break
+                        }
+                    }
                 }
             }
             return replies.subList(before, replies.size).toList()
         }
 
-        private fun execute(effect: RecEffect): RecEvent? = when (effect) {
+        private fun execute(effect: RecEffect): Result = when (effect) {
             RecEffect.EnterForeground -> {
                 foreground = !(refuseForeground || flaky())
-                RecEvent.ForegroundEntered(foreground)
+                Result.Done(RecEvent.ForegroundEntered(foreground))
             }
             RecEffect.LeaveForeground -> {
                 foreground = false
-                null
+                Result.Done(null)
             }
             RecEffect.CoreStart -> when {
-                corePhase != RecordingPhase.Idle -> RecEvent.CoreFailed(CoreException.AlreadyRecording())
-                flaky() -> RecEvent.CoreFailed(CoreException.Io("disk"))
+                corePhase != RecordingPhase.Idle -> Result.Done(RecEvent.CoreFailed(CoreException.AlreadyRecording()))
+                flaky() -> Result.Failed(CoreException.Io("disk"))
                 else -> {
                     corePhase = RecordingPhase.Recording
-                    coreSession = "s${++sessions}"
-                    RecEvent.CoreStarted(coreState())
+                    val session = "s${++sessions}"
+                    coreSession = session
+                    justStarted = true
+                    Result.Done(RecEvent.CoreStartReturned(SessionId(session)))
                 }
             }
-            RecEffect.CorePause -> if (corePhase != RecordingPhase.Recording) {
-                RecEvent.CoreFailed(CoreException.NotRecording())
-            } else if (flaky()) {
-                RecEvent.CoreFailed(CoreException.Io("pause"))
-            } else {
-                corePhase = RecordingPhase.Paused
-                RecEvent.CorePaused(coreState())
+            RecEffect.CorePause -> when {
+                corePhase != RecordingPhase.Recording -> Result.Done(RecEvent.CoreFailed(CoreException.NotRecording()))
+                flaky() -> Result.Done(RecEvent.CoreFailed(CoreException.Io("pause")))
+                else -> {
+                    corePhase = RecordingPhase.Paused
+                    Result.Done(RecEvent.CorePaused(coreState()))
+                }
             }
-            RecEffect.CoreResume -> if (corePhase != RecordingPhase.Paused) {
-                RecEvent.CoreFailed(CoreException.NotRecording())
-            } else if (flaky()) {
-                RecEvent.CoreFailed(CoreException.Io("resume"))
-            } else {
-                corePhase = RecordingPhase.Recording
-                RecEvent.CoreResumed(coreState())
+            RecEffect.CoreResume -> when {
+                corePhase != RecordingPhase.Paused -> Result.Done(RecEvent.CoreFailed(CoreException.NotRecording()))
+                flaky() -> Result.Failed(CoreException.Io("resume"))
+                else -> {
+                    corePhase = RecordingPhase.Recording
+                    Result.Done(RecEvent.CoreResumed(coreState()))
+                }
             }
             RecEffect.CoreStop -> {
                 val session = coreSession
@@ -86,33 +104,44 @@ class RecorderMachineTest {
                         corePhase = RecordingPhase.Idle
                         coreSession = null
                     }
-                    RecEvent.CoreFailed(CoreException.Io("seal"))
+                    Result.Done(RecEvent.CoreFailed(CoreException.Io("seal")))
                 } else {
                     corePhase = RecordingPhase.Idle
                     coreSession = null
-                    RecEvent.CoreStopped(SessionId(session))
+                    Result.Done(RecEvent.CoreStopped(SessionId(session)))
                 }
             }
-            RecEffect.CoreRead -> if (flaky()) RecEvent.CoreFailed(CoreException.Io("read")) else RecEvent.CoreRead(coreState())
+            RecEffect.CoreRead -> {
+                val afterStart = justStarted
+                justStarted = false
+                when {
+                    afterStart && failReadAfterStart -> Result.Failed(CoreException.Io("read"))
+                    flaky() -> Result.Done(RecEvent.CoreFailed(CoreException.Io("read")))
+                    else -> Result.Done(RecEvent.CoreRead(coreState()))
+                }
+            }
             RecEffect.DrainScanner -> {
                 scanning = false
-                null
+                // A drain that times out still stopped the scanner; the failure only reaches the state.
+                if (flaky()) Result.Failed(IllegalStateException("the scanner did not drain")) else Result.Done(null)
             }
             RecEffect.StartScanner -> {
                 scanning = true
-                null
+                Result.Done(null)
             }
-            RecEffect.StartLocation -> {
+            RecEffect.StartLocation -> if (flaky()) {
+                Result.Failed(SecurityException("location revoked"))
+            } else {
                 locating = true
-                null
+                Result.Done(null)
             }
             RecEffect.StopLocation -> {
                 locating = false
-                null
+                Result.Done(null)
             }
             is RecEffect.Reply -> {
                 replies += effect.outcome
-                null
+                Result.Done(null)
             }
         }
     }
@@ -141,7 +170,7 @@ class RecorderMachineTest {
     fun `start, pause, resume and stop keep the call order`() {
         val sim = Sim()
         assertEquals(RecOutcome.Session(SessionId("s1")), sim.start())
-        assertEquals(listOf("EnterForeground", "CoreStart", "StartLocation", "StartScanner", "Reply"), sim.log)
+        assertEquals(listOf("EnterForeground", "CoreStart", "CoreRead", "StartLocation", "StartScanner", "Reply"), sim.log)
         sim.log.clear()
         sim.request(RecEvent.Pause)
         assertEquals(listOf("DrainScanner", "CorePause", "StopLocation", "Reply"), sim.log)
@@ -156,6 +185,18 @@ class RecorderMachineTest {
     }
 
     @Test
+    fun `a state read that fails right after a successful start keeps the session and its service (#70 review)`() {
+        val sim = Sim().apply { failReadAfterStart = true }
+        assertEquals(RecOutcome.Session(SessionId("s1")), sim.start())
+        assertEquals(RecPhase.Live(SessionId("s1"), paused = false), sim.model.phase)
+        assertTrue(sim.foreground && sim.scanning && sim.locating)
+        assertTrue(sim.model.error != null)
+        assertEquals(RecOutcome.Session(SessionId("s1")), sim.request(RecEvent.Stop).single())
+        assertEquals(RecordingPhase.Idle, sim.corePhase)
+        assertFalse(sim.foreground)
+    }
+
+    @Test
     fun `a core that is already recording is adopted, not left without a service`() {
         val sim = Sim()
         sim.corePhase = RecordingPhase.Recording
@@ -165,13 +206,81 @@ class RecorderMachineTest {
     }
 
     @Test
-    fun `a stop request while starting is answered, not dropped`() {
+    fun `an adoption whose read fails keeps the unknown session's service, and the core naming it adopts it (#70 review)`() {
+        val adopting = RecModel(phase = RecPhase.AdoptingCore)
+        val failed = RecorderMachine.reduce(adopting, RecEvent.CoreFailed(CoreException.Io("read")))
+        assertEquals(RecPhase.Unidentified, failed.state.phase)
+        assertEquals(Phase.Recording, failed.state.public().phase)
+        assertFalse(RecEffect.LeaveForeground in failed.effects)
+        assertTrue(RecEffect.StartScanner in failed.effects)
+        assertTrue(failed.effects.last() is RecEffect.Reply)
+        val named = RecorderMachine.reduce(failed.state, RecEvent.CoreChanged(CoreRecordingState(RecordingPhase.Recording, "x", 0, 0, 0, 3, 0.0)))
+        assertEquals(RecPhase.Live(SessionId("x"), paused = false), named.state.phase)
+        val stopped = RecorderMachine.reduce(failed.state, RecEvent.Stop)
+        assertEquals("an unidentified session can be stopped", listOf(RecEffect.DrainScanner, RecEffect.CoreStop), stopped.effects)
+    }
+
+    @Test
+    fun `a restore that finds the core recording enters the service before going live (#70 review)`() {
         val sim = Sim()
+        sim.corePhase = RecordingPhase.Recording
+        sim.coreSession = "left"
+        sim.request(RecEvent.Restore)
+        assertEquals(listOf("CoreRead", "EnterForeground", "StartLocation", "StartScanner", "Reply"), sim.log)
+        assertEquals(RecPhase.Live(SessionId("left"), paused = false), sim.model.phase)
+        assertTrue(sim.foreground && sim.scanning && sim.locating)
+    }
+
+    @Test
+    fun `a restore that finds the core paused keeps the service and does not scan`() {
+        val sim = Sim()
+        sim.corePhase = RecordingPhase.Paused
+        sim.coreSession = "left"
+        sim.request(RecEvent.Restore)
+        assertEquals(RecPhase.Live(SessionId("left"), paused = true), sim.model.phase)
+        assertTrue(sim.foreground)
+        assertFalse(sim.scanning || sim.locating)
+    }
+
+    @Test
+    fun `a restore whose service is refused closes the session instead of running without it (#70 review)`() {
+        val sim = Sim().apply { refuseForeground = true }
+        sim.corePhase = RecordingPhase.Recording
+        sim.coreSession = "left"
+        sim.request(RecEvent.Restore)
+        assertEquals(RecordingPhase.Idle, sim.corePhase)
+        assertFalse(sim.foreground || sim.scanning || sim.locating)
+        assertEquals(RecPhase.Idle(SessionId("left")), sim.model.phase)
+        assertEquals(RecorderMachine.SERVICE_REFUSED, sim.model.error)
+    }
+
+    @Test
+    fun `a failed effect stops its batch, and the machine runs what still matters (#70 review)`() {
+        val live = RecModel(phase = RecPhase.Live(SessionId("s1"), paused = false))
+        val failed = RecorderMachine.reduce(
+            live,
+            RecEvent.EffectFailed(RecEffect.StartLocation, SecurityException("revoked"), listOf(RecEffect.StartScanner, RecEffect.Reply(RecOutcome.Done))),
+        )
+        assertEquals(listOf(RecEffect.StartScanner, RecEffect.Reply(RecOutcome.Done)), failed.effects)
+        assertTrue(failed.state.error != null)
+
+        val pausing = RecModel(phase = RecPhase.Pausing(SessionId("s1")))
+        val drainFailed = RecorderMachine.reduce(pausing, RecEvent.EffectFailed(RecEffect.DrainScanner, IllegalStateException("timeout"), listOf(RecEffect.CorePause)))
+        assertEquals("the core step still runs after a failed drain", listOf(RecEffect.CorePause), drainFailed.effects)
+        assertEquals(pausing.phase, drainFailed.state.phase)
+
+        // A failed core step answers through the core path and never runs the batch's later effects twice.
+        val starting = RecModel(phase = RecPhase.StartingCore)
+        val startFailed = RecorderMachine.reduce(starting, RecEvent.EffectFailed(RecEffect.CoreStart, CoreException.Io("disk")))
+        assertEquals(1, startFailed.effects.filterIsInstance<RecEffect.Reply>().size)
+    }
+
+    @Test
+    fun `a stop request while starting is answered, not dropped`() {
         val transition = RecorderMachine.reduce(RecModel(), RecEvent.Start(emptyList()))
         val replies = RecorderMachine.reduce(transition.state, RecEvent.Stop).effects.filterIsInstance<RecEffect.Reply>()
         assertEquals(1, replies.size)
         assertTrue(replies.single().outcome is RecOutcome.Failed)
-        assertTrue(sim.replies.isEmpty())
     }
 
     @Test
@@ -188,7 +297,8 @@ class RecorderMachineTest {
         val idle = RecModel()
         for (late in listOf(
             RecEvent.ForegroundEntered(true),
-            RecEvent.CoreStarted(CoreRecordingState(RecordingPhase.Recording, "x", 0, 0, 0, 1, 0.0)),
+            RecEvent.CoreStartReturned(SessionId("x")),
+            RecEvent.CoreRead(CoreRecordingState(RecordingPhase.Recording, "x", 0, 0, 0, 1, 0.0)),
             RecEvent.CorePaused(CoreRecordingState(RecordingPhase.Paused, "x", 0, 0, null, 1, 0.0)),
             RecEvent.CoreStopped(SessionId("x")),
         )) {
@@ -198,10 +308,30 @@ class RecorderMachineTest {
         }
     }
 
+    @Test
+    fun `an effect that throws in the runner is a typed failure, never a crash`() {
+        val starting = RecorderMachine.reduce(RecModel(), RecEvent.Start(emptyList())).state
+        val refused = RecorderMachine.reduce(starting, RecEvent.EffectFailed(RecEffect.EnterForeground, IllegalStateException("not allowed")))
+        assertEquals(RecPhase.Idle(lastSession = null), refused.state.phase)
+        assertEquals(RecorderMachine.SERVICE_REFUSED, refused.state.error)
+        assertTrue(refused.effects.single() is RecEffect.Reply)
+
+        val coreStarting = starting.copy(phase = RecPhase.StartingCore)
+        val coreFailed = RecorderMachine.reduce(coreStarting, RecEvent.EffectFailed(RecEffect.CoreStart, RuntimeException("binding")))
+        assertTrue("the service is left", RecEffect.LeaveForeground in coreFailed.effects)
+        assertEquals(RecPhase.Idle(lastSession = null), coreFailed.state.phase)
+
+        val live = RecModel(phase = RecPhase.Live(SessionId("s1"), paused = false))
+        val locationFailed = RecorderMachine.reduce(live, RecEvent.EffectFailed(RecEffect.StartLocation, SecurityException("revoked")))
+        assertEquals("the recording goes on", live.phase, locationFailed.state.phase)
+        assertTrue(locationFailed.state.error != null)
+    }
+
     /**
-     * Random requests against a core and platform that fail at random; after every request: it was answered exactly
-     * once, an open core session always has the foreground service, the scanner and location run only while the
-     * recording is live and not paused, and after a stop nothing runs.
+     * Random requests against a core and platform that fail at random (including a state read right after a
+     * successful start, a drain and a location step); after every request: it was answered exactly once, an open
+     * core session always has the foreground service and a phase that owns it, the scanner and location run only
+     * while the recording is live and not paused, and after a stop nothing runs.
      */
     @Test
     fun `random request sequences keep the invariants`() {
@@ -217,11 +347,11 @@ class RecorderMachineTest {
                     else -> RecEvent.Restore
                 }
                 sim.refuseForeground = random.nextInt(10) == 0
+                sim.failReadAfterStart = random.nextInt(4) == 0
                 val replies = sim.request(request)
                 val where = "seed $seed step $step $request: ${sim.model} core=${sim.corePhase}/${sim.coreSession}"
                 assertEquals("exactly one reply; $where", 1, replies.size)
-                val phase = sim.model.phase
-                when (phase) {
+                when (val phase = sim.model.phase) {
                     is RecPhase.Idle -> {
                         assertFalse("no scan when idle; $where", sim.scanning)
                         assertFalse("no location when idle; $where", sim.locating)
@@ -243,13 +373,18 @@ class RecorderMachineTest {
                             assertTrue("a recording scans; $where", sim.scanning)
                         }
                     }
-                    RecPhase.AwaitingForeground, RecPhase.StartingCore, RecPhase.AdoptingCore, RecPhase.Restoring,
-                    is RecPhase.Pausing, is RecPhase.Resuming, is RecPhase.Stopping, is RecPhase.Reconciling,
+                    RecPhase.Unidentified -> assertTrue("an unidentified session keeps its service; $where", sim.foreground)
+                    RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted, RecPhase.AdoptingCore,
+                    RecPhase.Restoring, is RecPhase.RestoreForeground, is RecPhase.Pausing, is RecPhase.Resuming,
+                    is RecPhase.Stopping, is RecPhase.Reconciling,
                     -> fail("a request left the machine unsettled; $where")
                 }
                 if (sim.corePhase != RecordingPhase.Idle) {
                     assertTrue("an open session always has the service; $where", sim.foreground)
-                    assertTrue("an open session is never orphaned; $where", phase is RecPhase.Live)
+                    assertTrue(
+                        "an open session is never orphaned; $where",
+                        sim.model.phase is RecPhase.Live || sim.model.phase == RecPhase.Unidentified,
+                    )
                 }
             }
         }
@@ -258,24 +393,5 @@ class RecorderMachineTest {
     private companion object {
         const val SEEDS = 200
         const val STEPS = 300
-    }
-
-    @Test
-    fun `an effect that throws in the runner is a typed failure, never a crash`() {
-        val starting = RecorderMachine.reduce(RecModel(), RecEvent.Start(emptyList())).state
-        val refused = RecorderMachine.reduce(starting, RecEvent.EffectFailed(RecEffect.EnterForeground, IllegalStateException("not allowed")))
-        assertEquals(RecPhase.Idle(lastSession = null), refused.state.phase)
-        assertEquals(RecorderMachine.SERVICE_REFUSED, refused.state.error)
-        assertTrue(refused.effects.single() is RecEffect.Reply)
-
-        val coreStarting = starting.copy(phase = RecPhase.StartingCore)
-        val coreFailed = RecorderMachine.reduce(coreStarting, RecEvent.EffectFailed(RecEffect.CoreStart, RuntimeException("binding")))
-        assertTrue("the service is left", RecEffect.LeaveForeground in coreFailed.effects)
-        assertEquals(RecPhase.Idle(lastSession = null), coreFailed.state.phase)
-
-        val live = RecModel(phase = RecPhase.Live(SessionId("s1"), paused = false))
-        val locationFailed = RecorderMachine.reduce(live, RecEvent.EffectFailed(RecEffect.StartLocation, SecurityException("revoked")))
-        assertEquals("the recording goes on", live.phase, locationFailed.state.phase)
-        assertTrue(locationFailed.state.error != null)
     }
 }

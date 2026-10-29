@@ -41,6 +41,23 @@ interface RecordingScanner {
      * batcher into `ingestScans`, so no observation of the running session reaches the core after it pauses or stops.
      */
     suspend fun stopAndDrain()
+
+    /**
+     * [stopAndDrain] with its outcome as a value: a scanner that cannot stop or flush in bounded time says so instead
+     * of hanging the recorder. The default trusts [stopAndDrain].
+     */
+    suspend fun drain(): DrainOutcome {
+        stopAndDrain()
+        return DrainOutcome.Drained
+    }
+}
+
+/** How a [RecordingScanner.drain] ended. */
+sealed interface DrainOutcome {
+    data object Drained : DrainOutcome
+
+    /** The scanner did not stop or flush in time (or had failed); [reason] says which. */
+    data class Failed(val reason: String) : DrainOutcome
 }
 
 /** The RECORDING location request (§4.2). */
@@ -147,13 +164,26 @@ class PlatformRecorder(
                 val transition = RecorderMachine.reduce(model, pending.removeFirst())
                 model = transition.state
                 _state.value = model.public()
-                for (effect in transition.effects) {
-                    when (effect) {
-                        is RecEffect.Reply -> reply?.complete(effect.outcome)
+                // The batch stops at the first failed effect: its failure (with the effects not run) is reduced
+                // next, and the machine decides which of them still run.
+                val batch = transition.effects
+                for ((index, effect) in batch.withIndex()) {
+                    val result = when (effect) {
+                        is RecEffect.Reply -> {
+                            reply?.complete(effect.outcome)
+                            EffectResult.Done(null)
+                        }
                         RecEffect.EnterForeground, RecEffect.LeaveForeground, RecEffect.CoreStart, RecEffect.CorePause,
                         RecEffect.CoreResume, RecEffect.CoreStop, RecEffect.CoreRead, RecEffect.DrainScanner,
                         RecEffect.StartScanner, RecEffect.StartLocation, RecEffect.StopLocation,
-                        -> runEffect(effect)?.let(pending::add)
+                        -> runEffect(effect)
+                    }
+                    when (result) {
+                        is EffectResult.Done -> result.event?.let(pending::add)
+                        is EffectResult.Failed -> {
+                            pending.addFirst(RecEvent.EffectFailed(effect, result.cause, batch.drop(index + 1)))
+                            break
+                        }
                     }
                 }
             }
@@ -162,43 +192,54 @@ class PlatformRecorder(
         }
     }
 
-    /** The one wrapper every effect goes through: any exception becomes a typed [RecEvent.EffectFailed]. */
-    private suspend fun runEffect(effect: RecEffect): RecEvent? = try {
+    /** An effect's outcome: its result event (if any), or its failure as a value. */
+    private sealed interface EffectResult {
+        data class Done(val event: RecEvent?) : EffectResult
+        data class Failed(val cause: Throwable) : EffectResult
+    }
+
+    /** The one wrapper every effect goes through: any exception (or a typed failure) becomes [EffectResult.Failed]. */
+    private suspend fun runEffect(effect: RecEffect): EffectResult = try {
         execute(effect)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: Exception) {
         // android.util.Log is a stub that throws in JVM tests; logging must never turn a failure into a crash.
         runCatching { Log.w(TAG, "recording step $effect failed", failure) }
-        RecEvent.EffectFailed(effect, failure)
+        EffectResult.Failed(failure)
     }
 
     /** Runs one effect; its result comes back as the next event. Core calls run on [io]. */
-    private suspend fun execute(effect: RecEffect): RecEvent? = when (effect) {
-        RecEffect.EnterForeground -> RecEvent.ForegroundEntered(host.enterForeground())
-        RecEffect.LeaveForeground -> host.leaveForeground().let { null }
-        RecEffect.CoreStart -> withContext(io) {
-            val ingest = core.await()
-            ingest.startRecording(environment())
-            RecEvent.CoreStarted(ingest.recordingState())
+    private suspend fun execute(effect: RecEffect): EffectResult = when (effect) {
+        RecEffect.EnterForeground -> EffectResult.Done(RecEvent.ForegroundEntered(host.enterForeground()))
+        RecEffect.LeaveForeground -> EffectResult.Done(host.leaveForeground().let { null })
+        RecEffect.CoreStart -> EffectResult.Done(
+            withContext(io) { RecEvent.CoreStartReturned(SessionId(core.await().startRecording(environment()))) },
+        )
+        RecEffect.CorePause -> EffectResult.Done(
+            withContext(io) {
+                val ingest = core.await()
+                ingest.pauseRecording()
+                RecEvent.CorePaused(ingest.recordingState())
+            },
+        )
+        RecEffect.CoreResume -> EffectResult.Done(
+            withContext(io) {
+                val ingest = core.await()
+                ingest.resumeRecording()
+                RecEvent.CoreResumed(ingest.recordingState())
+            },
+        )
+        RecEffect.CoreStop -> EffectResult.Done(withContext(io) { RecEvent.CoreStopped(SessionId(core.await().stopRecording())) })
+        RecEffect.CoreRead -> EffectResult.Done(withContext(io) { RecEvent.CoreRead(core.await().recordingState()) })
+        RecEffect.DrainScanner -> when (val drained = scanner.drain()) {
+            DrainOutcome.Drained -> EffectResult.Done(null)
+            is DrainOutcome.Failed -> EffectResult.Failed(IllegalStateExceptionValue(drained.reason))
         }
-        RecEffect.CorePause -> withContext(io) {
-            val ingest = core.await()
-            ingest.pauseRecording()
-            RecEvent.CorePaused(ingest.recordingState())
-        }
-        RecEffect.CoreResume -> withContext(io) {
-            val ingest = core.await()
-            ingest.resumeRecording()
-            RecEvent.CoreResumed(ingest.recordingState())
-        }
-        RecEffect.CoreStop -> withContext(io) { RecEvent.CoreStopped(SessionId(core.await().stopRecording())) }
-        RecEffect.CoreRead -> withContext(io) { RecEvent.CoreRead(core.await().recordingState()) }
-        RecEffect.DrainScanner -> scanner.stopAndDrain().let { null }
-        RecEffect.StartScanner -> scanner.start().let { null }
-        RecEffect.StartLocation -> location.startRecording().let { null }
-        RecEffect.StopLocation -> location.stopRecording().let { null }
-        is RecEffect.Reply -> null
+        RecEffect.StartScanner -> EffectResult.Done(scanner.start().let { null })
+        RecEffect.StartLocation -> EffectResult.Done(location.startRecording().let { null })
+        RecEffect.StopLocation -> EffectResult.Done(location.stopRecording().let { null })
+        is RecEffect.Reply -> EffectResult.Done(null)
     }
 
     private fun missingGrants(): List<String> = try {

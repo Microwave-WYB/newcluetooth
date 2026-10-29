@@ -26,6 +26,9 @@ class PlatformRecorderFailureTest {
     private var hostThrows = false
     private var locationThrows = false
     private var foreground = false
+    private var drainFails = false
+    private var readThrows = false
+    private var scannerStarts = 0
 
     private val core = object : TestCoreIngest() {
         var phase = RecordingPhase.Idle
@@ -34,7 +37,15 @@ class PlatformRecorderFailureTest {
             return "s1"
         }
 
-        override fun recordingState() = CoreRecordingState(phase, if (phase == RecordingPhase.Idle) null else "s1", 0, 0, 0, 1, 0.0)
+        override fun stopRecording(): String {
+            phase = RecordingPhase.Idle
+            return "s1"
+        }
+
+        override fun recordingState(): CoreRecordingState {
+            if (readThrows) throw IllegalStateException("state unreadable")
+            return CoreRecordingState(phase, if (phase == RecordingPhase.Idle) null else "s1", 0, 0, 0, 1, 0.0)
+        }
     }
 
     private fun TestScope.recorder(coreDeferred: CompletableDeferred<CoreIngest> = CompletableDeferred(core)) = PlatformRecorder(
@@ -43,8 +54,12 @@ class PlatformRecorderFailureTest {
             override val deferred = MutableStateFlow(false)
             override val dropped = MutableStateFlow(0L)
             override val error = MutableStateFlow<String?>(null)
-            override fun start() = Unit
+            override fun start() {
+                scannerStarts++
+            }
+
             override suspend fun stopAndDrain() = Unit
+            override suspend fun drain() = if (drainFails) DrainOutcome.Failed("the observations did not flush") else DrainOutcome.Drained
         },
         location = object : RecordingLocation {
             override fun startRecording() {
@@ -93,6 +108,28 @@ class PlatformRecorderFailureTest {
         val broken = CompletableDeferred<CoreIngest>().apply { completeExceptionally(IllegalStateException("core failed to open")) }
         val recorder = recorder(broken)
         assertTrue(recorder.start().isFailure)
+        assertEquals(Phase.Idle, recorder.state.value.phase)
+        assertTrue("the service was left", !foreground)
+    }
+
+    @Test
+    fun `a state read that throws after a successful start keeps the session, its service and the scan (#70 review)`() = runTest {
+        readThrows = true
+        val recorder = recorder()
+        assertEquals("s1", recorder.start().getOrNull())
+        assertEquals(Phase.Recording, recorder.state.value.phase)
+        assertTrue(foreground)
+        assertEquals(1, scannerStarts)
+        assertTrue(recorder.state.value.error != null)
+    }
+
+    @Test
+    fun `a drain that fails stops its batch, yet the stop still reaches the core (#70 review)`() = runTest {
+        val recorder = recorder()
+        assertEquals("s1", recorder.start().getOrNull())
+        drainFails = true
+        assertEquals("s1", recorder.stop().getOrNull())
+        assertEquals(RecordingPhase.Idle, core.phase)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertTrue("the service was left", !foreground)
     }

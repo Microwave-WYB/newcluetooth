@@ -24,9 +24,9 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.platform.describe
 import edu.ucsd.sysnet.cluetoothscanner.platform.failureHandler
+import edu.ucsd.sysnet.cluetoothscanner.platform.recording.DrainOutcome
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.RecordingScanner
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The BLE scanner of a recording (§4.1, SPEC V-1): it scans only between [start] and [stopAndDrain], which the
@@ -86,13 +87,13 @@ class BleScanner(
     /** Advertisements kept out of the durable path because they exceed the row limit. */
     val oversizedDropped: Long get() = oversized.get()
 
-    /** One message per event; [done] completes once the actor has executed the event's effects. */
-    private class Message(val event: ScanEvent, val done: CompletableDeferred<Unit>? = null)
+    /** One message per event; [done] completes true once the actor executed its effects, false if it never will. */
+    private class Message(val event: ScanEvent, val done: CompletableDeferred<Boolean>? = null)
 
     private val inbox = Channel<Message>(Channel.UNLIMITED)
 
     /** Every coroutine this runner launches carries it: an escaped exception becomes the scanner's error. */
-    private val guard = failureHandler(TAG) { _error.value = "The scanner stopped (${it.describe()})" }
+    private val guard = failureHandler(TAG) { failure -> _error.value = "The scanner stopped (${failure.describe()})" }
 
     // ---- Owned by the actor (main thread) ----
     private var live: Pair<ScanGeneration, ScanCallback>? = null
@@ -122,19 +123,28 @@ class BleScanner(
                 _deferred.value = state.deferred
                 _error.value = state.error
                 transition.effects.forEach(::runEffect)
-                message.done?.complete(Unit)
+                message.done?.complete(true)
             }
+        }.invokeOnCompletion {
+            // The actor is gone (failed or its scope ended): release everyone waiting on it.
+            inbox.close()
+            while (true) inbox.tryReceive().getOrNull()?.done?.complete(false) ?: break
         }
     }
 
     override fun start() = send(ScanEvent.Start)
 
     override suspend fun stopAndDrain() {
-        val stopped = CompletableDeferred<Unit>()
-        inbox.send(Message(ScanEvent.Stop, stopped))
-        stopped.await()
-        fence.await()
-        ingest.flush()
+        drain()
+    }
+
+    /** Bounded: the stop, the callback fence and the flush each have [DRAIN_TIMEOUT_MS]; a failure is a value. */
+    override suspend fun drain(): DrainOutcome {
+        val stopped = CompletableDeferred<Boolean>()
+        if (inbox.trySend(Message(ScanEvent.Stop, stopped)).isFailure) return DrainOutcome.Failed("the scanner is not running")
+        if (withTimeoutOrNull(DRAIN_TIMEOUT_MS) { stopped.await() } != true) return DrainOutcome.Failed("the scanner did not stop")
+        if (withTimeoutOrNull(DRAIN_TIMEOUT_MS) { fence.await() } == null) return DrainOutcome.Failed("the scan callbacks did not drain")
+        return if (ingest.flush(DRAIN_TIMEOUT_MS)) DrainOutcome.Drained else DrainOutcome.Failed("the observations did not flush")
     }
 
     /**
@@ -320,6 +330,9 @@ class BleScanner(
 
     companion object {
         private const val TAG = "BleScanner"
+        /** How long each step of a drain may take before it is a typed failure. */
+        const val DRAIN_TIMEOUT_MS = 5_000L
+
         /** [ScanMachine.RESTART] and [ScanMachine.RETRY], for callers that need plain numbers. */
         const val RESTART_MS = 60_000L
         const val RETRY_MS = 1_000L
@@ -380,17 +393,25 @@ class BleScanner(
 }
 
 /**
- * A bounded map keeping the latest value per key; past [capacity] the key written first is evicted. Lock-free: the
- * scanner writes on the main thread, GATT reads from any thread.
+ * A bounded least-recently-used map: every [put] and [get] refreshes the key, and past [capacity] the stalest key is
+ * evicted, so a device heard continuously is never evicted by newer addresses (GATT on random addresses before API 34
+ * needs the exact device the user is looking at). Lock-free: the scanner writes on the main thread, GATT reads from any
+ * thread; recency is a stamp from one monotonic counter. Eviction scans the [capacity] entries only when a new key
+ * arrives at capacity, and continuously heard devices only refresh their stamp.
  */
 class LatestByKey<K : Any, V : Any>(private val capacity: Int) {
-    private val entries = ConcurrentHashMap<K, V>()
-    private val order = ConcurrentLinkedQueue<K>()
+    private class Entry<V>(val value: V, val stamp: Long)
+
+    private val entries = ConcurrentHashMap<K, Entry<V>>()
+    private val clock = AtomicLong()
 
     fun put(key: K, value: V) {
-        if (entries.put(key, value) == null) order.add(key)
-        while (entries.size > capacity) order.poll()?.let(entries::remove) ?: break
+        entries[key] = Entry(value, clock.incrementAndGet())
+        while (entries.size > capacity) {
+            val stalest = entries.entries.minByOrNull { it.value.stamp } ?: return
+            entries.remove(stalest.key, stalest.value)
+        }
     }
 
-    operator fun get(key: K): V? = entries[key]
+    operator fun get(key: K): V? = entries.computeIfPresent(key) { _, entry -> Entry(entry.value, clock.incrementAndGet()) }?.value
 }
