@@ -50,8 +50,8 @@ sealed interface SourceData {
     data object Empty : SourceData
     /** A payload the runner holds (map points or cells, the faint routes, a device's sightings). */
     data class Stored(val id: PayloadId) : SourceData
-    /** The one-session route as points; the runner serializes it incrementally (RouteGeoJson). */
-    data class Line(val points: List<GeoPoint>) : SourceData
+    /** The one-session route; its points stay in the runner (see [RouteLine]). */
+    data class Line(val route: RouteLine) : SourceData
     /** M-8 Start and End. */
     data class Ends(val start: GeoPoint, val end: GeoPoint) : SourceData
     /** M-9 the user's location. */
@@ -84,8 +84,16 @@ sealed interface PointsState {
     data class Loaded(val coverage: Coverage, val mode: MapMode) : PointsState
 }
 
-/** The session view's facts the map needs (SessionView, §5.1). */
-data class ViewInfo(val live: Boolean, val sessionIds: List<String>, val frame: Bbox?, val route: List<GeoPoint>)
+/**
+ * A route held by the runner as an append-only point list under [base]; the state only knows its length and ends,
+ * so a live delta appends its new points ([MapEffect.AppendRoute]) instead of copying the route.
+ */
+data class RouteLine(val base: PayloadId, val length: Int, val start: GeoPoint?, val end: GeoPoint?) {
+    fun appended(points: List<GeoPoint>) = copy(length = length + points.size, start = start ?: points.firstOrNull(), end = points.lastOrNull() ?: end)
+}
+
+/** The session view's facts the map needs (SessionView, §5.1); its route is held by the runner. */
+data class ViewInfo(val live: Boolean, val sessionIds: List<String>, val frame: Bbox?, val route: RouteLine)
 
 sealed interface ViewState {
     data class Loading(val request: RequestId) : ViewState
@@ -234,6 +242,8 @@ sealed interface MapEffect {
         override val kind get() = QueryKind.Focus
     }
     data class Cancel(val kind: QueryKind) : MapEffect
+    /** Appends a live delta's new points to the runner's route [base] (whatever the style's state). */
+    data class AppendRoute(val base: PayloadId, val points: List<GeoPoint>) : MapEffect
 }
 
 data class Step(val state: MapState, val effects: List<MapEffect>)

@@ -119,7 +119,11 @@ class MapReducerFuzzTest {
                 22 -> MapEvent.LiveTick
                 23 -> MapEvent.ViewLoaded(
                     request(),
-                    ViewInfo(rnd.nextBoolean(), listOf(pick(listOf("a", "b"))), if (rnd.nextBoolean()) bbox() else null, List(rnd.nextInt(0, 4)) { point() }),
+                    run {
+                        val n = rnd.nextInt(0, 4)
+                        val route = RouteLine(payload(), n, if (n > 0) point() else null, if (n > 0) point() else null)
+                        ViewInfo(rnd.nextBoolean(), listOf(pick(listOf("a", "b"))), if (rnd.nextBoolean()) bbox() else null, route)
+                    },
                 )
                 24, 25 -> MapEvent.PointsLoaded(request(), pick(MapMode.entries), payload())
                 26 -> MapEvent.RoutesLoaded(request(), payload())
@@ -158,8 +162,16 @@ class MapReducerFuzzTest {
                 assertEquals((showing?.selection as? Selection.Device)?.key, q.key)
             }
 
-            // 4. every payload a source shows was handed in by an event
-            for (data in after.sources.values) if (data is SourceData.Stored) assertTrue("unknown payload $data", data.id in issuedPayloads)
+            // 4. every payload a source shows was handed in by an event; routes grow only by their new points
+            for (data in after.sources.values) when (data) {
+                is SourceData.Stored -> assertTrue("unknown payload $data", data.id in issuedPayloads)
+                is SourceData.Line -> assertTrue("unknown route $data", data.route.base in issuedPayloads)
+                SourceData.Empty, is SourceData.Ends, is SourceData.Me -> Unit
+            }
+            for (a in step.effects.filterIsInstance<MapEffect.AppendRoute>()) {
+                assertTrue(event is MapEvent.Live)
+                assertEquals((event as? MapEvent.Live)?.routeAppended, a.points)
+            }
 
             // 5. a camera intent waits only while the map cannot take it
             when (val p = after.pending) {

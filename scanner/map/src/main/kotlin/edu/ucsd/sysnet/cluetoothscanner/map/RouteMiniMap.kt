@@ -100,8 +100,13 @@ private class MiniMapRunner(private val context: android.content.Context, privat
     var image by mutableStateOf<Bitmap?>(null)
         private set
 
+    /** Reduces [event] and executes its effects; each effect runs in [guarded], so a throw is a Failed event. */
     fun dispatch(event: MiniMapEvent) {
-        val step = MiniMapReducer.reduce(state, event)
+        val step = try {
+            MiniMapReducer.reduce(state, event)
+        } catch (e: Exception) {
+            return
+        }
         state = step.state
         for (effect in step.effects) execute(effect)
     }
@@ -140,21 +145,20 @@ private class MiniMapRunner(private val context: android.content.Context, privat
                 )
             }
             MiniMapEffect.Cancel -> {
-                try {
-                    snapshotter?.cancel()
-                } catch (e: Exception) {
-                    // the snapshotter is being dropped; nothing waits on it
-                }
+                val s = snapshotter
                 snapshotter = null
+                // the snapshotter is being dropped: nothing waits on it, so a failed cancel needs no event
+                guarded(null) { s?.cancel() }
             }
         }
     }
 
-    private fun guarded(id: SnapshotterId, call: () -> Unit) {
+    /** The runner's one wrapper around every MapLibre call; a throw fails the snapshot of [id] (if any). */
+    private fun guarded(id: SnapshotterId?, call: () -> Unit) {
         try {
             call()
         } catch (e: Exception) {
-            dispatch(MiniMapEvent.Failed(id))
+            if (id != null) dispatch(MiniMapEvent.Failed(id))
         }
     }
 

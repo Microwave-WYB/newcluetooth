@@ -110,8 +110,8 @@ fun CluetoothMap(
             @Deprecated("Deprecated in Java")
             override fun onLowMemory() = state.trimMemory()
         }
-        context.applicationContext.registerComponentCallbacks(callbacks)
-        onDispose { context.applicationContext.unregisterComponentCallbacks(callbacks) }
+        guard("registerComponentCallbacks") { context.applicationContext.registerComponentCallbacks(callbacks) }
+        onDispose { guard("unregisterComponentCallbacks") { context.applicationContext.unregisterComponentCallbacks(callbacks) } }
     }
 
     DisposableEffect(mapView) {
@@ -144,15 +144,15 @@ fun CluetoothMap(
     val theme = if (dark) MapTheme.Dark else MapTheme.Light
     LaunchedEffect(map, theme, offline, baseStyleJson) {
         val m = map ?: return@LaunchedEffect
-        val builder = when {
-            baseStyleJson != null -> Style.Builder().fromJson(baseStyleJson)
-            offline -> Style.Builder().fromJson(MapAssets.fallbackStyleJson(theme))
-            else -> Style.Builder().fromUri(spec.baseStyleUrl(theme))
-        }
         // until the new style loads, nothing may touch the old one's sources
         surface?.style = null
         state.onStyleLoading()
         guard("setStyle") {
+            val builder = when {
+                baseStyleJson != null -> Style.Builder().fromJson(baseStyleJson)
+                offline -> Style.Builder().fromJson(MapAssets.fallbackStyleJson(theme))
+                else -> Style.Builder().fromUri(spec.baseStyleUrl(theme))
+            }
             m.setStyle(builder) { style ->
                 if (guard("install overlay") { StyleInstaller.install(style, spec, theme) } != null) {
                     surface?.style = style

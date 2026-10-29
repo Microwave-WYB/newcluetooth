@@ -31,8 +31,9 @@ class MapReducerTest {
     private fun idle(c: CameraSnapshot, at: Long = 0) = MapEvent.Idle(c, view, MapGeometry.visibleBbox(c, view), UptimeMs(at))
     private fun List<MapEffect>.onMap() = filterIsInstance<MapEffect.OnMap>()
     private inline fun <reified T : MapEffect> List<MapEffect>.only(): List<T> = filterIsInstance<T>()
-    private fun viewInfo(frame: Bbox? = bbox, route: List<GeoPoint> = listOf(sd, GeoPoint(sd.lon + 0.01, sd.lat))) =
-        ViewInfo(live = false, sessionIds = listOf("s1"), frame = frame, route = route)
+    private val route = RouteLine(PayloadId(100), 2, sd, GeoPoint(sd.lon + 0.01, sd.lat))
+    private fun viewInfo(frame: Bbox? = bbox, live: Boolean = false) =
+        ViewInfo(live = live, sessionIds = listOf("s1"), frame = frame, route = route)
 
     @Test fun `requests that arrive before the map and its style wait, then run in order on style load`() {
         val r = Run()
@@ -60,7 +61,7 @@ class MapReducerTest {
         assertEquals(MapReducer.FRAME_EASE, m.duration)
         assertEquals(MapEffect.ApplySelection(7L), loaded.only<MapEffect.ApplySelection>().single())
         val replayed = loaded.only<MapEffect.ReplaySources>().single().sources
-        assertEquals(SourceData.Line(viewInfo().route), replayed[Source.Route])
+        assertEquals(SourceData.Line(route), replayed[Source.Route])
         assertEquals(null, r.state.pending)
     }
 
@@ -181,5 +182,19 @@ class MapReducerTest {
         assertFalse(Source.Devices in r.state.sources)
         assertEquals(1, r.send(MapEvent.Refill).only<MapEffect.LoadPoints>().size)
         assertTrue(r.send(MapEvent.Refill).isEmpty())
+    }
+
+    @Test fun `a live delta sends only its new points, never the route`() {
+        val r = Run()
+        r.send(attached())
+        val load = r.send(MapEvent.Show(session, DeviceFilter(), false)).only<MapEffect.LoadView>().single()
+        r.send(MapEvent.ViewLoaded(load.request, viewInfo(live = true)))
+        val next = GeoPoint(sd.lon + 0.02, sd.lat)
+        val effects = r.send(MapEvent.Live("s1", listOf(next), pointsChanged = false))
+        assertEquals(MapEffect.AppendRoute(route.base, listOf(next)), effects.only<MapEffect.AppendRoute>().single())
+        assertEquals(SourceData.Line(route.copy(length = 3, end = next)), r.state.sources[Source.Route])
+        assertEquals(SourceData.Ends(sd, next), r.state.sources[Source.Ends])
+        // another session's delta is ignored
+        assertTrue(r.send(MapEvent.Live("other", listOf(next), pointsChanged = true)).isEmpty())
     }
 }

@@ -298,9 +298,11 @@ object MapReducer {
         if (!view.live || view.sessionIds.singleOrNull() != e.sessionId) return
         var next = session
         if (e.routeAppended.isNotEmpty()) {
-            val route = view.route + e.routeAppended
+            // only the new points travel: the runner appends them to the route it holds
+            val route = view.route.appended(e.routeAppended)
             next = next.copy(view = ViewState.Ready(view.copy(route = route)))
             b.state = b.state.copy(session = next)
+            b.appendRoute(MapEffect.AppendRoute(route.base, e.routeAppended))
             b.setSource(Source.Route, SourceData.Line(route))
             b.setSource(Source.Ends, endsOf(route))
         }
@@ -317,8 +319,11 @@ object MapReducer {
         b.requestPoints(force = true)
     }
 
-    private fun endsOf(route: List<GeoPoint>): SourceData =
-        if (route.size > 1) SourceData.Ends(route.first(), route.last()) else SourceData.Empty
+    private fun endsOf(route: RouteLine): SourceData {
+        val start = route.start
+        val end = route.end
+        return if (route.length > 1 && start != null && end != null) SourceData.Ends(start, end) else SourceData.Empty
+    }
 
     /** Accumulates the next state and its effects for one event. */
     private class Builder(var state: MapState) {
@@ -330,6 +335,8 @@ object MapReducer {
         fun notify(notice: Notice) { effects += MapEffect.Notify(notice) }
 
         fun query(q: MapEffect.Query) { effects += q }
+
+        fun appendRoute(a: MapEffect.AppendRoute) { effects += a }
 
         /** A MapLibre effect, dropped while the style is not ready (its state is replayed when it is). */
         fun onMap(effect: MapEffect.OnMap) { if (ready != null) effects += effect }

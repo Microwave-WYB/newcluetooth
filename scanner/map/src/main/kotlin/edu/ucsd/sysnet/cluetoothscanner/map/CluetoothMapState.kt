@@ -23,6 +23,10 @@ import edu.ucsd.sysnet.cluetoothscanner.map.model.Source
 import edu.ucsd.sysnet.cluetoothscanner.map.model.SourceData
 import edu.ucsd.sysnet.cluetoothscanner.map.model.UptimeMs
 import edu.ucsd.sysnet.cluetoothscanner.map.model.ViewInfo
+import edu.ucsd.sysnet.cluetoothscanner.map.model.RouteLine
+import edu.ucsd.sysnet.cluetoothscanner.map.model.Session
+import edu.ucsd.sysnet.cluetoothscanner.map.model.ViewState
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapStyleSpec
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
@@ -75,8 +79,14 @@ class CluetoothMapState(
     private val queue = ArrayDeque<MapEvent>()
     private var draining = false
 
-    /** The GeoJSON the state refers to by id; pruned to what the state still references after every drain. */
-    private val payloads = HashMap<PayloadId, String>()
+    /** What the runner holds for the state: GeoJSON, or a route's append-only points. */
+    private sealed interface Payload {
+        class Json(val json: String) : Payload
+        class Points(val points: MutableList<GeoPoint>) : Payload
+    }
+
+    /** The payloads the state refers to by id; pruned to what the state still references after every drain. */
+    private val payloads = HashMap<PayloadId, Payload>()
     private var nextPayload = 1L
     /** What each source last received, so an unchanged payload is not parsed again (a replay always sets). */
     private val applied = HashMap<Source, String>()
@@ -111,39 +121,54 @@ class CluetoothMapState(
 
     // ---- the queue ----
 
+    /**
+     * The one entry point for events. Each event is reduced and each of its effects executed inside [guarded], so
+     * any exception (in the reducer, a MapLibre call, a MapEvents listener) becomes a PlatformFailed event.
+     */
     private fun dispatch(event: MapEvent) {
         queue.addLast(event)
         if (draining) return
         draining = true
         while (true) {
             val next = queue.removeFirstOrNull() ?: break
-            val step = MapReducer.reduce(model, next)
+            val step = guarded("reduce ${next::class.simpleName}") { MapReducer.reduce(model, next) } ?: continue
             model = step.state
-            for (effect in step.effects) execute(effect)
+            for (effect in step.effects) guarded(effect::class.simpleName ?: "effect") { execute(effect) }
         }
         draining = false
         prunePayloads()
         _ui.value = MapReducer.ui(model)
     }
 
+    /** Keeps the payloads a source or the shown view still refers to. */
     private fun prunePayloads() {
-        val live = model.sources.values.mapNotNullTo(HashSet()) { (it as? SourceData.Stored)?.id }
+        val live = HashSet<PayloadId>()
+        for (data in model.sources.values) when (data) {
+            is SourceData.Stored -> live += data.id
+            is SourceData.Line -> live += data.route.base
+            SourceData.Empty, is SourceData.Ends, is SourceData.Me -> Unit
+        }
+        val view = ((model.session as? Session.Showing)?.view as? ViewState.Ready)?.info
+        if (view != null) live += view.route.base
         payloads.keys.retainAll(live)
     }
 
-    private fun store(json: String): PayloadId = PayloadId(nextPayload++).also { payloads[it] = json }
+    private fun store(json: String): PayloadId = PayloadId(nextPayload++).also { payloads[it] = Payload.Json(json) }
+
+    private fun storeRoute(points: List<GeoPoint>): PayloadId =
+        PayloadId(nextPayload++).also { payloads[it] = Payload.Points(points.toMutableList()) }
 
     // ---- attach / detach ----
 
     fun attach(surface: MapSurface) {
         this.surface = surface
         val s = sample(surface) ?: return
-        dispatch(MapEvent.Attached(s.viewport, s.camera, s.bbox, onSurface("styleReady") { surface.styleReady } ?: false))
+        dispatch(MapEvent.Attached(s.viewport, s.camera, s.bbox, guarded("styleReady") { surface.styleReady } ?: false))
     }
 
     fun detach(surface: MapSurface) {
         if (this.surface !== surface) return
-        val camera = onSurface("camera") { surface.camera } ?: MapReducer.knownCamera(model)
+        val camera = guarded("camera") { surface.camera } ?: MapReducer.knownCamera(model)
         this.surface = null
         dispatch(MapEvent.Detached(camera))
     }
@@ -172,7 +197,7 @@ class CluetoothMapState(
 
     override fun setSelection(key: DeviceKey?) = dispatch(MapEvent.Select(key))
 
-    override fun camera(): CameraSnapshot = surface?.let { s -> onSurface("camera") { s.camera } } ?: MapReducer.knownCamera(model)
+    override fun camera(): CameraSnapshot = surface?.let { s -> guarded("camera") { s.camera } } ?: MapReducer.knownCamera(model)
 
     /** S-8: the revealed sheet's saved camera, eased back (the prototype's 300 ms). */
     override fun restore(camera: CameraSnapshot) = dispatch(MapEvent.Restore(camera))
@@ -208,7 +233,7 @@ class CluetoothMapState(
         dispatch(MapEvent.StyleLoaded)
     }
 
-    // ---- effects ----
+    // ---- effects (each runs inside dispatch's guarded) ----
 
     private fun execute(effect: MapEffect) {
         when (effect) {
@@ -218,20 +243,25 @@ class CluetoothMapState(
                 applied.clear()
                 for ((source, data) in effect.sources) setSource(source, data, force = true)
             }
-            is MapEffect.ApplySelection -> onMap("applySelection") { it.applySelection(style.selection(effect.key?.let(DeviceAddr::addrOf))) }
+            is MapEffect.ApplySelection -> surface?.applySelection(style.selection(effect.key?.let(DeviceAddr::addrOf)))
             is MapEffect.SetRouteOpacity ->
-                onMap("setRouteOpacity") { it.setRouteOpacity(if (effect.faint) style.routeOpacityAllSessions else style.routeOpacitySession) }
-            is MapEffect.Move -> onMap("move") { it.move(effect.camera, effect.duration.value) }
+                surface?.setRouteOpacity(if (effect.faint) style.routeOpacityAllSessions else style.routeOpacitySession)
+            is MapEffect.Move -> surface?.move(effect.camera, effect.duration.value)
             is MapEffect.QueryClusterExpansion -> {
-                val zoom = onMap("clusterExpansionZoom") { it.clusterExpansionZoom(effect.hit) }
+                val zoom = surface?.clusterExpansionZoom(effect.hit)
                 val at = effect.hit.at
                 if (zoom != null && at != null) dispatch(MapEvent.ClusterExpansion(at, zoom))
             }
             is MapEffect.Notify -> notify(effect.notice)
             is MapEffect.Cancel -> running.remove(effect.kind)?.cancel()
+            is MapEffect.AppendRoute -> when (val p = payloads[effect.base]) {
+                is Payload.Points -> p.points.addAll(effect.points)
+                is Payload.Json, null -> dispatch(missing(effect.base))
+            }
             is MapEffect.LoadView -> launchQuery(effect) {
                 val v = queries.sessionView(effect.scope)
-                MapEvent.ViewLoaded(effect.request, ViewInfo(v.live, v.sessionIds, v.frame, v.route))
+                val route = RouteLine(storeRoute(v.route), v.route.size, v.route.firstOrNull(), v.route.lastOrNull())
+                MapEvent.ViewLoaded(effect.request, ViewInfo(v.live, v.sessionIds, v.frame, route))
             }
             is MapEffect.LoadPoints -> launchQuery(effect) {
                 val data = queries.mapPoints(effect.scope, effect.filter, effect.viewport, effect.zoom)
@@ -264,14 +294,18 @@ class CluetoothMapState(
     private fun setSource(source: Source, data: SourceData, force: Boolean) {
         val json = when (data) {
             SourceData.Empty -> GeoJson.EMPTY
-            is SourceData.Stored -> payloads[data.id] ?: return dispatch(missing(data.id))
-            is SourceData.Line -> route.render(data.points)
+            is SourceData.Stored -> (payloads[data.id] as? Payload.Json)?.json ?: return dispatch(missing(data.id))
+            is SourceData.Line -> {
+                val points = (payloads[data.route.base] as? Payload.Points)?.points ?: return dispatch(missing(data.route.base))
+                if (points.size != data.route.length) return dispatch(missing(data.route.base))
+                route.render(points)
+            }
             is SourceData.Ends -> GeoJson.ends(listOf(data.start, data.end), style.endProperties)
             is SourceData.Me -> GeoJson.me(data.at)
         }
         if (!force && applied[source] == json) return
         applied[source] = json
-        onMap("setGeoJson ${source.id}") { it.setGeoJson(source.id, json) }
+        surface?.setGeoJson(source.id, json)
     }
 
     private fun missing(id: PayloadId) = MapEvent.PlatformFailed(PlatformFailure("payload", "no payload ${id.value}"))
@@ -291,13 +325,11 @@ class CluetoothMapState(
         }
     }
 
-    /** One MapLibre call; a throw becomes a PlatformFailed event. */
-    private fun <T> onMap(operation: String, call: (MapSurface) -> T): T? {
-        val s = surface ?: return null
-        return onSurface(operation) { call(s) }
-    }
-
-    private fun <T> onSurface(operation: String, call: () -> T): T? = try {
+    /**
+     * The runner's one wrapper: every effect, every surface read and every reduce step runs in it, and any exception
+     * becomes a PlatformFailed event instead of reaching the main thread.
+     */
+    private fun <T> guarded(operation: String, call: () -> T): T? = try {
         call()
     } catch (e: Exception) {
         dispatch(MapEvent.PlatformFailed(PlatformFailure(operation, e.toString())))
@@ -306,7 +338,7 @@ class CluetoothMapState(
 
     private data class Sample(val camera: CameraSnapshot, val viewport: edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport, val bbox: Bbox)
 
-    private fun sample(s: MapSurface): Sample? = onSurface("sample") { Sample(s.camera, s.viewport, s.visibleBbox) }
+    private fun sample(s: MapSurface): Sample? = guarded("sample") { Sample(s.camera, s.viewport, s.visibleBbox) }
 
     companion object {
         const val FIRST_RUN_ZOOM = MapReducer.FIRST_RUN_ZOOM
