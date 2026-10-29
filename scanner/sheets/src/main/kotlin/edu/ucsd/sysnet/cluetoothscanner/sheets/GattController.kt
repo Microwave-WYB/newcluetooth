@@ -7,9 +7,9 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStep
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepKind
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattView
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
 /** The device sheet's GATT tab state (docs/v2-api.md §5.4). */
@@ -30,12 +30,12 @@ internal sealed interface GattUi {
  * - Leaving or popping the sheet cancels a running discovery (D-13.8): collecting the runner's flow is the
  *   discovery, so cancelling the collector cancels it. A cancelled run is never shown.
  *
- * [discover] is `GattRunner::discover` (:platform-api); the last view of its flow is final.
+ * The last view of [runner]'s flow is final.
  */
 internal class GattController(
-    private val key: Long,
+    private val key: DeviceKey,
     private val scope: CoroutineScope,
-    private val discover: (Long) -> Flow<GattView>,
+    private val runner: GattRunner,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     var state by mutableStateOf<GattUi>(GattUi.Idle)
@@ -66,7 +66,7 @@ internal class GattController(
         state = GattUi.Running(starting())
         run = scope.launch {
             var last: GattView? = null
-            discover(key).collect { view ->
+            runner.discover(key).collect { view ->
                 last = view
                 state = classify(view, final = false)
             }

@@ -17,6 +17,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GattView
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.TestScope
@@ -50,7 +51,11 @@ class GattControllerTest {
         view(false, step(Connecting, Failed, GattFailure.TimedOut)),
     )
 
-    private fun script(views: List<GattView>): (Long) -> Flow<GattView> = { flow { views.forEach { delay(100); emit(it) } } }
+    private fun runner(block: (Long) -> Flow<GattView>) = object : GattRunner {
+        override fun discover(key: Long): Flow<GattView> = block(key)
+    }
+
+    private fun script(views: List<GattView>) = runner { flow { views.forEach { delay(100); emit(it) } } }
 
     private fun TestScope.controller(views: List<GattView>) = GattController(7, this, script(views), clock = { 0 })
 
@@ -110,7 +115,7 @@ class GattControllerTest {
     fun `D-13-8 popping the sheet cancels a running discovery`() = runTest {
         var collecting = false
         var cancelled = false
-        val g = GattController(7, this, {
+        val g = GattController(7, this, runner {
             flow {
                 collecting = true
                 try {
@@ -139,7 +144,7 @@ class GattControllerTest {
             animator = { _, to, _, onValue -> onValue(to) },
             hooks = SheetStackHooks(onRemoved = { controllers[it.id]?.cancel() }),
         ).also { it.setScreen(915f, 1f, 0f) }
-        val never: (Long) -> Flow<GattView> = { flow { emit(view(false, step(Connecting, Running))); awaitCancellation() } }
+        val never = runner { flow { emit(view(false, step(Connecting, Running))); awaitCancellation() } }
         val d1 = stack.openDevice(1)
         controllers[d1.id] = GattController(1, this, never).apply { onDiscover(); onAuthorized() }
         runCurrent()
