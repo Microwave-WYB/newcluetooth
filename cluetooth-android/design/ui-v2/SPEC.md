@@ -247,6 +247,10 @@ Each component is built once. Its size, color and state rules come from these to
 
 - **S-1 One component.** Every bottom sheet is the same component: a `--panel` surface with `--shadow-sheet` and top
   corners of radius `--sheet-radius`.
+  - On phone a sheet always reaches the very bottom edge of the screen, full width, with square bottom corners, so it
+    covers the bottom corners on any screen shape.
+  - Its content gets bottom padding of the navigation-bar inset, and the background runs under the gesture bar. The
+    peek height excludes that inset.
 - **S-2 Corner buttons (phone).**
   - `--sheet-radius` = `--edge` + `--rb`/2 = 34 dp.
   - The corner buttons (the view switch at top-left, the X at top-right) are 40 dp. Their center x is 34 dp from the
