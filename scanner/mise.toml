@@ -71,6 +71,16 @@ run = "./gradlew --no-daemon --max-workers=2 :map:testDebugUnitTest :map:lintDeb
 description = "U0 :ui-contract JVM tests (OrderedKeys, G-9)"
 run = "./gradlew --no-daemon --max-workers=2 :ui-contract:test"
 
+[tasks.designsystem-check]
+description = "v2 :designsystem JVM tests (tokens, strings, rules, Roborazzi screenshots against src/test/screenshots) and lint"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :designsystem:testDebugUnitTest :designsystem:lintDebug"
+
+[tasks.designsystem-record]
+description = "Rewrite the :designsystem Roborazzi reference screenshots (review the diff before committing)"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :designsystem:testDebugUnitTest -Pcluetooth.record=true"
+
 [tasks.check]
 # one entry per line: each lane appends its own task line
 run = [
@@ -83,6 +93,7 @@ run = [
   "mise run //scanner:platform-test",
   "mise run //scanner:map-test",
   "mise run //scanner:sheets-test",
+  "mise run //scanner:designsystem-check",
   "mise run //scanner:lint",
 ]
 

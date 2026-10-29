@@ -1,0 +1,1 @@
+Inter 4.1 (https://github.com/rsms/inter/releases/tag/v4.1, Inter-4.1.zip sha256 9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e): InterVariable.ttf as res/font/inter_variable.ttf (wght 100-900, opsz 14-32).
