@@ -412,7 +412,8 @@ pub enum MapMode {
     Cells,
 }
 
-/// `geojson`: Points `{addr, rssi}`; Cells `{point_count, point_count_abbreviated}`.
+/// `geojson`: Points `{addr, rssi}`, with `addr` in the uppercase colon form `AA:BB:CC:DD:EE:FF`; Cells
+/// `{point_count, point_count_abbreviated}`.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MapData {
     pub mode: MapMode,

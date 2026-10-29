@@ -56,8 +56,8 @@ description = "Fail if the committed design/ui-v2 JSON exports are out of date"
 run = "node design/ui-v2/export.mjs --check"
 
 [tasks.core-test]
-description = "Lane A's v2 Kotlin modules: JVM tests of :core-api (and later :core-fake, :core-bridge)"
-run = "./gradlew --no-daemon --max-workers=2 :core-api:test"
+description = "Lane A's v2 Kotlin modules: JVM tests of :core-api and :core-fake (later :core-bridge)"
+run = "./gradlew --no-daemon --max-workers=2 :core-api:test :core-fake:test"
 
 [tasks.platform-test]
 description = "Lane B's v2 modules: JVM tests of :platform-api, :platform-fake and :platform, and the :gallery compile"

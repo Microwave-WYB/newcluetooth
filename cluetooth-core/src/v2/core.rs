@@ -251,8 +251,8 @@ impl Core {
         todo!()
     }
 
-    /// [V MapPoints] "devices"/"density" for the viewport (+50 %), never the whole scope (§3.7); `filter.query`
-    /// limits it to search matches (Q-5).
+    /// [V MapPoints] "devices"/"density" for the viewport (+50 %: the bbox padded by a quarter of its width and
+    /// height on each side), never the whole scope (§3.7); `filter.query` limits it to search matches (Q-5).
     pub async fn map_points(
         &self,
         scope: Scope,
