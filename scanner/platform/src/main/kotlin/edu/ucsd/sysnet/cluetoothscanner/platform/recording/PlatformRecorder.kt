@@ -114,7 +114,8 @@ class PlatformRecorder(
         class Signal(val event: RecEvent) : Message
     }
 
-    private val inbox = Channel<Message>(Channel.UNLIMITED)
+    /** A request the actor will never run (it ended, even one it was handed but not yet run) is answered Err. */
+    private val inbox = Channel<Message>(Channel.UNLIMITED, onUndeliveredElement = ::release)
 
     /** Every coroutine this runner launches carries it: an escaped exception becomes the recorder's error. */
     private val guard = failureHandler(TAG) { failure -> _state.update { it.copy(error = "The recorder stopped (${failure.describe()})") } }
@@ -125,7 +126,11 @@ class PlatformRecorder(
         scope.launch(guard) { scanner.error.collect { error -> error?.let { signal(RecEvent.ScannerError(it)) } } }
         coreStates?.let { flow -> scope.launch(guard) { flow.collect { signal(RecEvent.CoreChanged(it)) } } }
         storageFull?.let { flow -> scope.launch(guard) { flow.collect { signal(RecEvent.StorageFull(it)) } } }
-        scope.launch(guard) { actor() }
+        scope.launch(guard) { actor() }.invokeOnCompletion {
+            // The actor is gone (failed or its scope ended): cancelling the inbox closes it and answers every request
+            // still in it.
+            inbox.cancel()
+        }
         // RecordingService reads the process recorder from here (notification actions, foreground confirmation).
         RecordingServiceLink.recorder = this
     }
@@ -149,8 +154,15 @@ class PlatformRecorder(
 
     private suspend fun ask(event: RecEvent): RecOutcome {
         val reply = CompletableDeferred<RecOutcome>()
-        inbox.send(Message.Request(event, reply))
+        if (inbox.trySend(Message.Request(event, reply)).isFailure) return STOPPED
         return reply.await()
+    }
+
+    private fun release(message: Message) {
+        when (message) {
+            is Message.Request -> message.reply.complete(STOPPED)
+            is Message.Signal -> Unit
+        }
     }
 
     private suspend fun actor() {
@@ -161,35 +173,39 @@ class PlatformRecorder(
                 is Message.Signal -> message.event to null
             }
             val pending = ArrayDeque<RecEvent>().apply { add(first) }
-            while (pending.isNotEmpty()) {
-                val transition = RecorderMachine.reduce(model, pending.removeFirst())
-                model = transition.state
-                _state.value = model.public()
-                // The batch stops at the first failed effect: its failure (with the effects not run) is reduced
-                // next, and the machine decides which of them still run.
-                val batch = transition.effects
-                for ((index, effect) in batch.withIndex()) {
-                    val result = when (effect) {
-                        is RecEffect.Reply -> {
-                            reply?.complete(effect.outcome)
-                            EffectResult.Done(null)
+            // A request is always answered, even when the actor ends in the middle of it (a no-op once answered).
+            try {
+                while (pending.isNotEmpty()) {
+                    val transition = RecorderMachine.reduce(model, pending.removeFirst())
+                    model = transition.state
+                    _state.value = model.public()
+                    // The batch stops at the first failed effect: its failure (with the effects not run) is reduced
+                    // next, and the machine decides which of them still run.
+                    val batch = transition.effects
+                    for ((index, effect) in batch.withIndex()) {
+                        val result = when (effect) {
+                            is RecEffect.Reply -> {
+                                reply?.complete(effect.outcome)
+                                EffectResult.Done(null)
+                            }
+                            RecEffect.EnterForeground, RecEffect.LeaveForeground, RecEffect.CoreStart, RecEffect.CorePause,
+                            RecEffect.CoreResume, RecEffect.CoreStop, RecEffect.CoreRead, RecEffect.DrainScanner,
+                            RecEffect.StartScanner, RecEffect.StartLocation, RecEffect.StopLocation,
+                            -> runEffect(effect)
                         }
-                        RecEffect.EnterForeground, RecEffect.LeaveForeground, RecEffect.CoreStart, RecEffect.CorePause,
-                        RecEffect.CoreResume, RecEffect.CoreStop, RecEffect.CoreRead, RecEffect.DrainScanner,
-                        RecEffect.StartScanner, RecEffect.StartLocation, RecEffect.StopLocation,
-                        -> runEffect(effect)
-                    }
-                    when (result) {
-                        is EffectResult.Done -> result.event?.let(pending::add)
-                        is EffectResult.Failed -> {
-                            pending.addFirst(RecEvent.EffectFailed(effect, result.cause, batch.drop(index + 1)))
-                            break
+                        when (result) {
+                            is EffectResult.Done -> result.event?.let(pending::add)
+                            is EffectResult.Failed -> {
+                                pending.addFirst(RecEvent.EffectFailed(effect, result.cause, batch.drop(index + 1)))
+                                break
+                            }
                         }
                     }
                 }
+            } finally {
+                // A request the machine left unanswered (never expected), or one cut off when the actor ended.
+                reply?.complete(STOPPED)
             }
-            // A request the machine left unanswered (never expected) must not hang its caller.
-            reply?.complete(RecOutcome.Failed(PlatformError.Unavailable("the recorder did not answer")))
         }
     }
 
@@ -262,6 +278,7 @@ class PlatformRecorder(
 
     companion object {
         private const val TAG = "PlatformRecorder"
+        private val STOPPED = RecOutcome.Failed(PlatformError.Unavailable("the recorder stopped"))
         const val MISSING_GRANTS = RecorderMachine.MISSING_GRANTS
         const val SERVICE_REFUSED = RecorderMachine.SERVICE_REFUSED
 

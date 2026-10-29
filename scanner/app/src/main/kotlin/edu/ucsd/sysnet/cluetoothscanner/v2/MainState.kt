@@ -62,8 +62,10 @@ sealed interface MainTask {
     data object Sessions : MainTask
     /** The core's event subscription (§2.6). */
     data object CoreEvents : MainTask
-    /** A call into the map or the sheets from a map callback or the cover, or an Activity launch. */
+    /** A call into the map or the sheets from a map callback or the cover. */
     data object Platform : MainTask
+    /** An Activity launch the user asked for (a permission request, enable Bluetooth, the location settings). */
+    data object Launch : MainTask
     /** Something the screen runs threw past every guard (its scope's handler caught it). */
     data object Unhandled : MainTask
 }
@@ -155,6 +157,8 @@ data class MainUiState(
     val sheets: SheetsLink = SheetsLink.None,
     /** R-10: the storage-full dialog, null while closed. */
     val storageFull: StorageFullState? = null,
+    /** A failure the user must see, shown as a banner until dismissed or retried; null when there is none. */
+    val notice: Notice? = null,
 ) {
     val viewKey: ViewKey get() = ViewKey(scope, epoch)
     val searchPage: Page.SearchPage? get() = page as? Page.SearchPage
@@ -170,6 +174,12 @@ data class MainUiState(
     }
     val attachedSheets: SheetsState? get() = (sheets as? SheetsLink.Attached)?.sheets
 }
+
+/** A failure the user must see: the error's own words, and Retry when [retry] can run it again. */
+data class Notice(val message: String, val retry: MainEffect? = null)
+
+/** The words a failure shows: a platform call's typed error, else the throwable's message. */
+fun Throwable.userMessage(): String = (this as? PlatformFailure)?.error?.message ?: message ?: this::class.simpleName.orEmpty()
 
 /** Everything that changes [MainUiState]: the user's intents, and the results the runner feeds back. */
 sealed interface MainEvent {
@@ -227,6 +237,9 @@ sealed interface MainEvent {
     data object EnableBluetooth : MainEvent
     data object OpenAppSettings : MainEvent
     data object UploadNow : MainEvent
+    data object DismissNotice : MainEvent
+    /** The notice's Retry: it closes and runs what failed again. */
+    data object RetryNotice : MainEvent
 
     // ---- R-10 storage full ----
     /** `CoreEvent.StorageFull { freeBytes }`: the core stopped writing (and the recorder paused, B). */
@@ -453,6 +466,8 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     // O-2 Done: save, then the first run (recording straight away if the switch was left on)
     MainEvent.FinishOnboarding -> s.onboarding?.let { s.with(MainEffect.SaveOnboarding(it.ui.userId, it.ui.autoRecord)) } ?: s.only()
     MainEvent.OnboardingSaved -> s.copy(onboarding = null).with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
+    MainEvent.DismissNotice -> s.copy(notice = null).only()
+    MainEvent.RetryNotice -> s.notice?.retry?.let { s.copy(notice = null).with(it) } ?: s.copy(notice = null).only()
 }
 
 /**
@@ -476,18 +491,24 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         is MainEffect.FreeUpSpace -> reduce(s, MainEvent.SpaceFreed(
             CleanupOutcome(emptyMap(), task.effect.cleanups.associateWith { CleanupError.Failed(error.message ?: error::class.simpleName.orEmpty()) }), null,
         ))
-        is MainEffect.Export -> reduce(s, MainEvent.ExportFinished)
-        // the onboarding stays, so Done can be pressed again
-        is MainEffect.SaveOnboarding,
+        // the export says it failed: it stops, and nothing looks done
+        is MainEffect.Export -> s.copy(storage = s.storage?.copy(exporting = false), notice = Notice("$EXPORT_FAILED: ${error.userMessage()}")).only()
+        // the onboarding stays open; the notice retries the save
+        is MainEffect.SaveOnboarding -> s.copy(notice = Notice("$SAVE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
+        MainEffect.OpenAppSettings, MainEffect.UploadNow -> s.copy(notice = Notice(error.userMessage())).only()
         MainEffect.LoadSessions, MainEffect.StartRecording, MainEffect.PauseRecording, MainEffect.ResumeRecording,
         MainEffect.StopRecording, MainEffect.FrameRoute, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
         is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch, is MainEffect.Delete, is MainEffect.UpdateSettings,
-        is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation, MainEffect.OpenAppSettings,
-        MainEffect.UploadNow -> s.only()
+        is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation -> s.only()
     }
+    // the user asked for it and nothing happened: say why
+    MainTask.Launch -> s.copy(notice = Notice(error.userMessage())).only()
     // the keyed work keeps its last data, which the selectors show only for its own key
     is MainTask.View, is MainTask.Search, MainTask.Sessions, MainTask.CoreEvents, MainTask.Platform -> s.only()
 }
+
+private const val EXPORT_FAILED = "Export failed"
+private const val SAVE_FAILED = "Could not save the settings"
 
 /** R-4: the panel opens and closes only while a recording is active. */
 private fun withPanel(s: MainUiState, open: Boolean): MainUiState = when (s.recorder) {

@@ -9,6 +9,11 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import edu.ucsd.sysnet.cluetoothscanner.platform.TestCoreIngest
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.async
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +22,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -172,4 +178,41 @@ class PlatformRecorderFailureTest {
         assertEquals(2, scannerStarts)
         assertEquals("the dialog can close: no longer paused for storage", null, recorder.state.value.pause)
     }
+
+    @Test
+    fun `requests waiting on the recorder end Err when its actor ends, never hang (#80 review)`() = runTest {
+        val owner = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        val recorder = PlatformRecorder(
+            core = CompletableDeferred<CoreIngest>(core),
+            scanner = object : RecordingScanner {
+                override val deferred = MutableStateFlow(false)
+                override val dropped = MutableStateFlow(0L)
+                override val error = MutableStateFlow<String?>(null)
+                override fun start() = Unit
+                override suspend fun stopAndDrain() = Unit
+            },
+            location = object : RecordingLocation {
+                override fun startRecording() = Unit
+                override fun stopRecording() = Unit
+            },
+            host = object : ForegroundHost {
+                override suspend fun enterForeground(): Boolean = awaitCancellation() // Android never confirms
+                override fun leaveForeground() = Unit
+            },
+            grants = { emptyList() },
+            environment = { ScanEnvironment("m", "15", 35, "0.1.0", true, true, 1650, "all_supported", false) },
+            io = StandardTestDispatcher(testScheduler),
+            scope = owner,
+        )
+        val running = async { recorder.start() } // the actor runs it, waiting for the service
+        val queued = async { recorder.pause() } // still in the inbox
+        runCurrent()
+        assertFalse(running.isCompleted || queued.isCompleted)
+        owner.cancel()
+        runCurrent()
+        assertTrue("the request it was running is answered", running.await() is PlatformResult.Err)
+        assertTrue("the queued request is answered", queued.await() is PlatformResult.Err)
+        assertTrue("a request after the end is answered at once", recorder.stop() is PlatformResult.Err)
+    }
 }
+

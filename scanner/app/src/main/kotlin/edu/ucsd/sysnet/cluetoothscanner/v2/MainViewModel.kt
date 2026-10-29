@@ -366,10 +366,10 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     fun setCover(insets: CoverInsets) { guard(MainTask.Platform) { _ui.value.ready?.map?.setCover(insets) } }
 
     /** The Activity's launches fail here (e.g. no settings activity on the device). */
-    fun launchFailed(error: Throwable) = fail(MainTask.Platform, error)
+    fun launchFailed(error: Throwable) = fail(MainTask.Launch, error)
 
     /** An activity launch's typed failure ([PlatformResult.Err]) takes the same path as a thrown one. */
-    fun launchFailed(error: PlatformError) = fail(MainTask.Platform, PlatformFailure(error))
+    fun launchFailed(error: PlatformError) = fail(MainTask.Launch, PlatformFailure(error))
 
     companion object {
         private const val TAG = "MainViewModel"

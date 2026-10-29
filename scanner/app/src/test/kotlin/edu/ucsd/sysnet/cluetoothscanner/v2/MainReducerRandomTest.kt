@@ -60,12 +60,12 @@ class MainReducerRandomTest {
         37 -> listOf(MainEvent.Export(nextBoolean()), MainEvent.DeleteConfirmed, MainEvent.Delete(nextBoolean())).random(this)
         38 -> MainEvent.EditOnboarding { it.copy(step = it.step + 1) }
         39 -> MainEvent.Failed(
-            listOf(MainTask.Effect(effects.random(this)), MainTask.Link, MainTask.Unhandled, MainTask.Sessions, MainTask.Platform,
+            listOf(MainTask.Effect(effects.random(this)), MainTask.Link, MainTask.Unhandled, MainTask.Sessions, MainTask.Platform, MainTask.Launch,
                 MainTask.View(ViewKey(sessionA, ViewEpoch(1)))).random(this),
             IllegalStateException("random failure"),
         )
         40 -> MainEvent.RetryLink
-        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate).random(this)
+        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate, MainEvent.DismissNotice, MainEvent.RetryNotice).random(this)
         42 -> MainEvent.StorageFull(Bytes(nextLong(0, 400_000_000)))
         43 -> MainEvent.ReclaimableRead(if (nextBoolean()) null else Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(nextLong(1_000)), Bytes(nextLong(1_000))))
         44, 45 -> MainEvent.ChooseCleanup(Cleanup.entries.random(this), nextBoolean())
