@@ -7,6 +7,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKeys
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
+import kotlin.math.abs
 
 /**
  * G-9: the one ordered-keys state. Built once from `deviceOrder` (sorted once by RSSI); changes only by appends;
@@ -49,6 +50,19 @@ class OrderedKeys(initial: LongArray) {
 }
 
 data class CameraSnapshot(val center: GeoPoint, val zoom: Double, val bearing: Double = 0.0)
+
+/**
+ * M-11, used by Q-6: the view has moved away from [reference] when the zoom differs by 1 or more, or the reference
+ * centre is more than 25 % of [viewport] away from the current centre on either axis. The caller passes only the
+ * user's own moves; app camera moves never count.
+ */
+fun movedAway(reference: CameraSnapshot, current: CameraSnapshot, viewport: Bbox): Boolean {
+    if (abs(current.zoom - reference.zoom) >= 1.0) return true
+    val w = viewport.east - viewport.west
+    val h = viewport.north - viewport.south
+    return abs(current.center.lon - reference.center.lon) > 0.25 * w ||
+        abs(current.center.lat - reference.center.lat) > 0.25 * h
+}
 
 /** dp the sheet/panel/chrome cover. */
 data class CoverInsets(val top: Int, val bottom: Int, val left: Int, val right: Int)

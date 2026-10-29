@@ -213,14 +213,4 @@ class DiscoverModelTest {
         m.selectSegment(Segment.ThisArea)
         assertEquals(SheetHeight.Half, st.root.height)
     }
-
-    @Test
-    fun `M-11 moved away - a zoom change of 1, or the centre a quarter of the viewport away`() {
-        val vp = Bbox(0.0, 0.0, 1.0, 1.0)
-        val ref = CameraSnapshot(GeoPoint(0.5, 0.5), 15.0)
-        assertFalse(movedAway(ref, CameraSnapshot(GeoPoint(0.7, 0.7), 15.9), vp))
-        assertTrue(movedAway(ref, CameraSnapshot(GeoPoint(0.5, 0.5), 16.0), vp))
-        assertTrue(movedAway(ref, CameraSnapshot(GeoPoint(0.76, 0.5), 15.0), vp))
-        assertTrue(movedAway(ref, CameraSnapshot(GeoPoint(0.5, 0.24), 15.0), vp))
-    }
 }

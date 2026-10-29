@@ -12,7 +12,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.SearchState
-import kotlin.math.abs
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.movedAway
 
 /** The Discover sheet's views (D-2, D-3) and segments (D-1); §5.4 `SheetContentState.Discover`. */
 internal enum class DiscoverView { Categories, List }
@@ -39,18 +39,6 @@ internal fun CoreQueries.forScope(scope: Scope) = object : DiscoverQueries {
     override suspend fun deviceOrder() = this@forScope.deviceOrder(scope)
     override suspend fun deviceKeys(filter: DeviceFilter) = this@forScope.deviceKeys(scope, filter)
     override suspend fun search(query: String, area: Bbox?) = this@forScope.search(scope, query, area)
-}
-
-/**
- * M-11, used by Q-6: the view moved away from [reference] when the zoom differs by 1 or more, or the centre moved
- * more than 25 % of the viewport on either axis. Only the user's own moves are tested (the caller's job).
- */
-internal fun movedAway(reference: CameraSnapshot, current: CameraSnapshot, viewport: Bbox): Boolean {
-    if (abs(current.zoom - reference.zoom) >= 1.0) return true
-    val w = viewport.east - viewport.west
-    val h = viewport.north - viewport.south
-    return abs(current.center.lon - reference.center.lon) > 0.25 * w ||
-        abs(current.center.lat - reference.center.lat) > 0.25 * h
 }
 
 internal fun Bbox.camera(zoom: Double) = CameraSnapshot(GeoPoint((west + east) / 2, (south + north) / 2), zoom)
