@@ -13,5 +13,5 @@ infra/data/secrets/*
 /secrets/
 downloads/
 
-# Compose preview screenshots (rendered by mise run //cluetooth-android:ui-shots)
-cluetooth-android/app/src/screenshotTestDebug/
+# Compose preview screenshots (rendered by mise run //scanner:ui-shots)
+scanner/app/src/screenshotTestDebug/

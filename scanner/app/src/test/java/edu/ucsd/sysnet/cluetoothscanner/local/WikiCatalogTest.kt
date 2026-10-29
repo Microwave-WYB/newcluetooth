@@ -9,7 +9,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class WikiCatalogTest {
-    // Unit tests run in the module directory (cluetooth-android/app).
+    // Unit tests run in the module directory (scanner/app).
     private val asset = File("src/main/assets/wiki-bundle.json")
 
     @Test

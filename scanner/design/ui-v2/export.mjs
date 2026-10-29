@@ -10,7 +10,7 @@
  * The parser is strict: anything it does not recognise (another block or at-rule, a non-token declaration, an
  * unknown value form, an inset or multi-layer shadow, a non-color map value) stops the export with an error.
  *
- * Run from the repository root: mise exec -- node cluetooth-android/design/ui-v2/export.mjs
+ * Run from the repository root: mise exec -- node scanner/design/ui-v2/export.mjs
  * --check writes nothing and exits 1 when a committed JSON file is out of date.
  */
 import { readFileSync, writeFileSync } from "node:fs";
@@ -232,7 +232,7 @@ function exportTokens(css) {
   const tokens = {};
   for (const name of decls.light.keys()) tokens[name] = tokenEntry(name, decls);
   return {
-    generatedBy: "cluetooth-android/design/ui-v2/export.mjs",
+    generatedBy: "scanner/design/ui-v2/export.mjs",
     source: "tokens.css",
     note: "1 CSS px is 1 dp. light/dark are resolved values; css is the declaration as written.",
     tokens,
@@ -282,7 +282,7 @@ function exportMapStyle(js, tokens) {
   const values = Object.fromEntries(schemes.map((s) => [s, styleValues(MS, tokens, s)]));
   const plain = (x) => JSON.parse(JSON.stringify(x));
   return {
-    generatedBy: "cluetooth-android/design/ui-v2/export.mjs",
+    generatedBy: "scanner/design/ui-v2/export.mjs",
     source: "map-style.js",
     baseStyle: plain(MS.baseStyles),
     sources: plain(MS.sources()),

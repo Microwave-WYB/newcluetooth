@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 // The Wireless Wiki as the app sees it: wiki-bundle.json, written at build time by
-// cluetooth-android/tools/wiki-bundle. Rules stay in the JSON the native matcher reads;
+// scanner/tools/wiki-bundle. Rules stay in the JSON the native matcher reads;
 // they are not modelled here.
 
 @Serializable

@@ -11,7 +11,7 @@ Regenerate from the repository root:
 ```sh
 cd cluetooth-core
 cargo run --locked --example generate_payload_v2_fixture -- \
-  ../cluetooth-sync/tests/fixtures/payload-v2
+  ../data-sync/tests/fixtures/payload-v2
 ```
 
 The expected SHA-256 is

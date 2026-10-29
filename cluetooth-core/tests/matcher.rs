@@ -20,7 +20,7 @@ use cluetooth_core::{
 use regex_syntax::hir::{Class, Hir, HirKind};
 use serde_json::{Value, json};
 
-const BUNDLE: &str = include_str!("../../cluetooth-android/app/src/main/assets/wiki-bundle.json");
+const BUNDLE: &str = include_str!("../../scanner/app/src/main/assets/wiki-bundle.json");
 const CASES: &str = include_str!("fixtures/rule_cases.json");
 
 fn hex(s: &str) -> Vec<u8> {

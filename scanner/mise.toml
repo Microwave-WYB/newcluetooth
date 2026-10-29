@@ -1,6 +1,6 @@
 [tasks.sdk-install]
 description = "Install host SDK platform35/build-tools35.0.0 only; licenses must be manually accepted first"
-run = ['sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" </dev/null', 'mise run //cluetooth-android:sdk-check']
+run = ['sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" </dev/null', 'mise run //scanner:sdk-check']
 
 [tasks.native-sdk-install]
 description = "Explicit native-only NDK27.2.12479018 installation; no license acceptance"
@@ -8,7 +8,7 @@ run = ['sdkmanager --sdk_root="$ANDROID_HOME" "ndk;27.2.12479018" </dev/null', '
 
 [tasks.sdk-check]
 description = "Fail clearly if host SDK platform/build-tools are missing; no download/license acceptance"
-run = 'test -f "$ANDROID_HOME/platforms/android-35/android.jar" && test -f "$ANDROID_HOME/build-tools/35.0.0/source.properties" || { echo "Missing project Android SDK platform35/build-tools35.0.0; follow the manual license/setup steps in cluetooth-android/README.md" >&2; exit 1; }'
+run = 'test -f "$ANDROID_HOME/platforms/android-35/android.jar" && test -f "$ANDROID_HOME/build-tools/35.0.0/source.properties" || { echo "Missing project Android SDK platform35/build-tools35.0.0; follow the manual license/setup steps in scanner/README.md" >&2; exit 1; }'
 
 [tasks.test]
 description = "Host JVM tests only: compile real bindings, no Firebase processing, native packaging, APK or device"
@@ -56,7 +56,7 @@ description = "Fail if the committed design/ui-v2 JSON exports are out of date"
 run = "node design/ui-v2/export.mjs --check"
 
 [tasks.check]
-run = ["mise run //cluetooth-android:host-guard-check", "mise run //cluetooth-android:design-export-check", "mise run //cluetooth-android:wiki-bundle-test", "mise run //cluetooth-android:test", "mise run //cluetooth-android:lint"]
+run = ["mise run //scanner:host-guard-check", "mise run //scanner:design-export-check", "mise run //scanner:wiki-bundle-test", "mise run //scanner:test", "mise run //scanner:lint"]
 
 [tasks.build]
 description = "Product debug APKs (requires matching .debug Firebase client); no install or launch"
