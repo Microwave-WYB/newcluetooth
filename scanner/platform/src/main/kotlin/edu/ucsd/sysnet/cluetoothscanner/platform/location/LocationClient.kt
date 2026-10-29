@@ -113,7 +113,7 @@ class LocationClient(
     }
 
     /** P-5 "Turn on": the Play services settings dialog, else the system location settings. */
-    fun turnOn(activity: ComponentActivity) {
+    override fun turnOn(activity: ComponentActivity) {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LocationProfile.RECORDING.intervalMs).build()
         val settings = LocationSettingsRequest.Builder().addLocationRequest(request).setAlwaysShow(true).build()
         if (!playServices()) return openLocationSettings(activity)

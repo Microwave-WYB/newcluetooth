@@ -6,6 +6,8 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
+import androidx.activity.ComponentActivity
 import androidx.test.core.app.ApplicationProvider
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.LocationFix
@@ -24,6 +26,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -124,5 +127,12 @@ class LocationClientTest {
         idle()
         assertEquals(State.Off, client.status.value.state)
         assertNotNull(client.status.value.action)
+    }
+
+    @Test
+    fun `P-5 Turn on without Play services opens the system location settings`() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        client().turnOn(activity)
+        assertEquals(Settings.ACTION_LOCATION_SOURCE_SETTINGS, shadowOf(activity).nextStartedActivity.action)
     }
 }
