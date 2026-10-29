@@ -86,4 +86,13 @@ class DataStoreSettingsTest {
         assertEquals("ok1", settings.userId)
         assertTrue(settings.recordOnOpen)
     }
+
+    @Test
+    fun `no DataStore type is part of the public API, so callers need no DataStore dependency`() {
+        val type = DataStoreSettings::class.java
+        // Synthetic accessors (access$...) are compiler plumbing that no caller can name.
+        val public = type.constructors.filterNot { it.isSynthetic }.flatMap { it.parameterTypes.toList() } +
+            type.methods.filterNot { it.isSynthetic }.flatMap { it.parameterTypes.toList() + it.returnType }
+        assertTrue(public.none { it.name.startsWith("androidx.datastore") })
+    }
 }

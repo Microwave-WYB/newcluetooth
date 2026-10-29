@@ -2,10 +2,12 @@ package edu.ucsd.sysnet.cluetoothscanner.platform.scan
 
 import android.app.Application
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanRecord
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Intent
 import android.os.Looper
 import java.time.Duration
@@ -131,8 +133,10 @@ class BleScannerTest {
 
     @Test
     fun `the scan environment states the Coded PHY setting`() {
-        assertEquals("all_supported", scanner.environment(coded = true).scanPhy)
-        assertEquals("1m", scanner.environment(coded = false).scanPhy)
+        coded = true
+        assertEquals("all_supported", scanner.environment().scanPhy)
+        coded = false
+        assertEquals("1m", scanner.environment().scanPhy)
         assertEquals("0.1.0-test", scanner.environment().appVersion)
     }
 
@@ -245,5 +249,65 @@ class BleScannerTest {
         assertEquals(1, configures)
         advance(2 * BleScanner.RESTART_MS)
         assertTrue("no scan after the recording ended", callbacks().isEmpty())
+    }
+
+    private fun activePhy() = shadowOf(adapter.bluetoothLeScanner).activeScans.single().scanSettings()!!.phy
+
+    @Test
+    fun `a Coded PHY toggled while paused does not change the PHY at resume, only at the restart`() {
+        shadowOf(adapter).setEnabled(true)
+        scanner.start()
+        idle()
+        assertEquals(ScanSettings.PHY_LE_ALL_SUPPORTED, activePhy())
+        drain() // pause
+        coded = false
+        scanner.start() // resume
+        idle()
+        assertEquals("the footer still says Coded PHY: so does the scan", ScanSettings.PHY_LE_ALL_SUPPORTED, activePhy())
+        assertEquals(0, configures)
+        advance(BleScanner.RESTART_MS)
+        assertEquals("the restart tells the core first", 1, configures)
+        assertEquals(BluetoothDevice.PHY_LE_1M, activePhy())
+    }
+
+    @Test
+    fun `Bluetooth coming back does not change the PHY`() {
+        shadowOf(adapter).setEnabled(true)
+        scanner.start()
+        idle()
+        coded = false
+        bluetooth(false)
+        bluetooth(true)
+        assertEquals(ScanSettings.PHY_LE_ALL_SUPPORTED, activePhy())
+        assertEquals(0, configures)
+    }
+
+    @Test
+    fun `the recording starts with the PHY its environment declared`() {
+        coded = false
+        assertEquals("1m", scanner.environment().scanPhy)
+        coded = true // changed between startRecording and the first scan
+        shadowOf(adapter).setEnabled(true)
+        scanner.start()
+        idle()
+        assertEquals(BluetoothDevice.PHY_LE_1M, activePhy())
+    }
+
+    @Test
+    fun `a new recording starts on the PHY its footer records, not the previous recording's`() {
+        shadowOf(adapter).setEnabled(true)
+        coded = true
+        assertEquals("all_supported", scanner.environment().scanPhy) // recording 1: core.startRecording(env)
+        scanner.start()
+        idle()
+        assertEquals(ScanSettings.PHY_LE_ALL_SUPPORTED, activePhy())
+        drain() // stop
+        coded = false
+        val footer = scanner.environment() // recording 2: core.startRecording(env)
+        scanner.start()
+        idle()
+        assertEquals("1m", footer.scanPhy)
+        assertEquals("the scan agrees with the footer from the first start", BluetoothDevice.PHY_LE_1M, activePhy())
+        assertEquals("no configureScan was needed", 0, configures)
     }
 }

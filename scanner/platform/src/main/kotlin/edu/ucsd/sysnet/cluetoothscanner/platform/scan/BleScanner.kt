@@ -72,7 +72,11 @@ class BleScanner(
     private var requested = false
     private var receiversRegistered = false
     private var startedAtElapsedMs = 0L
-    private var appliedCodedPhy = true
+    /**
+     * The Coded PHY setting the core's payload footer records (from [environment] or the last successful
+     * `configureScan`). Every start scans with exactly this; only [restartNow] changes it, after telling the core.
+     */
+    private var footerCodedPhy: Boolean? = null
     private var restartSkippedWhileScreenOff = false
     private var restart: Runnable? = null
     private var retry: Runnable? = null
@@ -99,7 +103,7 @@ class BleScanner(
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(receiverContext: Context?, intent: Intent?) {
-            if (requests.isActive && ScanRestartPolicy.screenOnRestartNow(restartSkippedWhileScreenOff, appliedCodedPhy, codedPhy())) {
+            if (requests.isActive && ScanRestartPolicy.screenOnRestartNow(restartSkippedWhileScreenOff, footerCodedPhy ?: codedPhy(), codedPhy())) {
                 restartNow()
             }
         }
@@ -126,8 +130,19 @@ class BleScanner(
         ingest.flush()
     }
 
-    /** The footer facts of a scan with the current settings (`start_recording`, `configure_scan`). */
-    fun environment(coded: Boolean = codedPhy()): ScanEnvironment {
+    /**
+     * The environment for `core.startRecording` (the recorder's `environment`): the current Coded PHY setting becomes
+     * the footer's, and the scans of this recording use it until a restart changes it through `configureScan`. This is
+     * the only public way to get an environment, so a new recording can never start on the previous one's PHY.
+     */
+    fun environment(): ScanEnvironment {
+        val coded = codedPhy()
+        footerCodedPhy = coded
+        return environmentFor(coded)
+    }
+
+    /** The footer facts of a scan with the given Coded PHY setting (`start_recording`, `configure_scan`). */
+    private fun environmentFor(coded: Boolean): ScanEnvironment {
         val adapter = adapter()
         val o = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
         return buildScanEnvironment(
@@ -172,7 +187,8 @@ class BleScanner(
         }
         if (!enabled) return defer("Bluetooth is off")
         val scanner = adapter?.bluetoothLeScanner ?: return defer("No Bluetooth LE scanner", retryMs = RETRY_MS)
-        val coded = codedPhy()
+        // Bluetooth back, an error retry or a resume never switch the PHY: the footer would no longer be true.
+        val coded = footerCodedPhy ?: codedPhy().also { footerCodedPhy = it }
         val request = requests.begin(::callback)
         limiter.record()
         try {
@@ -181,7 +197,6 @@ class BleScanner(
             requests.fail(request.generation)
             return defer("startScan failed: ${error.message}", retryMs = RETRY_MS)
         }
-        appliedCodedPhy = coded
         restartSkippedWhileScreenOff = false
         startedAtElapsedMs = SystemClock.elapsedRealtime()
         _deferred.value = false
@@ -237,7 +252,7 @@ class BleScanner(
         val wait = limiter.waitMs()
         if (wait > 0) return scheduleRestart(wait)
         val coded = codedPhy()
-        if (coded == appliedCodedPhy) {
+        if (coded == footerCodedPhy) {
             stopScan()
             startScan()
             return
@@ -246,7 +261,7 @@ class BleScanner(
         cancel(restart)
         scope.launch(Dispatchers.Main.immediate) {
             val configured = try {
-                withContext(io) { core.await().configureScan(environment(coded)) }
+                withContext(io) { core.await().configureScan(environmentFor(coded)) }
                 true
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -257,6 +272,8 @@ class BleScanner(
             } finally {
                 reconfiguring = false
             }
+            // The core's footer changed: every later start (also after a pause) uses the new PHY.
+            if (configured) footerCodedPhy = coded
             when {
                 // The recording ended meanwhile: stopAndDrain already stopped everything.
                 !requested -> Unit
