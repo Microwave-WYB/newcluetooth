@@ -108,6 +108,10 @@
   --chip-pad: 14px;
   --chip-gap: 6px;
   --chip-row-pad: 6px;
+  --chip-icon: 18px;      /* the Filter chip's funnel */
+  --chip-count: 16px;     /* the Filter chip's count badge */
+  --check-size: 20px;     /* the Filter sheet's checkbox */
+  --check-r: 6px;
   --row-h: 64px;
   --spark-w: 56px;
   --spark-h: 22px;

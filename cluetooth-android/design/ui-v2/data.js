@@ -17,7 +17,7 @@
 
   const CENTER = { lat: 32.88, lon: -117.234 };
 
-  // ---- categories (the chip row order) ----
+  // ---- categories ----
   const CATEGORIES = [
     { id: "audio", label: "Audio", icon: "headphones" },
     { id: "lighting", label: "Lighting", icon: "bulb" },
@@ -27,7 +27,6 @@
     { id: "vehicles", label: "Vehicles", icon: "car" },
     { id: "medical", label: "Medical", icon: "medical" },
   ];
-  // the chip row is All + CATEGORIES: Unidentified comes right after All
   CATEGORIES.unshift({ id: "unidentified", label: "Unidentified", icon: "unknown" });
 
   // ---- products (wiki families) ----
@@ -378,6 +377,15 @@
         const d = withProduct(DEVICE[p.addr]);
         return r.current ? { ...d, best: p.at } : { ...d, rssi: p.rssi, history: null, stale: false, best: p.at };
       });
+    },
+    /** The categories present in a scope (a session id, or "all"), with their device counts: Unidentified first,
+     *  then by count (ties in CATEGORIES order). [{ id, label, icon, count }] */
+    getCategoryCounts: (scope) => {
+      const r = session(scope), count = {};
+      if (!r) return [];
+      for (const p of r.points) { const c = DEVICE[p.addr].category; count[c] = (count[c] || 0) + 1; }
+      const present = CATEGORIES.filter((c) => count[c.id]).map((c) => ({ ...c, count: count[c.id] }));
+      return clone([...present.filter((c) => c.id === "unidentified"), ...present.filter((c) => c.id !== "unidentified").sort((a, b) => b.count - a.count)]);
     },
     /** Discover for one session: categories with product cards. mode is "nearby" (live only) or "all". */
     getProducts: (mode, id) => {

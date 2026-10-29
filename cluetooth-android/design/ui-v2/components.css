@@ -198,6 +198,23 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   transition: background-color var(--t-fast), color var(--t-fast);
 }
 .chip.on { background: var(--chip-on-bg); color: var(--chip-on-fg); font-weight: var(--weight-medium); }
+/* the Filter chip: a circle as tall as the chips; while categories are selected, the selected style and a count */
+.chip.chip-icon { position: relative; width: var(--chip-h); padding: 0; display: grid; place-items: center; }
+.chip-icon .icon { width: var(--chip-icon); height: var(--chip-icon); }
+.chip-count {
+  position: absolute; top: -5px; right: -5px; min-width: var(--chip-count);
+  height: var(--chip-count); padding: 0 4px; border-radius: var(--r-pill); display: grid; place-items: center;
+  background: var(--blue); color: var(--on-blue); font-size: 11px; font-weight: var(--weight-medium); line-height: 1;
+  font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* ---------- Filter sheet: checkbox rows with device counts, Clear at the bottom ---------- */
+.filter-item { gap: 14px; }
+.check { width: var(--check-size); height: var(--check-size); flex: none; border-radius: var(--check-r); box-shadow: inset 0 0 0 2px var(--t3); display: grid; place-items: center; transition: background-color var(--t-fast), box-shadow var(--t-fast); }
+.check svg { width: 16px; height: 16px; fill: none; stroke: var(--chip-on-fg); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transition: opacity var(--t-fast); }
+.filter-item[aria-checked="true"] .check { background: var(--chip-on-bg); box-shadow: none; }
+.filter-item[aria-checked="true"] .check svg { opacity: 1; }
+.filter-foot { padding: 4px var(--gutter) 16px; }
 
 /* ---------- DeviceRow ---------- */
 .rows { display: block; }
@@ -470,7 +487,8 @@ button.item:active { background: var(--fill2); }
 .disc-head .seg button { height: calc(var(--sheet-header-h) - 4px); }
 .disc-head > *, .sheet-top > .ib { min-height: var(--sheet-header-h); }
 .disc-title { display: flex; align-items: center; height: var(--sheet-header-h); }
-.disc-chips .chips { position: static; padding: 0 var(--edge) 10px; }
+/* room above the chips for the Filter chip's count (the row itself does not move) */
+.disc-chips .chips { position: static; padding: var(--chip-row-pad) var(--edge) 10px; margin-top: calc(-1 * var(--chip-row-pad)); }
 .stack-sheet .hero { margin: 0 var(--edge); border-radius: var(--hero-r); } /* concentric with the sheet: inset --edge */
 .disc-sheet .prod-body .dev-product { font-size: var(--body-size); }
 .disc-sheet .search-slot { flex: none; }
