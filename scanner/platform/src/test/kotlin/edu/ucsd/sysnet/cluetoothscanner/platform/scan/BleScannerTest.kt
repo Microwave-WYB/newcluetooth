@@ -8,15 +8,20 @@ import android.bluetooth.le.ScanRecord
 import android.bluetooth.le.ScanResult
 import android.content.Intent
 import android.os.Looper
+import java.time.Duration
+import java.util.concurrent.Executor
 import androidx.test.core.app.ApplicationProvider
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.IngestAck
+import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.platform.TestCoreIngest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.junit.After
@@ -24,6 +29,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -38,15 +44,23 @@ class BleScannerTest {
     private val adapter: BluetoothAdapter = context.getSystemService(BluetoothManager::class.java).adapter
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ingested = mutableListOf<ScanObservationInput>()
+    private var coded = true
+    private var configureFails = false
+    private var configures = 0
     private val core = object : TestCoreIngest() {
         override fun ingestScans(batch: List<ScanObservationInput>): IngestAck {
             ingested += batch
             return IngestAck(batch.size, 0, 0)
         }
+
+        override fun configureScan(env: ScanEnvironment) {
+            configures++
+            if (configureFails) throw CoreException.Io("writer busy")
+        }
     }
     private val deferredCore = CompletableDeferred<CoreIngest>(core)
     private val ingest = ScanIngest(deferredCore, scope, Dispatchers.Main.immediate, nowMs = { 0 })
-    private val scanner = BleScanner(context, ingest, deferredCore, codedPhy = { true }, appVersion = "0.1.0-test", scope = scope, io = Dispatchers.Main.immediate)
+    private val scanner = BleScanner(context, ingest, deferredCore, codedPhy = { coded }, appVersion = "0.1.0-test", scope = scope, io = Dispatchers.Main.immediate)
 
     @After
     fun cancel() = scope.cancel()
@@ -124,5 +138,112 @@ class BleScannerTest {
 
     private companion object {
         const val ScanSettingsCallbackType = 1
+    }
+
+    private fun advance(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))
+
+    private fun bluetooth(on: Boolean) {
+        shadowOf(adapter).setEnabled(on)
+        context.sendBroadcast(
+            Intent(BluetoothAdapter.ACTION_STATE_CHANGED)
+                .putExtra(BluetoothAdapter.EXTRA_STATE, if (on) BluetoothAdapter.STATE_ON else BluetoothAdapter.STATE_OFF),
+        )
+        idle()
+    }
+
+    /** Five starts at once: the initial one and four Bluetooth off/on cycles. */
+    private fun fiveStarts() {
+        shadowOf(adapter).setEnabled(true)
+        scanner.start()
+        idle()
+        repeat(4) {
+            bluetooth(false)
+            bluetooth(true)
+        }
+        assertEquals("five starts so far, all allowed", 1, callbacks().size)
+    }
+
+    @Test
+    fun `a sixth start within 30 s is held back, not dropped`() {
+        fiveStarts()
+        bluetooth(false)
+        bluetooth(true)
+        assertTrue("held back by the start limit", callbacks().isEmpty())
+        advance(ScanStartLimiter.WINDOW_MS - 1)
+        assertTrue(callbacks().isEmpty())
+        advance(1)
+        assertEquals("started once the oldest start left the window", 1, callbacks().size)
+    }
+
+    @Test
+    fun `a stop during a held-back start never starts scanning after the recording ended`() {
+        fiveStarts()
+        bluetooth(false)
+        bluetooth(true)
+        assertTrue(callbacks().isEmpty())
+        drain()
+        advance(2 * ScanStartLimiter.WINDOW_MS)
+        assertTrue(callbacks().isEmpty())
+    }
+
+    @Test
+    fun `a Coded PHY restart over the start limit keeps the running scan and comes back`() {
+        fiveStarts()
+        val running = callbacks().single()
+        coded = false
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+        idle()
+        assertEquals("no restart yet", 0, configures)
+        assertSame(running, callbacks().single())
+        advance(ScanStartLimiter.WINDOW_MS)
+        assertEquals(1, configures)
+        assertTrue("restarted with the new PHY", callbacks().single() !== running)
+    }
+
+    @Test
+    fun `a failed configureScan keeps the scan, reports the error and re-arms the restart`() {
+        shadowOf(adapter).setEnabled(true)
+        scanner.start()
+        idle()
+        val running = callbacks().single()
+        coded = false
+        configureFails = true
+        advance(BleScanner.RESTART_MS)
+        assertEquals(1, configures)
+        assertSame("the running scan and its settings are kept", running, callbacks().single())
+        assertNotNull(scanner.error.value)
+        advance(BleScanner.RESTART_MS)
+        assertEquals("the restart was re-armed", 2, configures)
+        configureFails = false
+        advance(BleScanner.RESTART_MS)
+        assertEquals(3, configures)
+        assertTrue("the new PHY applies", callbacks().single() !== running)
+        assertNull("a good start clears the error", scanner.error.value)
+    }
+
+    @Test
+    fun `a recording that ends while configureScan is in flight is not restarted`() {
+        // configureScan runs on an io queue the test releases by hand, so the stop lands while it is in flight.
+        val ioQueue = ArrayDeque<Runnable>()
+        val io = Executor { ioQueue.addLast(it) }.asCoroutineDispatcher()
+        val slow = BleScanner(context, ingest, deferredCore, codedPhy = { coded }, appVersion = "0.1.0-test", scope = scope, io = io)
+        shadowOf(adapter).setEnabled(true)
+        slow.start()
+        idle()
+        coded = false
+        advance(BleScanner.RESTART_MS)
+        assertEquals("configureScan is queued", 0, configures)
+        var stopped = false
+        scope.launch {
+            slow.stopAndDrain()
+            stopped = true
+        }
+        repeat(5) { idle() }
+        assertTrue(stopped)
+        while (ioQueue.isNotEmpty()) ioQueue.removeFirst().run()
+        repeat(5) { idle() }
+        assertEquals(1, configures)
+        advance(2 * BleScanner.RESTART_MS)
+        assertTrue("no scan after the recording ended", callbacks().isEmpty())
     }
 }

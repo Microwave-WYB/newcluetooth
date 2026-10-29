@@ -98,6 +98,7 @@ class PlatformRecorderTest {
 
     private val core = Core()
     private val deferred = MutableStateFlow(false)
+    private val scannerError = MutableStateFlow<String?>(null)
     private var missing = emptyList<String>()
     private var foregroundAllowed = true
     private var inForeground = false
@@ -107,6 +108,7 @@ class PlatformRecorderTest {
     private val scanner = object : RecordingScanner {
         override val deferred = this@PlatformRecorderTest.deferred
         override val dropped = MutableStateFlow(0L)
+        override val error = scannerError
         override fun start() {
             log += "scanner.start"
         }
@@ -322,5 +324,15 @@ class PlatformRecorderTest {
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertEquals(RecordingPhase.Idle, core.phase)
         assertFalse(inForeground)
+    }
+
+    @Test
+    fun `a scanner error reaches the recorder state`() = runTest {
+        val recorder = recorder()
+        recorder.start()
+        scannerError.value = "The scan settings could not change (busy)"
+        runCurrent()
+        assertEquals("The scan settings could not change (busy)", recorder.state.value.error)
+        assertEquals(Phase.Recording, recorder.state.value.phase)
     }
 }

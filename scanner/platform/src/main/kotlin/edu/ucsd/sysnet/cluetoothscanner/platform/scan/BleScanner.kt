@@ -23,6 +23,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.RecordingScanner
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -63,6 +64,9 @@ class BleScanner(
     private val requests = ActiveRequestState<ScanCallback>()
     private val _deferred = MutableStateFlow(false)
     override val deferred: StateFlow<Boolean> = _deferred.asStateFlow()
+    private val _error = MutableStateFlow<String?>(null)
+    override val error: StateFlow<String?> = _error.asStateFlow()
+    private val limiter = ScanStartLimiter(SystemClock::elapsedRealtime)
     override val dropped: StateFlow<Long> get() = ingest.dropped
 
     private var requested = false
@@ -72,6 +76,12 @@ class BleScanner(
     private var restartSkippedWhileScreenOff = false
     private var restart: Runnable? = null
     private var retry: Runnable? = null
+
+    /** A start held back by the start limit; [stopScan] cancels it. */
+    private var pendingStart: Runnable? = null
+
+    /** A Coded PHY restart is waiting for `core.configureScan`. */
+    private var reconfiguring = false
 
     /** Advertisements kept out of the durable path because they exceed the row limit. */
     @Volatile
@@ -138,8 +148,22 @@ class BleScanner(
         null
     }
 
+    /** Every start path (start, Bluetooth back, retry, restart) comes here, so the start limit covers them all. */
     private fun startScan() {
         cancel(retry)
+        cancel(pendingStart)
+        pendingStart = null
+        if (!requested) return
+        val wait = limiter.waitMs()
+        if (wait > 0) {
+            // Over Android's start limit: start later, never drop the start.
+            Log.i(TAG, "Scan start held back ${wait} ms by the start limit")
+            pendingStart = Runnable {
+                pendingStart = null
+                if (requested && !requests.isActive) startScan()
+            }.also { main.postDelayed(it, wait) }
+            return
+        }
         val adapter = adapter()
         val enabled = try {
             adapter?.isEnabled == true
@@ -150,6 +174,7 @@ class BleScanner(
         val scanner = adapter?.bluetoothLeScanner ?: return defer("No Bluetooth LE scanner", retryMs = RETRY_MS)
         val coded = codedPhy()
         val request = requests.begin(::callback)
+        limiter.record()
         try {
             scanner.startScan(listOf(ScanFilter.Builder().build()), settings(coded), request.callback)
         } catch (error: Exception) {
@@ -160,12 +185,15 @@ class BleScanner(
         restartSkippedWhileScreenOff = false
         startedAtElapsedMs = SystemClock.elapsedRealtime()
         _deferred.value = false
+        _error.value = null
         scheduleRestart()
     }
 
     private fun stopScan() {
         cancel(restart)
         cancel(retry)
+        cancel(pendingStart)
+        pendingStart = null
         val callback = requests.stop() ?: return
         try {
             adapter()?.bluetoothLeScanner?.stopScan(callback)
@@ -185,7 +213,7 @@ class BleScanner(
         }
     }
 
-    private fun scheduleRestart() {
+    private fun scheduleRestart(delayMs: Long = RESTART_MS) {
         cancel(restart)
         restart = Runnable {
             if (!requests.isActive) return@Runnable
@@ -196,24 +224,48 @@ class BleScanner(
                 restartSkippedWhileScreenOff = true
                 scheduleRestart()
             }
-        }.also { main.postDelayed(it, RESTART_MS) }
+        }.also { main.postDelayed(it, delayMs) }
     }
 
-    /** Restarts with the current settings; a Coded PHY change first tells the core, so the footer stays true. */
+    /**
+     * Restarts with the current settings; a Coded PHY change first tells the core, so the footer stays true. A restart
+     * that would break the start limit keeps the running scan and comes back when it may start. A failed
+     * `configureScan` keeps the running scan and its settings, is reported in [error], and the restart is re-armed.
+     */
     private fun restartNow() {
+        if (reconfiguring || !requests.isActive) return
+        val wait = limiter.waitMs()
+        if (wait > 0) return scheduleRestart(wait)
         val coded = codedPhy()
         if (coded == appliedCodedPhy) {
             stopScan()
             startScan()
             return
         }
-        scope.launch {
-            withContext(io) { core.await().configureScan(environment(coded)) }
-            withContext(Dispatchers.Main.immediate) {
-                if (requested) {
+        reconfiguring = true
+        cancel(restart)
+        scope.launch(Dispatchers.Main.immediate) {
+            val configured = try {
+                withContext(io) { core.await().configureScan(environment(coded)) }
+                true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Log.w(TAG, "configureScan failed; keeping the current PHY", failure)
+                _error.value = "The scan settings could not change (${failure.message ?: failure::class.java.simpleName})"
+                false
+            } finally {
+                reconfiguring = false
+            }
+            when {
+                // The recording ended meanwhile: stopAndDrain already stopped everything.
+                !requested -> Unit
+                configured -> {
                     stopScan()
                     startScan()
                 }
+                requests.isActive -> scheduleRestart()
+                else -> startScan()
             }
         }
     }
