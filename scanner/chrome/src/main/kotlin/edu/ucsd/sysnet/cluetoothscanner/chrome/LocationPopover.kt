@@ -3,7 +3,8 @@ package edu.ucsd.sysnet.cluetoothscanner.chrome
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -40,17 +41,18 @@ fun locationActionLabel(action: LocationStatus.Action?): String? = when (action)
 }
 
 /**
- * P-5: the location popover's content, anchored by :map above the warning button (E places it). At most 260 dp
- * wide, `--panel`, radius 28 (concentric with its small pill button), 12 dp padding, `--shadow-raised`. A tap outside
+ * P-5: the location popover's content, anchored by :map above the warning button (E places it). It is
+ * `min(260 dp, the available width − 2 × --edge)` wide (a fixed width, not the text's), `--panel`, radius 28 (concentric with its small pill button), 12 dp padding, `--shadow-raised`. A tap outside
  * and the location becoming usable close it (E and :app).
  */
 @Composable
 fun LocationPopover(status: LocationStatus, onAction: (LocationStatus.Action) -> Unit, modifier: Modifier = Modifier) {
     val message = locationMessage(status) ?: return
     val shape = RoundedCornerShape(Concentric.popover)
+    BoxWithConstraints(modifier) {
     Column(
-        modifier
-            .widthIn(max = SpecValues.popoverMaxWidth)
+        Modifier
+            .width(minOf(SpecValues.popoverMaxWidth, maxWidth - Tokens.edge * 2))
             .tokenShadow(CluetoothTheme.shadows.shadowRaised, shape)
             .clip(shape)
             .background(CluetoothTheme.colors.panel)
@@ -64,5 +66,6 @@ fun LocationPopover(status: LocationStatus, onAction: (LocationStatus.Action) ->
             style = CluetoothTheme.type.control.copy(fontSize = Css.LocPop_P.fontSize.sp, lineHeight = Css.LocPop_P.lineHeight.sp),
         )
         if (label != null) Button(label, { onAction(status.action!!) }, kind = ButtonKind.Primary, small = true)
+    }
     }
 }

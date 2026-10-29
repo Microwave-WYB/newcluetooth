@@ -99,16 +99,41 @@ fun RecorderControl(
     searching: Boolean = false,
     miniMap: @Composable (Modifier) -> Unit = {},
 ) {
+    val groupW = rememberRecorderGroupWidth(ui.elapsedMs)
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val g = RecorderGeometry.compute(ui.form, tablet, maxWidth, maxHeight, groupW, bottomCover, searching)
+        RecorderLayer(ui, g, actions, tablet, miniMap, catchOutside = true)
+    }
+}
+
+/** The measured dot-and-time group: the dot, `.rec-open`'s 8 dp gap and the tabular time. */
+@Composable
+fun rememberRecorderGroupWidth(elapsedMs: Long): Dp {
+    val timeStyle = CluetoothTheme.type.body.copy(fontWeight = Weights.Medium).tabular()
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val timeW = with(density) { measurer.measure(Format.elapsed(elapsedMs), timeStyle).size.width.toDp() }
+    return Tokens.recDot + Css.RecOpen.gap + timeW
+}
+
+/**
+ * The recorder drawn at [g] (absolute within its parent), animating to each new geometry. [catchOutside] adds the
+ * full-screen layer that collapses the open panel (R-4); the gallery's static cells leave it out.
+ */
+@Composable
+fun RecorderLayer(
+    ui: RecorderUi,
+    g: RecorderGeometry,
+    actions: RecorderActions,
+    tablet: Boolean,
+    miniMap: @Composable (Modifier) -> Unit = {},
+    catchOutside: Boolean = true,
+) {
     val c = CluetoothTheme.colors
     val m = CluetoothTheme.motion
     val timeStyle = CluetoothTheme.type.body.copy(fontWeight = Weights.Medium).tabular()
     val time = Format.elapsed(ui.elapsedMs)
-    val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    val timeW = with(density) { measurer.measure(time, timeStyle).size.width.toDp() }
-    val groupW = Tokens.recDot + Css.RecOpen.gap + timeW
-    BoxWithConstraints(modifier.fillMaxSize()) {
-        val g = RecorderGeometry.compute(ui.form, tablet, maxWidth, maxHeight, groupW, bottomCover, searching)
+    run {
         val x by animateDpAsState(g.x, m.morph(), label = "recX")
         val y by animateDpAsState(g.y, m.morph(), label = "recY")
         val w by animateDpAsState(g.width, m.morph(), label = "recW")
@@ -126,7 +151,7 @@ fun RecorderControl(
         val extraAlpha by animateFloatAsState(if (panel) 1f else 0f, if (panel) m.spec(Tokens.tFastMs, Tokens.tFastMs) else m.fast(), label = "extraA")
         val shape = RoundedCornerShape(r)
 
-        if (panel) {
+        if (panel && catchOutside) {
             Box(
                 Modifier.fillMaxSize().testTag("recorderCatch")
                     .clickable(remember { MutableInteractionSource() }, null, onClick = actions.onCollapse),
