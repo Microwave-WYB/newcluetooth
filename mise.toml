@@ -1,7 +1,7 @@
 monorepo_root = true
 
 [monorepo]
-config_roots = ["db", "data-sync", "cluetooth-core", "scanner"]
+config_roots = ["db", "data-sync", "cluetooth-core", "scanner", "infra/data"]
 
 [tools]
 python = "3.14"

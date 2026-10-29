@@ -295,6 +295,29 @@ delete and aborts the rollback.
   `docker update --restart unless-stopped cluetooth-db`, no recreate, and in
   the compose file, now `infra/data/compose.yaml`). Before that it stayed down after a host reboot.
 
+## AndroZoo APK list (androzoo.apks)
+
+The AndroZoo list (`latest.csv.gz`, public, ~3.5 GB gzipped, ~25M rows) lives in the scan
+database as `androzoo.apks` (primary key `sha256`; indexes on `pkg_name` and
+`(pkg_name, vercode)`); `androzoo.sync_state` records what it was loaded from. Agents query it
+as role `androzoo_ro` (URL file `~/.config/androzoo-db/url`, tool `androzoo-sql`); they never
+read the CSV.
+
+The job is `infra/data/androzoo` (Node, service `androzoo-sync`, profile `androzoo`):
+
+- **Daily check** at `ANDROZOO_SYNC_AT` (UTC): HEAD the list and compare ETag, Last-Modified and
+  Content-Length with `sync_state`. Unchanged: nothing else happens.
+- **Download**: 10 concurrent Range segments with `If-Range`; a failed segment is retried on its
+  own from where it stopped; sizes are checked before the parts are joined. If it stays
+  incomplete the run fails, the table stays as it is, and the failure is logged.
+- **Load**: gunzip stream, COPY into an unlogged staging table, build the typed table and its
+  indexes, then drop the old table and rename the new one in one transaction. Only the newest
+  file stays in the job's own volume (`androzoo-data`), outside the agents' workspace.
+- Steps: `mise run //infra/data:androzoo-schema`, `androzoo-initial-load` (one-off, from an
+  existing file), `androzoo-schedule`, `androzoo-sync` (check now), `androzoo-test`.
+- Peak disk during a reload is about the old table plus the new one plus staging (~30 GB) plus
+  the download and its parts (~7 GB).
+
 ## Opt-in services: pgweb and a separate db tunnel
 
 Neither runs today; both are profiles in `infra/data/compose.yaml`, so a plain
