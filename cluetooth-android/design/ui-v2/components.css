@@ -299,8 +299,9 @@ button.item:active { background: var(--fill2); }
 .stack-sheet .sheet-body { touch-action: pan-y; }
 .stack-sheet.open:not(.full) .sheet-body { overflow-y: hidden; }
 /* every pushed sheet's header: its content, and the same close button (X) at the top right */
-.sheet-top { flex: none; position: relative; min-height: calc(var(--icon-btn) + 12px); padding-right: calc(var(--edge) + var(--icon-btn) + 8px); touch-action: pan-x; cursor: grab; }
-.sheet-top > .ib { position: absolute; top: 0; right: var(--edge); }
+.sheet-top { flex: none; position: relative; min-height: calc(var(--rb) + 8px); padding-right: calc(var(--edge) + var(--rb) + 8px); touch-action: pan-x; cursor: grab; }
+/* the X: the size of the search button (--rb) and its right inset, so the two share one vertical column */
+.sheet-top > .ib { position: absolute; top: 0; right: var(--edge); width: var(--rb); height: var(--rb); }
 .sheet-kicker { display: block; padding: 8px var(--gutter) 0; font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
 /* a sheet below the top one sits at the top sheet's height, covered */
 .sheet.sheet.open.following { transform: translateY(var(--follow-y)); }
@@ -491,14 +492,15 @@ button.item:active { background: var(--fill2); }
 .phone.tablet .sheet .sheet-body { overflow-y: auto; touch-action: pan-y; }
 .phone.tablet .disc-head, .phone.tablet .sheet-top, .phone.tablet .handle { cursor: pointer; }
 /* ☰ and search sit in the panel's header row */
-.phone.tablet .menu-btn { top: calc(var(--edge) + 8px); left: calc(var(--edge) + 8px); box-shadow: none; z-index: 96; }
-.phone.tablet .search-box { top: calc(var(--edge) + 8px); right: calc(100% - var(--edge) - var(--panel-w) + 8px); box-shadow: none; background: var(--fill2); }
-.phone.tablet .search-box.open { width: calc(var(--panel-w) - 16px); }
+.phone.tablet .menu-btn { top: calc(var(--edge) + var(--panel-inset)); left: calc(var(--edge) + var(--panel-inset)); box-shadow: none; z-index: 96; }
+.phone.tablet .search-box { top: calc(var(--edge) + var(--panel-inset)); right: calc(100% - var(--edge) - var(--panel-w) + var(--panel-inset)); box-shadow: none; background: var(--fill2); }
+.phone.tablet .search-box.open { width: calc(var(--panel-w) - 2 * var(--panel-inset)); }
+.phone.tablet .sheet-top > .ib { right: var(--panel-inset); } /* in the X column of the panel header's search button */
 .phone.tablet.side-open .search-box, .phone.tablet.side-open .main { transform: none; }
 /* search: results in the panel, no full-screen page; search state's bar in the panel's header row */
 .phone.tablet .page.search-page { left: var(--edge); top: var(--edge); bottom: var(--edge); right: auto; width: var(--panel-w); border-radius: var(--r-pop); box-shadow: var(--shadow-raised); background: var(--panel); overflow: hidden; }
 .phone.tablet .scroll.search-results { top: var(--panel-row); }
-.phone.tablet .search-bar { top: calc(var(--edge) + 8px); left: calc(var(--edge) + 8px); right: auto; width: calc(var(--panel-w) - 16px); box-shadow: none; background: var(--fill2); }
+.phone.tablet .search-bar { top: calc(var(--edge) + var(--panel-inset)); left: calc(var(--edge) + var(--panel-inset)); right: auto; width: calc(var(--panel-w) - 2 * var(--panel-inset)); box-shadow: none; background: var(--fill2); }
 .phone.tablet .search-area, .phone.tablet.recording .search-area { top: var(--edge); left: calc((var(--edge) + var(--panel-w) + 100%) / 2); }
 /* the recorder stays at the bottom right of the map: the FAB widens in place into the capsule (FAB height) and its
    panel grows upward; locate / warning sit right above it and move up while the panel is open */

@@ -88,7 +88,8 @@
   --bp-medium: 600px;           /* Material window size classes: compact < 600 dp <= medium < 840 dp <= expanded */
   --bp-expanded: 840px;
   --panel-w: 400px;             /* tablet: the floating left panel */
-  --panel-row: calc(var(--rb) + 16px); /* tablet: its top row (☰, search) */
+  --panel-inset: 8px;           /* tablet: the inset of the panel header's buttons (☰, search, the X) */
+  --panel-row: calc(var(--rb) + 2 * var(--panel-inset)); /* tablet: its top row (☰, search) */
   --drawer-tablet-w: 360px;     /* tablet: the sessions drawer */
   --recorder-tablet-w: 420px;   /* tablet: the recorder's expanded panel */
   --edge: 12px;            /* float controls' inset from the frame */
