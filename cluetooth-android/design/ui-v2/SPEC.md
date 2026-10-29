@@ -283,6 +283,11 @@ Each component is built once. Its size, color and state rules come from these to
 - **S-10 Header drag.** The whole header drags the sheet: the handle, the header row and its controls. Within the slop
   (G-13) it is a tap and the control works. Past the slop, vertically, it is a drag: the control under the finger
   doesn't fire and its press is cancelled. A mostly horizontal move is ignored.
+- **S-10a 1:1 tracking.** From the moment a drag starts until release, the sheet's top edge moves exactly as far as the
+  finger, with no lag, no easing and no transition while the finger is down. The slop distance (G-13) is included,
+  so there is no jump when the drag begins. When the content scrolls, as in S-13, the sum of the sheet movement and
+  the content scroll equals the finger movement. Note that the web prototype does not track exactly 1:1; follow this
+  rule, not the prototype, here.
 - **S-11 Tap on the handle or header background.** From Collapsed it goes up one state; from any other state it goes to
   Collapsed.
 - **S-12 Header controls raise the root.** Tapping any control in the Discover sheet's header while it is Collapsed

@@ -860,9 +860,10 @@
     Stack.entries.forEach((e) => {
       const below = e.el !== top;
       e.el.classList.toggle("following", below);
-      e.el.classList.toggle("dragging", below && liveY != null);
-      if (below) e.el.style.setProperty("--follow-y", `${y}px`);
-      else e.el.style.removeProperty("--follow-y");
+      if (below) {
+        e.el.classList.toggle("dragging", liveY != null); // the sheets below track the drag without a transition
+        e.el.style.setProperty("--follow-y", `${y}px`);
+      } else e.el.style.removeProperty("--follow-y"); // the dragged sheet's own .dragging belongs to its drag handler
     });
   }
   /** The scrim shows only while a pushed sheet is on top at Full; tapping it pops one level. */
