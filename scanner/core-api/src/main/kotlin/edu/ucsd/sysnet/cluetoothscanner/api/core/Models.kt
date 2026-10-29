@@ -92,6 +92,8 @@ data class CoreRecordingState(
     val activeBeforeMs: Long, val runningSinceMs: Long?,
     /** Shown devices (display filter applied). */
     val deviceCount: Int, val distanceM: Double,
+    /** SPEC R-10: paused because storage is full; resuming needs free space above the floor. */
+    val pausedForStorage: Boolean = false,
 )
 
 // ---- §2.4 Ingest ----
@@ -212,6 +214,11 @@ sealed interface CoreEvent {
     data object UploadNeeded : CoreEvent
     /** Also covers persistence failures. */
     data class StorageWarning(val message: String) : CoreEvent
+    /**
+     * SPEC R-10: free space fell below 200 MB or a write failed for lack of space. Writing stopped and the recording
+     * paused (`pausedForStorage`); [droppedScans] buffered rows could not be stored. Show the storage-full dialog.
+     */
+    data class StorageFull(val freeBytes: Long, val droppedScans: Long) : CoreEvent
 }
 
 // ---- §2.7 GATT view ----
@@ -243,6 +250,12 @@ data class StorageStats(val databaseBytes: Long, val rawFilesBytes: Long, val pe
 enum class ExportFormat { ParquetRaw, Csv, SqliteSnapshot }
 data class PreparedExport(val exportId: String, val localPath: String, val suggestedFileName: String,
                           val fileCount: Long, val sizeBytes: Long)
+/**
+ * SPEC R-10: the free space now and what each storage-full action frees: [uploadedRawBytes] for
+ * `deleteUploadedRaw`, [localDatabaseBytes] (an estimate) for `clearLocalDatabase`.
+ */
+data class Reclaimable(val freeBytes: Long, val uploadedRawBytes: Long, val localDatabaseBytes: Long)
+
 sealed interface DeleteOutcome {
     data class Deleted(val sessions: Int) : DeleteOutcome
     data class DeletedPendingKept(val pending: Int) : DeleteOutcome

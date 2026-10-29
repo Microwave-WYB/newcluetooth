@@ -31,11 +31,11 @@ use super::db;
 use super::error::CoreError;
 use super::keys::addr_of;
 use super::live::{self, LiveState};
-use super::machine::{self, Control, EpochMs, Event, Millis, Reply, SessionUuid};
+use super::machine::{self, Control, EpochMs, Event, Millis, Reply, SessionRow, SessionUuid};
 use super::query::{self, Ctx};
 use super::store::{Obs, RoutePoint, Store, haversine_m};
 use super::types::*;
-use super::{adv, gatt_view, store};
+use super::{adv, gatt_view, space, store};
 
 pub const API_VERSION: u32 = 8;
 
@@ -303,7 +303,6 @@ struct Runner {
     catalog: Arc<Catalog>,
     data_dir: PathBuf,
     stale_after_ms: i64,
-    session_row: Option<i64>,
     pending: Vec<Obs>,
     route: Vec<RoutePoint>,
     last_route: Option<RoutePoint>,
@@ -338,9 +337,10 @@ impl Runner {
         use machine::Effect as E;
         match effect {
             E::CreateSession { uuid, started } => {
-                let result = self.store.create_session(&uuid.0, started.0).map(|row| {
-                    self.session_row = Some(row);
-                });
+                let result = self
+                    .store
+                    .create_session(&uuid.0, started.0)
+                    .map(SessionRow);
                 queue.push_back(Event::SessionCreated { result });
             }
             E::ResetLive => {
@@ -401,16 +401,20 @@ impl Runner {
                 }
             }
             E::ClearFixes => self.fixes.clear(),
-            E::Commit { now } => {
+            E::Commit { row, now } => {
                 let batch = Batch {
                     obs: std::mem::take(&mut self.pending),
                     route: std::mem::take(&mut self.route),
                 };
-                let result = match self.session_row {
-                    Some(row) => self
-                        .store
-                        .commit(row, &batch.obs, &batch.route, &self.catalog),
-                    None => Err(CoreError::NotRecording),
+                let result = match self
+                    .store
+                    .commit(row.0, &batch.obs, &batch.route, &self.catalog)
+                {
+                    // R-10: report the free space measured now
+                    Err(CoreError::StorageFull { .. }) => Err(CoreError::StorageFull {
+                        free_bytes: space::free_bytes(&self.data_dir).unwrap_or(0),
+                    }),
+                    other => other,
                 };
                 match &result {
                     Ok(()) => self.committed_route = batch.route,
@@ -426,20 +430,31 @@ impl Runner {
                     self.route.extend(later);
                 }
             }
-            E::StorePause { at } => self.warn_on(|r, row| r.store.pause(row, at.0)),
-            E::StoreResume { at } => self.warn_on(|r, row| r.store.resume(row, at.0)),
+            E::DropPending => {
+                self.pending.clear();
+                self.route.clear();
+                self.failed = None;
+            }
+            E::StorePause { row, at } => {
+                let result = self.store.pause(row.0, at.0);
+                self.warn(result);
+            }
+            E::StoreResume { row, at } => {
+                let result = self.store.resume(row.0, at.0);
+                self.warn(result);
+            }
             E::Finish {
+                row,
                 ended,
                 active,
                 was_paused,
             } => {
-                self.warn_on(|r, row| {
-                    if was_paused {
-                        r.store.resume(row, ended.0)?;
-                    }
-                    r.store.finish(row, 2, ended.0, active.0)
-                });
-                self.session_row = None;
+                let result = match was_paused {
+                    true => self.store.resume(row.0, ended.0),
+                    false => Ok(()),
+                }
+                .and_then(|()| self.store.finish(row.0, 2, ended.0, active.0));
+                self.warn(result);
             }
             E::Delta { now, force } => self.delta(now.0, force),
             E::Snapshot => {
@@ -457,20 +472,29 @@ impl Runner {
                 reason: reason.into(),
             }),
             E::EmitStorageWarning(message) => self.emit(CoreEvent::StorageWarning { message }),
+            E::EmitStorageFull {
+                free_bytes,
+                dropped_scans,
+            } => self.emit(CoreEvent::StorageFull {
+                free_bytes,
+                dropped_scans,
+            }),
             E::Reply(r) => return Some(r),
         }
         None
     }
 
-    /// Runs a store write for the current session; a failure becomes a StorageWarning.
-    fn warn_on(&mut self, f: impl FnOnce(&mut Runner, i64) -> Result<(), CoreError>) {
-        if let Some(row) = self.session_row
-            && let Err(e) = f(self, row)
-        {
+    /// A failed bookkeeping write becomes a StorageWarning.
+    fn warn(&self, result: Result<(), CoreError>) {
+        if let Err(e) = result {
             self.emit(CoreEvent::StorageWarning {
                 message: e.to_string(),
             });
         }
+    }
+
+    fn db_path(&self) -> PathBuf {
+        self.data_dir.join("local.db")
     }
 
     fn emit(&self, event: CoreEvent) {
@@ -481,9 +505,9 @@ impl Runner {
         Snapshot {
             hide_unnamed_apple: self.control.hide_unnamed_apple,
             stale_after_ms: self.stale_after_ms,
-            live: match (self.control.rec.session(), self.session_row) {
+            live: match (self.control.rec.session(), self.control.rec.row()) {
                 (Some(s), Some(row)) => Some(LiveSnapshot {
-                    session: row,
+                    session: row.0,
                     uuid: s.uuid.0.clone(),
                     seq: self.live.seq,
                     current: self.live.current.clone(),
@@ -496,7 +520,7 @@ impl Runner {
     fn state(&self) -> RecordingState {
         let rec = &self.control.rec;
         let (active_before, since) = rec.active();
-        let (count, distance): (u32, f64) = match self.session_row {
+        let (count, distance): (u32, f64) = match self.control.rec.row() {
             None => (0, 0.0),
             Some(row) => self
                 .store
@@ -504,7 +528,7 @@ impl Runner {
                 .query_row(
                     "SELECT CASE WHEN ?2 THEN device_count_shown ELSE device_count END, distance_m
                      FROM sessions WHERE id = ?1",
-                    rusqlite::params![row, self.control.hide_unnamed_apple],
+                    rusqlite::params![row.0, self.control.hide_unnamed_apple],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .unwrap_or((0, 0.0)),
@@ -518,6 +542,7 @@ impl Runner {
             running_since_ms: since.map(|s| s.0),
             device_count: if session.is_some() { count } else { 0 },
             distance_m: if session.is_some() { distance } else { 0.0 },
+            paused_for_storage: rec.paused_for_storage(),
         }
     }
 
@@ -528,7 +553,9 @@ impl Runner {
             return;
         }
         let state = self.state();
-        let (Some(session), Some(row)) = (self.control.rec.session(), self.session_row) else {
+        let (Some(session), Some(SessionRow(row))) =
+            (self.control.rec.session(), self.control.rec.row())
+        else {
             return;
         };
         let input = live::DeltaInput {
@@ -645,7 +672,7 @@ impl Runner {
     }
 
     fn current_session(&self, now: i64) -> Result<Option<SessionSummary>, CoreError> {
-        let Some(row) = self.session_row else {
+        let Some(SessionRow(row)) = self.control.rec.row() else {
             return Ok(None);
         };
         let ctx = Ctx {
@@ -695,12 +722,14 @@ fn spawn_writer(runner: Runner) -> Result<mpsc::Sender<WriterMsg>, CoreError> {
 fn spawn_ticker(
     writer: mpsc::Sender<WriterMsg>,
     every: Duration,
+    data_dir: PathBuf,
 ) -> Result<mpsc::Sender<()>, CoreError> {
     let (stop, stopped) = mpsc::channel::<()>();
     spawn("ct-tick", move || {
         while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(every) {
             let tick = Event::Tick {
                 now: EpochMs(now_ms()),
+                free: space::free_bytes(&data_dir),
             };
             if writer.send(WriterMsg::Event(tick, None)).is_err() {
                 break;
@@ -715,6 +744,7 @@ fn spawn_ticker(
 #[derive(uniffi::Object)]
 pub struct Core {
     catalog: Arc<Catalog>,
+    data_dir: PathBuf,
     writer: mpsc::Sender<WriterMsg>,
     reader: mpsc::Sender<ReaderMsg>,
     interrupt: Arc<InterruptHandle>,
@@ -796,7 +826,6 @@ impl Core {
             catalog: catalog.clone(),
             data_dir: dir.to_path_buf(),
             stale_after_ms,
-            session_row: None,
             pending: Vec::new(),
             route: Vec::new(),
             last_route: None,
@@ -812,12 +841,14 @@ impl Core {
             Some(spawn_ticker(
                 writer.clone(),
                 Duration::from_millis(config.durability_interval_ms.max(1)),
+                dir.to_path_buf(),
             )?)
         } else {
             None
         };
         Ok(Arc::new(Core {
             catalog,
+            data_dir: dir.to_path_buf(),
             writer,
             reader,
             interrupt,
@@ -939,8 +970,21 @@ impl Core {
         self.ask_unit(Event::Pause { now: EpochMs(now) })
     }
 
+    #[cfg(test)]
     pub(crate) fn resume_recording_at(&self, now: i64) -> Result<(), CoreError> {
-        self.ask_unit(Event::Resume { now: EpochMs(now) })
+        self.resume_recording_free_at(now, None)
+    }
+
+    /// Resume with the free space measured by the caller (R-10).
+    pub(crate) fn resume_recording_free_at(
+        &self,
+        now: i64,
+        free: Option<u64>,
+    ) -> Result<(), CoreError> {
+        self.ask_unit(Event::Resume {
+            now: EpochMs(now),
+            free,
+        })
     }
 
     pub(crate) fn stop_recording_at(&self, now: i64) -> Result<String, CoreError> {
@@ -972,8 +1016,23 @@ impl Core {
     /// The commit tick with an explicit clock; waits until it was handled.
     #[cfg(test)]
     pub(crate) fn tick_at(&self, now: i64) {
-        let _ = self.tell(Event::Tick { now: EpochMs(now) });
+        self.tick_free_at(now, None);
+    }
+
+    /// The commit tick with an explicit clock and free space; waits until it was handled.
+    #[cfg(test)]
+    pub(crate) fn tick_free_at(&self, now: i64, free: Option<u64>) {
+        let _ = self.tell(Event::Tick {
+            now: EpochMs(now),
+            free,
+        });
         let _ = self.job(|_| ());
+    }
+
+    /// Every commit fails with `error` until called with `None`.
+    #[cfg(test)]
+    pub(crate) fn fail_commits(&self, error: Option<CoreError>) {
+        let _ = self.job(move |r| r.store.fail_commits = error);
     }
 
     #[cfg(test)]
@@ -1059,9 +1118,10 @@ impl Core {
         self.pause_recording_at(now_ms())
     }
 
-    /// [W] The same session.
+    /// [W] The same session. After a storage-full pause (R-10) it needs free space above the floor, else
+    /// `StorageFull`.
     pub fn resume_recording(&self) -> Result<(), CoreError> {
-        self.resume_recording_at(now_ms())
+        self.resume_recording_free_at(now_ms(), space::free_bytes(&self.data_dir))
     }
 
     /// [W] Commit and finish; returns the session id.
@@ -1287,6 +1347,43 @@ impl Core {
         Err(not_yet("acknowledge_export"))
     }
 
+    /// [W] SPEC R-10: the free space now and what each storage-full action would free.
+    pub async fn reclaimable(&self) -> Result<Reclaimable, CoreError> {
+        self.job_async(|r| {
+            let keep = r.control.rec.row().map(|row| row.0);
+            Ok(Reclaimable {
+                free_bytes: space::free_bytes(&r.data_dir).unwrap_or(0),
+                uploaded_raw_bytes: space::uploaded_raw_bytes(&r.data_dir)?,
+                local_database_bytes: r.store.clearable_bytes(keep, &r.db_path())?,
+            })
+        })
+        .await?
+    }
+
+    /// [W] SPEC R-10 "Delete uploaded raw files": only files that already uploaded (`archive/`); returns the bytes
+    /// freed. Files not yet uploaded are never touched.
+    pub async fn delete_uploaded_raw(&self) -> Result<u64, CoreError> {
+        self.job_async(|r| space::delete_uploaded_raw(&r.data_dir))
+            .await?
+    }
+
+    /// [W] SPEC R-10 "Clear local database": the stored history of every session except the current one; raw files
+    /// (uploaded or not) are kept. Returns the bytes freed. Call it after `delete_uploaded_raw`, which frees the
+    /// room the vacuum needs.
+    pub async fn clear_local_database(&self) -> Result<u64, CoreError> {
+        self.job_async(|r| {
+            let keep = r.control.rec.row().map(|row| row.0);
+            let db_path = r.db_path();
+            let freed = r.store.clear_except(keep, &db_path)?;
+            r.emit(CoreEvent::SessionsChanged);
+            r.emit(CoreEvent::DataInvalidated {
+                reason: "local database cleared".into(),
+            });
+            Ok(freed)
+        })
+        .await?
+    }
+
     /// [F]+[W] User-initiated only.
     pub async fn delete_local_data(
         &self,
@@ -1345,6 +1442,7 @@ mod tests {
             running_since_ms: Some(0),
             device_count: 0,
             distance_m: 0.0,
+            paused_for_storage: false,
         }
     }
 

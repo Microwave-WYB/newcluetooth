@@ -36,6 +36,10 @@ impl std::ops::Add for Millis {
     }
 }
 
+/// A session's `sessions.id`; only states after the row exists carry it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SessionRow(pub i64);
+
 /// A session's UUIDv7 (`sessions.uuid`, the Parquet `scan_session_id`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SessionUuid(pub String);
@@ -49,6 +53,19 @@ pub(crate) struct Session {
     pub last_commit: EpochMs,
 }
 
+/// Why a recording is paused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PauseReason {
+    User,
+    /// SPEC R-10: free space below [`STORAGE_FLOOR_BYTES`] or a write failed for lack of space.
+    StorageFull {
+        free_bytes: u64,
+    },
+}
+
+/// SPEC R-10: writing stops below this much free space on the data volume.
+pub(crate) const STORAGE_FLOOR_BYTES: u64 = 200_000_000;
+
 /// The recording lifecycle. `Pausing` and `Stopping` wait for the commit that must precede them; each state
 /// carries exactly the data valid in it.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,22 +75,27 @@ pub(crate) enum Rec {
     Starting(Session),
     Recording {
         session: Session,
+        row: SessionRow,
         active_before: Millis,
         running_since: EpochMs,
     },
     Pausing {
         session: Session,
+        row: SessionRow,
         active_before: Millis,
         running_since: EpochMs,
         at: EpochMs,
     },
     Paused {
         session: Session,
+        row: SessionRow,
         active_before: Millis,
+        reason: PauseReason,
     },
     /// `running_since` is `None` when the stop came while paused.
     Stopping {
         session: Session,
+        row: SessionRow,
         active_before: Millis,
         running_since: Option<EpochMs>,
         at: EpochMs,
@@ -89,6 +111,36 @@ impl Rec {
             | Rec::Pausing { session: s, .. }
             | Rec::Paused { session: s, .. }
             | Rec::Stopping { session: s, .. } => Some(s),
+        }
+    }
+
+    /// The session row; `None` while idle or while it is being created.
+    pub fn row(&self) -> Option<SessionRow> {
+        match self {
+            Rec::Idle | Rec::Starting(_) => None,
+            Rec::Recording { row, .. }
+            | Rec::Pausing { row, .. }
+            | Rec::Paused { row, .. }
+            | Rec::Stopping { row, .. } => Some(*row),
+        }
+    }
+
+    /// SPEC R-10: paused because storage is full (`RecordingState.paused_for_storage`).
+    pub fn paused_for_storage(&self) -> bool {
+        match self {
+            Rec::Paused {
+                reason: PauseReason::StorageFull { .. },
+                ..
+            } => true,
+            Rec::Idle
+            | Rec::Starting(_)
+            | Rec::Recording { .. }
+            | Rec::Pausing { .. }
+            | Rec::Paused {
+                reason: PauseReason::User,
+                ..
+            }
+            | Rec::Stopping { .. } => false,
         }
     }
 
@@ -145,6 +197,47 @@ impl Rec {
     }
 }
 
+/// The size of the pending buffer: rows, and bytes by the v3 input estimate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Buffer {
+    pub rows: u64,
+    pub bytes: u64,
+}
+
+impl Buffer {
+    fn plus(self, rows: &[Accepted]) -> Buffer {
+        Buffer {
+            rows: self.rows + rows.len() as u64,
+            bytes: self.bytes + rows.iter().map(|a| estimate(&a.input)).sum::<u64>(),
+        }
+    }
+
+    fn exceeds(self, cap: Buffer) -> bool {
+        self.rows > cap.rows || self.bytes > cap.bytes
+    }
+}
+
+/// The pending buffer's cap. A batch that would pass it commits at once; while commits fail, ingest refuses it
+/// with [`CoreError::StorageFailing`], so memory stays below the cap plus one batch.
+pub(crate) const PENDING_CAP: Buffer = Buffer {
+    rows: 20_000,
+    bytes: 16 * 1024 * 1024,
+};
+
+/// The longest wait between commit attempts while commits fail.
+const MAX_BACKOFF: Millis = Millis(60_000);
+
+/// Whether commits reach `local.db`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Storage {
+    Healthy,
+    /// `attempts` commits failed in a row; the next interval commit waits until `retry_at`.
+    Failing {
+        attempts: u32,
+        retry_at: EpochMs,
+    },
+}
+
 /// The writer's control state: immutable, replaced by every step.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Control {
@@ -152,6 +245,10 @@ pub(crate) struct Control {
     pub hide_unnamed_apple: bool,
     pub has_listener: bool,
     pub durability: Millis,
+    /// What the pending buffer holds now: appended rows, emptied by a successful commit.
+    pub buffer: Buffer,
+    pub cap: Buffer,
+    pub storage: Storage,
 }
 
 impl Control {
@@ -161,7 +258,28 @@ impl Control {
             hide_unnamed_apple: true,
             has_listener: false,
             durability,
+            buffer: Buffer::default(),
+            cap: PENDING_CAP,
+            storage: Storage::Healthy,
         }
+    }
+
+    /// Whether an interval commit is due: `durability` after the last attempt, or after the backoff while failing.
+    fn commit_due(&self, session: &Session, now: EpochMs) -> bool {
+        match self.storage {
+            Storage::Healthy => now - session.last_commit >= self.durability,
+            Storage::Failing { retry_at, .. } => now >= retry_at,
+        }
+    }
+
+    /// The wait after `attempts` failed commits: the interval, doubled per failure, at most [`MAX_BACKOFF`] (or
+    /// the interval when that is longer).
+    fn backoff(&self, attempts: u32) -> Millis {
+        let doubled = self
+            .durability
+            .0
+            .saturating_mul(1i64 << attempts.saturating_sub(1).min(16));
+        Millis(doubled.min(MAX_BACKOFF.0.max(self.durability.0)))
     }
 }
 
@@ -170,6 +288,14 @@ impl Control {
 pub(crate) struct Accepted {
     pub key: i64,
     pub input: ScanObservationInput,
+}
+
+/// The v3 input estimate of one row (`MAX_INPUT_BATCH_ESTIMATED_BYTES` counts the same way).
+fn estimate(o: &ScanObservationInput) -> u64 {
+    INPUT_FIXED_ESTIMATE_BYTES
+        + o.raw.len() as u64
+        + o.addr.len() as u64
+        + o.local_name.as_ref().map_or(0, |n| n.len() as u64)
 }
 
 /// What the writer is asked to do, or the result of an effect it ran.
@@ -183,8 +309,10 @@ pub(crate) enum Event {
     Pause {
         now: EpochMs,
     },
+    /// `free` is the data volume's free space, `None` when it could not be read.
     Resume {
         now: EpochMs,
+        free: Option<u64>,
     },
     Stop {
         now: EpochMs,
@@ -203,6 +331,7 @@ pub(crate) enum Event {
     /// The 5 s timer: commits while recording whether or not scans arrive.
     Tick {
         now: EpochMs,
+        free: Option<u64>,
     },
     SetDisplay {
         hide_unnamed_apple: bool,
@@ -215,7 +344,7 @@ pub(crate) enum Event {
     },
     /// Result of [`Effect::CreateSession`].
     SessionCreated {
-        result: Result<(), CoreError>,
+        result: Result<SessionRow, CoreError>,
     },
     /// Result of [`Effect::Commit`].
     Committed {
@@ -253,18 +382,24 @@ pub(crate) enum Effect {
     ClearFixes,
     /// Commit the pending buffer in one transaction; answer with [`Event::Committed`].
     Commit {
+        row: SessionRow,
         now: EpochMs,
     },
     /// Put the batch of the failed commit back in front of the pending buffer.
     RestoreBatch,
+    /// Drop the pending buffer, its route points and a failed batch (R-10: they cannot be stored).
+    DropPending,
     StorePause {
+        row: SessionRow,
         at: EpochMs,
     },
     StoreResume {
+        row: SessionRow,
         at: EpochMs,
     },
     /// Mark the session completed.
     Finish {
+        row: SessionRow,
         ended: EpochMs,
         active: Millis,
         was_paused: bool,
@@ -281,6 +416,10 @@ pub(crate) enum Effect {
     EmitSessionsChanged,
     EmitDataInvalidated(&'static str),
     EmitStorageWarning(String),
+    EmitStorageFull {
+        free_bytes: u64,
+        dropped_scans: u64,
+    },
     Reply(Reply),
 }
 
@@ -294,15 +433,7 @@ pub(crate) fn validate(
             detail: format!("{} rows > {MAX_INPUT_BATCH_ROWS}", batch.len()),
         });
     }
-    let estimate: u64 = batch
-        .iter()
-        .map(|o| {
-            INPUT_FIXED_ESTIMATE_BYTES
-                + o.raw.len() as u64
-                + o.addr.len() as u64
-                + o.local_name.as_ref().map_or(0, |n| n.len() as u64)
-        })
-        .sum();
+    let estimate: u64 = batch.iter().map(estimate).sum();
     if estimate > MAX_INPUT_BATCH_ESTIMATED_BYTES {
         return Err(CoreError::InputBatchTooLarge {
             detail: format!("~{estimate} bytes > {MAX_INPUT_BATCH_ESTIMATED_BYTES}"),
@@ -321,10 +452,6 @@ pub(crate) fn validate(
 
 fn reply(e: CoreError) -> Effect {
     Effect::Reply(Reply::Failed(e))
-}
-
-fn due(session: &Session, durability: Millis, now: EpochMs) -> bool {
-    now - session.last_commit >= durability
 }
 
 /// The step. Pure: the same state and event always give the same state and effects.
@@ -354,12 +481,17 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
         },
         Event::SessionCreated { result } => match &c.rec {
             Rec::Starting(s) => match result {
-                Ok(()) => (
-                    with(Rec::Recording {
-                        session: s.clone(),
-                        active_before: Millis(0),
-                        running_since: s.started,
-                    }),
+                Ok(row) => (
+                    Control {
+                        rec: Rec::Recording {
+                            session: s.clone(),
+                            row,
+                            active_before: Millis(0),
+                            running_since: s.started,
+                        },
+                        buffer: Buffer::default(),
+                        ..c.clone()
+                    },
                     vec![
                         E::ResetLive,
                         E::Snapshot,
@@ -379,23 +511,48 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
         Event::Scans { batch, now } => match validate(batch) {
             Err(e) => same(vec![reply(e)]),
             Ok((accepted, rejected)) => match &c.rec {
-                Rec::Recording { session, .. } => {
-                    let ack = IngestAck {
-                        accepted: accepted.len() as u32,
-                        rejected,
-                        ignored_not_recording: 0,
-                    };
-                    let mut effects = vec![E::Append(accepted), E::Snapshot];
-                    if due(session, c.durability, now) {
-                        effects.push(E::Commit { now });
+                Rec::Recording { session, row, .. } => {
+                    let after = c.buffer.plus(&accepted);
+                    let over = after.exceeds(c.cap);
+                    match (&c.storage, over) {
+                        // commits fail and the buffer is full: refuse rather than grow
+                        (Storage::Failing { .. }, true) => {
+                            same(vec![reply(CoreError::Backpressure)])
+                        }
+                        (Storage::Healthy, _) | (Storage::Failing { .. }, false) => {
+                            let ack = IngestAck {
+                                accepted: accepted.len() as u32,
+                                rejected,
+                                ignored_not_recording: 0,
+                            };
+                            let mut effects = vec![E::Append(accepted), E::Snapshot];
+                            if over || c.commit_due(session, now) {
+                                effects.push(E::Commit { row: *row, now });
+                            }
+                            effects.push(E::Reply(Reply::Ack(ack)));
+                            (
+                                Control {
+                                    buffer: after,
+                                    ..c.clone()
+                                },
+                                effects,
+                            )
+                        }
                     }
-                    effects.push(E::Reply(Reply::Ack(ack)));
-                    same(effects)
                 }
+                Rec::Paused {
+                    reason: PauseReason::StorageFull { free_bytes },
+                    ..
+                } => same(vec![reply(CoreError::StorageFull {
+                    free_bytes: *free_bytes,
+                })]),
                 Rec::Idle
                 | Rec::Starting(_)
                 | Rec::Pausing { .. }
-                | Rec::Paused { .. }
+                | Rec::Paused {
+                    reason: PauseReason::User,
+                    ..
+                }
                 | Rec::Stopping { .. } => {
                     let ack = IngestAck {
                         accepted: 0,
@@ -406,10 +563,25 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                 }
             },
         },
-        Event::Tick { now } => match &c.rec {
-            Rec::Recording { session, .. } => match due(session, c.durability, now) {
-                true => same(vec![E::Commit { now }]),
-                false => same(vec![]),
+        Event::Tick { now, free } => match &c.rec {
+            Rec::Recording {
+                session,
+                row,
+                active_before,
+                running_since,
+            } => match free {
+                Some(free_bytes) if free_bytes < STORAGE_FLOOR_BYTES => paused_full(
+                    c,
+                    session.clone(),
+                    *row,
+                    *active_before + (now - *running_since),
+                    now,
+                    free_bytes,
+                ),
+                Some(_) | None => match c.commit_due(session, now) {
+                    true => same(vec![E::Commit { row: *row, now }]),
+                    false => same(vec![]),
+                },
             },
             Rec::Idle
             | Rec::Starting(_)
@@ -421,34 +593,51 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
         Event::Pause { now } => match &c.rec {
             Rec::Recording {
                 session,
+                row,
                 active_before,
                 running_since,
             } => (
                 with(Rec::Pausing {
                     session: session.clone(),
+                    row: *row,
                     active_before: *active_before,
                     running_since: *running_since,
                     at: now,
                 }),
-                vec![E::Commit { now }],
+                vec![E::Commit { row: *row, now }],
             ),
             Rec::Paused { .. } => same(vec![E::Reply(Reply::Done)]),
             Rec::Idle | Rec::Starting(_) | Rec::Pausing { .. } | Rec::Stopping { .. } => {
                 same(vec![reply(CoreError::NotRecording)])
             }
         },
-        Event::Resume { now } => match &c.rec {
+        Event::Resume { now, free } => match &c.rec {
+            Rec::Paused {
+                reason: PauseReason::StorageFull { .. },
+                ..
+            } if free.is_some_and(|f| f < STORAGE_FLOOR_BYTES) => {
+                same(vec![reply(CoreError::StorageFull {
+                    free_bytes: free.unwrap_or(0),
+                })])
+            }
             Rec::Paused {
                 session,
+                row,
                 active_before,
+                ..
             } => (
-                with(Rec::Recording {
-                    session: session.clone(),
-                    active_before: *active_before,
-                    running_since: now,
-                }),
+                Control {
+                    rec: Rec::Recording {
+                        session: session.clone(),
+                        row: *row,
+                        active_before: *active_before,
+                        running_since: now,
+                    },
+                    storage: Storage::Healthy,
+                    ..c.clone()
+                },
                 vec![
-                    E::StoreResume { at: now },
+                    E::StoreResume { row: *row, at: now },
                     E::EmitRecordingChanged,
                     E::Reply(Reply::Done),
                 ],
@@ -461,28 +650,33 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
         Event::Stop { now } => match &c.rec {
             Rec::Recording {
                 session,
+                row,
                 active_before,
                 running_since,
             } => (
                 with(Rec::Stopping {
                     session: session.clone(),
+                    row: *row,
                     active_before: *active_before,
                     running_since: Some(*running_since),
                     at: now,
                 }),
-                vec![E::Commit { now }],
+                vec![E::Commit { row: *row, now }],
             ),
             Rec::Paused {
                 session,
+                row,
                 active_before,
+                ..
             } => (
                 with(Rec::Stopping {
                     session: session.clone(),
+                    row: *row,
                     active_before: *active_before,
                     running_since: None,
                     at: now,
                 }),
-                vec![E::Commit { now }],
+                vec![E::Commit { row: *row, now }],
             ),
             Rec::Idle | Rec::Starting(_) | Rec::Pausing { .. } | Rec::Stopping { .. } => {
                 same(vec![reply(CoreError::NotRecording)])
@@ -491,6 +685,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
         Event::Configure { env } => match &c.rec {
             Rec::Recording {
                 session,
+                row,
                 active_before,
                 running_since,
             } => (
@@ -499,6 +694,7 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
                         env,
                         ..session.clone()
                     },
+                    row: *row,
                     active_before: *active_before,
                     running_since: *running_since,
                 }),
@@ -506,14 +702,18 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
             ),
             Rec::Paused {
                 session,
+                row,
                 active_before,
+                reason,
             } => (
                 with(Rec::Paused {
                     session: Session {
                         env,
                         ..session.clone()
                     },
+                    row: *row,
                     active_before: *active_before,
+                    reason: *reason,
                 }),
                 vec![E::Reply(Reply::Done)],
             ),
@@ -555,8 +755,8 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
             vec![E::SetListener, E::Reply(Reply::Done)],
         ),
         Event::Close { now } => match &c.rec {
-            Rec::Recording { .. } | Rec::Paused { .. } => {
-                same(vec![E::Commit { now }, E::Reply(Reply::Done)])
+            Rec::Recording { row, .. } | Rec::Paused { row, .. } => {
+                same(vec![E::Commit { row: *row, now }, E::Reply(Reply::Done)])
             }
             Rec::Idle | Rec::Starting(_) | Rec::Pausing { .. } | Rec::Stopping { .. } => {
                 same(vec![E::Reply(Reply::Done)])
@@ -565,8 +765,72 @@ pub(crate) fn step(c: &Control, event: Event) -> (Control, Vec<Effect>) {
     }
 }
 
-/// The result of a commit: in a recording, its delta; for a pause or stop, the transition it waited for. A failed
-/// commit restores its batch, and a pause or stop that needed it fails while the recording goes on.
+/// SPEC R-10: stop writing and pause. The pending rows cannot be stored and are dropped (and counted); the
+/// session stays open and everything committed stays.
+fn paused_full(
+    c: &Control,
+    session: Session,
+    row: SessionRow,
+    active_before: Millis,
+    at: EpochMs,
+    free_bytes: u64,
+) -> (Control, Vec<Effect>) {
+    use Effect as E;
+    (
+        Control {
+            rec: Rec::Paused {
+                session,
+                row,
+                active_before,
+                reason: PauseReason::StorageFull { free_bytes },
+            },
+            buffer: Buffer::default(),
+            storage: Storage::Healthy,
+            ..c.clone()
+        },
+        vec![
+            E::DropPending,
+            E::StorePause { row, at },
+            E::Delta {
+                now: at,
+                force: true,
+            },
+            E::EmitRecordingChanged,
+            E::EmitStorageFull {
+                free_bytes,
+                dropped_scans: c.buffer.rows,
+            },
+        ],
+    )
+}
+
+/// The effects of a finished stop.
+fn finished(
+    session: &Session,
+    row: SessionRow,
+    active_before: Millis,
+    running_since: Option<EpochMs>,
+    at: EpochMs,
+) -> Vec<Effect> {
+    use Effect as E;
+    vec![
+        E::Finish {
+            row,
+            ended: at,
+            active: active_before + running_since.map_or(Millis(0), |s| at - s),
+            was_paused: running_since.is_none(),
+        },
+        E::Snapshot,
+        E::EmitRecordingChanged,
+        E::EmitSessionsChanged,
+        E::Reply(Reply::Session(session.uuid.clone())),
+    ]
+}
+
+/// The result of a commit: in a recording, its delta; for a pause or stop, the transition it waited for.
+/// - Out of space (R-10): the batch is dropped and the recording pauses; a stop still finishes.
+/// - Any other failure restores the batch and backs off; a pause or stop that needed it fails while the recording
+///   goes on.
 fn committed(
     c: &Control,
     rec: Rec,
@@ -574,13 +838,93 @@ fn committed(
     now: EpochMs,
 ) -> (Control, Vec<Effect>) {
     use Effect as E;
-    let with = |rec: Rec| Control { rec, ..c.clone() };
     match result {
+        Err(CoreError::StorageFull { free_bytes }) => match rec {
+            Rec::Recording {
+                session,
+                row,
+                active_before,
+                running_since,
+            } => paused_full(
+                c,
+                session,
+                row,
+                active_before + (now - running_since),
+                now,
+                free_bytes,
+            ),
+            Rec::Pausing {
+                session,
+                row,
+                active_before,
+                running_since,
+                at,
+            } => {
+                let (next, mut effects) = paused_full(
+                    c,
+                    session,
+                    row,
+                    active_before + (at - running_since),
+                    at,
+                    free_bytes,
+                );
+                effects.push(E::Reply(Reply::Done));
+                (next, effects)
+            }
+            Rec::Stopping {
+                session,
+                row,
+                active_before,
+                running_since,
+                at,
+            } => {
+                let mut effects = vec![
+                    E::DropPending,
+                    E::EmitStorageFull {
+                        free_bytes,
+                        dropped_scans: c.buffer.rows,
+                    },
+                ];
+                effects.extend(finished(&session, row, active_before, running_since, at));
+                (
+                    Control {
+                        rec: Rec::Idle,
+                        buffer: Buffer::default(),
+                        storage: Storage::Healthy,
+                        ..c.clone()
+                    },
+                    effects,
+                )
+            }
+            Rec::Idle | Rec::Starting(_) | Rec::Paused { .. } => (
+                Control {
+                    rec,
+                    buffer: Buffer::default(),
+                    ..c.clone()
+                },
+                vec![
+                    E::DropPending,
+                    E::EmitStorageFull {
+                        free_bytes,
+                        dropped_scans: c.buffer.rows,
+                    },
+                ],
+            ),
+        },
         Err(e) => {
+            let attempts = match c.storage {
+                Storage::Healthy => 1,
+                Storage::Failing { attempts, .. } => attempts.saturating_add(1),
+            };
+            let storage = Storage::Failing {
+                attempts,
+                retry_at: EpochMs(now.0.saturating_add(c.backoff(attempts).0)),
+            };
             let mut effects = vec![E::RestoreBatch, E::EmitStorageWarning(e.to_string())];
             let rec = match rec {
                 Rec::Pausing {
                     session,
+                    row,
                     active_before,
                     running_since,
                     ..
@@ -588,12 +932,14 @@ fn committed(
                     effects.push(reply(e));
                     Rec::Recording {
                         session,
+                        row,
                         active_before,
                         running_since,
                     }
                 }
                 Rec::Stopping {
                     session,
+                    row,
                     active_before,
                     running_since,
                     ..
@@ -602,63 +948,77 @@ fn committed(
                     match running_since {
                         Some(running_since) => Rec::Recording {
                             session,
+                            row,
                             active_before,
                             running_since,
                         },
                         None => Rec::Paused {
                             session,
+                            row,
                             active_before,
+                            reason: PauseReason::User,
                         },
                     }
                 }
                 Rec::Idle | Rec::Starting(_) | Rec::Recording { .. } | Rec::Paused { .. } => rec,
             };
-            (with(rec), effects)
+            (
+                Control {
+                    rec,
+                    storage,
+                    ..c.clone()
+                },
+                effects,
+            )
         }
-        Ok(()) => match rec {
-            Rec::Recording { .. } => (with(rec), vec![E::Delta { now, force: false }, E::Snapshot]),
-            Rec::Pausing {
-                session,
-                active_before,
-                running_since,
-                at,
-            } => (
-                with(Rec::Paused {
+        Ok(()) => {
+            let ok = |rec: Rec| Control {
+                rec,
+                buffer: Buffer::default(),
+                storage: Storage::Healthy,
+                ..c.clone()
+            };
+            match rec {
+                Rec::Recording { .. } => {
+                    (ok(rec), vec![E::Delta { now, force: false }, E::Snapshot])
+                }
+                Rec::Pausing {
                     session,
-                    active_before: active_before + (at - running_since),
-                }),
-                vec![
-                    E::StorePause { at },
-                    // deltas stop after the one that carries Paused (§2.6)
-                    E::Delta {
-                        now: at,
-                        force: true,
-                    },
-                    E::EmitRecordingChanged,
-                    E::Reply(Reply::Done),
-                ],
-            ),
-            Rec::Stopping {
-                session,
-                active_before,
-                running_since,
-                at,
-            } => (
-                with(Rec::Idle),
-                vec![
-                    E::Finish {
-                        ended: at,
-                        active: active_before + running_since.map_or(Millis(0), |s| at - s),
-                        was_paused: running_since.is_none(),
-                    },
-                    E::Snapshot,
-                    E::EmitRecordingChanged,
-                    E::EmitSessionsChanged,
-                    E::Reply(Reply::Session(session.uuid)),
-                ],
-            ),
-            Rec::Idle | Rec::Starting(_) | Rec::Paused { .. } => (with(rec), vec![]),
-        },
+                    row,
+                    active_before,
+                    running_since,
+                    at,
+                } => (
+                    ok(Rec::Paused {
+                        session,
+                        row,
+                        active_before: active_before + (at - running_since),
+                        reason: PauseReason::User,
+                    }),
+                    vec![
+                        E::StorePause { row, at },
+                        // deltas stop after the one that carries Paused (§2.6)
+                        E::Delta {
+                            now: at,
+                            force: true,
+                        },
+                        E::EmitRecordingChanged,
+                        E::Reply(Reply::Done),
+                    ],
+                ),
+                Rec::Stopping {
+                    session,
+                    row,
+                    active_before,
+                    running_since,
+                    at,
+                } => (
+                    ok(Rec::Idle),
+                    finished(&session, row, active_before, running_since, at),
+                ),
+                Rec::Idle | Rec::Starting(_) | Rec::Paused { .. } => (ok(rec), vec![]),
+            }
+        }
     }
 }
 
@@ -714,7 +1074,7 @@ mod tests {
             let now = match &e {
                 Event::Pause { now }
                 | Event::Stop { now }
-                | Event::Tick { now }
+                | Event::Tick { now, .. }
                 | Event::Scans { now, .. } => *now,
                 _ => EpochMs(0),
             };
@@ -722,9 +1082,9 @@ mod tests {
             c = next;
             for effect in &effects {
                 match effect {
-                    Effect::CreateSession { .. } => {
-                        queue.push_front(Event::SessionCreated { result: Ok(()) })
-                    }
+                    Effect::CreateSession { .. } => queue.push_front(Event::SessionCreated {
+                        result: Ok(SessionRow(1)),
+                    }),
                     Effect::Commit { .. } => queue.push_front(Event::Committed {
                         result: if commit_ok {
                             Ok(())
@@ -783,6 +1143,7 @@ mod tests {
             },
         );
         assert!(effects.contains(&Effect::Commit {
+            row: SessionRow(1),
             now: EpochMs(6_000)
         }));
         // the timer commits without scans
@@ -790,7 +1151,8 @@ mod tests {
             step(
                 &c,
                 Event::Tick {
-                    now: EpochMs(5_999)
+                    now: EpochMs(5_999),
+                    free: None
                 }
             )
             .1,
@@ -800,11 +1162,13 @@ mod tests {
             step(
                 &c,
                 Event::Tick {
-                    now: EpochMs(6_000)
+                    now: EpochMs(6_000),
+                    free: None
                 }
             )
             .1,
             vec![Effect::Commit {
+                row: SessionRow(1),
                 now: EpochMs(6_000)
             }]
         );
@@ -818,7 +1182,8 @@ mod tests {
             step(
                 &idle,
                 Event::Tick {
-                    now: EpochMs(99_999)
+                    now: EpochMs(99_999),
+                    free: None
                 }
             )
             .1,
@@ -847,6 +1212,7 @@ mod tests {
             c.clone(),
             vec![Event::Tick {
                 now: EpochMs(7_000),
+                free: None,
             }],
             false,
         );
@@ -857,7 +1223,8 @@ mod tests {
             step(
                 &after,
                 Event::Tick {
-                    now: EpochMs(8_000)
+                    now: EpochMs(8_000),
+                    free: None
                 }
             )
             .1,
@@ -906,7 +1273,8 @@ mod tests {
             step(
                 &c,
                 Event::Tick {
-                    now: EpochMs(1_000_000)
+                    now: EpochMs(1_000_000),
+                    free: None
                 }
             )
             .1,
@@ -916,6 +1284,7 @@ mod tests {
             c,
             vec![Event::Resume {
                 now: EpochMs(71_000),
+                free: None,
             }],
             true,
         );
@@ -928,6 +1297,7 @@ mod tests {
         );
         assert_eq!(c.rec, Rec::Idle);
         assert!(effects.contains(&Effect::Finish {
+            row: SessionRow(1),
             ended: EpochMs(76_000),
             active: Millis(15_000),
             was_paused: false

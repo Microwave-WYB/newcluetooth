@@ -2,6 +2,7 @@
 //! of exactly the observations the staging append covered.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
@@ -238,10 +239,21 @@ pub(crate) struct Store {
     /// Test hook: the next commit fails after writing everything, before `COMMIT`.
     #[cfg(test)]
     pub fail_next_commit: bool,
+    /// Test hook: every commit fails with this error, before `COMMIT`.
+    #[cfg(test)]
+    pub fail_commits: Option<CoreError>,
 }
 
 /// The cache entries one commit learned: sha256 → payload id, and payload facts.
 type Learned = (HashMap<[u8; 32], i64>, HashMap<i64, PayloadInfo>);
+
+/// `local.db` plus its WAL, in bytes (0 for a missing file).
+pub(crate) fn db_bytes(db_path: &Path) -> u64 {
+    let len = |p: &Path| std::fs::metadata(p).map_or(0, |m| m.len());
+    let mut wal = db_path.as_os_str().to_owned();
+    wal.push("-wal");
+    len(db_path) + len(Path::new(&wal))
+}
 
 /// Bound of the in-memory sha256 → payload id map (§2.4: an LRU of 50k hashes, then the DB).
 const PAYLOAD_CACHE: usize = 50_000;
@@ -254,6 +266,8 @@ impl Store {
             info: HashMap::new(),
             #[cfg(test)]
             fail_next_commit: false,
+            #[cfg(test)]
+            fail_commits: None,
         }
     }
 
@@ -330,6 +344,82 @@ impl Store {
         Ok(())
     }
 
+    /// SPEC R-10 "Clear local database": deletes every session but `keep` (the current one) with its rows, GATT
+    /// discoveries outside it and the payloads nothing references any more, recomputes the devices, then vacuums.
+    /// Files are not touched. Returns the bytes `local.db` (+ WAL) shrank by.
+    pub fn clear_except(&mut self, keep: Option<i64>, db_path: &Path) -> Result<u64, CoreError> {
+        let before = db_bytes(db_path);
+        let keep = keep.unwrap_or(-1);
+        let tx = self.conn.transaction()?;
+        let touched: Vec<i64> = tx
+            .prepare("SELECT DISTINCT addr FROM session_devices WHERE session_id != ?1")?
+            .query_map([keep], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        tx.execute_batch(&format!(
+            "DELETE FROM sighting_minutes WHERE session_id != {keep};
+             DELETE FROM session_devices_rtree WHERE id IN (SELECT id FROM session_devices WHERE session_id != {keep});
+             DELETE FROM session_devices WHERE session_id != {keep};
+             DELETE FROM session_device_payloads WHERE session_id != {keep};
+             DELETE FROM route_points WHERE session_id != {keep};
+             DELETE FROM session_pauses WHERE session_id != {keep};
+             DELETE FROM gatt_discoveries WHERE session_id IS NULL OR session_id != {keep};
+             DELETE FROM sessions_rtree WHERE id != {keep};
+             DELETE FROM sessions WHERE id != {keep};"
+        ))?;
+        for addr in touched {
+            refresh_device(&tx, addr)?;
+        }
+        tx.execute_batch(
+            "CREATE TEMP TABLE orphan_payloads AS SELECT id FROM payloads p
+               WHERE NOT EXISTS (SELECT 1 FROM sighting_minutes m WHERE m.payload_id = p.id)
+                 AND NOT EXISTS (SELECT 1 FROM session_device_payloads d WHERE d.payload_id = p.id)
+                 AND NOT EXISTS (SELECT 1 FROM session_devices d WHERE d.latest_payload_id = p.id)
+                 AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.latest_payload_id = p.id)
+                 AND NOT EXISTS (SELECT 1 FROM gatt_discoveries g WHERE g.trigger_payload_id = p.id);
+             DELETE FROM payload_structures WHERE payload_id IN (SELECT id FROM temp.orphan_payloads);
+             DELETE FROM payloads WHERE id IN (SELECT id FROM temp.orphan_payloads);
+             DROP TABLE temp.orphan_payloads;
+             DELETE FROM ad_structures
+               WHERE NOT EXISTS (SELECT 1 FROM payload_structures ps WHERE ps.structure_id = ad_structures.id);",
+        )?;
+        tx.commit()?;
+        // the deleted payload ids can be handed out again
+        self.payloads.clear();
+        self.info.clear();
+        self.conn
+            .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(before.saturating_sub(db_bytes(db_path)))
+    }
+
+    /// An estimate of what [`Store::clear_except`] frees: the free pages, plus the rest of the file in the share
+    /// of rows outside `keep`.
+    pub fn clearable_bytes(&self, keep: Option<i64>, db_path: &Path) -> Result<u64, CoreError> {
+        let total = db_bytes(db_path);
+        let (page, free): (i64, i64) = self.conn.query_row(
+            "SELECT page_size, freelist_count FROM pragma_page_size, pragma_freelist_count",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let (all, kept): (i64, i64) = self.conn.query_row(
+            "SELECT (SELECT count(*) FROM sighting_minutes) + (SELECT count(*) FROM session_devices)
+                      + (SELECT count(*) FROM route_points),
+                    (SELECT count(*) FROM sighting_minutes WHERE session_id = ?1)
+                      + (SELECT count(*) FROM session_devices WHERE session_id = ?1)
+                      + (SELECT count(*) FROM route_points WHERE session_id = ?1)",
+            [keep.unwrap_or(-1)],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let free_bytes = u64::try_from(page.saturating_mul(free))
+            .unwrap_or(0)
+            .min(total);
+        let used = (total - free_bytes) as f64;
+        let share = match all {
+            0 => 0.0,
+            _ => (all - kept) as f64 / all as f64,
+        };
+        Ok(free_bytes + (used * share) as u64)
+    }
+
     /// One commit's transaction; returns the cache entries it learned, for the caller to keep once it committed.
     fn commit_tx(
         &mut self,
@@ -381,6 +471,10 @@ impl Store {
             return Err(CoreError::Db {
                 detail: "injected commit failure".into(),
             });
+        }
+        #[cfg(test)]
+        if let Some(e) = &self.fail_commits {
+            return Err(e.clone());
         }
         tx.commit()?;
         Ok((fresh_payloads, fresh_info))

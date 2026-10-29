@@ -11,6 +11,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreStorage
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceDetail
@@ -30,6 +31,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.MapData
 import edu.ucsd.sysnet.cluetoothscanner.api.core.PendingUpload
 import edu.ucsd.sysnet.cluetoothscanner.api.core.PreparedExport
 import edu.ucsd.sysnet.cluetoothscanner.api.core.PreparedUpload
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Reclaimable
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ProductDetail
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
@@ -177,6 +179,9 @@ class CoreBridge private constructor(private val core: Core) : CoreQueries, Core
     override suspend fun acknowledgeExport(id: String) = call { core.acknowledgeExport(id) }
     override suspend fun deleteLocalData(scope: Scope, includeUnuploaded: Boolean): DeleteOutcome =
         call { core.deleteLocalData(scope.g(), includeUnuploaded).api() }
+    override suspend fun reclaimable(): CoreResult<Reclaimable> = result { core.reclaimable().api() }
+    override suspend fun deleteUploadedRaw(): CoreResult<Long> = result { core.deleteUploadedRaw().toLong() }
+    override suspend fun clearLocalDatabase(): CoreResult<Long> = result { core.clearLocalDatabase().toLong() }
 
     // ---- CoreIngest ----
 

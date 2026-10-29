@@ -11,6 +11,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreAssets
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreConfig
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DecodedField
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DecoderOutput
@@ -46,6 +47,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.PageRef
 import edu.ucsd.sysnet.cluetoothscanner.api.core.PendingUpload
 import edu.ucsd.sysnet.cluetoothscanner.api.core.PreparedExport
 import edu.ucsd.sysnet.cluetoothscanner.api.core.PreparedUpload
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Reclaimable
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ProductCard
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ProductDetail
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
@@ -258,7 +260,7 @@ internal fun GRecordingState.api() = CoreRecordingState(
         GRecordingPhase.RECORDING -> RecordingPhase.Recording
         GRecordingPhase.PAUSED -> RecordingPhase.Paused
     },
-    sessionId, startedMs, activeBeforeMs, runningSinceMs, deviceCount.toInt(), distanceM,
+    sessionId, startedMs, activeBeforeMs, runningSinceMs, deviceCount.toInt(), distanceM, pausedForStorage,
 )
 
 internal fun GFixSummary.api() = FixSummary(lat, lon, accuracyM, ageMs)
@@ -276,7 +278,11 @@ internal fun GCoreEvent.api(): CoreEvent = when (this) {
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.DataInvalidated -> CoreEvent.DataInvalidated(reason)
     edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.UploadNeeded -> CoreEvent.UploadNeeded
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.StorageWarning -> CoreEvent.StorageWarning(message)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.StorageFull ->
+        CoreEvent.StorageFull(freeBytes.toLong(), droppedScans.toLong())
 }
+
+internal fun GReclaimable.api() = Reclaimable(freeBytes.toLong(), uploadedRawBytes.toLong(), localDatabaseBytes.toLong())
 
 internal fun GStorageStats.api() = StorageStats(
     databaseBytes.toLong(), rawFilesBytes.toLong(), pendingCount.toInt(), pendingBytes.toLong(), sessionCount.toInt(),
@@ -312,6 +318,7 @@ internal fun GCoreError.api(): Exception = when (this) {
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.SchemaTooNew -> CoreException.SchemaTooNew(found.toInt(), supported.toInt())
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.InvalidBundle -> CoreException.InvalidBundle(detail)
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Backpressure -> CoreException.Backpressure()
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.StorageFull -> CoreException.StorageFull(freeBytes.toLong())
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.NotRecording -> CoreException.NotRecording()
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.AlreadyRecording -> CoreException.AlreadyRecording()
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Closed -> CoreException.Closed()
@@ -329,6 +336,16 @@ internal fun bindingFailure(e: Exception): Exception = when (e) {
     is CoreException -> e
     is GInternalException -> CoreException.Internal(e.message ?: "core panic")
     else -> CoreException.Internal(e.toString())
+}
+
+/** Runs a binding call as a [CoreResult]; a coroutine cancellation still propagates. */
+internal inline fun <T> result(block: () -> T): CoreResult<T> = try {
+    CoreResult.Ok(block())
+} catch (e: Exception) {
+    when (val failure = bindingFailure(e)) {
+        is CoreException -> CoreResult.Err(failure)
+        else -> throw failure
+    }
 }
 
 /** Runs a binding call; any failure is rethrown in :core-api's types ([bindingFailure]). */

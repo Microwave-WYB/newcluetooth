@@ -26,6 +26,7 @@ mod live;
 mod machine;
 mod query;
 mod search;
+mod space;
 mod store;
 mod types;
 

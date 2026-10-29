@@ -43,6 +43,7 @@ internal typealias GPreparedExport = edu.ucsd.sysnet.cluetoothscanner.core.gener
 internal typealias GPreparedUpload = edu.ucsd.sysnet.cluetoothscanner.core.generated.PreparedUpload
 internal typealias GProductCard = edu.ucsd.sysnet.cluetoothscanner.core.generated.ProductCard
 internal typealias GProductDetail = edu.ucsd.sysnet.cluetoothscanner.core.generated.ProductDetail
+internal typealias GReclaimable = edu.ucsd.sysnet.cluetoothscanner.core.generated.Reclaimable
 internal typealias GRecordingPhase = edu.ucsd.sysnet.cluetoothscanner.core.generated.RecordingPhase
 internal typealias GRecordingState = edu.ucsd.sysnet.cluetoothscanner.core.generated.RecordingState
 internal typealias GScanEnvironment = edu.ucsd.sysnet.cluetoothscanner.core.generated.ScanEnvironment

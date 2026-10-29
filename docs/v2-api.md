@@ -183,7 +183,7 @@ The data directory is `filesDir/cluetooth-core/`, the same as v3, so the in-plac
 |---|---|---|
 | `pending/scans/v3/…/<uuid>.parquet` (`v2/` for older) | sealed plaintext payloads awaiting upload | until upload succeeds, then moved to `archive/` |
 | `pending/gatt/v1/…/<uuid>.json` | plaintext gatt/v1 awaiting upload | same |
-| `archive/sessions/<session>/scans/…`, `archive/gatt/v1/…` | uploaded plaintext | **kept permanently**; removed only by Delete local data |
+| `archive/sessions/<session>/scans/…`, `archive/gatt/v1/…` | uploaded plaintext | kept; removed only by Delete local data or "Delete uploaded raw files" (§2.4.1) |
 | `upload-cache/<object path>.encrypted` | ciphertext | transient (§1.6) |
 | `upload-state/`, `active-payload/`, `export-temp/` | as v3 | as v3 |
 | `sessions/*.json` | pre-v2 session metadata | kept; these sessions are not imported into the DB |
@@ -385,6 +385,7 @@ pub struct RecordingState {
     pub phase: RecordingPhase, pub session_id: Option<String>, pub started_ms: Option<i64>,
     pub active_before_ms: i64, pub running_since_ms: Option<i64>,  // elapsed = before + (now − since); UI ticks locally
     pub device_count: u32, pub distance_m: f64,                   // shown devices (display filter applied)
+    pub paused_for_storage: bool,                                 // SPEC R-10 pause (§2.4.1)
 }
 
 #[uniffi::export(with_foreign)]
@@ -408,7 +409,8 @@ impl Core {
 
     pub fn start_recording(&self, env: ScanEnvironment) -> Result<String, CoreError>;  // [W] new UUIDv7
     pub fn pause_recording(&self) -> Result<(), CoreError>;          // [W] append + commit; ingest ignored while paused
-    pub fn resume_recording(&self) -> Result<(), CoreError>;         // [W] same session
+    pub fn resume_recording(&self) -> Result<(), CoreError>;         // [W] same session; after a storage-full
+                                                                     //     pause Err(StorageFull) below the floor
     pub fn stop_recording(&self) -> Result<String, CoreError>;       // [W] append + commit, seal, simplify route,
                                                                      //     finalize counts; returns the session id
     pub fn configure_scan(&self, env: ScanEnvironment) -> Result<(), CoreError>; // [W] footer change mid-session
@@ -428,8 +430,9 @@ recorded in `session_pauses`.
 
 impl Core {
     pub fn ingest_scans(&self, batch: Vec<ScanObservationInput>) -> Result<IngestAck, CoreError>;
-    // [N] validates (v3 rules: ≤ 64 rows, ≤ 1 MiB, raw ≤ 1650 B) and enqueues; blocks ≤ 1 s when the queue
-    //     (256 batches) is full, then Err(Backpressure): the caller keeps the batch and retries
+    // [W] validates (v3 rules: ≤ 64 rows, ≤ 1 MiB, raw ≤ 1650 B) and buffers until the next commit.
+    //     Err(Backpressure) while commits keep failing and the buffer is at its cap: keep the batch and retry.
+    //     Err(StorageFull) while paused for storage (§2.4.1): the batch cannot be stored; drop and count it.
     pub fn ingest_location(&self, fix: LocationFix);                 // [N] fix ring + route (≤ 100 m accuracy, ≥ 5 m or 30 s)
     pub fn clear_location(&self);                                    // [N]
     pub fn new_gatt_discovery_id(&self) -> Result<String, CoreError>;          // [N]
@@ -465,6 +468,40 @@ The writer, per observation and then per interval:
    Parquet.
 
 Frozen views of a scope that includes the current session lag ≤ 5 s. The live view always reads memory.
+
+**Bounded buffer.** The pending buffer is capped at 20,000 rows or 16 MiB (the v3 input estimate). A batch that
+would pass the cap commits at once. A commit that fails for another reason keeps its batch (StorageWarning) and
+backs off: the next interval commit waits the interval, doubled per failure, at most 60 s. While commits fail and
+the buffer is at its cap, `ingest_scans` returns `Backpressure`, so memory stays below the cap plus one batch.
+
+#### 2.4.1 Storage full (SPEC R-10)
+
+```rust
+#[derive(uniffi::Record)] pub struct Reclaimable { pub free_bytes: u64, pub uploaded_raw_bytes: u64, pub local_database_bytes: u64 }
+
+impl Core {
+    pub async fn reclaimable(&self) -> Result<Reclaimable, CoreError>;     // [W] free space and what each action frees
+                                                                           //     (the database figure is an estimate)
+    pub async fn delete_uploaded_raw(&self) -> Result<u64, CoreError>;     // [W] archive/ only; bytes freed
+    pub async fn clear_local_database(&self) -> Result<u64, CoreError>;    // [W] every session but the current one;
+                                                                           //     files kept; vacuums; bytes freed
+}
+```
+
+- **Stop writing.** Every commit tick reads the data volume's free space (`statvfs`). Below 200 MB, or when a
+  commit fails with `SQLITE_FULL`/`ENOSPC`, the writer stops writing: the pending rows are dropped and counted, the
+  recording pauses (`paused_for_storage`), the session stays open, and `CoreEvent::StorageFull { free_bytes,
+  dropped_scans }` is emitted. Everything committed before stays. A stop whose commit fails for lack of space still
+  finishes the session at its committed data.
+- **While paused for storage** `ingest_scans` returns `Err(StorageFull)`.
+- **Resume** is the UI's call. It returns `Err(StorageFull)` while free space is still below the floor; above it,
+  recording continues in the same session. A user pause is not a storage pause: its resume needs no free space.
+- **Delete uploaded raw files** removes the regular files under `archive/` (uploaded plaintext). `pending/` and the
+  upload markers are never touched.
+- **Clear local database** deletes every session except the current one with its rows, the GATT discoveries outside
+  it and the payloads nothing references any more, recomputes the devices, then `VACUUM`s. No file is touched, so
+  un-uploaded raw files still upload. When both actions are chosen, run Delete uploaded raw files first: the vacuum
+  needs some free room.
 
 ### 2.5 Queries (SPEC B)
 
@@ -618,6 +655,7 @@ pub enum CoreEvent {
     DataInvalidated { reason: String },    // display filter, re-match done, delete: re-query the open scope
     UploadNeeded,                          // a payload or GATT file was sealed
     StorageWarning { message: String },    // also covers persistence failures
+    StorageFull { free_bytes: u64, dropped_scans: u64 },  // SPEC R-10: writing stopped, recording paused (§2.4.1)
 }
 ```
 
@@ -753,6 +791,7 @@ pub enum CoreError {
     SchemaTooNew { found: u32, supported: u32 },    // an older build opened a newer local.db
     InvalidBundle { detail: String },               // wiki bundle schema/vocabulary violation
     Backpressure, NotRecording, AlreadyRecording, Closed,
+    StorageFull { free_bytes: u64 },                // SPEC R-10 (§2.4.1)
     Cancelled,                                      // §2 cancellation; Kotlin maps it to CancellationException
 }
 ```
@@ -1428,6 +1467,10 @@ interface CoreStorage {
     suspend fun prepareExport(scope: Scope, format: ExportFormat): PreparedExport
     suspend fun acknowledgeExport(id: String)
     suspend fun deleteLocalData(scope: Scope, includeUnuploaded: Boolean): DeleteOutcome
+    // SPEC R-10 (§2.4.1), typed results (AGENTS.md): CoreResult<T> = Ok(value) | Err(CoreException)
+    suspend fun reclaimable(): CoreResult<Reclaimable>
+    suspend fun deleteUploadedRaw(): CoreResult<Long>
+    suspend fun clearLocalDatabase(): CoreResult<Long>
 }
 interface CoreIngest { /* platform only: ingestScans, ingestLocation, clearLocation, newGattDiscoveryId, gattTarget,
     ingestGatt, start/pause/resume/stopRecording, configureScan, recordingState, setDisplayFilter, uploads */ }

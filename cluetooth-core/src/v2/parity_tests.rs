@@ -8,6 +8,7 @@ use std::sync::Arc;
 use serde_json::Value as Json;
 
 use super::core::Core;
+use super::error::CoreError;
 use super::keys::{addr_of, key_of};
 use super::types::*;
 use crate::{LocationFix, ScanEnvironment, ScanObservationInput};
@@ -1521,12 +1522,12 @@ fn randomized(seed: u64) {
         }
     }
     if session.is_some() {
-        loop {
+        // an injected failure fails one commit only, so the second stop finishes
+        let stopped = (0..3).any(|_| {
             now += 1_000;
-            if core.stop_recording_at(now).is_ok() {
-                break;
-            }
-        }
+            core.stop_recording_at(now).is_ok()
+        });
+        assert!(stopped, "seed {seed}: the last stop never finished");
     }
     assert_eq!(core.pending_len(), 0);
     let stored: HashMap<(String, i64, Vec<u8>), i64> = core.with_writer_conn(|conn| {
@@ -1557,4 +1558,257 @@ fn randomized(seed: u64) {
         let prev = last.insert(d.session_id.clone(), d.seq).unwrap_or(0);
         assert!(d.seq > prev, "seed {seed}: seq {} after {prev}", d.seq);
     }
+}
+
+/// Waits until an event matching `f` arrived; returns every event so far.
+fn wait_event(c: &Collect, f: impl Fn(&CoreEvent) -> bool) -> Vec<CoreEvent> {
+    for _ in 0..200 {
+        if c.events.lock().unwrap().iter().any(&f) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    c.events.lock().unwrap().clone()
+}
+
+fn stored_sightings(core: &Core) -> i64 {
+    core.with_writer_conn(|c| {
+        c.query_row(
+            "SELECT coalesce(sum(sightings), 0) FROM sighting_minutes",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    })
+}
+
+fn batch(n: usize, at: i64) -> Vec<ScanObservationInput> {
+    (0..n)
+        .map(|i| {
+            obs(
+                &format!("AA:00:00:00:{:02X}:{:02X}", i / 256, i % 256),
+                -60,
+                at,
+                1,
+                "A",
+            )
+        })
+        .collect()
+}
+
+/// SPEC R-10: a commit that always fails for lack of space stops writing and pauses; memory stays bounded and
+/// ingest gets a typed error; after space comes back, resume records again and nothing committed was lost.
+#[test]
+fn a_full_disk_pauses_drops_and_resumes() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(batch(10, t0 + 1_000), t0 + 1_000)
+        .unwrap();
+    core.tick_at(t0 + 5_000);
+    assert_eq!(stored_sightings(&core), 10);
+    core.fail_commits(Some(CoreError::StorageFull { free_bytes: 0 }));
+    core.ingest_scans_at(batch(7, t0 + 6_000), t0 + 6_000)
+        .unwrap();
+    core.tick_at(t0 + 10_000);
+    let state = core.recording_state().unwrap();
+    assert_eq!(state.phase, RecordingPhase::Paused);
+    assert!(state.paused_for_storage);
+    assert_eq!(
+        state.session_id.as_deref(),
+        Some(id.as_str()),
+        "the session stays open"
+    );
+    assert_eq!(
+        core.pending_len(),
+        0,
+        "the rows that could not be stored are dropped"
+    );
+    let events = wait_event(&c, |e| matches!(e, CoreEvent::StorageFull { .. }));
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            CoreEvent::StorageFull {
+                dropped_scans: 7,
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+    // while paused for storage every batch is refused, typed, and nothing is buffered
+    for i in 0..50 {
+        let at = t0 + 11_000 + i;
+        assert!(matches!(
+            core.ingest_scans_at(batch(64, at), at),
+            Err(CoreError::StorageFull { .. })
+        ));
+    }
+    assert_eq!(core.pending_len(), 0);
+    // resume needs the free space back above the floor
+    assert!(matches!(
+        core.resume_recording_free_at(t0 + 20_000, Some(1_000)),
+        Err(CoreError::StorageFull { free_bytes: 1_000 })
+    ));
+    assert!(core.recording_state().unwrap().paused_for_storage);
+    core.fail_commits(None);
+    core.resume_recording_free_at(t0 + 21_000, Some(10_000_000_000))
+        .unwrap();
+    let state = core.recording_state().unwrap();
+    assert_eq!(state.phase, RecordingPhase::Recording);
+    assert!(!state.paused_for_storage);
+    core.ingest_scans_at(batch(3, t0 + 22_000), t0 + 22_000)
+        .unwrap();
+    assert_eq!(core.stop_recording_at(t0 + 23_000).unwrap(), id);
+    assert_eq!(
+        stored_sightings(&core),
+        13,
+        "the first 10 and the 3 after resume"
+    );
+}
+
+/// SPEC R-10: below the 200 MB floor the tick stops writing and pauses, without a commit.
+#[test]
+fn the_free_space_floor_pauses_without_writing() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(batch(4, t0 + 1_000), t0 + 1_000)
+        .unwrap();
+    core.tick_free_at(t0 + 5_000, Some(199_999_999));
+    assert!(core.recording_state().unwrap().paused_for_storage);
+    assert_eq!(stored_sightings(&core), 0);
+    let events = wait_event(&c, |e| matches!(e, CoreEvent::StorageFull { .. }));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        CoreEvent::StorageFull {
+            free_bytes: 199_999_999,
+            dropped_scans: 4
+        }
+    )));
+    // a user pause is not a storage pause: its resume needs no free space
+    core.resume_recording_free_at(t0 + 6_000, Some(300_000_000))
+        .unwrap();
+    core.pause_recording_at(t0 + 7_000).unwrap();
+    assert!(!core.recording_state().unwrap().paused_for_storage);
+    core.resume_recording_free_at(t0 + 8_000, Some(1)).unwrap();
+}
+
+/// #71: commits that keep failing (not for space) back off and the pending buffer stays capped; past the cap
+/// ingest is refused with Backpressure, and the retained rows commit once storage works again.
+#[test]
+fn repeated_commit_failures_keep_pending_bounded() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    core.start_recording_at(env(), t0).unwrap();
+    core.fail_commits(Some(CoreError::Db {
+        detail: "disk I/O error".into(),
+    }));
+    let cap = super::machine::PENDING_CAP.rows as usize;
+    let mut accepted = 0usize;
+    let mut refused = 0usize;
+    for i in 0..(cap / 64 + 20) as i64 {
+        let at = t0 + 5_000 + i;
+        match core.ingest_scans_at(batch(64, at), at) {
+            Ok(ack) => accepted += ack.accepted as usize,
+            Err(CoreError::Backpressure) => refused += 1,
+            Err(e) => panic!("{e}"),
+        }
+        assert!(core.pending_len() <= cap + 64, "pending stays capped");
+    }
+    assert!(refused > 0, "ingest is refused past the cap");
+    assert_eq!(core.pending_len(), accepted);
+    // backoff: an attempt failed at t0 + 5 s, so ticks before the retry time do not run the transaction again
+    let warnings = |c: &Collect| {
+        c.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, CoreEvent::StorageWarning { .. }))
+            .count()
+    };
+    let before = warnings(&c);
+    core.tick_at(t0 + 9_000);
+    assert_eq!(warnings(&c), before);
+    core.fail_commits(None);
+    core.tick_at(t0 + 60_000);
+    assert_eq!(core.pending_len(), 0);
+    assert_eq!(stored_sightings(&core), accepted as i64);
+}
+
+fn write_file(path: &std::path::Path, len: usize) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, vec![7u8; len]).unwrap();
+}
+
+/// SPEC R-10 cleanup: both actions free space, report it beforehand, and never touch files not yet uploaded.
+#[test]
+fn cleanup_frees_space_and_keeps_unuploaded_files() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, dir, _c) = fresh_core(t0);
+    let root = dir.path();
+    let pending = [
+        root.join("pending/scans/v3/2025/10/20/a.parquet"),
+        root.join("pending/gatt/v1/2025/10/20/b.json"),
+    ];
+    for p in &pending {
+        write_file(p, 1_000);
+    }
+    write_file(
+        &root.join("archive/sessions/s/scans/v3/2025/10/20/c.parquet"),
+        30_000,
+    );
+    write_file(&root.join("archive/gatt/v1/2025/10/20/d.json"), 2_000);
+    // an old session with many devices, then the current one
+    let old = core.start_recording_at(env(), t0).unwrap();
+    for i in 0..40 {
+        let at = t0 + 1_000 + i;
+        let mut b = batch(64, at);
+        for (j, o) in b.iter_mut().enumerate() {
+            o.addr = format!("BB:00:00:00:{:02X}:{:02X}", i, j);
+            o.raw.extend((i as u16 * 64 + j as u16).to_be_bytes());
+        }
+        core.ingest_scans_at(b, at).unwrap();
+    }
+    core.stop_recording_at(t0 + 10_000).unwrap();
+    let current = core.start_recording_at(env(), t0 + 20_000).unwrap();
+    core.ingest_scans_at(batch(5, t0 + 21_000), t0 + 21_000)
+        .unwrap();
+    core.tick_at(t0 + 26_000);
+
+    let r = block(core.reclaimable()).unwrap();
+    assert_eq!(r.uploaded_raw_bytes, 32_000);
+    assert!(r.local_database_bytes > 0);
+    assert_eq!(block(core.delete_uploaded_raw()).unwrap(), 32_000);
+    assert!(!root.join("archive/gatt/v1/2025/10/20/d.json").exists());
+    assert_eq!(block(core.reclaimable()).unwrap().uploaded_raw_bytes, 0);
+
+    let freed = block(core.clear_local_database()).unwrap();
+    assert!(freed > 0, "the vacuum shrank local.db");
+    for p in &pending {
+        assert!(p.exists(), "{} survives", p.display());
+    }
+    let ids: Vec<String> = core.with_writer_conn(|c| {
+        c.prepare("SELECT uuid FROM sessions")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    });
+    assert_eq!(ids, vec![current.clone()]);
+    assert!(!ids.contains(&old));
+    assert!(block(core.sessions()).unwrap().is_empty());
+    assert_eq!(stored_sightings(&core), 5, "the current session is kept");
+    // the recording goes on: new payloads after the cache reset commit under their own ids
+    let mut o = obs("CC:00:00:00:00:01", -50, t0 + 27_000, 2, "New");
+    o.raw.push(1);
+    core.ingest_scans_at(vec![o], t0 + 27_000).unwrap();
+    assert_eq!(core.stop_recording_at(t0 + 28_000).unwrap(), current);
+    assert_eq!(stored_sightings(&core), 6);
+    core.with_writer_conn(|c| {
+        let n: i64 = c
+            .query_row("SELECT count(*) FROM payloads", [], |r| r.get(0))
+            .unwrap();
+        assert!(n <= 2, "orphan payloads are gone ({n})");
+    });
 }
