@@ -1,7 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.map
 
 import android.content.Context
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapCacheInfo
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapCacheInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.maplibre.android.storage.FileSource

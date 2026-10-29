@@ -5,22 +5,22 @@ import edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport
 import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.Hit
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.CameraSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.CoverInsets
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceLive
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatus
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatusSource
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.api.core.MapData
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MapEvents
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
 import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.MyLocation
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.MyLocation
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionView
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Sighting
@@ -92,6 +92,10 @@ private class FakeSurface(override val viewport: Viewport = Viewport(412.0, 915.
     var selection: List<SelectionProp> = emptyList()
     var lineOpacity = -1.0
     var expansionZoom = 14
+    /** The state's clock (ms). */
+    var now = 0L
+    /** MapLibre may report an app move's idle later, not inside move(). */
+    var asyncIdle = false
 
     override fun setGeoJson(source: String, geojson: String) { sources[source] = geojson }
     override fun applySelection(props: List<SelectionProp>) { selection = props }
@@ -100,12 +104,22 @@ private class FakeSurface(override val viewport: Viewport = Viewport(412.0, 915.
         moves += camera to durationMs
         listener.onMoveStarted(byGesture = false)
         this.camera = camera
-        listener.onIdle()
+        if (!asyncIdle) listener.onIdle()
     }
     override fun clusterExpansionZoom(hit: Hit) = expansionZoom
 
+    /** The finger lifted and MapLibre already reported idle: the fling runs as a second gesture move. */
+    fun fling(to: CameraSnapshot) {
+        now += 16
+        listener.onMoveStarted(byGesture = true)
+        camera = to
+        now += 600
+        listener.onIdle()
+    }
+
     /** The user drags (and maybe pinches) the map to [to]. */
     fun userMove(to: CameraSnapshot) {
+        now += 1_000 // a new touch
         listener.onMoveStarted(byGesture = true)
         listener.onMoveStarted(byGesture = true)
         camera = to
@@ -137,10 +151,11 @@ class CluetoothMapStateTest {
         queries: FakeQueries = FakeQueries(devices),
         location: FakeLocation = FakeLocation(ok, MyLocation(CENTER, 5.0, 0)),
     ): Rig {
-        val state = CluetoothMapState(queries, location, Design.style, backgroundScope)
+        val surface = FakeSurface()
+        val state = CluetoothMapState(queries, location, Design.style, backgroundScope, clock = { surface.now })
         val events = RecordingEvents()
         state.events = events
-        val surface = FakeSurface().also { it.listener = state }
+        surface.listener = state
         state.attach(surface)
         runCurrent()
         return Rig(state, surface, events, queries, location)
@@ -363,5 +378,59 @@ class CluetoothMapStateTest {
         state.onStyleLoaded()
         assertTrue(surface.sources.getValue("devices").contains("AA:BB:CC:00:00:00"))
         assertEquals(GeoJson.routes(listOf(q.route)), surface.sources["route"])
+    }
+
+    @Test fun `a session switch costs one map_points query, also when the frame's idle comes later`() = runTest {
+        for (async in listOf(false, true)) {
+            val r = rig()
+            r.surface.asyncIdle = async
+            val before = r.queries.mapPointCalls.size
+            r.state.show(Scope.session(SESSION), DeviceFilter(), routesFaint = false)
+            runCurrent()
+            if (async) { r.surface.listener.onIdle(); runCurrent() }
+            assertEquals("asyncIdle=$async", before + 1, r.queries.mapPointCalls.size)
+        }
+    }
+
+    @Test fun `the fling edge - a fling right after the drag's idle is the user's, but no second gesture start`() = runTest {
+        val r = rig()
+        r.state.show(Scope.session(SESSION), DeviceFilter(), routesFaint = false)
+        runCurrent()
+        r.events.idles.clear()
+        val cam = r.surface.camera
+        r.surface.userMove(cam.copy(center = GeoPoint(cam.center.lon + 0.001, cam.center.lat)))
+        r.surface.fling(cam.copy(center = GeoPoint(cam.center.lon + 0.02, cam.center.lat)))
+        assertEquals(1, r.events.gestureStarts)
+        assertEquals(listOf(true, true), r.events.idles)
+        // P-4 measures at the fling's end: far from the location now
+        assertTrue(r.state.ui.value.showLocate)
+        // a later, separate touch is a new gesture
+        r.surface.userMove(cam)
+        assertEquals(2, r.events.gestureStarts)
+    }
+
+    @Test fun `trimMemory drops the cached point data and refills it when shown again`() = runTest {
+        val r = rig()
+        r.state.show(Scope.session(SESSION), DeviceFilter(), routesFaint = false)
+        r.state.setSelection(devices[1].key)
+        runCurrent()
+        val calls = r.queries.mapPointCalls.size
+        r.state.trimMemory()
+        r.surface.sources.clear()
+        r.state.onStyleLoaded() // a replay right after the trim refills from the core, not the cache
+        runCurrent()
+        assertEquals(calls + 1, r.queries.mapPointCalls.size)
+        assertTrue(r.surface.sources.getValue("devices").contains("AA:BB:CC:00:00:01"))
+        assertEquals(GeoJson.sightings(listOf(Sighting(devices[1].at, -70, 0))), r.surface.sources["sightings"])
+        assertEquals(GeoJson.routes(listOf(r.queries.route)), r.surface.sources["route"])
+
+        // onStop then onStart, without a style reload
+        r.state.trimMemory()
+        r.state.refillAfterTrim()
+        runCurrent()
+        assertEquals(calls + 2, r.queries.mapPointCalls.size)
+        r.state.refillAfterTrim() // nothing trimmed: no query
+        runCurrent()
+        assertEquals(calls + 2, r.queries.mapPointCalls.size)
     }
 }

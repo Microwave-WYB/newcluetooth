@@ -26,4 +26,3 @@ the camera rules, selection, taps and the R-5 mini map. See `docs/v2-api.md` §6
   ```
 
   `MapFrameTimeTest` takes `-e blank true` to pan over a blank base map instead of OpenFreeMap.
-- `stub/Contracts.kt` holds temporary copies of the `:ui-contract` and `:platform-api` types until those merge.

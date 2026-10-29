@@ -1,7 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.map.camera
 
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatus
-import edu.ucsd.sysnet.cluetoothscanner.map.stub.LocationStatus.State
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus.State
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
