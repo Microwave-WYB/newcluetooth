@@ -263,3 +263,64 @@ class MainSettingsTest {
         assertEquals(listOf(MainEffect.Delete(Scope.All, includeUnuploaded = true)), step.effects)
     }
 }
+
+/** Every effect and every piece of keyed work ends in a result or a typed Failed the logic recovers from. */
+class MainFailureTest {
+    private val boom = IllegalStateException("boom")
+    private fun failed(s: MainUiState, task: MainTask) = reduce(s, MainEvent.Failed(task, boom))
+
+    @Test fun theLinkFailsAndRetriesAsAStateMachine() {
+        val failed = failed(MainUiState(), MainTask.Link).state
+        assertEquals(CoreLink.Failed(boom, 0), failed.core)
+        assertNull(failed.linkAttempt)
+        val retry = failed.on(MainEvent.RetryLink)
+        assertEquals(CoreLink.Waiting(1), retry.core)
+        assertEquals(1, retry.linkAttempt)
+        // Retry while waiting changes nothing
+        assertEquals(retry, retry.on(MainEvent.RetryLink))
+    }
+
+    @Test fun whatTheScreenWaitsForFallsBack() {
+        // no settings: the launch view still opens; no launch facts: the first run
+        assertEquals(listOf(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts), failed(MainUiState(), MainTask.Effect(MainEffect.LoadSettings)).effects)
+        val first = failed(MainUiState(scope = sessionA), MainTask.Effect(MainEffect.ReadLaunchFacts)).state
+        assertNull(first.scope)
+        // no storage stats: the section shows zeros
+        assertEquals(0L, failed(MainUiState(), MainTask.Effect(MainEffect.LoadStorage)).state.storage?.databaseBytes)
+    }
+
+    @Test fun aFailedExportStopsExporting() {
+        val exporting = MainUiState().on(MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)),
+            MainEvent.EditStorage { it.copy(exportFormat = ExportFormat.Csv) }, MainEvent.Export(toDownloads = false))
+        assertEquals(true, exporting.storage?.exporting)
+        assertEquals(false, failed(exporting, MainTask.Effect(MainEffect.Export(Scope.All, ExportFormat.Csv, false))).state.storage?.exporting)
+    }
+
+    @Test fun otherFailuresLeaveTheStateAlone() {
+        val s = MainUiState(scope = sessionA, searchQuery = "tile").on(MainEvent.OpenSearch)
+        listOf(MainTask.View(s.viewKey), MainTask.Sessions, MainTask.CoreEvents, MainTask.Platform,
+            MainTask.Effect(MainEffect.SaveOnboarding("x", true)), MainTask.Effect(MainEffect.SheetsBack),
+            MainTask.Effect(MainEffect.Delete(Scope.All, false)), MainTask.Effect(MainEffect.StartRecording),
+        ).forEach { assertEquals(Step(s), failed(s, it)) }
+        s.searchKey?.let { assertEquals(Step(s), failed(s, MainTask.Search(it))) }
+    }
+}
+
+/** The runner's one wrapper: a throw becomes the task's failure; cancellation stays the caller's. */
+class GuardedTest {
+    @Test fun aThrowIsReportedWithItsTask() {
+        val reported = mutableListOf<Pair<MainTask, Throwable>>()
+        val e = IllegalArgumentException("x")
+        assertNull(guarded(MainTask.Sessions, { t, err -> reported += t to err }) { throw e })
+        assertEquals(listOf<Pair<MainTask, Throwable>>(MainTask.Sessions to e), reported)
+        assertEquals(3, guarded(MainTask.Platform, { _, _ -> reported.clear() }) { 3 })
+        assertEquals(1, reported.size)
+    }
+
+    @Test fun cancellationIsNotAFailure() {
+        var reported = false
+        val thrown = runCatching { guarded(MainTask.Link, { _, _ -> reported = true }) { throw kotlinx.coroutines.CancellationException("c") } }
+        assertTrue(thrown.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertEquals(false, reported)
+    }
+}

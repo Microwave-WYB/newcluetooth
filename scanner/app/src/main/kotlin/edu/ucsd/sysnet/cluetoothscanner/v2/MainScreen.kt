@@ -76,9 +76,10 @@ fun MainScreen(vm: MainViewModel) {
     val location by vm.location.collectAsState()
     val myLocation by vm.graph.location.myLocation.collectAsState()
     val coreState by vm.coreState.collectAsState()
-    (coreState as? CoreState.Failed)?.let { CoreErrorScreen(it.error, vm::retryCore); return }
-    val r = ui.ready ?: return
     val dispatch = vm::dispatch
+    (coreState as? CoreState.Failed)?.let { CoreErrorScreen(it.error, vm::retryCore); return }
+    (ui.core as? CoreLink.Failed)?.let { CoreErrorScreen(it.error) { dispatch(MainEvent.RetryLink) }; return }
+    val r = ui.ready ?: return
     val density = LocalDensity.current
     val nav = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
     val status = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
@@ -126,8 +127,10 @@ fun MainScreen(vm: MainViewModel) {
         val miniMap: @Composable (Modifier) -> Unit = { m ->
             RouteMiniMap(route, myLocation?.at, m, dark = CluetoothTheme.isDark)
         }
+        // the list is the core's; only its selection follows the scope, so it is rebuilt only when either changes
+        val sessionsShown = remember(ui.scope, sessionsList) { shownSessions(ui, sessionsList) }
         val sessions = @Composable { m: Modifier ->
-            shownSessions(ui, sessionsList)?.let { SessionsList(it, { sc -> dispatch(MainEvent.SelectScope(sc)) }, { dispatch(MainEvent.OpenSettings) }, m, tablet = tablet, bottomInset = if (tablet) 0.dp else nav) }
+            sessionsShown?.let { SessionsList(it, { sc -> dispatch(MainEvent.SelectScope(sc)) }, { dispatch(MainEvent.OpenSettings) }, m, tablet = tablet, bottomInset = if (tablet) 0.dp else nav) }
         }
 
         val mainLayers = @Composable {
@@ -156,7 +159,7 @@ fun MainScreen(vm: MainViewModel) {
             }
         }
 
-        val searchShown = shownSearch(ui, searchResults)
+        val searchShown = remember(ui.searchPage, ui.viewKey, searchResults) { shownSearch(ui, searchResults) }
         val searchRows = searchShown?.second.orEmpty()
         val topState = TopChromeState(
             hasSession = hasSession, sidebarOpen = ui.sidebarOpen && !tablet, recorderPanelOpen = form == RecorderUi.Form.Panel && !tablet,
@@ -191,7 +194,7 @@ fun MainScreen(vm: MainViewModel) {
                 ui.page == Page.Settings, SettingsUi(settings, vm.graph.uploads.status.collectAsState().value, st),
                 SettingsActions(
                     onBack = { dispatch(MainEvent.ClosePage) }, onSettings = { dispatch(MainEvent.UpdateSettings(it)) },
-                    onUploadNow = vm.graph.uploads::uploadNow,
+                    onUploadNow = { dispatch(MainEvent.UploadNow) },
                     onExportScope = { s -> dispatch(MainEvent.EditStorage { it.copy(exportScope = s) }) },
                     onExportFormat = { f -> dispatch(MainEvent.EditStorage { it.copy(exportFormat = f) }) },
                     onShare = { dispatch(MainEvent.Export(toDownloads = false)) }, onSaveToDownloads = { dispatch(MainEvent.Export(toDownloads = true)) },
@@ -210,7 +213,7 @@ fun MainScreen(vm: MainViewModel) {
                 ob.ui, ob.steps,
                 OnboardingActions(
                     onRequest = { which: OnboardingPermission -> dispatch(MainEvent.RequestPermission(which)) },
-                    onOpenSettings = vm.graph.permissions::openAppSettings, onEnableBluetooth = { dispatch(MainEvent.EnableBluetooth) },
+                    onOpenSettings = { dispatch(MainEvent.OpenAppSettings) }, onEnableBluetooth = { dispatch(MainEvent.EnableBluetooth) },
                     onUserId = { id ->
                         dispatch(MainEvent.EditOnboarding { it.copy(userId = id, userIdValid = edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings.isValidUserId(id)) })
                     },

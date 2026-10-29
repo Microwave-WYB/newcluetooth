@@ -23,7 +23,11 @@ class MainReducerRandomTest {
     private val scopes = listOf(null, Scope.All, sessionA, sessionB)
     private val boxes = listOf(null, box, Bbox(0.0, 0.0, 1.0, 1.0))
 
-    private fun Random.event(): MainEvent = when (nextInt(40)) {
+    private val effects = listOf(MainEffect.LoadSettings, MainEffect.LoadSessions, MainEffect.ReadLaunchFacts, MainEffect.LoadStorage,
+        MainEffect.Export(Scope.All, ExportFormat.Csv, false), MainEffect.SaveOnboarding("ab1", true), MainEffect.Delete(Scope.All, true),
+        MainEffect.StartRecording, MainEffect.SheetsBack, MainEffect.UploadNow)
+
+    private fun Random.event(): MainEvent = when (nextInt(43)) {
         0 -> MainEvent.SettingsLoaded(settings(done = nextBoolean(), userId = listOf(null, "ab1", "BAD").random(this)), perms)
         1 -> MainEvent.PermissionsChanged(perms.copy(bluetoothOn = nextBoolean()))
         2 -> MainEvent.LaunchFactsRead(LaunchFacts(listOf(null, "a", "b").random(this), nextBoolean(), nextInt(3)))
@@ -54,6 +58,13 @@ class MainReducerRandomTest {
         36 -> MainEvent.EditStorage { it.copy(exportFormat = ExportFormat.entries.random(this)) }
         37 -> listOf(MainEvent.Export(nextBoolean()), MainEvent.DeleteConfirmed, MainEvent.Delete(nextBoolean())).random(this)
         38 -> MainEvent.EditOnboarding { it.copy(step = it.step + 1) }
+        39 -> MainEvent.Failed(
+            listOf(MainTask.Effect(effects.random(this)), MainTask.Link, MainTask.Sessions, MainTask.Platform,
+                MainTask.View(ViewKey(sessionA, ViewEpoch(1)))).random(this),
+            IllegalStateException("random failure"),
+        )
+        40 -> MainEvent.RetryLink
+        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings).random(this)
         else -> listOf(MainEvent.RequestPermission(OnboardingPermission.entries.random(this)), MainEvent.EnableBluetooth, MainEvent.FinishOnboarding).random(this)
     }
 
@@ -96,6 +107,9 @@ class MainReducerRandomTest {
                 step.effects.filterIsInstance<MainEffect.SheetsEnterSearch>().forEach { fx ->
                     check("pick without a page", s.searchPage?.query == fx.query && n.searchQuery == fx.query && n.page == null)
                 }
+                // a failure never leaves the export running; the link fails only while waiting
+                if (e is MainEvent.Failed && (e.task as? MainTask.Effect)?.effect is MainEffect.Export) check("export kept running", n.storage?.exporting != true)
+                if (n.core is CoreLink.Failed && s.core !is CoreLink.Failed) check("link failed from ${s.core}", s.core is CoreLink.Waiting && e is MainEvent.Failed)
                 // storage: an export runs only with a format
                 n.storage?.let { if (it.exporting) check("export without a format", it.exportFormat != null) }
                 if (e is MainEvent.Back) checkBack(s, e, step, ::check)

@@ -83,15 +83,22 @@ class AppGraph(private val app: Application) {
     fun start() {
         core.start()
         platformRecorder // RecordingService finds it through RecordingServiceLink (§4.4)
+        // each step is guarded on its own: one that fails is logged and skipped, the others still run
         scope.launch {
             val handle = core.ready()
-            platformRecorder.restore()
+            guarded(MainTask.Platform, ::startFailed) { platformRecorder.restore() }
             // §1.2.6 (#53): one "Recording interrupted" notice for sessions Core::open marked interrupted
-            runCatching { InterruptedRecordingNotice(app).check { handle.queries.sessions() } }
+            guarded(MainTask.Platform, ::startFailed) { InterruptedRecordingNotice(app).check { handle.queries.sessions() } }
             // G-12: the display filter follows the setting; it never affects ingest or upload
             settings.settings.map { it.hideUnnamedApple }.distinctUntilChanged().collect { hide ->
-                kotlinx.coroutines.withContext(io) { handle.ingest.setDisplayFilter(DisplayFilter(hide)) }
+                guarded(MainTask.Platform, ::startFailed) {
+                    kotlinx.coroutines.withContext(io) { handle.ingest.setDisplayFilter(DisplayFilter(hide)) }
+                }
             }
         }
+    }
+
+    private fun startFailed(task: MainTask, error: Throwable) {
+        android.util.Log.w("AppGraph", "start step failed ($task)", error)
     }
 }

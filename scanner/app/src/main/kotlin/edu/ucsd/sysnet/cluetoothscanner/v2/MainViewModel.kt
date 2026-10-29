@@ -1,6 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.v2
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -26,6 +27,7 @@ import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.Channel
@@ -44,14 +46,30 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 
 /**
+ * Runs [block]; anything it throws (except cancellation, which belongs to the caller's scope) goes to [failed] with
+ * [task] and yields null. The runner runs every effect, every piece of keyed work and every platform call through
+ * this, so a failure always ends as a typed [MainEvent.Failed] and never reaches the main thread.
+ */
+internal inline fun <T> guarded(task: MainTask, failed: (MainTask, Throwable) -> Unit, block: () -> T): T? =
+    try {
+        block()
+    } catch (c: CancellationException) {
+        throw c
+    } catch (t: Throwable) {
+        failed(task, t)
+        null
+    }
+
+/**
  * §6.7.1, the runner of the main screen's logic ([reduce] in MainState.kt): one queue of [MainEvent]s with a
- * single consumer that reduces each event and executes the [MainEffect]s it returns; results come back as events.
- * The session view and the search page work in scopes keyed by the state ([ViewKey], [SearchKey]). Each data
- * holder has a single writer: the view job, the search job and the sessions queue. The recording itself lives in
- * the [AppGraph]; this only reads it and asks it to change (§1.2.1).
+ * single consumer that reduces each event and executes the [MainEffect]s it returns; results come back as events,
+ * failures as [MainEvent.Failed] (see [guarded]). The link, the session view and the search page work in scopes
+ * keyed by the state ([MainUiState.linkAttempt], [ViewKey], [SearchKey]). Each data holder has a single writer: the
+ * view job, the search job and the sessions queue. The recording itself lives in the [AppGraph]; this only reads
+ * it and asks it to change (§1.2.1).
  */
 class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(app) {
-    /** Every coroutine of this ViewModel runs here: a failure is logged and moves the core state to Failed. */
+    /** Every coroutine of this ViewModel runs here; [guarded] catches first, the core's handler is the last resort. */
     private val vmScope = CoroutineScope(viewModelScope.coroutineContext + graph.core.handler)
 
     private val _ui = MutableStateFlow(MainUiState())
@@ -96,6 +114,14 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         events.trySend(e)
     }
 
+    /** The one failure path: log, then the logic decides ([MainEvent.Failed]). */
+    private fun fail(task: MainTask, error: Throwable) {
+        Log.w(TAG, "$task failed", error)
+        dispatch(MainEvent.Failed(task, error))
+    }
+
+    private inline fun <T> guard(task: MainTask, block: () -> T): T? = guarded(task, ::fail, block)
+
     init {
         vmScope.launch(start = CoroutineStart.UNDISPATCHED) {
             for (e in events) {
@@ -104,29 +130,42 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
                 step.effects.forEach(::execute)
             }
         }
-        vmScope.launch {
-            val core = graph.core.ready()
-            val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(app), vmScope)
-            // §2.6: subscribe before querying
-            launch(start = CoroutineStart.UNDISPATCHED) {
-                core.queries.events.collect { if (it is CoreEvent.SessionsChanged || it is CoreEvent.DataInvalidated) sessionReads.trySend(Unit) }
-            }
-            launch(start = CoroutineStart.UNDISPATCHED) { for (r in sessionReads) _sessions.value = readSessions(core.queries) }
-            dispatch(MainEvent.CoreLinked(Ready(core, map)))
-            launch { graph.recorder.state.map { it.phase }.distinctUntilChanged().collect { dispatch(MainEvent.RecorderChanged(it)) } }
-            launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
-            launch { viewWork(core.queries) }
-            // V-6 decides on the stored settings, not the defaults
-            launch(start = CoroutineStart.UNDISPATCHED) {
-                val s = graph.settings.loaded()
-                dispatch(MainEvent.SettingsLoaded(s, graph.permissions.state.value))
-            }
-        }
+        vmScope.launch { linkWork() }
+        vmScope.launch { linkedWork() }
     }
 
     private suspend fun ready(): Ready = ui.mapNotNull { it.ready }.first()
 
     // ---- the work keyed by the state ----
+
+    /** §1.2.2: each attempt awaits the core and builds the map state on it → CoreLinked, or Failed(Link). */
+    private suspend fun linkWork() = ui.map { it.linkAttempt }.distinctUntilChanged().collectLatest { attempt ->
+        if (attempt == null) return@collectLatest
+        guard(MainTask.Link) {
+            val core = graph.core.ready()
+            val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(getApplication<Application>()), vmScope)
+            dispatch(MainEvent.CoreLinked(Ready(core, map)))
+        }
+    }
+
+    /** What runs while the screen is linked: the core's events, the sessions queue, the platform state, the view. */
+    private suspend fun linkedWork() = ui.map { it.ready }.distinctUntilChanged().collectLatest { ready ->
+        val q = ready?.core?.queries ?: return@collectLatest
+        coroutineScope {
+            // §2.6: subscribe before querying
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                guard(MainTask.CoreEvents) {
+                    q.events.collect { if (it is CoreEvent.SessionsChanged || it is CoreEvent.DataInvalidated) sessionReads.trySend(Unit) }
+                }
+            }
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                for (r in sessionReads) guard(MainTask.Sessions) { _sessions.value = readSessions(q) }
+            }
+            launch { graph.recorder.state.map { it.phase }.distinctUntilChanged().collect { dispatch(MainEvent.RecorderChanged(it)) } }
+            launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
+            launch { viewWork(q) }
+        }
+    }
 
     /** V-2 / V-7: the shown scope's view, re-read while it is live; the search page's work lives inside it. */
     private suspend fun viewWork(q: CoreQueries) = ui.map { it.viewKey }.distinctUntilChanged().collectLatest { key ->
@@ -134,13 +173,15 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         if (scope == null) { _view.value = null; return@collectLatest }
         coroutineScope {
             launch { searchWork(q, key) }
-            var v = q.sessionView(scope)
-            _view.value = ViewData(key, v)
-            // the live route and device count while this view is live; frozen views are read once
-            while (v.live) {
-                delay(LIVE_REFRESH_MS)
-                v = q.sessionView(scope)
+            guard(MainTask.View(key)) {
+                var v = q.sessionView(scope)
                 _view.value = ViewData(key, v)
+                // the live route and device count while this view is live; frozen views are read once
+                while (v.live) {
+                    delay(LIVE_REFRESH_MS)
+                    v = q.sessionView(scope)
+                    _view.value = ViewData(key, v)
+                }
             }
         }
     }
@@ -151,57 +192,66 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         ui.map { it.searchKey }.distinctUntilChanged().collectLatest { key ->
             val scope = view.scope
             if (key == null || key.view != view || scope == null) { _search.value = null; return@collectLatest }
-            val hits = q.search(scope, key.query, key.area)
-            if (hits == null) { _search.value = SearchResults(key, null, emptyList()); return@collectLatest }
-            val o = order ?: OrderedKeys(q.deviceOrder(scope).keys).also { order = it }
-            o.append(hits.keys)
-            val keys = o.visible(hits).take(MAX_ROWS).toLongArray()
-            _search.value = SearchResults(key, o, q.deviceRows(scope, keys))
+            guard(MainTask.Search(key)) {
+                val hits = q.search(scope, key.query, key.area)
+                _search.value = if (hits == null) SearchResults(key, null, emptyList()) else {
+                    val o = order ?: OrderedKeys(q.deviceOrder(scope).keys).also { order = it }
+                    o.append(hits.keys)
+                    val keys = o.visible(hits).take(MAX_ROWS).toLongArray()
+                    SearchResults(key, o, q.deviceRows(scope, keys))
+                }
+            }
         }
     }
 
     private suspend fun readSessions(q: CoreQueries): SessionsListState {
         val current = q.currentSession()
+        // the summary is optional for the list: an unreadable one shows as empty
         val all = runCatching { q.allSessionsSummary() }.getOrElse { AllSessionsSummary(0, 0, null) }
         return SessionsListState.build(current, all, q.sessions(), _ui.value.scope, System.currentTimeMillis())
     }
 
     // ---- effects ----
 
+    /** Every effect runs in its own coroutine, through [guard]: it ends in its result event or in Failed(effect). */
     private fun execute(effect: MainEffect) {
+        vmScope.launch { guard(MainTask.Effect(effect)) { run(effect) } }
+    }
+
+    private suspend fun run(effect: MainEffect) {
         val s = _ui.value
         when (effect) {
+            MainEffect.LoadSettings -> {
+                val loaded = graph.settings.loaded() // V-6 decides on the stored settings, not the defaults
+                dispatch(MainEvent.SettingsLoaded(loaded, graph.permissions.state.value))
+            }
             MainEffect.LoadSessions -> sessionReads.trySend(Unit)
-            MainEffect.ReadLaunchFacts -> vmScope.launch { dispatch(MainEvent.LaunchFactsRead(launchFacts())) }
-            MainEffect.StartRecording -> vmScope.launch { graph.recorder.start().onSuccess { dispatch(MainEvent.RecordingStarted(it)) } }
-            MainEffect.PauseRecording -> vmScope.launch { graph.recorder.pause() }
-            MainEffect.ResumeRecording -> vmScope.launch { graph.recorder.resume() }
-            MainEffect.StopRecording -> vmScope.launch { graph.recorder.stop() }
+            MainEffect.ReadLaunchFacts -> dispatch(MainEvent.LaunchFactsRead(launchFacts()))
+            MainEffect.StartRecording -> graph.recorder.start().onSuccess { dispatch(MainEvent.RecordingStarted(it)) }
+            MainEffect.PauseRecording -> graph.recorder.pause()
+            MainEffect.ResumeRecording -> graph.recorder.resume()
+            MainEffect.StopRecording -> graph.recorder.stop()
             MainEffect.FrameRoute -> bboxOf(shownRoute(s, _view.value))?.let { box -> s.ready?.map?.frame(box) }
             MainEffect.SheetsBack -> s.attachedSheets?.handleBack()
             is MainEffect.SheetsEnterSearch -> s.ready?.let { r -> s.attachedSheets?.enterSearch(effect.query, effect.area, r.map.camera(), effect.picked) }
             is MainEffect.SheetsSearchThisArea -> s.attachedSheets?.searchThisArea(effect.camera.viewport, effect.camera.zoom)
             MainEffect.SheetsExitSearch -> s.attachedSheets?.exitSearch()
-            MainEffect.LoadStorage -> vmScope.launch { dispatch(MainEvent.StorageLoaded(storageFacts())) }
-            is MainEffect.Export -> vmScope.launch {
-                val core = ready().core
-                val prepared = runCatching { core.storage.prepareExport(effect.scope, effect.format) }.getOrNull()
-                if (prepared != null) {
-                    runCatching { if (effect.toDownloads) graph.exportShare.saveToDownloads(prepared) else graph.exportShare.share(prepared) }
-                }
+            MainEffect.LoadStorage -> dispatch(MainEvent.StorageLoaded(storageFacts()))
+            is MainEffect.Export -> {
+                val prepared = ready().core.storage.prepareExport(effect.scope, effect.format)
+                if (effect.toDownloads) graph.exportShare.saveToDownloads(prepared) else graph.exportShare.share(prepared)
                 dispatch(MainEvent.ExportFinished)
             }
-            is MainEffect.Delete -> vmScope.launch {
-                val core = ready().core
-                val outcome = runCatching { core.storage.deleteLocalData(effect.scope, effect.includeUnuploaded) }.getOrNull()
-                dispatch(MainEvent.DeleteFinished(effect.scope, outcome != null && outcome !is DeleteOutcome.Refused))
+            is MainEffect.Delete -> {
+                val outcome = ready().core.storage.deleteLocalData(effect.scope, effect.includeUnuploaded)
+                dispatch(MainEvent.DeleteFinished(effect.scope, outcome !is DeleteOutcome.Refused))
             }
-            is MainEffect.UpdateSettings -> vmScope.launch { graph.settings.update(effect.transform) }
-            is MainEffect.SaveOnboarding -> vmScope.launch {
+            is MainEffect.UpdateSettings -> graph.settings.update(effect.transform)
+            is MainEffect.SaveOnboarding -> {
                 graph.settings.update { it.copy(userId = effect.userId, recordOnOpen = effect.autoRecord, onboardingDone = true) }
                 dispatch(MainEvent.OnboardingSaved)
             }
-            is MainEffect.RequestPermissions -> _requests.tryEmit(
+            is MainEffect.RequestPermissions -> _requests.emit(
                 ActivityRequest.Permissions(
                     when (effect.which) {
                         OnboardingPermission.Nearby -> Permissions.nearby()
@@ -210,8 +260,10 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
                     },
                 ),
             )
-            MainEffect.EnableBluetooth -> _requests.tryEmit(ActivityRequest.EnableBluetooth)
-            MainEffect.TurnOnLocation -> _requests.tryEmit(ActivityRequest.TurnOnLocation)
+            MainEffect.EnableBluetooth -> _requests.emit(ActivityRequest.EnableBluetooth)
+            MainEffect.TurnOnLocation -> _requests.emit(ActivityRequest.TurnOnLocation)
+            MainEffect.OpenAppSettings -> graph.permissions.openAppSettings()
+            MainEffect.UploadNow -> graph.uploads.uploadNow()
         }
     }
 
@@ -219,6 +271,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     private suspend fun launchFacts(): LaunchFacts {
         val rec = graph.recorder.state.value
         val restored = rec.sessionId?.takeIf { rec.phase != RecorderState.Phase.Idle }
+        // an unreadable count opens as if there were none (V-6 then picks record-on-open or the first run)
         val sessions = runCatching { ready().core.queries.allSessionsSummary().sessionCount }.getOrDefault(0)
         return LaunchFacts(restored, graph.settings.loaded().recordOnOpen, sessions)
     }
@@ -231,7 +284,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         return StorageFacts(stats.databaseBytes, stats.rawFilesBytes, cache, stats.pendingCount)
     }
 
-    // ---- what the composition reads from the platform side ----
+    // ---- what the composition and the map call: platform calls, each through [guard] ----
 
     private fun pushedSheet(s: MainUiState) = s.attachedSheets?.let { it.stack.entries.size > 1 } == true
     private fun sheetSearching(s: MainUiState) = s.attachedSheets?.searching == true
@@ -247,19 +300,25 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
 
     /** M-7, P-6, D-4, Q-6: the map's events go to D's sheets; the settled camera also comes here (Q-3, Q-6). */
     val mapEvents: MapEvents = object : MapEvents {
-        override fun onUserGestureStart() { _ui.value.attachedSheets?.mapEvents?.onUserGestureStart() }
+        override fun onUserGestureStart() { guard(MainTask.Platform) { _ui.value.attachedSheets?.mapEvents?.onUserGestureStart() } }
         override fun onCameraIdle(byUser: Boolean, viewport: Bbox, zoom: Double) {
             dispatch(MainEvent.CameraIdle(MapCamera(viewport, zoom)))
-            _ui.value.attachedSheets?.mapEvents?.onCameraIdle(byUser, viewport, zoom)
+            guard(MainTask.Platform) { _ui.value.attachedSheets?.mapEvents?.onCameraIdle(byUser, viewport, zoom) }
         }
-        override fun onDeviceTap(key: DeviceKey) { _ui.value.attachedSheets?.mapEvents?.onDeviceTap(key) }
-        override fun onEmptyTap() { _ui.value.attachedSheets?.mapEvents?.onEmptyTap() ?: _ui.value.ready?.map?.setSelection(null) }
+        override fun onDeviceTap(key: DeviceKey) { guard(MainTask.Platform) { _ui.value.attachedSheets?.mapEvents?.onDeviceTap(key) } }
+        override fun onEmptyTap() {
+            guard(MainTask.Platform) { _ui.value.attachedSheets?.mapEvents?.onEmptyTap() ?: _ui.value.ready?.map?.setSelection(null) }
+        }
     }
 
-    /** What the sheets, the panel and the chrome cover, for the map's padding (M-10, D-14). */
-    fun setCover(insets: CoverInsets) { _ui.value.ready?.map?.setCover(insets) }
+    /** What the sheets, the panel and the chrome cover, for the map's padding (M-10, D-14); per frame, so no event. */
+    fun setCover(insets: CoverInsets) { guard(MainTask.Platform) { _ui.value.ready?.map?.setCover(insets) } }
+
+    /** The Activity's launches fail here (e.g. no settings activity on the device). */
+    fun launchFailed(error: Throwable) = fail(MainTask.Platform, error)
 
     companion object {
+        private const val TAG = "MainViewModel"
         private const val LIVE_REFRESH_MS = 5_000L
         private const val MAX_ROWS = 200
 

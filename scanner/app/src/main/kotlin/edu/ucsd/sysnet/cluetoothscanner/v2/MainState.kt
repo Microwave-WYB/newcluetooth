@@ -35,10 +35,26 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 /** The opened core plus the map state built on it. */
 class Ready(val core: CoreHandle, val map: CluetoothMapState)
 
-/** The screen's link to the core: waiting until it is open and the map state is built (§1.2.2). */
+/** The screen's link to the core (§1.2.2): Waiting(attempt) → Linked(ready) | Failed(error); Retry waits again. */
 sealed interface CoreLink {
-    data object Waiting : CoreLink
+    /** The runner awaits the core and builds the map state for this attempt. */
+    data class Waiting(val attempt: Int) : CoreLink
     data class Linked(val ready: Ready) : CoreLink
+    data class Failed(val error: Throwable, val attempt: Int) : CoreLink
+}
+
+/** What the runner was doing when something threw; [MainEvent.Failed] names it so the logic can recover. */
+sealed interface MainTask {
+    data class Effect(val effect: MainEffect) : MainTask
+    /** Linking to the core: awaiting it and building the map state. */
+    data object Link : MainTask
+    data class View(val key: ViewKey) : MainTask
+    data class Search(val key: SearchKey) : MainTask
+    data object Sessions : MainTask
+    /** The core's event subscription (§2.6). */
+    data object CoreEvents : MainTask
+    /** A call into the map or the sheets from a map callback or the cover, or an Activity launch. */
+    data object Platform : MainTask
 }
 
 /** Lane D's sheets for the shown scope; they are a Compose holder, so the composition attaches and detaches them. */
@@ -101,7 +117,7 @@ data class MainUiState(
     val storage: StorageUi? = null,
     val onboarding: OnboardingFlow? = null,
     val camera: MapCamera? = null,
-    val core: CoreLink = CoreLink.Waiting,
+    val core: CoreLink = CoreLink.Waiting(0),
     val sheets: SheetsLink = SheetsLink.None,
 ) {
     val viewKey: ViewKey get() = ViewKey(scope, epoch)
@@ -110,6 +126,8 @@ data class MainUiState(
     val searchKey: SearchKey? get() = searchPage?.takeIf { scope != null }?.let { SearchKey(viewKey, it.query, it.area) }
     val recorderPanelOpen: Boolean get() = (recorder as? RecorderMirror.Active)?.panelOpen == true
     val ready: Ready? get() = (core as? CoreLink.Linked)?.ready
+    /** The link attempt the runner works on, while waiting. */
+    val linkAttempt: Int? get() = (core as? CoreLink.Waiting)?.attempt
     val attachedSheets: SheetsState? get() = (sheets as? SheetsLink.Attached)?.sheets
 }
 
@@ -117,6 +135,9 @@ data class MainUiState(
 sealed interface MainEvent {
     // ---- results and platform state ----
     data class CoreLinked(val ready: Ready) : MainEvent
+    /** Anything the runner ran threw: every effect and every piece of keyed work ends in a result or this. */
+    data class Failed(val task: MainTask, val error: Throwable) : MainEvent
+    data object RetryLink : MainEvent
     data class SettingsLoaded(val settings: Settings, val permissions: PermissionState) : MainEvent
     data class PermissionsChanged(val permissions: PermissionState) : MainEvent
     data class LaunchFactsRead(val facts: LaunchFacts) : MainEvent
@@ -162,11 +183,15 @@ sealed interface MainEvent {
     data class EditOnboarding(val transform: (OnboardingUi) -> OnboardingUi) : MainEvent
     data class RequestPermission(val which: OnboardingPermission) : MainEvent
     data object EnableBluetooth : MainEvent
+    data object OpenAppSettings : MainEvent
+    data object UploadNow : MainEvent
     data object FinishOnboarding : MainEvent
 }
 
 /** Everything the logic wants done; the runner executes each and feeds its result back as a [MainEvent]. */
 sealed interface MainEffect {
+    /** V-6 / O-2: read the stored settings and the grants → [MainEvent.SettingsLoaded]. */
+    data object LoadSettings : MainEffect
     /** Re-read the sessions list (the core's). */
     data object LoadSessions : MainEffect
     /** V-6: read the [LaunchFacts] → [MainEvent.LaunchFactsRead]. */
@@ -196,6 +221,9 @@ sealed interface MainEffect {
     data class RequestPermissions(val which: OnboardingPermission) : MainEffect
     data object EnableBluetooth : MainEffect
     data object TurnOnLocation : MainEffect
+    data object OpenAppSettings : MainEffect
+    /** O-1: the uploader runs now (B). */
+    data object UploadNow : MainEffect
 }
 
 /** One transition: the next state and the effects to run, in order. */
@@ -206,7 +234,13 @@ private fun MainUiState.with(vararg effects: MainEffect) = Step(this, effects.to
 
 /** The pure transition function of the main screen. */
 fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
-    is MainEvent.CoreLinked -> s.copy(core = CoreLink.Linked(e.ready)).only()
+    // §1.2.2 then V-6: the screen is linked; the launch flow starts from the stored settings
+    is MainEvent.CoreLinked -> s.copy(core = CoreLink.Linked(e.ready)).with(MainEffect.LoadSettings)
+    is MainEvent.Failed -> failed(s, e.task, e.error)
+    MainEvent.RetryLink -> when (val c = s.core) {
+        is CoreLink.Failed -> s.copy(core = CoreLink.Waiting(c.attempt + 1)).only()
+        is CoreLink.Waiting, is CoreLink.Linked -> s.only()
+    }
     // O-2 on first launch; otherwise V-6 decides on the stored settings, not the defaults
     is MainEvent.SettingsLoaded ->
         if (e.settings.onboardingDone) s.with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
@@ -313,9 +347,38 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     is MainEvent.EditOnboarding -> s.copy(onboarding = s.onboarding?.let { it.copy(ui = e.transform(it.ui)) }).only()
     is MainEvent.RequestPermission -> s.with(MainEffect.RequestPermissions(e.which))
     MainEvent.EnableBluetooth -> s.with(MainEffect.EnableBluetooth)
+    MainEvent.OpenAppSettings -> s.with(MainEffect.OpenAppSettings)
+    MainEvent.UploadNow -> s.with(MainEffect.UploadNow)
     // O-2 Done: save, then the first run (recording straight away if the switch was left on)
     MainEvent.FinishOnboarding -> s.onboarding?.let { s.with(MainEffect.SaveOnboarding(it.ui.userId, it.ui.autoRecord)) } ?: s.only()
     MainEvent.OnboardingSaved -> s.copy(onboarding = null).with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
+}
+
+/**
+ * A failure leaves the state as consistent as a success would: what was running stops, and what the screen waits
+ * for falls back (the launch view to the first run, the storage section to zeros). The runner has logged it.
+ */
+private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = when (task) {
+    MainTask.Link -> when (val c = s.core) {
+        is CoreLink.Waiting -> s.copy(core = CoreLink.Failed(error, c.attempt)).only()
+        is CoreLink.Linked, is CoreLink.Failed -> s.only()
+    }
+    is MainTask.Effect -> when (task.effect) {
+        // without stored settings the launch view still opens (its own facts fall back to the first run)
+        MainEffect.LoadSettings -> s.with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
+        MainEffect.ReadLaunchFacts -> reduce(s, MainEvent.LaunchFactsRead(LaunchFacts(null, recordOnOpen = false, sessionCount = 0)))
+        MainEffect.LoadStorage -> reduce(s, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)))
+        is MainEffect.Export -> reduce(s, MainEvent.ExportFinished)
+        // the onboarding stays, so Done can be pressed again
+        is MainEffect.SaveOnboarding,
+        MainEffect.LoadSessions, MainEffect.StartRecording, MainEffect.PauseRecording, MainEffect.ResumeRecording,
+        MainEffect.StopRecording, MainEffect.FrameRoute, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
+        is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch, is MainEffect.Delete, is MainEffect.UpdateSettings,
+        is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation, MainEffect.OpenAppSettings,
+        MainEffect.UploadNow -> s.only()
+    }
+    // the keyed work keeps its last data, which the selectors show only for its own key
+    is MainTask.View, is MainTask.Search, MainTask.Sessions, MainTask.CoreEvents, MainTask.Platform -> s.only()
 }
 
 /** R-4: the panel opens and closes only while a recording is active. */
