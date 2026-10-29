@@ -361,8 +361,9 @@
       body.innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
     }
     }
-    sheet.style.setProperty("--peek", `${$(".handle", sheet).offsetHeight + head.offsetHeight}px`);
-    if (!sheetState(sheet)) setSheetState(sheet, "collapsed");
+    sheet.style.setProperty("--peek", `${head.offsetTop + head.offsetHeight}px`);
+    // the first state: the peek on phone, the open panel on tablet (collapsed there would be a bare header)
+    if (!sheetState(sheet)) setSheetState(sheet, isTablet() ? "full" : "collapsed");
     liftRecorder();
   }
   /** The search results as rows (search state's sheet and the search page), in the session's fixed order. */
@@ -680,12 +681,16 @@
   function computeLayout() {
     const w = phone.clientWidth, mode = w >= parseFloat(tok("--bp-expanded")) ? "expanded" : w >= parseFloat(tok("--bp-medium")) ? "medium" : "compact";
     if (mode === S.layout) return;
+    const wasCompact = S.layout === "compact";
     S.layout = mode;
     phone.dataset.layout = mode;
     phone.classList.toggle("tablet", isTablet());
     if (!Stack.entries.length) return;
     // the panel has two states: open (full) and collapsed
     if (isTablet()) Stack.entries.forEach((e) => { if (sheetState(e.el) === "half") setSheetState(e.el, "full"); });
+    // from phone to tablet: the phone's resting peek becomes the open panel
+    if (isTablet() && wasCompact) Stack.entries.forEach((e) => { if (sheetState(e.el) === "collapsed") setSheetState(e.el, "full"); });
+    Stack.entries.forEach((e) => (e.kind === "discover" ? renderDiscover() : renderSheet(e)));
     couple(); updateScrim(); liftRecorder();
     if (S.recorder !== "idle") setRecorder(S.recorder === "panel" ? "capsule" : S.recorder); // the recorder's place depends on the layout
   }
@@ -907,7 +912,7 @@
       const rows = productDevices(p).filter((d) => inArea(d.addr)).map((d) => UI.deviceRow(d, { spark: S.live })).join("");
       body.innerHTML = UI.productView(p, rows || `<div class="empty">No matching devices</div>`);
     }
-    el.style.setProperty("--peek", `${$(".handle", el).offsetHeight + top.offsetHeight}px`);
+    el.style.setProperty("--peek", `${top.offsetTop + top.offsetHeight}px`);
   }
   /** After the search, the area or a filter changes: the root and every product sheet, scroll kept. */
   function refreshSheets() {

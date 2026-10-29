@@ -152,6 +152,11 @@
   --r-pop: 20px;
   --r-pill: 999px;
   --r-sheet: 20px;
+  /* concentric corners: a sheet's top corner arc is centered on its corner buttons, which sit in the column of the
+     search float button (--rb at --edge). On tablet the panel is concentric with its header buttons (--panel-inset). */
+  --sheet-radius: calc(var(--edge) + var(--rb) / 2);
+  --sheet-header-h: var(--icon-btn); /* a sheet header row: the view switch, the X, the segmented control, titles */
+  --panel-radius: calc(var(--panel-inset) + var(--rb) / 2);
 
   /* ---- Focus ---- */
   --focus-w: 2px;
