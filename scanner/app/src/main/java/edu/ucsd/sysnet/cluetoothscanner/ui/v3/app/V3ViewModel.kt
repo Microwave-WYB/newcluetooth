@@ -2,7 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.ui.v3.app
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
+import edu.ucsd.sysnet.cluetoothscanner.V3CluetoothApplication
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattStartResult
 import edu.ucsd.sysnet.cluetoothscanner.gatt.GattUiState as EngineGattState
 import edu.ucsd.sysnet.cluetoothscanner.gatt.startGattDiscovery
@@ -95,7 +95,7 @@ data class SavedInfo(val summary: SavedRecording, val recordingId: String?)
  * here touches Compose.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
+class V3ViewModel(private val app: V3CluetoothApplication) : ViewModel() {
     private val localData = app.localData
     private val hub = app.localData as? LocalDataHub
     private val recording = app.recordingController
@@ -268,7 +268,7 @@ class V3ViewModel(private val app: CluetoothApplication) : ViewModel() {
     )
 
     init {
-        // The stores are fed by CluetoothApplication; this is only the on-screen list.
+        // The stores are fed by V3CluetoothApplication; this is only the on-screen list.
         viewModelScope.launch(Dispatchers.Default) {
             uiActive.collectLatest { active ->
                 if (active) {

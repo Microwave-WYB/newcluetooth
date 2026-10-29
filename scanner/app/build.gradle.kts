@@ -286,6 +286,19 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    // v2 (integration step 1, docs/v2-api.md §6.7.1). The core is bound in one place, v2/CoreBinding.kt.
+    implementation(project(":core-api"))
+    implementation(project(":ui-contract"))
+    implementation(project(":designsystem"))
+    implementation(project(":chrome"))
+    implementation(project(":sheets"))
+    implementation(project(":map"))
+    implementation(project(":platform-api"))
+    implementation(project(":platform"))
+    implementation(project(":core-fake")) // only v2/CoreBinding.kt may use it (until :core-bridge)
+    implementation(project(":platform-fake")) // only v2/PlatformPlaceholders.kt may use it (until #53 and the GATT/upload/export pieces)
+    implementation(libs.androidx.core.splashscreen)
+
 
     implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
     implementation("com.google.firebase:firebase-storage")

@@ -5,7 +5,7 @@ import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.google.firebase.storage.FirebaseStorage
-import edu.ucsd.sysnet.cluetoothscanner.CluetoothApplication
+import edu.ucsd.sysnet.cluetoothscanner.V3CluetoothApplication
 import edu.ucsd.sysnet.cluetoothscanner.utils.AppSettings
 import edu.ucsd.sysnet.cluetoothscanner.utils.EncryptionUtils
 import kotlinx.coroutines.CancellationException
@@ -70,8 +70,8 @@ class UploadWorker(
     }
 
     private suspend fun uploadV2Payloads(): PayloadUploadSummary {
-        val application = context.applicationContext as? CluetoothApplication
-            ?: error("CluetoothApplication is required for the process-owned core")
+        val application = context.applicationContext as? V3CluetoothApplication
+            ?: error("V3CluetoothApplication is required for the process-owned core")
         return application.repository.uploadPendingV2(
             FirebaseObjectFileUploader(),
             UploadResume(
@@ -190,8 +190,8 @@ class GattUploadWorker(
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            val application = context.applicationContext as? CluetoothApplication
-                ?: error("CluetoothApplication is required for the process-owned core")
+            val application = context.applicationContext as? V3CluetoothApplication
+                ?: error("V3CluetoothApplication is required for the process-owned core")
             val summary = application.repository.uploadPendingV2(
                 FirebaseObjectFileUploader(),
                 // Own session store and cache directory: the scan run's orphan cleanup can never
