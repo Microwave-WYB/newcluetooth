@@ -55,6 +55,10 @@ run = "node design/ui-v2/export.mjs"
 description = "Fail if the committed design/ui-v2 JSON exports are out of date"
 run = "node design/ui-v2/export.mjs --check"
 
+[tasks.core-test]
+description = "Lane A's v2 Kotlin modules: JVM tests of :core-api (and later :core-fake, :core-bridge)"
+run = "./gradlew --no-daemon --max-workers=2 :core-api:test"
+
 [tasks.check]
 run = ["mise run //scanner:host-guard-check", "mise run //scanner:design-export-check", "mise run //scanner:wiki-bundle-test", "mise run //scanner:test", "mise run //scanner:lint"]
 

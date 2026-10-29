@@ -13,6 +13,7 @@ mod scan;
 mod session;
 mod staging;
 mod state;
+pub mod v2;
 
 use std::path::Path;
 
