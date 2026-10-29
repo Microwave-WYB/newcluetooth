@@ -235,6 +235,8 @@ object Strings {
     // ---- App (integration) ----
     /** §1.2.2: the core could not open its data (the error class and message follow, then Try again). */
     const val CoreOpenFailed = "Cluetooth could not open its data"
+    /** §1.2.2: the main screen failed after the data opened (the error class and message follow, then Try again). */
+    const val ScreenFailed = "Cluetooth ran into a problem"
 
     // ---- Notifications (B) ----
     /** "Recording · 12:34 · 26 devices". */

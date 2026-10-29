@@ -20,10 +20,12 @@ enum class LayoutMode {
     }
 }
 
-/** §5.4: the full-screen pages over the main screen. */
+/** §5.4: the full-screen pages over the main screen; each carries only its own state. */
 sealed interface Page {
     data object Settings : Page
-    data object SearchPage : Page
+
+    /** Q-3 / Q-4: the query, and the area it searches (the viewport when the page opened, null once everywhere). */
+    data class SearchPage(val query: String, val area: Bbox?, val searchedEverywhere: Boolean) : Page
 }
 
 /** G-14: what System Back closes, topmost first; [Leave] lets the system finish the activity. */

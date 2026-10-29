@@ -45,8 +45,13 @@ class AppGraph(private val app: Application) {
     /** §1.2.2: the core lifecycle (Opening → Ready | Failed, Retry); it opens the core on Dispatchers.IO. */
     val core: CoreOpener = CoreOpener(base, io, open = { CoreBinding.open(app, scope) })
 
-    /** The process scope (main thread; work that blocks hops to [io]). A failure in it moves the core to Failed. */
-    val scope: CoroutineScope = CoroutineScope(base.coroutineContext + core.handler)
+    /**
+     * The process scope (main thread; work that blocks hops to [io]). It has its own handler: a failure in it is
+     * logged and ends only that coroutine; it never touches the core's state, which means only "the open failed".
+     */
+    val scope: CoroutineScope = CoroutineScope(
+        base.coroutineContext + kotlinx.coroutines.CoroutineExceptionHandler { _, e -> android.util.Log.e("AppGraph", "uncaught in the process scope", e) },
+    )
 
     val appVersion: String = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "0.1.0"
 
@@ -83,15 +88,22 @@ class AppGraph(private val app: Application) {
     fun start() {
         core.start()
         platformRecorder // RecordingService finds it through RecordingServiceLink (§4.4)
+        // each step is guarded on its own: one that fails is logged and skipped, the others still run
         scope.launch {
             val handle = core.ready()
-            platformRecorder.restore()
+            guarded(MainTask.Platform, ::startFailed) { platformRecorder.restore() }
             // §1.2.6 (#53): one "Recording interrupted" notice for sessions Core::open marked interrupted
-            runCatching { InterruptedRecordingNotice(app).check { handle.queries.sessions() } }
+            guarded(MainTask.Platform, ::startFailed) { InterruptedRecordingNotice(app).check { handle.queries.sessions() } }
             // G-12: the display filter follows the setting; it never affects ingest or upload
             settings.settings.map { it.hideUnnamedApple }.distinctUntilChanged().collect { hide ->
-                kotlinx.coroutines.withContext(io) { handle.ingest.setDisplayFilter(DisplayFilter(hide)) }
+                guarded(MainTask.Platform, ::startFailed) {
+                    kotlinx.coroutines.withContext(io) { handle.ingest.setDisplayFilter(DisplayFilter(hide)) }
+                }
             }
         }
+    }
+
+    private fun startFailed(task: MainTask, error: Throwable) {
+        android.util.Log.w("AppGraph", "start step failed ($task)", error)
     }
 }
