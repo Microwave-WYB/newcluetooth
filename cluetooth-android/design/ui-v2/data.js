@@ -283,12 +283,28 @@
     return norm(addr || "").includes(norm(q));
   }
   /** The addresses of a session's devices (scope: a session id, "all" for All sessions) that match the query, in
-   *  the session's order; null for an empty query (no search). */
-  function searchDevices(query, scope) {
+   *  the session's order; null for an empty query (no search). bbox, optional: [west, south, east, north]; only
+   *  devices whose point (their strongest sighting) lies inside it. */
+  function searchDevices(query, scope, bbox) {
     if (!String(query || "").trim()) return null;
     const r = session(scope);
     if (!r) return [];
-    return r.points.map((p) => DEVICE[p.addr]).filter((d) => matchDevice(query, d.name, d.addr)).map((d) => d.addr);
+    const inside = (at) => !bbox || (at[0] >= bbox[0] && at[0] <= bbox[2] && at[1] >= bbox[1] && at[1] <= bbox[3]);
+    return r.points.filter((p) => inside(p.at)).map((p) => DEVICE[p.addr]).filter((d) => matchDevice(query, d.name, d.addr)).map((d) => d.addr);
+  }
+
+  // ---- location status (static demo states, ?loc=denied|off|waiting|stale) ----
+  /** The warning shows after this long without a first fix, or when the last fix is older than this. */
+  const LOCATION_WARN = { noFixMs: 30 * 1000, staleMs: 2 * 60 * 1000 };
+  let locationDemo = "ok";
+  const LOC_DEMO = { ok: {}, denied: {}, off: {}, waiting: { waitingMs: 45 * 1000 }, stale: { ageMs: 5 * 60 * 1000 } };
+  function locationStatusFor(state) {
+    const d = LOC_DEMO[state] || {};
+    if (state === "denied") return { state, warn: true, message: "Location permission is off", action: { id: "allow", label: "Allow" } };
+    if (state === "off") return { state, warn: true, message: "Location is turned off", action: { id: "turn-on", label: "Turn on" } };
+    if (state === "waiting") return { state, warn: d.waitingMs > LOCATION_WARN.noFixMs, message: "Waiting for location…", waitingMs: d.waitingMs };
+    if (state === "stale") return { state, warn: d.ageMs > LOCATION_WARN.staleMs, message: `Location is ${Math.round(d.ageMs / 60000)} min old`, ageMs: d.ageMs };
+    return { state: "ok", warn: false };
   }
 
   // ---- the boundary ----
@@ -324,6 +340,13 @@
     },
     /** "All sessions": every device and product of every session, frozen. Its id ("all") works wherever a session id does. */
     getAllSessionsView: () => { const v = allSessions(); const { points, ...meta } = v; return clone(meta); },
+    LOCATION_WARN,
+    /** Whether the location is usable and, if not, why (and the fix, if there is one). */
+    getLocationStatus: () => locationStatusFor(locationDemo),
+    locationStatusFor,
+    setLocationDemo: (state) => { locationDemo = LOC_DEMO[state] ? state : "ok"; },
+    /** The fix button's stub: the problem clears. */
+    fixLocation: () => { locationDemo = "ok"; },
     /** The user's current location. */
     getMyLocation: () => ({ at: [CENTER.lon + 0.0004, CENTER.lat + 0.00012], lat: 32.88012, lon: -117.23421, accuracy: 8 }),
     /** All finished sessions, newest first: this run's recordings, then the stored ones (including ones without data). */

@@ -37,6 +37,8 @@
     medical: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
     external: '<path d="M7 17 17 7M9 7h8v8"/>',
     close: '<path d="M6 6l12 12M18 6 6 18"/>',
+    locateOff: '<circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><path d="M4 4l16 16"/>',
+    locate: '<circle cx="12" cy="12" r="7"/><circle class="solid" cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
     list: '<path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
     grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
     panelClose: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M16 15l-3-3 3-3"/>',
@@ -54,12 +56,36 @@
     floatButton: ({ name, label, action, cls = "", value = "" }) =>
       `<button class="rb ${cls}" data-action="${action}" data-value="${esc(value)}" aria-label="${esc(label)}">${icon(name)}</button>`,
 
-    /** TopSearch: the top-right search button; open, it is the wiki search field across the top row. Name only. */
-    topSearch: (open, cls = "") => `
-      <div class="top-search ${open ? "open" : ""} ${cls}">
-        <button class="ts-toggle" data-action="search" aria-label="Search by name" aria-expanded="${open}">${icon("search")}</button>
-        <input id="top-q" type="search" placeholder="Search by name" autocomplete="off" aria-label="Search by name" tabindex="${open ? 0 : -1}">
+    /** LocationWarning: the locate button's spot while there is no usable location; tapping opens its popover. */
+    locWarn: (cls = "") => `<button class="rb loc-warn ${cls}" data-action="loc-pop" aria-label="Location problem">${icon("locateOff")}</button>`,
+    /** LocationPopover: the reason, and the fix when there is one. */
+    locPop: (status, cls = "") => `
+      <div class="loc-pop ${cls}" role="dialog" aria-label="Location">
+        <p>${esc(status.message)}</p>
+        ${status.action ? UI.button({ kind: "primary", label: status.action.label, action: "loc-fix", value: status.action.id, cls: "small" }) : ""}
       </div>`,
+
+    /** SearchBox: one element. Closed, the round search button (top right). Open, it expands into the full-width
+     *  wiki search field with a back arrow (its icon morphs), while the search page fades in under it. */
+    searchBox: (cls = "") => `
+      <div class="search-box ${cls}">
+        <button class="sbx-btn" data-action="search-open" aria-label="Search devices">${icon("search", "i-a")}${icon("back", "i-b")}</button>
+        <input id="search-q" type="search" placeholder="Search name or MAC" autocomplete="off" tabindex="-1" aria-label="Search devices">
+      </div>`,
+
+    /** SearchBar: search state's top row; the text reopens the search page, the X leaves search state. */
+    searchBar: (query, cls = "") => `
+      <div class="search-bar ${cls}">
+        <button class="sb-text" data-action="search-edit">${icon("search")}<span>${esc(query)}</span></button>
+        ${UI.iconButton({ name: "close", label: "Exit search", action: "search-exit" })}
+      </div>`,
+
+    /** NoResults: nothing matched; in an area, a text button searches the whole session view. */
+    noResults: (inArea) => `<div class="empty">${inArea ? "No results in this area" : "No devices match"}${inArea
+      ? `<br><button class="text-btn" data-action="search-everywhere">Search everywhere</button>` : ""}</div>`,
+
+    /** SearchPage: fades in under the expanded search box; the matching devices. */
+    searchPage: () => `<div class="scroll search-results"><div class="rows" id="search-rows"></div></div>`,
 
     /** MenuButton: ☰ at the map's top-left; with the sidebar out, it rides the sidebar's edge as "collapse sidebar". */
     menuButton: (open, cls = "") =>
@@ -289,13 +315,19 @@
         <div class="sheet-fade"></div>
         <div class="sheet-body" id="disc-body"></div>
       </section>
+      ${UI.floatButton({ name: "locate", label: "Show my location", action: "locate", cls: "locate-btn gone" })}
+      ${UI.locWarn("gone")}
+      <div class="pop-catch" data-action="loc-pop-close"></div>
+      <div class="loc-pop-slot" id="loc-pop"></div>
       <div class="recorder-catch" data-action="recorder-close"></div>
       ${UI.recorder({ state: "idle", paused: false, time: "12:34", meta: "", mapId: "rec-map" })}
       <div class="main-dim" data-action="side-close"></div>
       </div>
       <nav class="side" aria-label="Sessions"></nav>
       ${UI.menuButton(false)}
-      ${UI.topSearch(false)}
+      ${UI.searchBox()}
+      <div class="search-bar-slot" id="search-bar"></div>
+      <div class="search-area gone" id="search-area">${UI.chip({ label: "Search this area", on: false, action: "search-area" })}</div>
       <div id="pages"></div>
       <div class="scrim" data-action="sheet-close"></div>`;
   }
@@ -308,6 +340,13 @@
     if (!sess) return liftRecorder();
     const mode = S.live ? S.discoverMode : "all";
     const head = $("#disc-head"), chips = $("#disc-chips"), body = $("#disc-body");
+    if (S.search) {
+      // search state: the matched devices only, list view, "N results"
+      const n = S.search.order.length, where = S.search.bbox ? " in this area" : "";
+      head.innerHTML = `<span></span><span class="disc-title">${n} ${n === 1 ? "result" : "results"}${where}</span><span></span>`;
+      chips.innerHTML = "";
+      body.innerHTML = n ? `<div class="rows">${resultRows()}</div>` : UI.noResults(!!S.search.bbox);
+    } else {
     head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, hist: S.histMode });
     if (S.discView === "list") {
       chips.innerHTML = UI.chipRow(CATS, S.devCat, "dev-cat", "inline");
@@ -316,22 +355,31 @@
       chips.innerHTML = "";
       const area = areaCounts();
       const groups = D.getProducts(mode, S.session)
-        .map((g) => ({ ...g, products: g.products.filter((p) => (!S.found || S.foundProducts.has(p.id)) && (!area || area.count[p.id]))
+        .map((g) => ({ ...g, products: g.products.filter((p) => !area || area.count[p.id])
           .map((p) => (area ? { ...p, count: area.count[p.id], inRange: Math.min(p.inRange, area.live[p.id] || 0) } : p)) }))
         .filter((g) => g.products.length);
       body.innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
+    }
     }
     sheet.style.setProperty("--peek", `${$(".handle", sheet).offsetHeight + head.offsetHeight}px`);
     if (!sheetState(sheet)) setSheetState(sheet, "collapsed");
     liftRecorder();
   }
-  /** Is a device in the current search's results (or is there no search)? */
-  const found = (addr) => !S.found || S.found.has(addr);
+  /** The search results as rows (search state's sheet and the search page), in the session's fixed order. */
+  function resultRows(addrs = S.search && S.search.order, action = "device") {
+    if (!addrs) return "";
+    const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
+    return addrs.map((a) => byAddr[a]).filter((d) => d && !hiddenByFilter(d)).map((d) => UI.deviceRow(d, { spark: S.live, action })).join("")
+      || `<div class="empty">No devices match</div>`;
+  }
+  /** Matching addresses (data.js searchDevices, within bbox if given) in the fixed order of the shown session. */
+  const searchOrder = (query, bbox) => { const hit = new Set(D.searchDevices(query, S.session, bbox) || []); return S.order.filter((a) => hit.has(a)); };
 
-  /** The record FAB stays anchored just above the Discover sheet's collapsed peek. It lives below the sheets, so a
-   *  rising sheet slides over it and a collapsing one uncovers it: no hiding. */
+  /** The record FAB (bottom right) and the locate button (bottom left) stay anchored just above the Discover sheet's
+   *  collapsed peek. They live below the sheets, so a rising sheet slides over them and a collapsing one uncovers
+   *  them: no hiding. */
   function liftRecorder() {
-    const root = $(".disc-sheet", phone), open = root.classList.contains("open");
+    const root = $(".disc-sheet", phone), open = root.classList.contains("open") && !isTablet();
     phone.style.setProperty("--rec-lift", `${open ? parseFloat(getComputedStyle(root).getPropertyValue("--peek")) || 0 : 0}px`);
   }
 
@@ -352,7 +400,7 @@
   function sessionRows(mode) {
     const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
     return (S.area ? S.areaOrder : S.order).map((a) => byAddr[a])
-      .filter((d) => d && inArea(d.addr) && found(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat))
+      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat))
       .map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
   }
   // ---- "This area" (history and All sessions): the sheets list only devices whose point is in the viewport ----
@@ -378,8 +426,28 @@
     S.area = vis;
     refreshSheets();
   }
+  /** The locate button shows once the user's own pan or zoom has taken their location off center (more than 40 px,
+   *  or any zoom since the last recenter); never after the app's camera moves, never without a location. */
+  function updateLocate(zoomed, byUser = true) {
+    if (zoomed) S.locZoomed = true;
+    const status = D.getLocationStatus();
+    // no usable location: the warning is always there instead (sheets still cover it)
+    $(".loc-warn", phone).classList.toggle("gone", !status.warn);
+    const show = byUser && !status.warn && status.state === "ok" && !!ME && (S.locZoomed || S.map.locOffset() > 40);
+    $(".locate-btn", phone).classList.toggle("gone", !show);
+  }
+  function setLocPop(open) {
+    $("#loc-pop").innerHTML = open ? UI.locPop(D.getLocationStatus()) : "";
+    $(".pop-catch", phone).classList.toggle("on", open);
+  }
   /** The map came to rest; byUser: after the user's drag or zoom. */
-  function mapMoved(byUser) {
+  function mapMoved(byUser, zoomed) {
+    if (byUser) updateLocate(zoomed);
+    if (S.search) {
+      // the app's own camera moves (framing a picked device) move the reference; only the user's moves offer the chip
+      if (!byUser) { if (!S.search.moved) S.search.ref = S.map.view(); }
+      else { S.search.moved = S.map.movedFrom(S.search.ref); updateSearchArea(); }
+    }
     if (byUser && S.histMode === "area" && S.session && !S.live) applyArea();
   }
 
@@ -478,7 +546,8 @@
     const M = { sel: null, points: [], at: {}, ready: false, pending: [] };
     const whenReady = (f) => (M.ready ? f() : M.pending.push(f));
     // frame what the sheets leave visible above them
-    const pad = () => ({ top: 90, bottom: sheetCover() + 40, left: 40, right: 40 });
+    const panelLeft = () => (isTablet() ? parseFloat(tok("--edge")) + $(".disc-sheet", phone).offsetWidth : 0);
+    const pad = () => ({ top: 90, bottom: sheetCover() + 40, left: panelLeft() + 40, right: 40 });
 
     map.on("load", () => {
       addStyle(map);
@@ -504,13 +573,22 @@
       map.getCanvas().style.cursor = hit ? "pointer" : "";
     });
     M.visibleAddrs = () => { const b = map.getBounds(); return new Set(M.points.filter((p) => b.contains(p.at)).map((p) => p.addr)); };
-    let userMove = false;
-    map.on("moveend", () => { mapMoved(userMove); userMove = false; });
+    M.bbox = () => { const b = map.getBounds(); return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]; };
+    M.view = () => ({ center: map.getCenter().toArray(), zoom: map.getZoom() });
+    /** Has the view moved away from ref: a zoom change of a level or more, or more than 25% of the viewport? */
+    M.movedFrom = (ref) => {
+      if (Math.abs(map.getZoom() - ref.zoom) >= 1) return true;
+      const p = map.project(ref.center), w = map.getCanvas().clientWidth, h = map.getCanvas().clientHeight;
+      return Math.abs(p.x - w / 2) / w > 0.25 || Math.abs(p.y - h / 2) / h > 0.25;
+    };
+    let userMove = false, zoomAtStart = 0;
+    map.on("moveend", () => { mapMoved(userMove, userMove && Math.abs(map.getZoom() - zoomAtStart) > 0.01); userMove = false; });
     // the user panning or zooming the map (drag, pinch, wheel, double-tap) collapses the sheet in front;
     // camera moves made by the app have no originalEvent
     map.on("movestart", (e) => {
       if (!e.originalEvent) return;
       userMove = true;
+      zoomAtStart = map.getZoom();
       const ds = Stack.top().el; // the sheet in front
       if (ds.classList.contains("open") && sheetState(ds) !== "collapsed") setSheetState(ds, "collapsed");
     });
@@ -540,6 +618,14 @@
       const coords = [...(sess.routes || [sess.route]).flat(), ...points.map((p) => p.at)];
       if (coords.length) map.fitBounds(boundsOf(coords), { padding: pad(), maxZoom: 17, duration: 0 });
     });
+    /** How far (px) the user's location is from the center of the map area the sheets leave visible. */
+    M.locOffset = () => {
+      if (!ME) return 0;
+      const p = map.project(ME.at), l = panelLeft(), w = map.getCanvas().clientWidth - l, h = map.getCanvas().clientHeight - sheetCover();
+      return Math.hypot(p.x - l - w / 2, p.y - h / 2);
+    };
+    /** The camera to the user's location, at street level (or closer if already closer); an app move. */
+    M.locate = () => whenReady(() => map.easeTo({ center: ME.at, zoom: Math.max(map.getZoom(), 17), padding: { top: 0, bottom: sheetCover(), left: panelLeft(), right: 0 }, duration: 600 }));
     M.fit = (coords) => whenReady(() => coords.length && map.fitBounds(boundsOf(coords), { padding: pad(), maxZoom: 17 }));
     M.select = (addr, move) => whenReady(() => {
       M.sel = addr;
@@ -547,7 +633,7 @@
       map.getSource("sightings").setData(fc(sightings));
       const at = M.at[addr] || (sightings[0] && sightings[0].at);
       const below = Math.max(sheetCover(), 320);
-      if (move && at) map.easeTo({ center: at, zoom: Math.max(map.getZoom(), 18.2), padding: { top: 0, bottom: below, left: 0, right: 0 }, duration: 600 });
+      if (move && at) map.easeTo({ center: at, zoom: Math.max(map.getZoom(), 18.2), padding: { top: 0, bottom: isTablet() ? 0 : below, left: panelLeft(), right: 0 }, duration: 600 });
       paintSelection();
     });
     /** Removes the device highlight. */
@@ -577,21 +663,38 @@
 
   const phone = $("#phone");
   const S = {
-    session: null, live: false, order: [],
+    session: null, live: false, order: [], layout: null,
     recorder: "idle", paused: false, recMap: null,
     discoverMode: "nearby", discView: "categories",
-    devCat: "all", query: "", found: null, foundProducts: null, viewBeforeSearch: null, histMode: "all", area: null, areaOrder: [], // area: the devices in view while "This area" is on
+    devCat: "all", search: null, page: null, locZoomed: false, // search: { query, bbox, order, ref, moved, saved } in search state; page: the search page's scope
+    histMode: "all", area: null, areaOrder: [], // area: the devices in view while "This area" is on
     settings: { ...SETTINGS }, stack: [], map: null,
     ob: 0, obAuto: true, obAllowed: [false, false, false],
   };
 
   const top = () => (S.stack.length ? S.stack[S.stack.length - 1].id : "main");
 
+  // ---- Layout: one value, like Compose's WindowSizeClass. compact (< --bp-medium) is the phone layout; medium and
+  // expanded use the tablet layout: a floating left panel holds the sheet stack, the map fills the rest.
+  const isTablet = () => S.layout !== "compact";
+  function computeLayout() {
+    const w = phone.clientWidth, mode = w >= parseFloat(tok("--bp-expanded")) ? "expanded" : w >= parseFloat(tok("--bp-medium")) ? "medium" : "compact";
+    if (mode === S.layout) return;
+    S.layout = mode;
+    phone.dataset.layout = mode;
+    phone.classList.toggle("tablet", isTablet());
+    if (!Stack.entries.length) return;
+    // the panel has two states: open (full) and collapsed
+    if (isTablet()) Stack.entries.forEach((e) => { if (sheetState(e.el) === "half") setSheetState(e.el, "full"); });
+    couple(); updateScrim(); liftRecorder();
+    if (S.recorder !== "idle") setRecorder(S.recorder === "panel" ? "capsule" : S.recorder); // the recorder's place depends on the layout
+  }
+
   /** ☰ and search show on the map only (not over Settings). */
   function updateChrome() {
     const t = top();
     $(".menu-btn", phone).classList.toggle("gone", t !== "main");
-    $(".top-search", phone).classList.toggle("gone", t !== "main" || !S.session);
+    $(".search-box", phone).classList.toggle("gone", !(t === "main" || t === "search") || !S.session);
   }
 
   function push(id, html, { cls = "", mount, cleanup } = {}) {
@@ -611,6 +714,7 @@
   function pop() {
     const e = S.stack.pop();
     if (!e) return;
+    if (e.id === "search") morphSearchBox(false);
     e.el.classList.remove("in");
     const done = () => { e.cleanup && e.cleanup(); e.el.remove(); };
     e.el.addEventListener("transitionend", done, { once: true });
@@ -624,7 +728,7 @@
     S.live = !!(id && live);
     Stack.reset();
     S.histMode = "all"; S.area = null; S.areaOrder = []; // per session view
-    runSearch(S.query, false); // an open search applies to the new view
+    if (S.search) { S.search = null; phone.classList.remove("searching"); $("#search-bar").innerHTML = ""; } // a new view leaves search
     S.order = id ? D.getSessionDevices(id).sort((a, b) => b.rssi - a.rssi).map((d) => d.addr) : []; // sorted once
     const sess = id && D.getRecording(id);
     S.map.setSession(sess, id ? sessionPoints() : []);
@@ -633,15 +737,16 @@
     const r = $(".recorder", phone);
     $(".rec-meta", r).textContent = S.recorder === "idle" ? "" : `${D.getCurrentRecording().devices} devices · ${locationText()}`;
   }
-  const sessionPoints = () => D.getSessionDevices(S.session).map((d) => ({ addr: d.addr, at: d.best, rssi: d.rssi, category: d.category, product: d.product || "unidentified" }));
+  const sessionPoints = () => D.getSessionDevices(S.session).filter((d) => !S.search || S.search.order.includes(d.addr)).map((d) => ({ addr: d.addr, at: d.best, rssi: d.rssi, category: d.category, product: d.product || "unidentified" }));
 
   /** The recorder: "idle" (FAB), "capsule" or "panel". The capsule's width and the panel's height are measured. */
   function setRecorder(state) {
     S.recorder = state;
     const r = $(".recorder", phone), row = $(".rec-row", r);
     if (state === "panel") r.style.setProperty("--panel-h", `${[...r.children].reduce((h, c) => h + c.offsetHeight + parseFloat(getComputedStyle(c).marginTop) + parseFloat(getComputedStyle(c).marginBottom), 0) + 2}px`);
-    // idle is the FAB at the bottom right; recording is always the island at the top center
-    const top = state !== "idle", a = r.getBoundingClientRect(), moving = r.classList.contains("top") !== top;
+    // idle is the FAB at the bottom right; recording is the island at the top center on phone, and widens in place
+    // into the capsule (FAB height) at the bottom right on tablet
+    const top = state !== "idle" && !isTablet(), a = r.getBoundingClientRect(), moving = r.classList.contains("top") !== top;
     r.classList.remove("idle", "capsule", "panel");
     r.classList.add(state);
     r.classList.toggle("top", top);
@@ -655,6 +760,9 @@
     r.setAttribute("aria-label", state === "idle" ? "Record" : "Recording");
     $(".recorder-catch", phone).classList.toggle("on", state === "panel");
     phone.classList.toggle("rec-top-open", state === "panel");
+    phone.classList.toggle("recording", state !== "idle");
+    // tablet: the locate / warning button sits above the recorder and moves up while its panel is open
+    phone.style.setProperty("--rec-h", state === "panel" ? r.style.getPropertyValue("--panel-h") || tok("--recorder-panel-h") : tok("--fab"));
     if (state === "panel" && !S.recMap) {
       r.addEventListener("transitionend", function once(e) {
         if (e.propertyName !== "height") return;
@@ -691,6 +799,7 @@
   const sheetState = (sheet) => SNAP_STATES.find((st) => sheet.classList.contains(st)) || null;
   function setSheetState(sheet, state) {
     if (state === "dismissed") return Stack.pop();
+    if (isTablet() && state === "half") state = "full"; // the panel: open or collapsed
     SNAP_STATES.forEach((st) => sheet.classList.toggle(st, st === state));
     if (sheet === Stack.top().el) { couple(); updateScrim(); }
     liftRecorder();
@@ -699,6 +808,7 @@
   /** Every sheet below the top one sits at the top sheet's height (fully covered). liveY: during a drag. */
   function couple(liveY) {
     const top = Stack.top().el, y = liveY != null ? liveY : offsetOf(top, sheetState(top));
+    phone.classList.toggle("stacked", Stack.entries.length > 1);
     Stack.entries.forEach((e) => {
       const below = e.el !== top;
       e.el.classList.toggle("following", below);
@@ -709,7 +819,7 @@
   }
   /** The scrim shows only while a pushed sheet is on top at Full; tapping it pops one level. */
   function updateScrim() {
-    const top = Stack.top(), on = Stack.entries.length > 1 && sheetState(top.el) === "full";
+    const top = Stack.top(), on = !isTablet() && Stack.entries.length > 1 && sheetState(top.el) === "full"; // no scrim for panel levels
     const scrim = $(".scrim", phone);
     scrim.style.zIndex = (+top.el.style.zIndex || 81) - 1;
     scrim.classList.toggle("on", on);
@@ -794,7 +904,7 @@
     } else {
       const p = D.getProduct(entry.props.id);
       top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">${esc((CATS.find((c) => c.id === p.category) || { label: "Unidentified" }).label)}</span>`);
-      const rows = productDevices(p).filter((d) => (!S.query.trim() || D.matchDevice(S.query, d.name, d.addr)) && inArea(d.addr)).map((d) => UI.deviceRow(d, { spark: S.live })).join("");
+      const rows = productDevices(p).filter((d) => inArea(d.addr)).map((d) => UI.deviceRow(d, { spark: S.live })).join("");
       body.innerHTML = UI.productView(p, rows || `<div class="empty">No matching devices</div>`);
     }
     el.style.setProperty("--peek", `${$(".handle", el).offsetHeight + top.offsetHeight}px`);
@@ -827,7 +937,7 @@
   }
   /** How much of the screen bottom the sheets cover (the top sheet). */
   function sheetCover() {
-    if (!$(".disc-sheet", phone).classList.contains("open")) return 0;
+    if (isTablet() || !$(".disc-sheet", phone).classList.contains("open")) return 0; // the tablet panel is at the left
     const top = Stack.top().el;
     return top.offsetHeight - offsetOf(top, sheetState(top));
   }
@@ -865,6 +975,7 @@
     let y = (offs.find((o) => o.st === from) || offs[0]).y, lastY = e.clientY, moved = false, sheetMoved = false;
     const y0 = e.clientY, x0 = e.clientX, samples = [[performance.now(), e.clientY]];
     const move = (ev) => {
+      if (isTablet()) return; // the panel does not drag; a tap on its header toggles it
       if (!moved) {
         const dx = Math.abs(ev.clientX - x0), dy0 = Math.abs(ev.clientY - y0);
         if (Math.max(dx, dy0) < SLOP) return;
@@ -916,7 +1027,7 @@
   // (that lowers it). The decision is made on the first move, while touchmove can still be cancelled.
   phone.addEventListener("touchstart", (e) => {
     const sheet = e.target.closest(".sheet.open:not(.static)");
-    if (!sheet || e.touches.length > 1 || !e.target.closest(".sheet-body, .disc-chips")) return;
+    if (isTablet() || !sheet || e.touches.length > 1 || !e.target.closest(".sheet-body, .disc-chips")) return;
     const scroller = $(".sheet-body", sheet), offs = snapOffsets(sheet), from = sheetState(sheet);
     const top = offs[offs.length - 1].y, bottom = offs[0].y;
     const t = e.touches[0], y0 = t.clientY, samples = [[performance.now(), y0]];
@@ -959,7 +1070,7 @@
   let wheelLock = 0;
   phone.addEventListener("wheel", (e) => {
     const sheet = e.target.closest(".sheet.open:not(.static)");
-    if (!sheet || !e.target.closest(".sheet-body, .disc-chips, .disc-head, .sheet-top, .handle")) return;
+    if (isTablet() || !sheet || !e.target.closest(".sheet-body, .disc-chips, .disc-head, .sheet-top, .handle")) return;
     const scroller = $(".sheet-body", sheet), st = sheetState(sheet);
     if (e.deltaY > 0 && st !== "full") { e.preventDefault(); if (Date.now() > wheelLock) { setSheetState(sheet, "full"); wheelLock = Date.now() + 400; } }
     else if (e.deltaY < 0 && scroller.scrollTop <= 0 && st !== "collapsed") { e.preventDefault(); if (Date.now() > wheelLock) { setSheetState(sheet, nextDown(sheet)); wheelLock = Date.now() + 400; } }
@@ -1002,30 +1113,101 @@
   }
   function stopGatt() { if (S.gattRun) S.gattRun.timers.forEach(clearTimeout); S.gattRun = null; }
 
-  /** Search: D.searchDevices gives the matching devices of the session view; rows keep their fixed order. Typing in
-   *  categories view switches the sheet to the list until the search closes. */
-  function runSearch(text, render = true) {
-    S.query = text;
-    S.found = S.session ? (D.searchDevices(text, S.session) || null) : null;
-    if (S.found) {
-      S.found = new Set(S.found);
-      S.foundProducts = new Set(D.getSessionDevices(S.session).filter((d) => S.found.has(d.addr)).map((d) => d.product || "unidentified"));
-      if (S.discView !== "list") { S.viewBeforeSearch = S.discView; S.discView = "list"; }
-    }
-    if (render) refreshSheets();
-  }
-  /** The top-right search: the button opens the field across the top row; an empty field closes again. */
-  function setSearch(open) {
-    const el = $(".top-search", phone), input = $("#top-q");
-    el.classList.toggle("open", open);
-    $(".ts-toggle", el).setAttribute("aria-expanded", open);
+  // ---- Search (Google Maps style) ----
+  // The search button opens a full-screen page: back arrow, a wiki search field, the matching devices (data.js
+  // matchDevice / searchDevices, the session's fixed order). Tapping a result enters search state on the map: a
+  // full-width search bar replaces the top row, the Discover sheet lists only the matches ("N results"), the map
+  // shows only their points, and the result's device sheet opens at Half. The bar's X (or Back with only the root
+  // sheet left) leaves search state and restores the sheet's view, height and scroll.
+  /** The search box expands from the button to the full-width field (back arrow + input) while the page fades in;
+   *  closing reverses it. From search state the bar is already full width: the box opens and closes in place. */
+  function morphSearchBox(open) {
+    const box = $(".search-box", phone), input = $("#search-q"), inPlace = !!S.search;
+    if (inPlace) { box.classList.add("no-anim"); box.getBoundingClientRect(); }
+    if (open) box.classList.add("lift");
+    box.classList.toggle("open", open);
+    $(".sbx-btn", box).setAttribute("aria-label", open ? "Close search" : "Search devices");
     input.tabIndex = open ? 0 : -1;
-    if (open) input.focus();
-    else {
-      if (S.query) { input.value = ""; runSearch(""); }
-      // the view the user had before searching comes back when the search closes
-      if (S.viewBeforeSearch) { S.discView = S.viewBeforeSearch; S.viewBeforeSearch = null; refreshSheets(); }
-    }
+    if (!open) input.blur();
+    if (inPlace) { box.getBoundingClientRect(); box.classList.remove("no-anim"); }
+    if (!open) setTimeout(() => { if (!box.classList.contains("open")) box.classList.remove("lift"); }, inPlace ? 0 : parseFloat(tok("--t-fade")) * 1000);
+  }
+  function openSearchPage() {
+    const q = S.search ? S.search.query : "", input = $("#search-q");
+    S.page = { bbox: S.map.bbox() }; // the area the search runs in: the map as it is now
+    input.value = q;
+    morphSearchBox(true);
+    push("search", UI.searchPage(), { cls: "search-page", mount: () => {
+      renderResults(q);
+      input.focus();
+      input.setSelectionRange(q.length, q.length);
+    } });
+  }
+  function renderResults(q) {
+    const rows = $("#search-rows", phone);
+    if (!rows) return;
+    if (!q.trim()) { rows.innerHTML = `<div class="empty">Search devices by name or MAC address</div>`; return; }
+    const order = searchOrder(q, S.page.bbox);
+    rows.innerHTML = order.length ? resultRows(order, "search-pick") : UI.noResults(!!S.page.bbox);
+  }
+  function enterSearch(query, bbox) {
+    const root = $(".disc-sheet", phone);
+    Stack.reset();
+    if (!S.search) S.search = { saved: { view: S.discView, state: sheetState(root), scroll: $("#disc-body").scrollTop } };
+    S.search.query = query.trim();
+    S.search.bbox = bbox;
+    S.search.ref = S.map.view();   // the searched area; moving away from it offers "Search this area"
+    S.search.order = searchOrder(query, bbox);
+    S.search.moved = false;
+    phone.classList.add("searching");
+    $("#search-bar").innerHTML = UI.searchBar(S.search.query);
+    renderDiscover();
+    $("#disc-body").scrollTop = 0;
+    S.map.setPoints(sessionPoints());
+    updateSearchArea();
+  }
+  /** "Search this area": the same query on the current viewport. Rows still matching keep their order, new matches
+   *  are appended, rows no longer matching hide. */
+  function searchThisArea() {
+    const bbox = S.map.bbox(), hit = new Set(searchOrder(S.search.query, bbox));
+    const kept = S.search.order.filter((a) => hit.has(a));
+    S.search.order = [...kept, ...S.order.filter((a) => hit.has(a) && !kept.includes(a))];
+    S.search.bbox = bbox;
+    S.search.ref = S.map.view();
+    S.search.moved = false;
+    refreshSearch();
+  }
+  /** "Search everywhere": the same query across the whole session view. */
+  function searchEverywhere() {
+    if (S.stack.length && top() === "search") { S.page.bbox = null; renderResults($("#search-q").value); return; }
+    S.search.bbox = null;
+    S.search.order = searchOrder(S.search.query, null);
+    S.search.moved = false;
+    refreshSearch();
+  }
+  function refreshSearch() {
+    renderDiscover();
+    S.map.setPoints(sessionPoints());
+    updateSearchArea();
+  }
+  /** The "Search this area" chip: in search state, after the user moved the map away from the searched area. */
+  function updateSearchArea() {
+    const el = $("#search-area");
+    if (el) el.classList.toggle("gone", !(S.search && S.search.moved));
+  }
+  function exitSearch() {
+    if (!S.search) return;
+    const saved = S.search.saved;
+    S.search = null;
+    Stack.reset();
+    phone.classList.remove("searching");
+    $("#search-bar").innerHTML = "";
+    updateSearchArea();
+    S.discView = saved.view;
+    renderDiscover();
+    setSheetState($(".disc-sheet", phone), saved.state || "collapsed");
+    $("#disc-body").scrollTop = saved.scroll;
+    S.map.setPoints(sessionPoints());
   }
 
   const ACTIONS = {
@@ -1100,7 +1282,21 @@
       else refreshSheets();
     },
     "disc-view": () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; },
-    search: () => setSearch(!$(".top-search", phone).classList.contains("open") || !!S.query),
+    "search-open": () => (top() === "search" ? pop() : openSearchPage()), // open: it is the panel's Back
+    "search-edit": () => openSearchPage(),
+    "search-exit": () => exitSearch(),
+    "search-area": () => searchThisArea(),
+    locate: () => { S.map.locate(); S.locZoomed = false; $(".locate-btn", phone).classList.add("gone"); },
+    "loc-pop": () => setLocPop(!$("#loc-pop").innerHTML),
+    "loc-pop-close": () => setLocPop(false),
+    "loc-fix": (el) => { D.fixLocation(el.dataset.value); setLocPop(false); updateLocate(false, false); }, // a stub: the state clears
+    "search-everywhere": () => searchEverywhere(),
+    "search-pick": (el) => {
+      const addr = el.dataset.value, q = $("#search-q").value, wasSearching = !!S.search;
+      pop(); // the page fades out and the field shrinks back into the button
+      const go = () => { enterSearch(q, S.page.bbox); openDevice(addr, true); };
+      if (wasSearching) go(); else setTimeout(go, parseFloat(tok("--t-fade")) * 1000); // then search state
+    },
     "ob-allow": (el) => { S.obAllowed[+el.dataset.value] = true; renderOnboarding(); },
     "ob-auto": (el) => { S.obAuto = !S.obAuto; el.setAttribute("aria-checked", S.obAuto); },
     "ob-next": () => { S.ob++; renderOnboarding(); },
@@ -1130,37 +1326,50 @@
     }
   }, true);
 
-  // an empty search field closes when it loses focus
-  phone.addEventListener("focusout", (e) => { if (e.target.id === "top-q" && !e.target.value) setTimeout(() => !S.query && setSearch(false), 120); });
 
   // Escape stands in for system back: the topmost layer closes first.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || location.hash) return;
-    if (Stack.entries.length > 1) Stack.pop();
+    if ($("#loc-pop").innerHTML) setLocPop(false);
+    else if (S.stack.length) pop(); // a page (the search page, Settings) closes first
+    else if (Stack.entries.length > 1) Stack.pop();
     else if (phone.classList.contains("side-open")) setDrawer(false);
-    else if ($(".top-search.open", phone)) setSearch(false);
     else if (S.recorder === "panel") setRecorder("capsule");
-    else if (S.stack.length) pop();
+    else if (S.search) exitSearch();
   });
   phone.addEventListener("input", (e) => {
-    if (e.target.id === "top-q") runSearch(e.target.value);
+    if (e.target.id === "search-q") renderResults(e.target.value);
   });
 
   /** Launch. Recording when "Record when the app opens" is on; otherwise All sessions, or only the location for a
    *  brand-new user. Demo states: ?state=1 (All sessions), 2 (recording), 3 (after Stop), 4 (a history session),
    *  first (first run, no recordings ever); 5 is the old name of 1. */
+  /** The frame: ?layout=tablet (1024 × 768) or ?layout=phone (412 × 915) for review; otherwise a big desktop
+   *  screen shows the phone frame, and anything else (phones, tablets, landscape) fills the window. */
+  function setFrame() {
+    const want = new URLSearchParams(location.search).get("layout");
+    const frame = want === "tablet" ? "frame-tablet" : want === "phone" || (innerWidth >= 1100 && innerHeight >= 960) ? "frame-phone" : "";
+    phone.classList.remove("frame-tablet", "frame-phone");
+    if (frame) phone.classList.add(frame);
+    $("#stage-link").hidden = !frame; // the gallery link only beside a review frame
+  }
   function boot() {
+    setFrame();
     renderMain();
     Stack.init($(".disc-sheet", phone));
+    computeLayout();
+    addEventListener("resize", () => { setFrame(); computeLayout(); });
     updateChrome();
     S.map = createMainMap($("#main-map"));
-    const q = new URLSearchParams(location.search).get("state");
+    const params = new URLSearchParams(location.search), q = params.get("state");
+    if (params.get("loc")) D.setLocationDemo(params.get("loc")); // denied, off, waiting, stale
     if (q === "first" || new URLSearchParams(location.search).get("first")) D.useFirstRunDemo();
     const state = q === "first" ? 1 : +q || (S.settings.autoRecord ? 2 : 1);
     if (state === 2 || state === 3) startRecording();
     if (state === 3) stopRecording();
     if (state === 4) showSession("r1", false);
     if (state === 1 || state === 5) showDefault();
+    updateLocate(false, false); // at launch only the warning can show; the locate button waits for a user move
   }
   /** Not recording: All sessions, or nothing but the location when there are no recordings at all. */
   function showDefault() {
@@ -1190,6 +1399,15 @@
         <a href="./?state=3">3 · After Stop (frozen)</a>
         <a href="./?state=4">4 · History session</a>
         <a href="./?state=first">First run (no recordings yet)</a>
+        <a href="./?layout=tablet&state=1">Tablet · 1</a>
+        <a href="./?layout=tablet&state=2">Tablet · 2 recording</a>
+        <a href="./?layout=tablet&state=3">Tablet · 3</a>
+        <a href="./?layout=tablet&state=4">Tablet · 4</a>
+        <a href="./?layout=phone&state=1">Phone frame</a>
+        <a href="./?state=1&loc=denied">Location: permission off</a>
+        <a href="./?state=1&loc=off">Location: turned off</a>
+        <a href="./?state=1&loc=waiting">Location: waiting</a>
+        <a href="./?state=1&loc=stale">Location: stale</a>
         <a href="./#onboarding">Onboarding</a>
       </div>
 
@@ -1207,8 +1425,10 @@
         ${cell("density on", UI.floatButton({ name: "density", label: "Density", action: "", cls: "on" }))}
         ${cell("density off", UI.floatButton({ name: "density", label: "Density", action: "" }))}
       </div>
-      ${sect("TopSearch", ".top-search · --rb → wiki .sf (--fill2, --search-size, inset --focus-color); filters by name")}
-      <div class="g-row">${cell("closed", UI.topSearch(false, "static"), "width: 80px")}${cell("open", UI.topSearch(true, "static"), "width: 340px")}</div>
+      ${sect("Search", ".search-box: the button expands into the wiki field with a back arrow (--t-fade) while the page fades in; search state: .search-bar (--fill1, --shadow-float, X)")}
+      <div class="g-row">${cell("closed", UI.searchBox("static"), "width: 80px")}${cell("open", UI.searchBox("static open"), "width: 388px")}${cell("search bar (search state)", UI.searchBar("govee", "static"), "width: 388px")}
+        ${cell("Search this area", `<div class="search-area static">${UI.chip({ label: "Search this area", on: false, action: "" })}</div>`)}
+        ${cell("no results in this area", UI.noResults(true), "width: 300px")}</div>
       ${sect("MenuButton", ".menu-btn · ☰ → collapse sidebar, rides the sidebar edge; --side-w, --t-std")}
       <div class="g-row">${cell("closed", UI.menuButton(false, "static"))}${cell("open", UI.menuButton(true, "static"))}</div>
       ${sect("IconButton", ".ib · --icon-btn, --icon-btn-glyph; neutral --fill2/--t1; rec --rec-red/--on-rec")}
@@ -1217,6 +1437,9 @@
         ${cell("Resume", UI.iconButton({ name: "play", label: "Resume", action: "" }))}
         ${cell("Stop", UI.iconButton({ name: "stop", label: "Stop", action: "", kind: "rec" }))}
       </div>
+      ${sect("Location warning", ".loc-warn (.rb, --warn) in the locate button's spot; .loc-pop (--panel, --r-pop, --shadow-raised); thresholds in data.js LOCATION_WARN")}
+      <div class="g-row">${[["denied", "permission off"], ["off", "location turned off"], ["stale", "stale fix (waiting reads \"Waiting for location…\")"]]
+        .map(([st, label]) => cell(label, `<div class="g-locwarn">${UI.locPop(D.locationStatusFor(st), "static")}${UI.locWarn("static")}</div>`, "width: 260px")).join("")}</div>
       ${sect("Search rule (data.js matchDevice / searchDevices)", "deterministic checks; the Rust core mirrors this rule")}
       <div class="g-row">${(() => {
         const cases = [
