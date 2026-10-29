@@ -53,7 +53,7 @@ fun cleanupTitle(c: Cleanup): String = when (c) {
 /** R-10: the storage-full dialog as :app's reducer describes it. */
 data class StorageFullUi(
     val freeBytes: Long,
-    /** null while the core is asked, or when it cannot say. */
+    /** null while the core is asked ([checking]), or when it cannot say (no size shows). */
     val reclaimable: Reclaimable?,
     /** The switches (both off when the dialog opens). */
     val chosen: Set<Cleanup>,
@@ -63,6 +63,8 @@ data class StorageFullUi(
     val freedBytes: Long?,
     /** Free space is back above the floor: "Resume" continues the recording. */
     val canResume: Boolean,
+    /** The core is being asked what each cleanup frees. */
+    val checking: Boolean = false,
 )
 
 class StorageFullActions(
@@ -101,7 +103,8 @@ fun StorageFullDialog(ui: StorageFullUi, actions: StorageFullActions, modifier: 
             for (cleanup in Cleanup.entries) {
                 val on = cleanup in ui.chosen
                 ListItem(
-                    cleanupTitle(cleanup), sub = Strings.frees(ui.reclaimable?.of(cleanup)), horizontalPadding = Dp(0f),
+                    cleanupTitle(cleanup), sub = ui.reclaimable?.let { Strings.frees(it.of(cleanup)) } ?: Strings.Checking.takeIf { ui.checking },
+                    horizontalPadding = Dp(0f),
                     trailing = {
                         Switch(on, { if (!ui.freeing) actions.onChoose(cleanup, it) }, Modifier.testTag("switch:$cleanup"), label = cleanupTitle(cleanup))
                     },

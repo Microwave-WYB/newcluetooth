@@ -3,7 +3,10 @@ package edu.ucsd.sysnet.cluetoothscanner.chrome
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -95,6 +98,17 @@ class StorageFullScreenTest {
         compose.onNodeWithTag("cleanup:UploadedRaw").assertIsNotEnabled()
         compose.onNodeWithTag("primary:Clear", useUnmergedTree = true).performScrollTo().performClick()
         compose.runOnIdle { assertEquals(listOf("confirm"), calls) }
+    }
+
+    /** "Checking…" only while the core is asked; when it cannot say, no size shows. */
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
+    @Test fun sizesAreCheckingThenKnownOrAbsent() {
+        var state by androidx.compose.runtime.mutableStateOf(ui.copy(reclaimable = null, checking = true))
+        compose.setContent { CluetoothTheme(reducedMotion = true) { StorageFullDialog(state, actions) } }
+        assertEquals(2, compose.onAllNodesWithText("Checking…", useUnmergedTree = true).fetchSemanticsNodes().size)
+        state = ui.copy(reclaimable = null, checking = false)
+        compose.onNodeWithText("Checking…").assertDoesNotExist()
+        compose.onNodeWithText("Delete uploaded raw files").assertExists()
     }
 
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneLight() = shot(false)

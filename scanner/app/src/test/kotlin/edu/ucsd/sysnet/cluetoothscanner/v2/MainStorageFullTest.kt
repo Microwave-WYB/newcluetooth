@@ -22,6 +22,9 @@ class MainStorageFullTest {
         assertEquals(150_000_000L, ui.freeBytes)
         assertEquals(Reclaimable(300_000_000, 40_000_000), ui.reclaimable)
         assertEquals(false, ui.canResume)
+        assertEquals(false, ui.checking)
+        assertEquals(true, storageFullUi(opened.storageFull ?: error("open")).checking)
+        assertEquals(false, storageFullUi(opened.on(MainEvent.ReclaimableRead(null)).storageFull ?: error("open")).checking)
         // a second report while open only updates the free space
         assertEquals(Step(opened.copy(storageFull = opened.storageFull?.copy(free = Bytes(1)))), reduce(opened, MainEvent.StorageFull(Bytes(1))))
     }

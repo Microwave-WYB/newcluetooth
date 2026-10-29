@@ -61,7 +61,7 @@ data class StorageUi(
     val deleteConfirm: DeleteConfirm?,
     /** O-1 item 11's own scope, independent of Export's; it starts like [exportScope]. */
     val deleteScope: Scope = exportScope,
-    /** R-10 in O-1 item 11: what each cleanup frees (null while the core is asked, or when it cannot say). */
+    /** R-10 in O-1 item 11: what each cleanup frees (null until the core has said; no size shows then). */
     val reclaimable: Reclaimable? = null,
     /** The cleanup waiting for its confirmation. */
     val cleanupConfirm: Cleanup? = null,
@@ -249,7 +249,7 @@ private fun DeleteBlock(st: StorageUi, a: SettingsActions, sessionLabel: String?
 private fun CleanupBlock(st: StorageUi, a: SettingsActions) {
     for (cleanup in Cleanup.entries) {
         ListItem(
-            cleanupTitle(cleanup), sub = Strings.frees(st.reclaimable?.of(cleanup)),
+            cleanupTitle(cleanup), sub = st.reclaimable?.let { Strings.frees(it.of(cleanup)) },
             trailing = {
                 Button(
                     cleanupAction(cleanup), { a.onCleanupRequest(cleanup) }, Modifier.testTag("cleanup:$cleanup"), kind = ButtonKind.Tonal,

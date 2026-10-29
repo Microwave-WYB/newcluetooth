@@ -239,8 +239,10 @@ object Strings {
     fun freeSpace(bytes: Long) = "${Format.bytes(bytes)} free"
     const val DeleteUploadedRaw = "Delete uploaded raw files"
     const val ClearLocalDatabase = "Clear local database"
-    /** What a cleanup frees: "Frees 340 MB", or "Checking…" until the core has said. */
-    fun frees(bytes: Long?) = if (bytes == null) "Checking…" else "Frees ${Format.bytes(bytes)}"
+    /** What a cleanup frees: "Frees 340 MB". */
+    fun frees(bytes: Long) = "Frees ${Format.bytes(bytes)}"
+    /** While the core is asked what a cleanup frees. */
+    const val Checking = "Checking…"
     const val FreeUpSpace = "Free up space"
     const val NotNow = "Not now"
     const val Freeing = "Freeing up space…"

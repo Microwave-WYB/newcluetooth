@@ -526,6 +526,7 @@ fun storageFullUi(d: StorageFullState): StorageFullUi = StorageFullUi(
     freeing = d.step is CleanupStep.Freeing,
     freedBytes = (d.step as? CleanupStep.Choosing)?.lastFreed?.n,
     canResume = d.canResume,
+    checking = d.reclaim is ReclaimRead.Reading,
 )
 
 /** G-14, with R-10's dialog over everything: Back there is "Not now". */
