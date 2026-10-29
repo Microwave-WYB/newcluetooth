@@ -15,13 +15,13 @@ object MapAssets {
     }
 
     /**
-     * The style used when the base map cannot load (offline): the `--bg` background and the OpenFreeMap glyphs, so
-     * the overlay layers still draw on a plain map.
+     * The style used when the base map cannot load (offline): the `--bg` background and the OpenFreeMap glyph URL,
+     * which [BundledGlyphs] serves from the cache, so the overlay layers and their labels still draw on a plain map.
      */
     fun fallbackStyleJson(theme: MapTheme): String {
         val colors = if (theme == MapTheme.Dark) Tokens.darkColors else Tokens.lightColors
         val bg = "#%06x".format(colors.bg.toArgb() and 0xFFFFFF)
-        return """{"version":8,"glyphs":"https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf","sources":{},""" +
+        return """{"version":8,"glyphs":"${BundledGlyphs.GLYPHS_URL}","sources":{},""" +
             """"layers":[{"id":"background","type":"background","paint":{"background-color":"$bg"}}]}"""
     }
 }

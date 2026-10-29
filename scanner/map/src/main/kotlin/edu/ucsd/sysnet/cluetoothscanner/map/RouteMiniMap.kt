@@ -26,6 +26,7 @@ import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import edu.ucsd.sysnet.cluetoothscanner.map.style.BundledGlyphs
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapStyleSpec
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapTheme
@@ -79,6 +80,7 @@ fun RouteMiniMap(
     LaunchedEffect(size, theme, baseStyleJson) {
         if (size.width == 0 || size.height == 0) return@LaunchedEffect
         MapLibre.getInstance(context.applicationContext)
+        BundledGlyphs.install(context, spec)
         holder[0]?.cancel()
         holder[0] = null
         var rendered: Pair<List<GeoPoint>, CameraSnapshot>? = null

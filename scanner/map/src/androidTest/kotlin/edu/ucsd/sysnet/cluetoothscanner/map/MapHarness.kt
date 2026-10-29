@@ -50,13 +50,13 @@ const val BLANK_STYLE = """{"version":8,"glyphs":"https://tiles.openfreemap.org/
  * A core stand-in for the map: [devices] with the §3.7 rule (≤ 10 000 in the viewport + 50 % → Points, else Cells
  * aggregated to about 1/16 of the viewport side).
  */
-class GridQueries(private val devices: List<Pair<DeviceKey, GeoPoint>>) : UnusedCoreQueries() {
+class GridQueries(private val devices: List<Pair<DeviceKey, GeoPoint>>, private val route: List<GeoPoint> = emptyList()) : UnusedCoreQueries() {
     override val live = MutableSharedFlow<LiveDelta>()
     val lastMode = MutableStateFlow<MapMode?>(null)
 
     override suspend fun sessionView(scope: Scope) = SessionView(
         scope, live = false, sessionIds = listOf(SESSION), deviceCount = devices.size,
-        frame = MapGeometry.bboxOf(devices.map { it.second }), route = emptyList(), routesFaint = false, seq = 0,
+        frame = MapGeometry.bboxOf(devices.map { it.second } + route), route = route, routesFaint = false, seq = 0,
     )
     override suspend fun routes(scope: Scope, viewport: Bbox?, zoom: Double) = """{"type":"FeatureCollection","features":[]}"""
     override suspend fun deviceRows(scope: Scope, keys: LongArray) = devices.filter { it.first in keys }.map { (k, at) ->
