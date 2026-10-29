@@ -103,6 +103,9 @@
   --recorder-panel-h: 232px;    /* fallback; the panel's height is measured from its content */
   --recorder-map-h: 132px;
   --recorder-pad: 18px;         /* the capsule's left inset, before the dot */
+  --island-h: var(--rb);        /* the recording island: as tall as the float buttons beside it */
+  --island-ib: 36px;            /* its Pause and Stop buttons (hit area stays --rb) */
+  --island-pad: 14px;           /* its left inset, before the dot */
   --rec-dot: 8px;
   --side-w: 82cqw;          /* the left sidebar; the map strip beside it stays visible */
   --sheet-peek: 92px;

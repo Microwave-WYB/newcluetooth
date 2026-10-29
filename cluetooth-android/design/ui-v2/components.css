@@ -75,7 +75,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   display: flex; flex-direction: column; justify-content: flex-end;
   background: var(--rec); box-shadow: var(--shadow-float); cursor: pointer;
   transition: width var(--t-morph) var(--ease), height var(--t-morph) var(--ease), border-radius var(--t-morph) var(--ease),
-    background-color var(--t-std), box-shadow var(--t-morph), bottom var(--t-page) var(--ease), opacity var(--t-std), scale var(--t-std) var(--ease);
+    background-color var(--t-std), box-shadow var(--t-morph), bottom var(--t-page) var(--ease), top var(--t-morph) var(--ease), opacity var(--t-std), scale var(--t-std) var(--ease);
 }
 /* the idle FAB hides while the Discover sheet is expanded */
 .recorder.idle.sheet-up { opacity: 0; scale: 0.6; pointer-events: none; }
@@ -88,7 +88,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .recorder.capsule { width: var(--capsule-w, var(--recorder-capsule-w)); }
 .recorder.panel { width: calc(100% - 2 * var(--edge)); height: var(--panel-h, var(--recorder-panel-h)); border-radius: var(--r-pop); box-shadow: var(--shadow-raised); }
 .recorder.static { position: relative; right: auto; bottom: auto; }
-.rec-row { flex: none; align-self: flex-start; width: max-content; height: var(--fab); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 var(--recorder-pad); white-space: nowrap; opacity: 0; transition: opacity var(--t-fast); }
+.rec-row { flex: none; align-self: flex-start; width: max-content; height: var(--fab); transition: height var(--t-morph) var(--ease); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 var(--recorder-pad); white-space: nowrap; opacity: 0; transition: opacity var(--t-fast); }
 .rec-open { display: flex; align-items: center; gap: 8px; height: 100%; padding-right: 4px; cursor: pointer; }
 .rec-time { font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
 .rec-meta { flex: none; padding: 14px var(--gutter) 0; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity var(--t-fast); }
@@ -101,6 +101,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .recorder.top { top: calc(var(--edge) + (var(--rb) - var(--fab)) / 2); bottom: auto; right: auto; left: calc(50% - var(--fab) / 2); justify-content: flex-start; }
 .recorder.top.capsule { left: calc(50% - var(--capsule-w, var(--recorder-capsule-w)) / 2); }
 .recorder.top.panel { left: var(--edge); }
+/* collapsed, the island is as tall as ☰ and search (44 px) and centered on their row; the panel is unchanged */
+.recorder.top.capsule { top: calc(var(--edge) + (var(--rb) - var(--island-h)) / 2); height: var(--island-h); border-radius: calc(var(--island-h) / 2); }
+.recorder.top.capsule .rec-row { height: var(--island-h); gap: 6px; padding: 0 4px 0 var(--island-pad); }
+.recorder.top.capsule .rec-row .ib { width: var(--island-ib); height: var(--island-ib); position: relative; }
+.recorder.top.capsule .rec-row .ib::after { content: ""; position: absolute; inset: calc((var(--island-ib) - var(--rb)) / 2); } /* hit area --rb */
 .recorder.top .rec-row { order: -1; }
 .recorder.top .rec-meta { padding-top: 0; }
 .recorder.top .rec-map { margin-bottom: var(--edge); }
@@ -385,11 +390,14 @@ button.item:active { background: var(--fill2); }
 .disc-title { font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
 .disc-sheet .search-slot { flex: none; }
 
-/* ---------- AreaToggle: "Only this area", floating just under the top row ---------- */
-.area-toggle { position: absolute; z-index: 9; top: calc(var(--edge) + var(--rb) + 8px); left: 50%; transform: translateX(-50%); transition: opacity var(--t-fast); }
-.area-toggle .chip { box-shadow: var(--shadow-float); }
-.area-toggle.gone { opacity: 0; pointer-events: none; }
-.area-toggle.static { position: static; transform: none; }
+/* ---------- Filter this area: a one-shot button just under the top row, and the applied-area chip ---------- */
+.area-btn { position: absolute; z-index: 9; top: calc(var(--edge) + var(--rb) + 8px); left: 50%; transform: translateX(-50%); transition: opacity var(--t-fast); }
+.area-btn .chip { box-shadow: var(--shadow-float); }
+.area-btn.gone { opacity: 0; pointer-events: none; }
+.area-btn.static { position: static; transform: none; }
+.area-chip { display: inline-flex; align-items: center; gap: 6px; padding-right: 10px; }
+.area-chip .icon { width: 14px; height: 14px; }
+.disc-end { justify-self: end; }
 
 .maplibregl-ctrl-attrib { font-size: 10px; }
 

@@ -164,6 +164,9 @@
       ${UI.sect("Devices")}
       <div class="rows">${rows}</div>`,
 
+    /** AreaChip: an applied area filter, removable. */
+    areaChip: () => `<button class="chip on area-chip" data-action="area-clear" aria-label="Clear the area filter">This area${icon("close")}</button>`,
+
     /** SheetTop: a pushed sheet's header with the same close button (X) at the top right. */
     sheetTop: (inner) => `${inner}${UI.iconButton({ name: "close", label: "Close", action: "sheet-close" })}`,
 
@@ -286,7 +289,7 @@
         <div class="disc-chips" id="disc-chips"></div>
         <div class="sheet-body" id="disc-body"></div>
       </section>
-      <div class="area-toggle gone" id="area-toggle"></div>
+      <div class="area-btn gone" id="area-btn"></div>
       <div class="recorder-catch" data-action="recorder-close"></div>
       ${UI.recorder({ state: "idle", paused: false, time: "12:34", meta: "", mapId: "rec-map" })}
       <div class="main-dim" data-action="side-close"></div>
@@ -308,8 +311,11 @@
     const q = S.query.trim().toLowerCase();
     const head = $("#disc-head"), chips = $("#disc-chips"), body = $("#disc-body");
     head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode });
+    // an applied area filter shows as a removable chip: first in the chip row, or in the header without one
+    if (S.area && S.discView !== "list") head.lastElementChild.outerHTML = `<span class="disc-end">${UI.areaChip()}</span>`;
     if (S.discView === "list") {
       chips.innerHTML = UI.chipRow(CATS, S.devCat, "dev-cat", "inline");
+      if (S.area) chips.firstElementChild.insertAdjacentHTML("afterbegin", UI.areaChip());
       body.innerHTML = `<div class="rows">${sessionRows(mode)}</div>`;
     } else {
       chips.innerHTML = "";
@@ -350,40 +356,43 @@
   function sessionRows(mode) {
     const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
     const q = S.query.trim().toLowerCase();
-    return (S.areaOnly ? S.areaOrder : S.order).map((a) => byAddr[a])
-      .filter((d) => d && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat) && nameMatch(d.name, q))
+    return S.order.map((a) => byAddr[a])
+      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (S.devCat === "all" || d.category === S.devCat) && nameMatch(d.name, q))
       .map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
   }
-  // ---- "Only this area": the sheet lists only devices whose point is inside the map's viewport ----
-  const inArea = (addr) => !S.areaOnly || S.inView.has(addr);
-  /** Per product, how many of the session's devices are in view (null when the toggle is off). */
+  // ---- "Filter this area" (like Google Maps' "Search this area"): a one-shot snapshot of the viewport ----
+  // The button appears after the user moves the map away from the area last applied (or the initial view): more
+  // than 25% of the viewport, or a zoom change of a level or more. Tapping it filters the sheets once to the devices
+  // inside the current viewport; later moves don't change the list. Rows keep their relative order.
+  const inArea = (addr) => !S.area || S.area.has(addr);
+  /** Per product, how many of the session's devices are in the applied area (null without one). */
   function areaCounts() {
-    if (!S.areaOnly) return null;
+    if (!S.area) return null;
     const count = {}, live = {};
     for (const d of D.getSessionDevices(S.session)) {
-      if (!S.inView.has(d.addr)) continue;
+      if (!S.area.has(d.addr)) continue;
       const k = d.product || "unidentified";
       count[k] = (count[k] || 0) + 1;
       if (!d.stale) live[k] = (live[k] || 0) + 1;
     }
     return { count, live };
   }
-  /** After the map moves: rows still in view keep their order, rows that left hide, rows that came in are appended. */
-  function updateArea() {
-    if (!S.areaOnly || !S.session) return;
-    const vis = S.map.visibleAddrs();
-    S.areaOrder = [...S.areaOrder.filter((a) => vis.has(a)), ...S.order.filter((a) => vis.has(a) && !S.areaOrder.includes(a))];
-    S.inView = vis;
-    refreshSheets();
+  /** After every map move. The app's own camera moves (framing a session, a product or a device) only move the
+   *  reference while no area is applied; the user's moves are compared with it. */
+  function mapMoved(byUser) {
+    if (!S.session) return;
+    if (!byUser) { if (!S.area) { S.areaRef = S.map.view(); S.areaMoved = false; } }
+    else S.areaMoved = !S.areaRef || S.map.movedFrom(S.areaRef);
+    updateAreaToggle();
   }
-  /** The toggle floats under the top row; it hides with no session, under an open search field or recorder panel,
-   *  and when a sheet at Full hides the map. */
+  /** The button floats under the top row; it hides until the map has moved, with no session, under an open search
+   *  field or recorder panel, and when the top sheet at Full hides the map. */
   function updateAreaToggle() {
-    const el = $("#area-toggle");
+    const el = $("#area-btn");
     if (!el) return;
-    const hidden = !S.session || $(".top-search.open", phone) || S.recorder === "panel" || sheetState(Stack.top().el) === "full";
+    const hidden = !S.session || !S.areaMoved || $(".top-search.open", phone) || S.recorder === "panel" || sheetState(Stack.top().el) === "full";
     el.classList.toggle("gone", !!hidden);
-    el.innerHTML = UI.chip({ label: "Only this area", on: S.areaOnly, action: "area" });
+    el.innerHTML = UI.chip({ label: "Filter this area", on: false, action: "area-apply" });
   }
 
   /** A product's devices: those of the shown session if it has any, else every device of the product. Sorted once. */
@@ -507,11 +516,20 @@
       map.getCanvas().style.cursor = hit ? "pointer" : "";
     });
     M.visibleAddrs = () => { const b = map.getBounds(); return new Set(M.points.filter((p) => b.contains(p.at)).map((p) => p.addr)); };
-    map.on("moveend", () => updateArea());
+    M.view = () => ({ center: map.getCenter().toArray(), zoom: map.getZoom() });
+    /** Has the view moved away from ref: a zoom change of a level or more, or more than 25% of the viewport? */
+    M.movedFrom = (ref) => {
+      if (Math.abs(map.getZoom() - ref.zoom) >= 1) return true;
+      const p = map.project(ref.center), w = map.getCanvas().clientWidth, h = map.getCanvas().clientHeight;
+      return Math.abs(p.x - w / 2) / w > 0.25 || Math.abs(p.y - h / 2) / h > 0.25;
+    };
+    let userMove = false;
+    map.on("moveend", () => { mapMoved(userMove); userMove = false; });
     // the user panning or zooming the map (drag, pinch, wheel, double-tap) collapses the sheet in front;
     // camera moves made by the app have no originalEvent
     map.on("movestart", (e) => {
       if (!e.originalEvent) return;
+      userMove = true;
       const ds = Stack.top().el; // the sheet in front
       if (ds.classList.contains("open") && sheetState(ds) !== "collapsed") setSheetState(ds, "collapsed");
     });
@@ -581,7 +599,7 @@
     session: null, live: false, order: [],
     recorder: "idle", paused: false, recMap: null,
     discoverMode: "nearby", discView: "categories",
-    devCat: "all", query: "", areaOnly: false, areaOrder: [], inView: new Set(),
+    devCat: "all", query: "", area: null, areaRef: null, areaMoved: false, // area: the applied snapshot (a Set of addresses)
     settings: { ...SETTINGS }, stack: [], map: null,
     ob: 0, obAuto: true, obAllowed: [false, false, false],
   };
@@ -624,7 +642,7 @@
     S.session = id;
     S.live = !!(id && live);
     Stack.reset();
-    S.areaOnly = false; // per session view
+    S.area = null; S.areaRef = null; S.areaMoved = false; // per session view
     S.order = id ? D.getSessionDevices(id).sort((a, b) => b.rssi - a.rssi).map((d) => d.addr) : []; // sorted once
     const sess = id && D.getRecording(id);
     S.map.setSession(sess, id ? sessionPoints() : []);
@@ -640,14 +658,14 @@
   function setRecorder(state) {
     S.recorder = state;
     const r = $(".recorder", phone), row = $(".rec-row", r);
-    // the row is max-content wide, so this is the content width even when measured from the open panel
-    if (state === "capsule") r.style.setProperty("--capsule-w", `${row.offsetWidth}px`);
     if (state === "panel") r.style.setProperty("--panel-h", `${[...r.children].reduce((h, c) => h + c.offsetHeight + parseFloat(getComputedStyle(c).marginTop) + parseFloat(getComputedStyle(c).marginBottom), 0) + 2}px`);
     // idle is the FAB at the bottom right; recording is always the island at the top center
     const top = state !== "idle", a = r.getBoundingClientRect(), moving = r.classList.contains("top") !== top;
     r.classList.remove("idle", "capsule", "panel");
     r.classList.add(state);
     r.classList.toggle("top", top);
+    // the row is max-content wide, so this is the capsule's content width (measured with the capsule's sizes)
+    if (state === "capsule") r.style.setProperty("--capsule-w", `${row.offsetWidth}px`);
     if (moving) {
       const b = r.getBoundingClientRect();
       r.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)` }, { transform: "none" }],
@@ -1067,12 +1085,14 @@
     },
     stop: () => stopRecording(),
     "disc-mode": (el) => { S.discoverMode = el.dataset.value; renderDiscover(); },
-    area: () => {
-      S.areaOnly = !S.areaOnly;
-      if (S.areaOnly) { S.inView = S.map.visibleAddrs(); S.areaOrder = S.order.filter((a) => S.inView.has(a)); }
+    "area-apply": () => {
+      S.area = S.map.visibleAddrs(); // a snapshot: later moves don't change it
+      S.areaRef = S.map.view();
+      S.areaMoved = false;
       refreshSheets();
       updateAreaToggle();
     },
+    "area-clear": () => { S.area = null; refreshSheets(); updateAreaToggle(); },
     "disc-view": () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; },
     search: () => setSearch(!$(".top-search", phone).classList.contains("open") || !!S.query),
     "ob-allow": (el) => { S.obAllowed[+el.dataset.value] = true; renderOnboarding(); },
@@ -1186,8 +1206,8 @@
         ${cell("Resume", UI.iconButton({ name: "play", label: "Resume", action: "" }))}
         ${cell("Stop", UI.iconButton({ name: "stop", label: "Stop", action: "", kind: "rec" }))}
       </div>
-      ${sect("AreaToggle", ".area-toggle · the chip, floating: --chip-bg + --shadow-float; on: --chip-on-bg")}
-      <div class="g-row">${cell("off", `<div class="area-toggle static">${UI.chip({ label: "Only this area", on: false, action: "" })}</div>`)}${cell("on", `<div class="area-toggle static">${UI.chip({ label: "Only this area", on: true, action: "" })}</div>`)}</div>
+      ${sect("Filter this area", ".area-btn · one-shot button, floating: --chip-bg + --shadow-float; applied: .area-chip (removable, --chip-on-bg)")}
+      <div class="g-row">${cell("button (after the map moved)", `<div class="area-btn static">${UI.chip({ label: "Filter this area", on: false, action: "" })}</div>`)}${cell("applied: removable chip", UI.areaChip())}</div>
       ${sect("Recorder (main map only: idle FAB bottom-right, recording = top-center island)", ".recorder · --fab, --fab-dot, --rec, --on-rec, --recorder-pad, --recorder-map-h, --shadow-float → --shadow-raised, --t-morph; BlinkingDot .rec-dot · --rec-dot, --t-blink")}
       <div class="g-row">
         ${cell("idle", UI.recorder({ state: "idle", paused: false, time: "12:34", meta: "", cls: "static" }), "width: 120px; height: 90px")}
