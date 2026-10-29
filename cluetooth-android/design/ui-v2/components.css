@@ -136,8 +136,15 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .recorder.capsule { width: var(--capsule-w, var(--recorder-capsule-w)); }
 .recorder.panel { width: calc(100% - 2 * var(--edge)); height: var(--panel-h, var(--recorder-panel-h)); border-radius: var(--rec-r, var(--rec-panel-r)); box-shadow: var(--shadow-raised); }
 .recorder.static { position: relative; right: auto; bottom: auto; }
-.rec-row { flex: none; align-self: flex-end; width: max-content; height: var(--fab); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 var(--recorder-pad); white-space: nowrap; opacity: 0; transition: opacity var(--t-fast); }
-.rec-open { display: flex; align-items: center; gap: 8px; height: 100%; padding-right: 4px; cursor: pointer; }
+.rec-row { flex: none; align-self: stretch; position: relative; height: var(--fab); white-space: nowrap; opacity: 0; transition: opacity var(--t-fast); }
+/* the row's two groups. Capsule: dot + time at the left inset, Pause + Stop at the right inset. Panel: dot + time move
+   to the center; Pause + Stop stay at the inset that makes Stop concentric with the panel's corner (so they ride the
+   right edge as the panel widens). Both animate with the width (--t-morph, --ease). */
+.recorder { --rec-pad-l: var(--recorder-pad); --rec-pad-r: calc(var(--rec-panel-r-tablet) - var(--icon-btn) / 2); --rec-gap: var(--rec-gap-tablet); }
+.recorder.top { --rec-pad-l: var(--island-pad); --rec-pad-r: calc(var(--rec-panel-r) - var(--island-ib) / 2); --rec-gap: var(--rec-gap-phone); }
+.rec-open { position: absolute; top: 50%; left: var(--rec-pad-l); transform: translateY(-50%); display: flex; align-items: center; gap: 8px; cursor: pointer; transition: left var(--t-morph) var(--ease); }
+.recorder.panel .rec-open { left: calc(50% - var(--rec-group-w, 64px) / 2); }
+.rec-btns { position: absolute; top: 50%; right: var(--rec-pad-r); transform: translateY(-50%); display: flex; align-items: center; gap: var(--rec-gap); }
 .rec-time { font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
 .rec-meta { flex: none; padding: 14px var(--gutter) 0; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity var(--t-fast); }
 .rec-map { flex: none; margin: 10px var(--edge) 0; height: var(--recorder-map-h); border-radius: calc(var(--rec-r, var(--rec-panel-r)) - var(--edge)); /* panel radius - inset 12: phone 10, tablet 16 */ overflow: hidden; background: var(--fill2); opacity: 0; transition: opacity var(--t-fast); cursor: pointer; }
@@ -154,7 +161,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    panel widens symmetrically around it, its extra content growing downward */
 .recorder.top.capsule, .recorder.top.panel { top: calc(var(--edge) + (var(--rb) - var(--island-h)) / 2); }
 .recorder.top.capsule { height: var(--island-h); border-radius: calc(var(--island-h) / 2); }
-.recorder.top .rec-row { align-self: center; height: var(--island-h); gap: 6px; padding: 0 4px 0 var(--island-pad); }
+.recorder.top .rec-row { height: var(--island-h); }
 .recorder.top .rec-row .ib { width: var(--island-ib); height: var(--island-ib); position: relative; }
 .recorder.top .rec-row .ib::after { content: ""; position: absolute; inset: calc((var(--island-ib) - var(--rb)) / 2); } /* hit area --rb */
 .recorder.top .rec-row { order: -1; }
@@ -237,9 +244,12 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .page-bar + .scroll, .scroll.below-bar { top: var(--top-zone); }
 
 /* ---------- Segmented ---------- */
-.seg { display: flex; border-radius: var(--r-pill); background: var(--seg-bg); padding: 2px; }
+.seg { position: relative; display: flex; border-radius: var(--r-pill); background: var(--seg-bg); padding: 2px; }
+/* the selected thumb slides between the options (--t-std, --ease) */
+.seg-thumb { position: absolute; top: 2px; bottom: 2px; left: calc(2px + (100% - 4px) / var(--seg-n, 2) * var(--seg-i, 0)); width: calc((100% - 4px) / var(--seg-n, 2)); border-radius: var(--r-pill); background: var(--seg-on-bg); box-shadow: var(--seg-on-shadow); transition: left var(--t-std) var(--ease); }
+.seg button { position: relative; z-index: 1; }
 .seg button { flex: 1; height: 32px; padding: 0 16px; border-radius: var(--r-pill); font-size: 14px; color: var(--seg-fg); white-space: nowrap; transition: background-color var(--t-fast), color var(--t-fast); }
-.seg button[aria-checked="true"] { background: var(--seg-on-bg); color: var(--seg-on-fg); font-weight: var(--weight-medium); box-shadow: var(--seg-on-shadow); }
+.seg button[aria-checked="true"] { color: var(--seg-on-fg); font-weight: var(--weight-medium); } /* the thumb draws the selection */
 
 /* ---------- Discover panel ---------- */
 .cat { padding: 8px 0 6px; }
@@ -251,7 +261,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 /* ---------- ProductCard ---------- */
 .pcard {
   width: var(--card-w); flex: none; display: flex; flex-direction: column; gap: 8px; padding: 12px; text-align: left;
-  border-radius: var(--r-item); background: var(--fill2);
+  border-radius: var(--card-r); background: var(--fill2); /* concentric with the sheet: the card row is inset --gutter */
 }
 .pcard-icon { width: var(--card-icon); height: var(--card-icon); border-radius: 50%; display: grid; place-items: center; background: var(--bg); color: var(--t1); }
 .pcard-icon.muted { color: var(--t3); }
@@ -359,7 +369,11 @@ button.item:active { background: var(--fill2); }
 .sheet.static { position: relative; transform: none; visibility: visible; height: auto; border-radius: var(--corner-r); }
 .sheet .handle { cursor: grab; touch-action: none; }
 /* corner geometry: --corner-r is the top corner radius and the depth / inset of the corner buttons' centers */
-.phone, .gallery { --corner-r: var(--sheet-radius); --corner-btn: calc(var(--corner-r) - var(--sheet-header-h) / 2); --head-drop: var(--handle-zone); }
+.phone, .gallery { --corner-r: var(--sheet-radius); --corner-btn: calc(var(--corner-r) - var(--sheet-header-h) / 2); --head-drop: var(--handle-zone); --content-inset: 0px; }
+/* rounded things inside a sheet are concentric with it: radius = the sheet's corner radius - their inset from its edge
+   (the sheet body's own inset, --content-inset, plus the element's) */
+.phone, .gallery { --card-r: calc(var(--corner-r) - var(--content-inset) - var(--gutter)); --hero-r: calc(var(--corner-r) - var(--content-inset) - var(--edge)); }
+.phone.tablet { --content-inset: var(--panel-pad); }
 .phone.tablet { --head-drop: 0px; }
 /* the handle floats centered at the top, between the corner buttons (never over them) */
 .handle { position: absolute; z-index: 1; top: 0; left: 50%; transform: translateX(-50%); display: grid; place-items: center; height: var(--handle-zone); width: calc(var(--handle-w) * 2); }
@@ -457,7 +471,7 @@ button.item:active { background: var(--fill2); }
 .disc-head > *, .sheet-top > .ib { min-height: var(--sheet-header-h); }
 .disc-title { display: flex; align-items: center; height: var(--sheet-header-h); }
 .disc-chips .chips { position: static; padding: 0 var(--edge) 10px; }
-.disc-sheet .hero { margin: 0 var(--edge); border-radius: var(--r-item); }
+.stack-sheet .hero { margin: 0 var(--edge); border-radius: var(--hero-r); } /* concentric with the sheet: inset --edge */
 .disc-sheet .prod-body .dev-product { font-size: var(--body-size); }
 .disc-sheet .search-slot { flex: none; }
 
@@ -540,3 +554,19 @@ button.item:active { background: var(--fill2); }
 .phone.tablet .loc-pop { left: auto; right: var(--edge); bottom: calc(var(--edge) + 12px + var(--rec-h, var(--fab)) + 12px + var(--rb) + 8px); }
 .phone.tablet.rec-top-open .menu-btn, .phone.tablet.rec-top-open .search-box { opacity: 1; pointer-events: auto; }
 .phone.tablet { --rec-r: var(--rec-panel-r-tablet); }
+
+/* ---------- Content swaps: crossfade (the view switch) and shared axis X (segmented switches) ---------- */
+.sheet-body { position: relative; } /* swap ghosts are placed inside it, scrolling with the content */
+.swap-ghost { position: absolute; margin: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+.swap-ghost.out-fade { animation: swap-fade-out var(--t-fast) var(--ease) forwards; }
+.swap-ghost.out-left { animation: swap-out-left var(--t-std) var(--ease) forwards; }
+.swap-ghost.out-right { animation: swap-out-right var(--t-std) var(--ease) forwards; }
+.in-fade { animation: swap-fade-in var(--t-fast) var(--ease); }
+.in-right { animation: swap-in-right var(--t-std) var(--ease); }
+.in-left { animation: swap-in-left var(--t-std) var(--ease); }
+@keyframes swap-fade-out { to { opacity: 0; } }
+@keyframes swap-fade-in { from { opacity: 0; } }
+@keyframes swap-out-left { to { opacity: 0; transform: translateX(calc(-1 * var(--swap-x))); } }
+@keyframes swap-out-right { to { opacity: 0; transform: translateX(var(--swap-x)); } }
+@keyframes swap-in-right { from { opacity: 0; transform: translateX(var(--swap-x)); } }
+@keyframes swap-in-left { from { opacity: 0; transform: translateX(calc(-1 * var(--swap-x))); } }

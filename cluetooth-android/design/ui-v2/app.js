@@ -98,8 +98,10 @@
         <div class="rec-map" data-action="open-session-map"><div ${mapId ? `id="${mapId}"` : ""} style="height:100%"></div></div>
         <div class="rec-row">
           <span class="rec-open" data-action="recorder-open"><span class="rec-dot ${paused ? "paused" : ""}"></span><span class="rec-time">${esc(time)}</span></span>
-          ${UI.iconButton({ name: paused ? "play" : "pause", label: paused ? "Resume" : "Pause", action: "pause", kind: "neutral" })}
-          ${UI.iconButton({ name: "stop", label: "Stop", action: "stop", kind: "rec" })}
+          <span class="rec-btns">
+            ${UI.iconButton({ name: paused ? "play" : "pause", label: paused ? "Resume" : "Pause", action: "pause", kind: "neutral" })}
+            ${UI.iconButton({ name: "stop", label: "Stop", action: "stop", kind: "rec" })}
+          </span>
         </div>
       </div>`,
 
@@ -149,7 +151,7 @@
 
     /** Segmented control (wiki .seg). */
     segmented: (options, value, action) =>
-      `<div class="seg" role="radiogroup">${options.map((o) =>
+      `<div class="seg" role="radiogroup" style="--seg-n: ${options.length}; --seg-i: ${Math.max(0, options.findIndex((o) => o.id === value))}"><span class="seg-thumb" aria-hidden="true"></span>${options.map((o) =>
         `<button role="radio" aria-checked="${o.id === value}" data-action="${action}" data-value="${o.id}">${esc(o.label)}</button>`).join("")}</div>`,
 
     /** Button: primary (filled) or tonal. */
@@ -343,10 +345,13 @@
       // search state: the matched devices only, list view, "N results"
       const n = S.search.order.length, where = S.search.bbox ? " in this area" : "";
       head.innerHTML = `<span></span><span class="disc-title">${n} ${n === 1 ? "result" : "results"}${where}</span><span></span>`;
+      head.dataset.sig = "search";
       chips.innerHTML = "";
       body.innerHTML = n ? `<div class="rows">${resultRows()}</div>` : UI.noResults(!!S.search.bbox);
     } else {
-    head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, hist: S.histMode });
+    const sig = `${S.discView}|${S.live}`, seg = $(".seg", head);
+    if (head.dataset.sig === sig && seg) setSegValue(seg, S.live ? mode : S.histMode);
+    else { head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, hist: S.histMode }); head.dataset.sig = sig; }
     if (S.discView === "list") {
       chips.innerHTML = UI.chipRow(CATS, S.devCat, "dev-cat", "inline");
       body.innerHTML = `<div class="rows">${sessionRows(mode)}</div>`;
@@ -374,6 +379,38 @@
   }
   /** Matching addresses (data.js searchDevices, within bbox if given) in the fixed order of the shown session. */
   const searchOrder = (query, bbox) => { const hit = new Set(D.searchDevices(query, S.session, bbox) || []); return S.order.filter((a) => hit.has(a)); };
+
+  /** Moves a segmented control's thumb to value (it slides); returns -1 / 0 / 1 for the direction of the change. */
+  function setSegValue(seg, value) {
+    const btns = [...seg.querySelectorAll("button")], from = btns.findIndex((b) => b.getAttribute("aria-checked") === "true"), to = btns.findIndex((b) => b.dataset.value === value);
+    btns.forEach((b, i) => b.setAttribute("aria-checked", i === to));
+    seg.style.setProperty("--seg-i", to);
+    return Math.sign(to - from);
+  }
+  /** Swaps content in place: a copy of the old content leaves while the new one arrives. mode "fade" (crossfade), or
+   *  1 / -1 (shared axis X: the option picked is to the right / left). The containers keep their size. */
+  function swapContent(els, render, mode) {
+    const ghosts = els.filter((el) => el && el.offsetParent && el.offsetHeight).map((el) => {
+      const g = el.cloneNode(true);
+      g.removeAttribute("id");
+      g.classList.remove("in-fade", "in-left", "in-right");
+      g.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"));
+      g.classList.add("swap-ghost", mode === "fade" ? "out-fade" : mode > 0 ? "out-left" : "out-right");
+      Object.assign(g.style, { top: `${el.offsetTop}px`, left: `${el.offsetLeft}px`, width: `${el.offsetWidth}px`, height: `${el.offsetHeight}px` });
+      el.offsetParent.append(g);
+      g.scrollTop = el.scrollTop;
+      setTimeout(() => g.remove(), 400);
+      return g;
+    });
+    render();
+    els.forEach((el) => {
+      if (!el) return;
+      el.classList.remove("in-fade", "in-left", "in-right");
+      void el.offsetWidth;
+      el.classList.add(mode === "fade" ? "in-fade" : mode > 0 ? "in-right" : "in-left");
+    });
+    return ghosts;
+  }
 
   /** The record FAB (bottom right) and the locate button (bottom left) stay anchored just above the Discover sheet's
    *  collapsed peek. They live below the sheets, so a rising sheet slides over them and a collapsing one uncovers
@@ -755,8 +792,14 @@
     r.classList.remove("idle", "capsule", "panel");
     r.classList.add(state);
     r.classList.toggle("top", top);
-    // the row is max-content wide, so this is the capsule's content width (measured with the capsule's sizes)
-    if (state === "capsule") r.style.setProperty("--capsule-w", `${row.offsetWidth}px`);
+    // the row spans the recorder: dot + time sit at the left inset in the capsule and move to the center in the
+    // panel; Pause + Stop stay at the inset that makes Stop concentric with the panel's corner, riding its right edge
+    const isTop = r.classList.contains("top"), n = (t) => parseFloat(tok(t));
+    const open = $(".rec-open", r), btns = $(".rec-btns", r);
+    const padL = n(isTop ? "--island-pad" : "--recorder-pad"), gap = n(isTop ? "--rec-gap-phone" : "--rec-gap-tablet");
+    const padR = n(isTop ? "--rec-panel-r" : "--rec-panel-r-tablet") - n(isTop ? "--island-ib" : "--icon-btn") / 2;
+    r.style.setProperty("--rec-group-w", `${open.offsetWidth}px`);
+    if (state === "capsule") r.style.setProperty("--capsule-w", `${padL + open.offsetWidth + gap + 4 + btns.offsetWidth + padR}px`);
     if (moving) {
       const b = r.getBoundingClientRect();
       r.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)` }, { transform: "none" }],
@@ -1252,10 +1295,10 @@
     device: (el) => openDevice(el.dataset.value, true),
     "dev-tab": (el) => {
       const sheet = el.closest(".sheet"), t = Stack.entryOf(sheet).props;
+      const dir = setSegValue($("#dev-seg .seg", sheet), el.dataset.value);
       t.tab = el.dataset.value;
-      const d = D.getDevice(t.addr);
-      $("#dev-seg", sheet).innerHTML = UI.segmented([{ id: "adv", label: "Advertising" }, { id: "gatt", label: "GATT" }], t.tab, "dev-tab");
-      $("#dev-tab", sheet).innerHTML = t.tab === "adv" ? UI.advertising(d) : gattTabNow(t.addr);
+      const d = D.getDevice(t.addr), tab = $("#dev-tab", sheet);
+      swapContent([tab], () => { tab.innerHTML = t.tab === "adv" ? UI.advertising(d) : gattTabNow(t.addr); }, dir || 1);
     },
     // GATT: the button turns into Cancel | I am authorized (the prompt every time); authorized starts the discovery
     "gatt-go": (el) => {
@@ -1292,14 +1335,21 @@
       if (S.recorder === "capsule") setRecorder("capsule");
     },
     stop: () => stopRecording(),
-    "disc-mode": (el) => { S.discoverMode = el.dataset.value; renderDiscover(); },
-    "hist-mode": (el) => {
-      S.histMode = el.dataset.value;
-      S.area = null;
-      if (S.histMode === "area") applyArea();
-      else refreshSheets();
+    "disc-mode": (el) => {
+      const dir = setSegValue(el.closest(".seg"), el.dataset.value);
+      swapContent([$("#disc-body")], () => { S.discoverMode = el.dataset.value; renderDiscover(); }, dir || 1);
     },
-    "disc-view": () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; },
+    "hist-mode": (el) => {
+      const dir = setSegValue(el.closest(".seg"), el.dataset.value);
+      swapContent([$("#disc-body")], () => {
+        S.histMode = el.dataset.value;
+        S.area = null;
+        if (S.histMode === "area") applyArea();
+        else refreshSheets();
+      }, dir || 1);
+    },
+    // the view switch crossfades the content (and the chip row appearing or going)
+    "disc-view": () => swapContent([$("#disc-chips"), $("#disc-body")], () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; }, "fade"),
     "search-open": () => (isTablet() ? $("#search-q").focus() : top() === "search" ? pop() : openSearchPage()), // phone, open: it is the page's Back
     "search-edit": () => openSearchPage(),
     "search-exit": () => exitSearch(),

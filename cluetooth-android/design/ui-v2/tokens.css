@@ -160,6 +160,8 @@
   --panel-pad: var(--panel-inset); /* inset of content inside a rounded container's corner region (top and sides alike) */
   --pop-pad: 12px;              /* popover padding (all sides) */
   --rec-panel-r: 22px;          /* phone recorder panel: concentric with its 36 px buttons at a 4 px inset (18 + 4) */
+  --rec-gap-phone: 6px;         /* gap between Pause and Stop (phone island) */
+  --rec-gap-tablet: 8px;        /* tablet capsule */
   --rec-panel-r-tablet: 28px;   /* tablet: 40 px buttons at an 8 px inset (20 + 8) */
   --pop-r: 28px;                /* location popover: concentric with its 32 px pill button at --pop-pad (16 + 12) */
   --panel-radius: calc(var(--panel-inset) + var(--rb) / 2);
@@ -175,6 +177,7 @@
   --t-page: 0.32s;
   --t-morph: 0.36s;
   --t-blink: 1s;
+  --swap-x: 28px;           /* shared axis X: how far content slides when a segmented switch changes */
   --t-fade: 0.2s;           /* the search page fading in and the field expanding */
   --t-spin: 0.8s;           /* the GATT step spinner */
   --dim: 0.42;             /* stale rows, faded map points */
