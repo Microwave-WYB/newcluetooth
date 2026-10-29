@@ -11,12 +11,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /** Moves an offset over time; the Compose host eases it, tests apply it at once. */
-internal fun interface OffsetAnimator {
+fun interface OffsetAnimator {
     suspend fun animate(from: Float, to: Float, durationMs: Int, onValue: (Float) -> Unit)
 }
 
 /** What the stack asks of the rest of the UI (S-8, S-17, D-13.8). The integration wires these to MapRequests. */
-internal class SheetStackHooks(
+class SheetStackHooks(
     val camera: () -> CameraSnapshot? = { null },
     val restoreCamera: (CameraSnapshot) -> Unit = {},
     /** The top sheet changed: the map follows it (S-17). [opening] is false when it was revealed by a pop. */
@@ -26,10 +26,10 @@ internal class SheetStackHooks(
 )
 
 /** Why a sheet pops (S-8). Every path pops exactly one level; only a drag release reveals without easing. */
-internal enum class PopReason { Close, Back, Scrim, EmptyMap, Drag }
+enum class PopReason { Close, Back, Scrim, EmptyMap, Drag }
 
 /** One level of the stack. [height] and [panel] are its saved states while it is hidden (S-7). */
-internal class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight, panel: PanelHeight) {
+class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight, panel: PanelHeight) {
     var height by mutableStateOf(height)
         internal set
     var panel by mutableStateOf(panel)
@@ -43,8 +43,9 @@ internal class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight
     var camera: CameraSnapshot? = null
         internal set
 
-    /** The measured bottom of the header (S-5 peek), px; NaN until laid out. */
-    internal var peek by mutableFloatStateOf(Float.NaN)
+    /** The measured bottom of the header (S-5 peek), px from the sheet's top; NaN until laid out. */
+    var peek by mutableFloatStateOf(Float.NaN)
+        internal set
 
     /** The top edge while dragged or animating; null while resting at [height]. */
     internal var liveOffset by mutableStateOf<Float?>(null)
@@ -106,7 +107,7 @@ internal class SheetEntry(val id: Long, val kind: SheetKind, height: SheetHeight
  * stays drawn under it ([below]); while a popped sheet slides out, it stays drawn over the revealed one ([leaving]).
  * Draw order is [rendered]; the scrim, when shown, goes directly under [top].
  */
-internal class SheetStackController(
+class SheetStackController(
     private val scope: CoroutineScope,
     private val animator: OffsetAnimator,
     private val metrics: SheetMetrics = SheetMetrics(),
@@ -144,7 +145,7 @@ internal class SheetStackController(
         bottomInset = bottomInsetPx
     }
 
-    fun geometry(entry: SheetEntry): SheetGeometry {
+    internal fun geometry(entry: SheetEntry): SheetGeometry {
         val peek = if (entry.peek.isNaN()) defaultPeek() else entry.peek
         return SheetGeometry(
             screenHeight = screenHeight,
@@ -329,7 +330,7 @@ internal class SheetStackController(
     // ---- Gestures (phone) ----
 
     /** A pointer went down on [entry] at screen ([x], [y]). Null when the sheet does not take gestures. */
-    fun beginDrag(entry: SheetEntry, region: DragRegion, x: Float, y: Float, timeMs: Long): SheetDrag? {
+    internal fun beginDrag(entry: SheetEntry, region: DragRegion, x: Float, y: Float, timeMs: Long): SheetDrag? {
         if (tablet || entry !== top) return null
         entry.dragInterrupted = entry.animation?.isActive == true
         stop(entry)
@@ -351,7 +352,7 @@ internal class SheetStackController(
     }
 
     /** Feeds a move; true when it moved the sheet (the caller consumes the pointer change). */
-    fun dragMove(entry: SheetEntry, x: Float, y: Float, timeMs: Long): Boolean {
+    internal fun dragMove(entry: SheetEntry, x: Float, y: Float, timeMs: Long): Boolean {
         val drag = entry.drag ?: return false
         if (!drag.move(x, y, timeMs)) return false
         below = null // S-7: once the top sheet is dragged nothing below it is drawn
@@ -360,12 +361,12 @@ internal class SheetStackController(
     }
 
     /** A child took a pending gesture. */
-    fun dragYield(entry: SheetEntry) {
+    internal fun dragYield(entry: SheetEntry) {
         entry.drag?.yield()
     }
 
     /** The pointer went up (or was cancelled). Returns the release so the caller can tell a tap. */
-    fun endDrag(entry: SheetEntry): SheetDrag.Release? {
+    internal fun endDrag(entry: SheetEntry): SheetDrag.Release? {
         val drag = entry.drag ?: return null
         entry.drag = null
         val release = drag.release()

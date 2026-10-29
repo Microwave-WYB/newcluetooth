@@ -9,23 +9,23 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.Identification
 // The segment (Nearby, This area), a product page and a search query are set elsewhere and survive Clear.
 
 /** D-1: the filter button's badge, one per active switch, a non-Any Identification and each checked category. */
-internal val DeviceFilter.activeFilterCount: Int
+val DeviceFilter.activeFilterCount: Int
     get() = listOf(readable, trackers, vulnerable).count { it } +
         (if (identification != Identification.Any) 1 else 0) + categories.size
 
 /** D-3a Clear: the sheet's own choices only. */
-internal fun DeviceFilter.clearSheetFilters(): DeviceFilter =
+fun DeviceFilter.clearSheetFilters(): DeviceFilter =
     copy(identification = Identification.Any, categories = emptySet(), readable = false, trackers = false, vulnerable = false)
 
 /** D-3a: a category row toggled; categories combine any-of. */
-internal fun DeviceFilter.toggleCategory(id: String): DeviceFilter =
+fun DeviceFilter.toggleCategory(id: String): DeviceFilter =
     copy(categories = if (id in categories) categories - id else categories + id)
 
 /** V-7: a new session view starts unfiltered. */
-internal fun resetFilterForNewView(): DeviceFilter = DeviceFilter()
+fun resetFilterForNewView(): DeviceFilter = DeviceFilter()
 
 /** Q-5, D-3a: search ignores the filters; it queries with the query and the area only. */
-internal fun searchQueryFilter(query: String, area: Bbox?): DeviceFilter = DeviceFilter(area = area, query = query)
+fun searchQueryFilter(query: String, area: Bbox?): DeviceFilter = DeviceFilter(area = area, query = query)
 
 /**
  * D-3a: the Filter sheet's rows. The order is fixed when the sheet opens; counts update in place; a row whose count
@@ -34,7 +34,7 @@ internal fun searchQueryFilter(query: String, area: Bbox?): DeviceFilter = Devic
  *
  * This is the contract's `SheetContentState.Filter(rowOrder, counts)` plus the labels to show.
  */
-internal data class FilterSheetContent(
+data class FilterSheetContent(
     val rowOrder: List<String>,
     val counts: Map<String, Int>,
     val labels: Map<String, String>,

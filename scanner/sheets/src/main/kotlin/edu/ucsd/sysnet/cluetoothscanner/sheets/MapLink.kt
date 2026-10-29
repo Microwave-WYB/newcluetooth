@@ -10,7 +10,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapRequests
  * when it is revealed (S-8). [onTopChanged] and [onRemoved] carry what the top sheet shows (S-17) and the GATT
  * cancel (D-13.8); the sheet contents supply them.
  */
-internal fun mapStackHooks(
+fun mapStackHooks(
     map: MapRequests,
     onTopChanged: (entry: SheetEntry, opening: Boolean) -> Unit = { _, _ -> },
     onRemoved: (SheetEntry) -> Unit = {},
@@ -28,7 +28,7 @@ internal fun mapStackHooks(
  * - M-7, S-4: a point opens its device (replacing a device sheet on top); D-14: from a map tap the camera stays.
  * - D-4, Q-6: camera idle goes to [cameraIdle] (This area and "Search this area" live in the sheet contents).
  */
-internal class SheetMapEvents(
+class SheetMapEvents(
     private val stack: SheetStackController,
     private val cameraIdle: (byUser: Boolean, viewport: Bbox, zoom: Double) -> Unit = { _, _, _ -> },
 ) : MapEvents {

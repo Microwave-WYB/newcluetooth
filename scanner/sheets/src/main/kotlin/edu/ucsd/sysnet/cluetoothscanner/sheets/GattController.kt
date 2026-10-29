@@ -14,7 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /** The device sheet's GATT tab state (docs/v2-api.md §5.4). */
-internal sealed interface GattUi {
+sealed interface GattUi {
     data object Idle : GattUi
     data object Confirm : GattUi
     data class Running(val view: GattView) : GattUi
@@ -37,7 +37,7 @@ internal sealed interface GattUi {
  * integration). That owner must call [cancel] when the entry leaves the stack, i.e. from `SheetStackHooks.onRemoved`
  * (pop, a device replacing a device, a reset); the stack itself does not know about GATT.
  */
-internal class GattController(
+class GattController(
     private val key: DeviceKey,
     private val scope: CoroutineScope,
     private val runner: GattRunner,

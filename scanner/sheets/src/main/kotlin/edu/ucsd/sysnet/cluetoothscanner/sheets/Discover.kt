@@ -15,27 +15,27 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.movedAway
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera
 
 /** The Discover sheet's views (D-2, D-3) and segments (D-1); §5.4 `SheetContentState.Discover`. */
-internal enum class DiscoverView { Categories, List }
-internal enum class Segment { Nearby, All, ThisArea }
+enum class DiscoverView { Categories, List }
+enum class Segment { Nearby, All, ThisArea }
 
 /** D-4: the area and its own order (kept rows first, then new ones in session order). */
-internal data class AreaState(val bbox: Bbox, val order: OrderedKeys)
+data class AreaState(val bbox: Bbox, val order: OrderedKeys)
 
 /** D-1: [Nearby | All] while recording, [This area | All] for history and All sessions. */
-internal fun segmentsFor(live: Boolean): List<Segment> =
+fun segmentsFor(live: Boolean): List<Segment> =
     if (live) listOf(Segment.Nearby, Segment.All) else listOf(Segment.ThisArea, Segment.All)
 
 /** D-1: Nearby while recording, All otherwise (and after every session change, V-7). */
-internal fun defaultSegment(live: Boolean): Segment = if (live) Segment.Nearby else Segment.All
+fun defaultSegment(live: Boolean): Segment = if (live) Segment.Nearby else Segment.All
 
 /** The queries the Discover sheet makes, for one scope; a subset of `CoreQueries`. */
-internal interface DiscoverQueries {
+interface DiscoverQueries {
     suspend fun deviceOrder(): DeviceKeys
     suspend fun deviceKeys(filter: DeviceFilter): DeviceKeys
     suspend fun search(query: String, area: Bbox?): DeviceKeys?
 }
 
-internal fun CoreQueries.forScope(scope: Scope) = object : DiscoverQueries {
+fun CoreQueries.forScope(scope: Scope) = object : DiscoverQueries {
     override suspend fun deviceOrder() = this@forScope.deviceOrder(scope)
     override suspend fun deviceKeys(filter: DeviceFilter) = this@forScope.deviceKeys(scope, filter)
     override suspend fun search(query: String, area: Bbox?) = this@forScope.search(scope, query, area)
@@ -56,7 +56,7 @@ internal data class SearchReturn(val view: DiscoverView, val height: SheetHeight
  *   [SearchState.savedFilter]); Q-6 re-runs on the viewport with the same order rule; Q-7 restores the view, the
  *   filters and the root sheet's height and scroll.
  */
-internal class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, private val stack: SheetStackController) {
+class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, private val stack: SheetStackController) {
     var view by mutableStateOf(DiscoverView.Categories)
         private set
     var segment by mutableStateOf(defaultSegment(live))
