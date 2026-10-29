@@ -5,9 +5,13 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DisplayFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.ExportShare
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.map.MapLibreCacheInfo
+import edu.ucsd.sysnet.cluetoothscanner.platform.export.AndroidExportShare
 import edu.ucsd.sysnet.cluetoothscanner.platform.location.LocationClient
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.InterruptedRecordingNotice
 import edu.ucsd.sysnet.cluetoothscanner.platform.settings.AndroidPermissions
@@ -63,7 +67,9 @@ class AppGraph(private val app: Application) {
     /** O-2 (#53): the grants; the Activity refreshes it on resume and after a request. */
     val permissions: AndroidPermissions by lazy { AndroidPermissions(app) }
     val uploads get() = placeholders.uploads
-    val exportShare get() = placeholders.exportShare
+    /** O-1 item 10 (#68): the share sheet and Downloads; it acknowledges exports through the core. */
+    val exportShare: ExportShare get() = androidExportShare
+    private val androidExportShare by lazy { AndroidExportShare(app, ::acknowledgeExport, scope, io) }
     val gattRunner get() = placeholders.gattRunner
     /** R-10: the core's storage-full event and cleanups (#71). */
     val storageCleanup: StorageCleanup by lazy { CoreStorageCleanup { core.ready() } }
@@ -96,6 +102,8 @@ class AppGraph(private val app: Application) {
         scope.launch {
             val handle = core.ready()
             guarded(MainTask.Platform, ::startFailed) { platformRecorder.restore() }
+            // §4.5: the exports an earlier process shared (or failed to acknowledge) are acknowledged now
+            guarded(MainTask.Platform, ::startFailed) { androidExportShare.acknowledgeStale() }
             // §1.2.6 (#53): one "Recording interrupted" notice for sessions Core::open marked interrupted
             guarded(MainTask.Platform, ::startFailed) { InterruptedRecordingNotice(app).check { handle.queries.sessions() } }
             // G-12: the display filter follows the setting; it never affects ingest or upload
@@ -105,6 +113,16 @@ class AppGraph(private val app: Application) {
                 }
             }
         }
+    }
+
+    /** `CoreStorage.acknowledgeExport` still throws (lane A converts :core-api); here it becomes a typed result. */
+    private suspend fun acknowledgeExport(id: String): PlatformResult<Unit> = try {
+        core.ready().storage.acknowledgeExport(id)
+        PlatformResult.Ok(Unit)
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        PlatformResult.Err(PlatformError.Core(failure.message ?: failure::class.java.simpleName))
     }
 
     private fun startFailed(task: MainTask, error: Throwable) {

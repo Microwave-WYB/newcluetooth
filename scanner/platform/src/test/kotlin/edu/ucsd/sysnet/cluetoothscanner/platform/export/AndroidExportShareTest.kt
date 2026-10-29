@@ -39,7 +39,7 @@ class AndroidExportShareTest {
 
     private val share = AndroidExportShare(
         context,
-        acknowledge = { acknowledged += it },
+        acknowledge = { acknowledged += it; PlatformResult.Ok(Unit) },
         scope = CoroutineScope(Dispatchers.Unconfined),
         io = Dispatchers.Unconfined,
         downloads = { name, _, source ->
@@ -97,7 +97,7 @@ class AndroidExportShareTest {
     fun `section 4_5 a shared export is acknowledged at the next app start`() = runBlocking {
         share.share(export("e1"))
         // A new process: the outstanding id survives in prefs.
-        val next = AndroidExportShare(context, { acknowledged += it }, CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined) { n, _, _ -> n }
+        val next = AndroidExportShare(context, { acknowledged += it; PlatformResult.Ok(Unit) }, CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined) { n, _, _ -> n }
         next.acknowledgeStale()
         assertEquals(listOf("e1"), acknowledged)
         next.acknowledgeStale()
@@ -130,20 +130,38 @@ class AndroidExportShareTest {
     }
 
     @Test
-    fun `a failed acknowledgement stays pending and is retried at the next app start`() = runBlocking {
+    fun `an Err acknowledgement stays pending and is retried at the next app start`() = runBlocking {
         var refuse = true
         val flaky = AndroidExportShare(
             context,
-            { id -> if (refuse) throw IllegalStateException("core busy") else acknowledged += id },
+            { id ->
+                if (refuse) {
+                    PlatformResult.Err(PlatformError.Core("core busy"))
+                } else {
+                    acknowledged += id
+                    PlatformResult.Ok(Unit)
+                }
+            },
             CoroutineScope(Dispatchers.Unconfined),
             Dispatchers.Unconfined,
         ) { n, _, _ -> n }
         flaky.saveToDownloads(export("e1"))
         assertTrue("the core refused it", acknowledged.isEmpty())
         refuse = false
-        AndroidExportShare(context, { acknowledged += it }, CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined) { n, _, _ -> n }
+        AndroidExportShare(context, { acknowledged += it; PlatformResult.Ok(Unit) }, CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined) { n, _, _ -> n }
             .acknowledgeStale()
         assertEquals(listOf("e1"), acknowledged)
+    }
+
+    @Test
+    fun `a port that throws is only a failed acknowledgement, never a crash`() = runBlocking {
+        val throwing = AndroidExportShare(
+            context, { throw IllegalStateException("broken port") }, CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined,
+        ) { n, _, _ -> n }
+        assertEquals(PlatformResult.Ok(Unit), throwing.saveToDownloads(export("e1")))
+        AndroidExportShare(context, { acknowledged += it; PlatformResult.Ok(Unit) }, CoroutineScope(Dispatchers.Unconfined), Dispatchers.Unconfined) { n, _, _ -> n }
+            .acknowledgeStale()
+        assertEquals("still pending, so acknowledged later", listOf("e1"), acknowledged)
     }
 
     @Test
