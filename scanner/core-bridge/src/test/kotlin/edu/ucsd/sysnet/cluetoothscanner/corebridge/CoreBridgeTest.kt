@@ -203,4 +203,15 @@ class CoreBridgeTest {
         assertEquals(view, core.deviceGatt(jbl))
         try { core.ingestGatt("{}"); fail() } catch (_: CoreException.InvalidPayload) {}
     }
+
+    /** AGENTS.md crash rules: every binding failure is typed; a Rust panic (InternalException) is Internal. */
+    @Test
+    fun bindingFailuresAreTyped() {
+        assertTrue(bindingFailure(GInternalException("boom")) is CoreException.Internal)
+        assertTrue(bindingFailure(edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.NotRecording()) is CoreException.NotRecording)
+        assertTrue(bindingFailure(edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Cancelled()) is kotlin.coroutines.cancellation.CancellationException)
+        assertTrue(bindingFailure(IllegalStateException("x")) is CoreException.Internal)
+        val c = kotlin.coroutines.cancellation.CancellationException("scope")
+        assertTrue(bindingFailure(c) === c)
+    }
 }

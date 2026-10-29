@@ -1,36 +1,41 @@
-//! The v2 `Core` object (`docs/v2-api.md` §2.3 to §2.8).
+//! The v2 `Core` object (`docs/v2-api.md` §2.3 to §2.8), as single-owner actors joined by queues (AGENTS.md):
+//!
+//! - **writer** (`ct-writer`) owns the `Store` (the write connection and its caches), the pending buffers, the fix
+//!   ring and the live state, and runs the effects of the pure [`machine::step`]; every mutation is a message;
+//! - **reader** (`ct-read`) owns the read connection and the latest immutable [`Snapshot`] from the writer; every
+//!   query is a job with a one-shot reply, and dropping the reply future cancels it;
+//! - **notify** (`ct-notify`) owns the listener and coalesces live deltas;
+//! - **ticker** (`ct-tick`) sends the 5 s commit tick while the core lives.
 //!
 //! Threading tags, as in §2: [N] non-blocking, [W] applied by the writer, [P] point query, [V] cancellable viewport
-//! or filter query (latest wins per kind), [F] file I/O under the file lock.
-//!
-//! This slice commits observations straight to `local.db` every `durability_interval_ms` and on pause, stop and
-//! close; the Parquet staging append that gates each commit, the writer and read threads, the live snapshot and
-//! deltas, GATT, uploads, export and delete follow in the next slices and return `Db { "not implemented" }` here.
+//! or filter query, [F] file I/O. Every FFI function returns `Result<_, CoreError>`.
 
-use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard, mpsc};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::VecDeque;
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, mpsc};
+use std::task::{Context, Poll};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::Connection;
+use futures_channel::oneshot;
+use rusqlite::{Connection, InterruptHandle, OptionalExtension};
 
-use crate::config::{
-    INPUT_FIXED_ESTIMATE_BYTES, MAX_INPUT_BATCH_ESTIMATED_BYTES, MAX_INPUT_BATCH_ROWS,
-};
 use crate::location::RecentLocationFixes;
-use crate::payload::MAX_RAW_BYTES;
 use crate::payload_identity::generate_uuid_v7;
 use crate::{LocationFix, PendingUpload, PreparedUpload, ScanEnvironment, ScanObservationInput};
 
 use super::catalog::Catalog;
 use super::db;
 use super::error::CoreError;
-use super::keys::{addr_of as key_addr, key_of};
+use super::keys::addr_of;
 use super::live::{self, LiveState};
+use super::machine::{self, Control, EpochMs, Event, Millis, Reply, SessionUuid};
 use super::query::{self, Ctx};
 use super::store::{Obs, RoutePoint, Store, haversine_m};
 use super::types::*;
 use super::{adv, gatt_view, store};
-use rusqlite::OptionalExtension;
 
 pub const API_VERSION: u32 = 8;
 
@@ -46,79 +51,97 @@ pub trait CoreListener: Send + Sync {
     fn on_event(&self, event: CoreEvent);
 }
 
-struct Recording {
-    session: i64,
-    uuid: String,
-    started_ms: i64,
-    phase: RecordingPhase,
-    active_before_ms: i64,
-    running_since_ms: Option<i64>,
-    env: ScanEnvironment,
-    pending: Vec<Obs>,
-    route: Vec<RoutePoint>,
-    last_route: Option<RoutePoint>,
-    last_commit_ms: i64,
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
-struct Writer {
-    store: Store,
-    recording: Option<Recording>,
-    fixes: RecentLocationFixes,
-    live: LiveState,
+fn not_yet(what: &str) -> CoreError {
+    CoreError::Db {
+        detail: format!("{what} is not implemented yet in this core slice"),
+    }
 }
 
-/// What `ct-notify` delivers to the listener, in order.
+fn new_uuid(now: i64) -> Result<String, CoreError> {
+    let mut random = [0u8; 10];
+    getrandom::fill(&mut random).map_err(|e| CoreError::Clock {
+        detail: e.to_string(),
+    })?;
+    Ok(generate_uuid_v7(u64::try_from(now).unwrap_or(0), random)?
+        .hyphenated()
+        .to_string())
+}
+
+fn closed<T>(_: T) -> CoreError {
+    CoreError::Closed
+}
+
+fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), CoreError> {
+    std::thread::Builder::new()
+        .name(name.into())
+        .spawn(f)
+        .map(|_| ())
+        .map_err(CoreError::from_io)
+}
+
+// ---- notify ----
+
+/// What `ct-notify` receives, in order.
 enum Note {
     Live(Box<LiveDelta>),
     Event(CoreEvent),
+    Listener(Option<Arc<dyn CoreListener>>),
 }
 
-type Listener = Arc<Mutex<Option<Arc<dyn CoreListener>>>>;
-
-/// `ct-notify` (§1.3): calls the listener off the ingest path; while it is busy, queued deltas coalesce (§2.6).
-fn spawn_notify(listener: Listener) -> Result<mpsc::Sender<Note>, CoreError> {
+/// `ct-notify` (§1.3): owns the listener and calls it off the ingest path; while it is busy, queued deltas
+/// coalesce (§2.6).
+fn spawn_notify() -> Result<mpsc::Sender<Note>, CoreError> {
     let (tx, rx) = mpsc::channel::<Note>();
-    std::thread::Builder::new()
-        .name("ct-notify".into())
-        .spawn(move || {
-            while let Ok(first) = rx.recv() {
-                let mut notes = vec![first];
-                notes.extend(rx.try_iter());
-                let mut pending: Option<LiveDelta> = None;
-                let mut out = Vec::new();
-                for note in notes {
-                    match note {
-                        Note::Live(d) => {
-                            pending = Some(match pending.take() {
-                                None => *d,
-                                Some(prev) => coalesce(prev, *d),
-                            })
-                        }
-                        Note::Event(e) => {
-                            if let Some(d) = pending.take() {
-                                out.push(Note::Live(Box::new(d)));
-                            }
-                            out.push(Note::Event(e));
-                        }
+    spawn("ct-notify", move || {
+        let mut listener: Option<Arc<dyn CoreListener>> = None;
+        while let Ok(first) = rx.recv() {
+            let mut pending: Option<LiveDelta> = None;
+            let mut out: Vec<Note> = Vec::new();
+            for note in std::iter::once(first).chain(rx.try_iter()) {
+                match note {
+                    Note::Live(d) => {
+                        pending = Some(match pending.take() {
+                            None => *d,
+                            Some(prev) => coalesce(prev, *d),
+                        })
                     }
-                }
-                if let Some(d) = pending {
-                    out.push(Note::Live(Box::new(d)));
-                }
-                let current = lock(&listener).clone();
-                let Some(l) = current else { continue };
-                for note in out {
-                    match note {
-                        Note::Live(d) => l.on_live(*d),
-                        Note::Event(e) => l.on_event(e),
+                    other => {
+                        if let Some(d) = pending.take() {
+                            out.push(Note::Live(Box::new(d)));
+                        }
+                        out.push(other);
                     }
                 }
             }
-        })
-        .map_err(CoreError::from_io)?;
+            if let Some(d) = pending {
+                out.push(Note::Live(Box::new(d)));
+            }
+            for note in out {
+                match note {
+                    Note::Listener(l) => listener = l,
+                    Note::Live(d) => {
+                        if let Some(l) = &listener {
+                            l.on_live(*d);
+                        }
+                    }
+                    Note::Event(e) => {
+                        if let Some(l) = &listener {
+                            l.on_event(e);
+                        }
+                    }
+                }
+            }
+        }
+    })?;
     Ok(tx)
 }
-
 /// §2.6 coalescing: the latest values per key, appends concatenated, one `seq` (the newer).
 fn coalesce(mut a: LiveDelta, b: LiveDelta) -> LiveDelta {
     for c in b.changed {
@@ -167,52 +190,558 @@ fn coalesce(mut a: LiveDelta, b: LiveDelta) -> LiveDelta {
     }
 }
 
-#[derive(uniffi::Object)]
-pub struct Core {
-    config: CoreConfig,
-    catalog: Arc<Catalog>,
-    /// `filesDir/cluetooth-core` (§1.5).
-    data_dir: std::path::PathBuf,
-    writer: Mutex<Writer>,
-    reader: Mutex<Connection>,
-    display: Mutex<DisplayFilter>,
-    listener: Listener,
-    notify: Mutex<mpsc::Sender<Note>>,
+// ---- reader ----
+
+/// What the reader knows of the writer: immutable, replaced by every writer step that changes it.
+#[derive(Clone, Debug)]
+struct Snapshot {
+    hide_unnamed_apple: bool,
+    stale_after_ms: i64,
+    live: Option<LiveSnapshot>,
 }
 
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+#[derive(Clone, Debug)]
+struct LiveSnapshot {
+    session: i64,
+    uuid: String,
+    seq: u64,
+    current: Arc<std::collections::HashMap<i64, i16>>,
 }
 
-fn not_yet(what: &str) -> CoreError {
-    CoreError::Db {
-        detail: format!("{what} is not implemented yet in this core slice"),
+impl Snapshot {
+    fn ctx<'a>(&self, catalog: &'a Catalog, now: i64) -> Ctx<'a> {
+        Ctx {
+            catalog,
+            hide_unnamed_apple: self.hide_unnamed_apple,
+            live: self.live.as_ref().map(|l| query::Live {
+                session: l.session,
+                uuid: l.uuid.clone(),
+                stale_before_ms: now - self.stale_after_ms,
+                seq: l.seq,
+                current: l.current.clone(),
+            }),
+        }
     }
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+type ReadJob = Box<dyn FnOnce(&Connection, &Snapshot) + Send>;
+
+enum ReaderMsg {
+    Snapshot(Snapshot),
+    Job(ReadJob),
 }
 
-fn new_uuid(now: i64) -> Result<String, CoreError> {
-    let mut random = [0u8; 10];
-    getrandom::fill(&mut random).map_err(|e| CoreError::Clock {
-        detail: e.to_string(),
+fn spawn_reader(conn: Connection, first: Snapshot) -> Result<mpsc::Sender<ReaderMsg>, CoreError> {
+    let (tx, rx) = mpsc::channel::<ReaderMsg>();
+    spawn("ct-read", move || {
+        let mut snapshot = first;
+        while let Ok(msg) = rx.recv() {
+            match msg {
+                ReaderMsg::Snapshot(s) => snapshot = s,
+                ReaderMsg::Job(job) => job(&conn, &snapshot),
+            }
+        }
     })?;
-    Ok(generate_uuid_v7(now.max(0) as u64, random)?
-        .hyphenated()
-        .to_string())
+    Ok(tx)
+}
+
+/// The reply of one query. Dropping it before it resolves cancels the query: a query that has not started is
+/// skipped, and one in flight is interrupted (`sqlite3_interrupt`, §2 cancellation).
+pub(crate) struct ReadFuture<T> {
+    rx: oneshot::Receiver<Result<T, CoreError>>,
+    id: u64,
+    running: Arc<AtomicU64>,
+    interrupt: Arc<InterruptHandle>,
+    done: bool,
+}
+
+impl<T> Future for ReadFuture<T> {
+    type Output = Result<T, CoreError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match Pin::new(&mut self.rx).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.done = true;
+                Poll::Ready(result.unwrap_or(Err(CoreError::Closed)))
+            }
+        }
+    }
+}
+
+impl<T> Drop for ReadFuture<T> {
+    fn drop(&mut self) {
+        if !self.done && self.running.load(Ordering::SeqCst) == self.id {
+            self.interrupt.interrupt();
+        }
+    }
+}
+
+// ---- writer ----
+
+/// What the writer receives.
+enum WriterMsg {
+    /// An event for the machine, with the caller's reply channel when it waits.
+    Event(Event, Option<mpsc::SyncSender<Reply>>),
+    /// The listener for `ct-notify`, then [`Event::SetListener`].
+    Listener(Option<Arc<dyn CoreListener>>, mpsc::SyncSender<Reply>),
+    /// A runner-side read or write outside the machine (state, GATT, tests).
+    Job(Box<dyn FnOnce(&mut Runner) + Send>),
+}
+
+/// The batch of the last commit attempt: kept when it failed, until the machine restores it.
+#[derive(Default)]
+struct Batch {
+    obs: Vec<Obs>,
+    route: Vec<RoutePoint>,
+}
+
+/// The writer's runner: owns the bulk data and the write connection, and executes the machine's effects.
+struct Runner {
+    control: Control,
+    store: Store,
+    catalog: Arc<Catalog>,
+    data_dir: PathBuf,
+    stale_after_ms: i64,
+    session_row: Option<i64>,
+    pending: Vec<Obs>,
+    route: Vec<RoutePoint>,
+    last_route: Option<RoutePoint>,
+    failed: Option<Batch>,
+    /// The route points of the last successful commit, for its delta.
+    committed_route: Vec<RoutePoint>,
+    fixes: RecentLocationFixes,
+    live: LiveState,
+    listener: Option<Arc<dyn CoreListener>>,
+    reader: mpsc::Sender<ReaderMsg>,
+    notify: mpsc::Sender<Note>,
+}
+
+impl Runner {
+    /// One event through the machine, then its effects, then the events they produce, until quiet.
+    fn handle(&mut self, event: Event) -> Option<Reply> {
+        let mut queue = VecDeque::from([event]);
+        let mut reply = None;
+        while let Some(e) = queue.pop_front() {
+            let (next, effects) = machine::step(&self.control, e);
+            self.control = next;
+            for effect in effects {
+                if let Some(r) = self.run(effect, &mut queue) {
+                    reply = Some(r);
+                }
+            }
+        }
+        reply
+    }
+
+    fn run(&mut self, effect: machine::Effect, queue: &mut VecDeque<Event>) -> Option<Reply> {
+        use machine::Effect as E;
+        match effect {
+            E::CreateSession { uuid, started } => {
+                let result = self.store.create_session(&uuid.0, started.0).map(|row| {
+                    self.session_row = Some(row);
+                });
+                queue.push_back(Event::SessionCreated { result });
+            }
+            E::ResetLive => {
+                self.live = LiveState::default();
+                self.pending.clear();
+                self.route.clear();
+                self.last_route = None;
+                self.failed = None;
+                self.committed_route.clear();
+            }
+            E::Append(rows) => {
+                for machine::Accepted { key, input } in rows {
+                    let fix = self
+                        .fixes
+                        .most_recent_preceding(input.elapsed_realtime_nanos)
+                        .map(|f| (f.lat, f.lon, f.accuracy_meters));
+                    self.live.hear(key, input.rssi);
+                    self.pending.push(Obs {
+                        addr: key,
+                        at_ms: input.scanned_at_ms,
+                        rssi: input.rssi,
+                        raw: input.raw,
+                        tx_power: input.tx_power,
+                        connectable: input.is_connectable,
+                        addr_type: input.addr_type,
+                        is_legacy: input.is_legacy,
+                        primary_phy: input.primary_phy,
+                        secondary_phy: input.secondary_phy,
+                        adv_sid: input.adv_sid,
+                        data_status: input.data_status,
+                        adv_tx_power: input.adv_tx_power,
+                        periodic_interval: input.periodic_interval,
+                        fix,
+                    });
+                }
+            }
+            E::AddFix { fix, route } => {
+                self.live.fix = Some((fix.lat, fix.lon, fix.accuracy_meters, fix.observed_at_ms));
+                self.fixes.push(fix.clone());
+                if route && fix.accuracy_meters <= ROUTE_MAX_ACCURACY_M {
+                    let keep = match self.last_route {
+                        None => true,
+                        Some(p) => {
+                            haversine_m(p.lat, p.lon, fix.lat, fix.lon) >= ROUTE_MIN_STEP_M
+                                || fix.observed_at_ms - p.t_ms >= ROUTE_MIN_INTERVAL_MS
+                        }
+                    };
+                    if keep {
+                        let p = RoutePoint {
+                            t_ms: fix.observed_at_ms,
+                            lat: fix.lat,
+                            lon: fix.lon,
+                            accuracy: Some(fix.accuracy_meters),
+                        };
+                        self.route.push(p);
+                        self.last_route = Some(p);
+                    }
+                }
+            }
+            E::ClearFixes => self.fixes.clear(),
+            E::Commit { now } => {
+                let batch = Batch {
+                    obs: std::mem::take(&mut self.pending),
+                    route: std::mem::take(&mut self.route),
+                };
+                let result = match self.session_row {
+                    Some(row) => self
+                        .store
+                        .commit(row, &batch.obs, &batch.route, &self.catalog),
+                    None => Err(CoreError::NotRecording),
+                };
+                match &result {
+                    Ok(()) => self.committed_route = batch.route,
+                    Err(_) => self.failed = Some(batch),
+                }
+                queue.push_back(Event::Committed { result, now });
+            }
+            E::RestoreBatch => {
+                if let Some(batch) = self.failed.take() {
+                    let later = std::mem::replace(&mut self.pending, batch.obs);
+                    self.pending.extend(later);
+                    let later = std::mem::replace(&mut self.route, batch.route);
+                    self.route.extend(later);
+                }
+            }
+            E::StorePause { at } => self.warn_on(|r, row| r.store.pause(row, at.0)),
+            E::StoreResume { at } => self.warn_on(|r, row| r.store.resume(row, at.0)),
+            E::Finish {
+                ended,
+                active,
+                was_paused,
+            } => {
+                self.warn_on(|r, row| {
+                    if was_paused {
+                        r.store.resume(row, ended.0)?;
+                    }
+                    r.store.finish(row, 2, ended.0, active.0)
+                });
+                self.session_row = None;
+            }
+            E::Delta { now, force } => self.delta(now.0, force),
+            E::Snapshot => {
+                let _ = self.reader.send(ReaderMsg::Snapshot(self.snapshot()));
+            }
+            E::SetListener => {
+                let _ = self.notify.send(Note::Listener(self.listener.take()));
+            }
+            E::EmitRecordingChanged => {
+                let state = self.state();
+                self.emit(CoreEvent::RecordingChanged { state });
+            }
+            E::EmitSessionsChanged => self.emit(CoreEvent::SessionsChanged),
+            E::EmitDataInvalidated(reason) => self.emit(CoreEvent::DataInvalidated {
+                reason: reason.into(),
+            }),
+            E::EmitStorageWarning(message) => self.emit(CoreEvent::StorageWarning { message }),
+            E::Reply(r) => return Some(r),
+        }
+        None
+    }
+
+    /// Runs a store write for the current session; a failure becomes a StorageWarning.
+    fn warn_on(&mut self, f: impl FnOnce(&mut Runner, i64) -> Result<(), CoreError>) {
+        if let Some(row) = self.session_row
+            && let Err(e) = f(self, row)
+        {
+            self.emit(CoreEvent::StorageWarning {
+                message: e.to_string(),
+            });
+        }
+    }
+
+    fn emit(&self, event: CoreEvent) {
+        let _ = self.notify.send(Note::Event(event));
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            hide_unnamed_apple: self.control.hide_unnamed_apple,
+            stale_after_ms: self.stale_after_ms,
+            live: match (self.control.rec.session(), self.session_row) {
+                (Some(s), Some(row)) => Some(LiveSnapshot {
+                    session: row,
+                    uuid: s.uuid.0.clone(),
+                    seq: self.live.seq,
+                    current: self.live.current.clone(),
+                }),
+                _ => None,
+            },
+        }
+    }
+
+    fn state(&self) -> RecordingState {
+        let rec = &self.control.rec;
+        let (active_before, since) = rec.active();
+        let (count, distance): (u32, f64) = match self.session_row {
+            None => (0, 0.0),
+            Some(row) => self
+                .store
+                .conn
+                .query_row(
+                    "SELECT CASE WHEN ?2 THEN device_count_shown ELSE device_count END, distance_m
+                     FROM sessions WHERE id = ?1",
+                    rusqlite::params![row, self.control.hide_unnamed_apple],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap_or((0, 0.0)),
+        };
+        let session = rec.session();
+        RecordingState {
+            phase: rec.phase(),
+            session_id: session.map(|s| s.uuid.0.clone()),
+            started_ms: session.map(|s| s.started.0),
+            active_before_ms: active_before.0,
+            running_since_ms: since.map(|s| s.0),
+            device_count: if session.is_some() { count } else { 0 },
+            distance_m: if session.is_some() { distance } else { 0.0 },
+        }
+    }
+
+    /// Builds and queues the live delta after a commit (§2.6); nothing is built without a listener.
+    fn delta(&mut self, now: i64, force: bool) {
+        let route = std::mem::take(&mut self.committed_route);
+        if !self.control.has_listener {
+            return;
+        }
+        let state = self.state();
+        let (Some(session), Some(row)) = (self.control.rec.session(), self.session_row) else {
+            return;
+        };
+        let input = live::DeltaInput {
+            conn: &self.store.conn,
+            catalog: &self.catalog,
+            hide_unnamed_apple: self.control.hide_unnamed_apple,
+            session: row,
+            uuid: &session.uuid.0,
+            now,
+            stale_after_ms: self.stale_after_ms,
+            state,
+            route: &route,
+            force,
+        };
+        match live::delta(&mut self.live, input) {
+            Ok(Some(d)) => {
+                let _ = self.notify.send(Note::Live(Box::new(d)));
+            }
+            Ok(None) => {}
+            Err(e) => self.emit(CoreEvent::StorageWarning {
+                message: e.to_string(),
+            }),
+        }
+    }
+
+    /// §2.4 `gatt_target`: the device's latest sighting, the uncommitted ones first, then the DB.
+    fn gatt_target(&self, key: DeviceKey) -> Result<Option<GattTarget>, CoreError> {
+        let session_id = self.control.rec.session().map(|s| s.uuid.0.clone());
+        let addr_type = |t: Option<i64>| match t {
+            Some(0) => Some("public".to_owned()),
+            Some(1) => Some("random".to_owned()),
+            _ => None,
+        };
+        let conn = &self.store.conn;
+        let named = || -> Result<Option<String>, CoreError> {
+            Ok(conn
+                .query_row("SELECT name FROM devices WHERE addr = ?1", [key], |r| {
+                    r.get(0)
+                })
+                .optional()?
+                .flatten())
+        };
+        let pending = self
+            .pending
+            .iter()
+            .filter(|o| o.addr == key)
+            .max_by_key(|o| o.at_ms);
+        if let Some(o) = pending {
+            return Ok(Some(GattTarget {
+                addr: addr_of(key),
+                addr_type: addr_type(o.addr_type.map(i64::from)),
+                name: adv::payload_fields(&adv::split(&o.raw))
+                    .local_name
+                    .or(named()?),
+                trigger_raw: o.raw.clone(),
+                trigger_rssi: o.rssi,
+                trigger_scanned_at_ms: o.at_ms,
+                trigger_is_legacy: o.is_legacy,
+                trigger_primary_phy: o.primary_phy,
+                trigger_secondary_phy: o.secondary_phy,
+                trigger_adv_sid: o.adv_sid,
+                session_id,
+            }));
+        }
+        let latest = conn
+            .query_row(
+                "SELECT payload_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, rssi_max, last_seen_ms
+                 FROM sighting_minutes WHERE addr = ?1 ORDER BY last_seen_ms DESC, id DESC LIMIT 1",
+                [key],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, i64>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, Option<i16>>(6)?,
+                        r.get::<_, i64>(7)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((payload, at, legacy, primary, secondary, sid, rssi, seen)) = latest else {
+            return Ok(None);
+        };
+        let opt = |v: i64| i32::try_from(v).ok().filter(|v| *v >= 0);
+        Ok(Some(GattTarget {
+            addr: addr_of(key),
+            addr_type: addr_type(Some(at)),
+            name: named()?,
+            trigger_raw: store::payload_raw(conn, payload)?,
+            trigger_rssi: rssi,
+            trigger_scanned_at_ms: seen,
+            trigger_is_legacy: (legacy >= 0).then_some(legacy == 1),
+            trigger_primary_phy: opt(primary),
+            trigger_secondary_phy: opt(secondary),
+            trigger_adv_sid: opt(sid),
+            session_id,
+        }))
+    }
+
+    /// §2.4 `ingest_gatt`: the plaintext under `pending/gatt/v1`, then the rows.
+    fn ingest_gatt(&mut self, json: &str) -> Result<GattView, CoreError> {
+        let file = crate::gatt::save(&self.data_dir, json.as_bytes())?;
+        let (view, _) = gatt_view::view(&self.catalog, json)?;
+        let tx = self.store.conn.transaction()?;
+        gatt_view::store(&tx, json)?;
+        tx.commit()?;
+        if !file.archived {
+            self.emit(CoreEvent::UploadNeeded);
+        }
+        Ok(view)
+    }
+
+    fn current_session(&self, now: i64) -> Result<Option<SessionSummary>, CoreError> {
+        let Some(row) = self.session_row else {
+            return Ok(None);
+        };
+        let ctx = Ctx {
+            catalog: &self.catalog,
+            hide_unnamed_apple: self.control.hide_unnamed_apple,
+            live: None,
+        };
+        let (before, since) = self.control.rec.active();
+        Ok(query::session_rows(&self.store.conn)?
+            .into_iter()
+            .find(|s| s.id == row)
+            .map(|mut s| {
+                s.active_ms = before.0 + since.map_or(0, |since| now - since.0);
+                query::summary(&ctx, &s, UploadState::Pending)
+            }))
+    }
+}
+
+fn spawn_writer(runner: Runner) -> Result<mpsc::Sender<WriterMsg>, CoreError> {
+    let (tx, rx) = mpsc::channel::<WriterMsg>();
+    let mut runner = runner;
+    spawn("ct-writer", move || {
+        while let Ok(msg) = rx.recv() {
+            match msg {
+                WriterMsg::Event(event, reply) => {
+                    let r = runner.handle(event);
+                    if let (Some(reply), Some(r)) = (reply, r) {
+                        let _ = reply.send(r);
+                    }
+                }
+                WriterMsg::Listener(listener, reply) => {
+                    let present = listener.is_some();
+                    runner.listener = listener;
+                    if let Some(r) = runner.handle(Event::SetListener { present }) {
+                        let _ = reply.send(r);
+                    }
+                }
+                WriterMsg::Job(job) => job(&mut runner),
+            }
+        }
+    })?;
+    Ok(tx)
+}
+
+/// `ct-tick`: the commit tick every `durability_interval_ms` (the machine commits only while recording); it ends
+/// when the core is dropped.
+fn spawn_ticker(
+    writer: mpsc::Sender<WriterMsg>,
+    every: Duration,
+) -> Result<mpsc::Sender<()>, CoreError> {
+    let (stop, stopped) = mpsc::channel::<()>();
+    spawn("ct-tick", move || {
+        while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(every) {
+            let tick = Event::Tick {
+                now: EpochMs(now_ms()),
+            };
+            if writer.send(WriterMsg::Event(tick, None)).is_err() {
+                break;
+            }
+        }
+    })?;
+    Ok(stop)
+}
+
+// ---- the object ----
+
+#[derive(uniffi::Object)]
+pub struct Core {
+    catalog: Arc<Catalog>,
+    writer: mpsc::Sender<WriterMsg>,
+    reader: mpsc::Sender<ReaderMsg>,
+    interrupt: Arc<InterruptHandle>,
+    /// The id of the query the reader runs now (0 = none).
+    running: Arc<AtomicU64>,
+    next_query: AtomicU64,
+    /// Dropping it stops `ct-tick`.
+    _ticker: Option<mpsc::Sender<()>>,
 }
 
 impl Core {
-    /// Open with an explicit `now`; [`Core::open`] passes the clock.
+    #[cfg(test)]
+    /// Opens with an explicit `now` and no ticker (tests drive the ticks); [`Core::open`] passes the clock and
+    /// starts `ct-tick`.
     pub(crate) fn open_at(
         config: CoreConfig,
         assets: CoreAssets,
         now: i64,
+    ) -> Result<Arc<Core>, CoreError> {
+        Self::open_with(config, assets, now, false)
+    }
+
+    fn open_with(
+        config: CoreConfig,
+        assets: CoreAssets,
+        now: i64,
+        ticker: bool,
     ) -> Result<Arc<Core>, CoreError> {
         if config.live_interval_ms < 1000 {
             return Err(CoreError::InvalidConfig {
@@ -246,249 +775,176 @@ impl Core {
                 rusqlite::params![key, value],
             )?;
         }
-        let reader = db::open_reader(&db_path)?;
-        let listener: Listener = Arc::new(Mutex::new(None));
-        let notify = spawn_notify(listener.clone())?;
-        Ok(Arc::new(Core {
-            writer: Mutex::new(Writer {
-                store: Store::new(conn),
-                recording: None,
-                fixes: RecentLocationFixes::new(32, config.location_max_age_ms),
-                live: LiveState::default(),
-            }),
-            reader: Mutex::new(reader),
-            display: Mutex::new(DisplayFilter {
-                hide_unnamed_apple: true,
-            }),
-            listener,
-            notify: Mutex::new(notify),
-            catalog,
+        let read_conn = db::open_reader(&db_path)?;
+        let interrupt = Arc::new(read_conn.get_interrupt_handle());
+        let stale_after_ms = i64::try_from(config.stale_after_ms).unwrap_or(i64::MAX);
+        let control = Control::new(Millis(
+            i64::try_from(config.durability_interval_ms).unwrap_or(i64::MAX),
+        ));
+        let reader = spawn_reader(
+            read_conn,
+            Snapshot {
+                hide_unnamed_apple: control.hide_unnamed_apple,
+                stale_after_ms,
+                live: None,
+            },
+        )?;
+        let notify = spawn_notify()?;
+        let writer = spawn_writer(Runner {
+            control,
+            store: Store::new(conn),
+            catalog: catalog.clone(),
             data_dir: dir.to_path_buf(),
-            config,
+            stale_after_ms,
+            session_row: None,
+            pending: Vec::new(),
+            route: Vec::new(),
+            last_route: None,
+            failed: None,
+            committed_route: Vec::new(),
+            fixes: RecentLocationFixes::new(32, config.location_max_age_ms),
+            live: LiveState::default(),
+            listener: None,
+            reader: reader.clone(),
+            notify,
+        })?;
+        let _ticker = if ticker {
+            Some(spawn_ticker(
+                writer.clone(),
+                Duration::from_millis(config.durability_interval_ms.max(1)),
+            )?)
+        } else {
+            None
+        };
+        Ok(Arc::new(Core {
+            catalog,
+            writer,
+            reader,
+            interrupt,
+            running: Arc::new(AtomicU64::new(0)),
+            next_query: AtomicU64::new(1),
+            _ticker,
         }))
     }
 
-    fn live_of(&self, w: &Writer, now: i64) -> Option<query::Live> {
-        w.recording.as_ref().map(|r| query::Live {
-            session: r.session,
-            uuid: r.uuid.clone(),
-            stale_before_ms: now - self.config.stale_after_ms as i64,
-            seq: w.live.seq,
-            current: w.live.current.clone(),
+    /// Sends an event and waits for the machine's reply.
+    fn ask(&self, event: Event) -> Result<Reply, CoreError> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.writer
+            .send(WriterMsg::Event(event, Some(tx)))
+            .map_err(closed)?;
+        rx.recv().map_err(closed)
+    }
+
+    fn tell(&self, event: Event) -> Result<(), CoreError> {
+        self.writer
+            .send(WriterMsg::Event(event, None))
+            .map_err(closed)
+    }
+
+    fn ask_unit(&self, event: Event) -> Result<(), CoreError> {
+        match self.ask(event)? {
+            Reply::Failed(e) => Err(e),
+            Reply::Done | Reply::Session(_) | Reply::Ack(_) => Ok(()),
+        }
+    }
+
+    fn ask_session(&self, event: Event) -> Result<String, CoreError> {
+        match self.ask(event)? {
+            Reply::Session(s) => Ok(s.0),
+            Reply::Failed(e) => Err(e),
+            Reply::Done | Reply::Ack(_) => Err(CoreError::Db {
+                detail: "the writer answered without a session id".into(),
+            }),
+        }
+    }
+
+    /// Runs `f` on the writer and waits for it.
+    fn job<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Runner) -> T + Send + 'static,
+    ) -> Result<T, CoreError> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.writer
+            .send(WriterMsg::Job(Box::new(move |r| {
+                let _ = tx.send(f(r));
+            })))
+            .map_err(closed)?;
+        rx.recv().map_err(closed)
+    }
+
+    /// Runs `f` on the writer without blocking the caller's thread.
+    async fn job_async<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Runner) -> T + Send + 'static,
+    ) -> Result<T, CoreError> {
+        let (tx, rx) = oneshot::channel();
+        self.writer
+            .send(WriterMsg::Job(Box::new(move |r| {
+                let _ = tx.send(f(r));
+            })))
+            .map_err(closed)?;
+        rx.await.map_err(closed)
+    }
+
+    /// Queues a query on the reader. `f` may run twice: an interrupt meant for a cancelled query that just ended
+    /// can reach the next one, which then runs again.
+    pub(crate) fn read<T: Send + 'static>(
+        &self,
+        f: impl Fn(&Connection, &Ctx<'_>) -> Result<T, CoreError> + Send + 'static,
+    ) -> ReadFuture<T> {
+        let (tx, rx) = oneshot::channel();
+        let id = self.next_query.fetch_add(1, Ordering::SeqCst);
+        let running = self.running.clone();
+        let catalog = self.catalog.clone();
+        let job: ReadJob = Box::new(move |conn, snapshot| {
+            if tx.is_canceled() {
+                return; // dropped before it started
+            }
+            running.store(id, Ordering::SeqCst);
+            let ctx = snapshot.ctx(&catalog, now_ms());
+            let mut result = f(conn, &ctx);
+            if matches!(result, Err(CoreError::Cancelled)) && !tx.is_canceled() {
+                result = f(conn, &ctx);
+            }
+            running.store(0, Ordering::SeqCst);
+            let _ = tx.send(result);
+        });
+        let _ = self.reader.send(ReaderMsg::Job(job));
+        ReadFuture {
+            rx,
+            id,
+            running: self.running.clone(),
+            interrupt: self.interrupt.clone(),
+            done: false,
+        }
+    }
+
+    // ---- crate API with an explicit clock (tests) ----
+
+    pub(crate) fn start_recording_at(
+        &self,
+        env: ScanEnvironment,
+        now: i64,
+    ) -> Result<String, CoreError> {
+        let uuid = SessionUuid(new_uuid(now)?);
+        self.ask_session(Event::Start {
+            uuid,
+            env,
+            now: EpochMs(now),
         })
     }
 
-    /// Runs a read on the read connection with the current recording's view.
-    fn read<T>(
-        &self,
-        f: impl FnOnce(&Connection, &Ctx<'_>) -> Result<T, CoreError>,
-    ) -> Result<T, CoreError> {
-        let now = now_ms();
-        let live = self.live_of(&lock(&self.writer), now);
-        let ctx = Ctx {
-            catalog: &self.catalog,
-            hide_unnamed_apple: lock(&self.display).hide_unnamed_apple,
-            live,
-        };
-        let conn = lock(&self.reader);
-        f(&conn, &ctx)
+    pub(crate) fn pause_recording_at(&self, now: i64) -> Result<(), CoreError> {
+        self.ask_unit(Event::Pause { now: EpochMs(now) })
     }
 
-    fn emit(&self, event: CoreEvent) {
-        let _ = lock(&self.notify).send(Note::Event(event));
+    pub(crate) fn resume_recording_at(&self, now: i64) -> Result<(), CoreError> {
+        self.ask_unit(Event::Resume { now: EpochMs(now) })
     }
 
-    /// Builds and queues the live delta after a commit (§2.6); nothing is built without a listener.
-    fn emit_delta(&self, w: &mut Writer, route: &[RoutePoint], now: i64, force: bool) {
-        if lock(&self.listener).is_none() {
-            return;
-        }
-        let state = self.state_of(w);
-        let Some(r) = w.recording.as_ref() else {
-            return;
-        };
-        let input = live::DeltaInput {
-            conn: &w.store.conn,
-            catalog: &self.catalog,
-            hide_unnamed_apple: lock(&self.display).hide_unnamed_apple,
-            session: r.session,
-            uuid: &r.uuid,
-            now,
-            stale_after_ms: self.config.stale_after_ms as i64,
-            state,
-            route,
-            force,
-        };
-        match live::delta(&mut w.live, input) {
-            Ok(Some(d)) => {
-                let _ = lock(&self.notify).send(Note::Live(Box::new(d)));
-            }
-            Ok(None) => {}
-            Err(e) => self.emit(CoreEvent::StorageWarning {
-                message: e.to_string(),
-            }),
-        }
-    }
-
-    fn state_of(&self, w: &Writer) -> RecordingState {
-        match &w.recording {
-            None => RecordingState {
-                phase: RecordingPhase::Idle,
-                session_id: None,
-                started_ms: None,
-                active_before_ms: 0,
-                running_since_ms: None,
-                device_count: 0,
-                distance_m: 0.0,
-            },
-            Some(r) => {
-                let hide = lock(&self.display).hide_unnamed_apple;
-                let (count, distance): (u32, f64) = w
-                    .store
-                    .conn
-                    .query_row(
-                        "SELECT CASE WHEN ?2 THEN device_count_shown ELSE device_count END, distance_m
-                         FROM sessions WHERE id = ?1",
-                        rusqlite::params![r.session, hide],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .unwrap_or((0, 0.0));
-                RecordingState {
-                    phase: r.phase,
-                    session_id: Some(r.uuid.clone()),
-                    started_ms: Some(r.started_ms),
-                    active_before_ms: r.active_before_ms,
-                    running_since_ms: r.running_since_ms,
-                    device_count: count,
-                    distance_m: distance,
-                }
-            }
-        }
-    }
-
-    /// The commit of §2.4 step 5 for the current recording, then its live delta.
-    fn commit(&self, w: &mut Writer, now: i64) -> Result<(), CoreError> {
-        let Writer {
-            store, recording, ..
-        } = w;
-        let Some(r) = recording.as_mut() else {
-            return Ok(());
-        };
-        let obs = std::mem::take(&mut r.pending);
-        let route = std::mem::take(&mut r.route);
-        let result = store.commit(r.session, &obs, &route, &self.catalog);
-        r.last_commit_ms = now;
-        let recording = r.phase == RecordingPhase::Recording;
-        match &result {
-            Err(e) => {
-                // Nothing is lost: the batch goes back in front of whatever arrives next, for the next commit.
-                let later = std::mem::replace(&mut r.pending, obs);
-                r.pending.extend(later);
-                let later = std::mem::replace(&mut r.route, route);
-                r.route.extend(later);
-                self.emit(CoreEvent::StorageWarning {
-                    message: e.to_string(),
-                });
-            }
-            Ok(()) if recording => self.emit_delta(w, &route, now, false),
-            Ok(()) => {}
-        }
-        result
-    }
-
-    /// §2.4 `gatt_target`: the device's latest sighting, pending first, then the DB.
-    fn gatt_target_of(&self, key: DeviceKey) -> Result<Option<GattTarget>, CoreError> {
-        let w = lock(&self.writer);
-        let session_id = w.recording.as_ref().map(|r| r.uuid.clone());
-        let addr_type = |t: Option<i64>| match t {
-            Some(0) => Some("public".to_owned()),
-            Some(1) => Some("random".to_owned()),
-            _ => None,
-        };
-        let pending = w.recording.as_ref().and_then(|r| {
-            r.pending
-                .iter()
-                .filter(|o| o.addr == key)
-                .max_by_key(|o| o.at_ms)
-        });
-        if let Some(o) = pending {
-            let named: Option<String> = w
-                .store
-                .conn
-                .query_row("SELECT name FROM devices WHERE addr = ?1", [key], |r| {
-                    r.get(0)
-                })
-                .optional()?
-                .flatten();
-            return Ok(Some(GattTarget {
-                addr: key_addr(key),
-                addr_type: addr_type(o.addr_type.map(i64::from)),
-                name: adv::payload_fields(&adv::split(&o.raw))
-                    .local_name
-                    .or(named),
-                trigger_raw: o.raw.clone(),
-                trigger_rssi: o.rssi,
-                trigger_scanned_at_ms: o.at_ms,
-                trigger_is_legacy: o.is_legacy,
-                trigger_primary_phy: o.primary_phy,
-                trigger_secondary_phy: o.secondary_phy,
-                trigger_adv_sid: o.adv_sid,
-                session_id,
-            }));
-        }
-        let conn = &w.store.conn;
-        let latest = conn
-            .query_row(
-                "SELECT payload_id, addr_type, is_legacy, primary_phy, secondary_phy, adv_sid, rssi_max, last_seen_ms
-                 FROM sighting_minutes WHERE addr = ?1 ORDER BY last_seen_ms DESC, id DESC LIMIT 1",
-                [key],
-                |r| {
-                    Ok((
-                        r.get::<_, i64>(0)?,
-                        r.get::<_, i64>(1)?,
-                        r.get::<_, i64>(2)?,
-                        r.get::<_, i64>(3)?,
-                        r.get::<_, i64>(4)?,
-                        r.get::<_, i64>(5)?,
-                        r.get::<_, Option<i16>>(6)?,
-                        r.get::<_, i64>(7)?,
-                    ))
-                },
-            )
-            .optional()?;
-        let Some((payload, at, legacy, primary, secondary, sid, rssi, seen)) = latest else {
-            return Ok(None);
-        };
-        let opt = |v: i64| (v >= 0).then_some(v as i32);
-        let name: Option<String> = conn
-            .query_row("SELECT name FROM devices WHERE addr = ?1", [key], |r| {
-                r.get(0)
-            })
-            .optional()?
-            .flatten();
-        Ok(Some(GattTarget {
-            addr: key_addr(key),
-            addr_type: addr_type(Some(at)),
-            name,
-            trigger_raw: store::payload_raw(conn, payload)?,
-            trigger_rssi: rssi,
-            trigger_scanned_at_ms: seen,
-            trigger_is_legacy: (legacy >= 0).then_some(legacy == 1),
-            trigger_primary_phy: opt(primary),
-            trigger_secondary_phy: opt(secondary),
-            trigger_adv_sid: opt(sid),
-            session_id,
-        }))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fail_next_commit(&self) {
-        lock(&self.writer).store.fail_next_commit = true;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_writer_conn<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
-        f(&lock(&self.writer).store.conn)
+    pub(crate) fn stop_recording_at(&self, now: i64) -> Result<String, CoreError> {
+        self.ask_session(Event::Stop { now: EpochMs(now) })
     }
 
     pub(crate) fn ingest_scans_at(
@@ -496,251 +952,100 @@ impl Core {
         batch: Vec<ScanObservationInput>,
         now: i64,
     ) -> Result<IngestAck, CoreError> {
-        if batch.len() > MAX_INPUT_BATCH_ROWS {
-            return Err(CoreError::InputBatchTooLarge {
-                detail: format!("{} rows > {MAX_INPUT_BATCH_ROWS}", batch.len()),
-            });
+        match self.ask(Event::Scans {
+            batch,
+            now: EpochMs(now),
+        })? {
+            Reply::Ack(ack) => Ok(ack),
+            Reply::Failed(e) => Err(e),
+            Reply::Done | Reply::Session(_) => Err(CoreError::Db {
+                detail: "the writer answered ingest without an ack".into(),
+            }),
         }
-        let estimate: u64 = batch
-            .iter()
-            .map(|o| {
-                INPUT_FIXED_ESTIMATE_BYTES
-                    + o.raw.len() as u64
-                    + o.addr.len() as u64
-                    + o.local_name.as_ref().map_or(0, |n| n.len() as u64)
-            })
-            .sum();
-        if estimate > MAX_INPUT_BATCH_ESTIMATED_BYTES {
-            return Err(CoreError::InputBatchTooLarge {
-                detail: format!("~{estimate} bytes > {MAX_INPUT_BATCH_ESTIMATED_BYTES}"),
-            });
-        }
-        let mut w = lock(&self.writer);
-        let recording = matches!(&w.recording, Some(r) if r.phase == RecordingPhase::Recording);
-        if !recording {
-            return Ok(IngestAck {
-                accepted: 0,
-                rejected: 0,
-                ignored_not_recording: batch.len() as u32,
-            });
-        }
-        let mut ack = IngestAck::default();
-        let mut rows = Vec::with_capacity(batch.len());
-        for o in batch {
-            let Some(addr) = key_of(&o.addr) else {
-                ack.rejected += 1;
-                continue;
-            };
-            if o.raw.len() > MAX_RAW_BYTES {
-                ack.rejected += 1;
-                continue;
-            }
-            let fix = w
-                .fixes
-                .most_recent_preceding(o.elapsed_realtime_nanos)
-                .map(|f| (f.lat, f.lon, f.accuracy_meters));
-            rows.push(Obs {
-                addr,
-                at_ms: o.scanned_at_ms,
-                rssi: o.rssi,
-                raw: o.raw,
-                tx_power: o.tx_power,
-                connectable: o.is_connectable,
-                addr_type: o.addr_type,
-                is_legacy: o.is_legacy,
-                primary_phy: o.primary_phy,
-                secondary_phy: o.secondary_phy,
-                adv_sid: o.adv_sid,
-                data_status: o.data_status,
-                adv_tx_power: o.adv_tx_power,
-                periodic_interval: o.periodic_interval,
-                fix,
-            });
-            ack.accepted += 1;
-        }
-        let due = {
-            for o in &rows {
-                w.live.hear(o.addr, o.rssi);
-            }
-            let r = w.recording.as_mut().expect("recording");
-            r.pending.extend(rows);
-            now - r.last_commit_ms >= self.config.durability_interval_ms as i64
-        };
-        if due {
-            // The batch is accepted either way: a failed commit keeps it pending for the next one and reports a
-            // StorageWarning; returning the error would make the caller send it again.
-            let _ = self.commit(&mut w, now);
-        }
-        Ok(ack)
     }
 
+    #[cfg(test)]
     pub(crate) fn ingest_location_at(&self, fix: LocationFix) {
-        if !fix.is_usable() {
-            return;
-        }
-        let mut w = lock(&self.writer);
-        w.fixes.push(fix.clone());
-        w.live.fix = Some((fix.lat, fix.lon, fix.accuracy_meters, fix.observed_at_ms));
-        let Some(r) = w.recording.as_mut() else {
-            return;
-        };
-        if r.phase != RecordingPhase::Recording || fix.accuracy_meters > ROUTE_MAX_ACCURACY_M {
-            return;
-        }
-        let keep = match r.last_route {
-            None => true,
-            Some(p) => {
-                haversine_m(p.lat, p.lon, fix.lat, fix.lon) >= ROUTE_MIN_STEP_M
-                    || fix.observed_at_ms - p.t_ms >= ROUTE_MIN_INTERVAL_MS
-            }
-        };
-        if keep {
-            let p = RoutePoint {
-                t_ms: fix.observed_at_ms,
-                lat: fix.lat,
-                lon: fix.lon,
-                accuracy: Some(fix.accuracy_meters),
-            };
-            r.route.push(p);
-            r.last_route = Some(p);
-        }
+        let _ = self.tell(Event::Location { fix });
     }
 
-    pub(crate) fn start_recording_at(
+    /// The commit tick with an explicit clock; waits until it was handled.
+    #[cfg(test)]
+    pub(crate) fn tick_at(&self, now: i64) {
+        let _ = self.tell(Event::Tick { now: EpochMs(now) });
+        let _ = self.job(|_| ());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_commit(&self) {
+        let _ = self.job(|r| r.store.fail_next_commit = true);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_writer_conn<T: Send + 'static>(
         &self,
-        env: ScanEnvironment,
-        now: i64,
-    ) -> Result<String, CoreError> {
-        let state = {
-            let mut w = lock(&self.writer);
-            if w.recording.is_some() {
-                return Err(CoreError::AlreadyRecording);
-            }
-            let uuid = new_uuid(now)?;
-            let session = w.store.create_session(&uuid, now)?;
-            w.live = LiveState::default();
-            w.recording = Some(Recording {
-                session,
-                uuid,
-                started_ms: now,
-                phase: RecordingPhase::Recording,
-                active_before_ms: 0,
-                running_since_ms: Some(now),
-                env,
-                pending: Vec::new(),
-                route: Vec::new(),
-                last_route: None,
-                last_commit_ms: now,
-            });
-            self.state_of(&w)
-        };
-        let id = state.session_id.clone().expect("recording");
-        self.emit(CoreEvent::RecordingChanged { state });
-        Ok(id)
+        f: impl FnOnce(&Connection) -> T + Send + 'static,
+    ) -> T {
+        match self.job(move |r| f(&r.store.conn)) {
+            Ok(v) => v,
+            Err(e) => panic!("writer gone: {e}"),
+        }
     }
 
-    pub(crate) fn pause_recording_at(&self, now: i64) -> Result<(), CoreError> {
-        let state = {
-            let mut w = lock(&self.writer);
-            match &w.recording {
-                None => return Err(CoreError::NotRecording),
-                Some(r) if r.phase == RecordingPhase::Paused => return Ok(()),
-                _ => {}
-            }
-            self.commit(&mut w, now)?;
-            let Writer {
-                store, recording, ..
-            } = &mut *w;
-            let r = recording.as_mut().expect("recording");
-            r.active_before_ms += now - r.running_since_ms.unwrap_or(now);
-            r.running_since_ms = None;
-            r.phase = RecordingPhase::Paused;
-            store.pause(r.session, now)?;
-            // deltas stop after the one that carries Paused (§2.6)
-            self.emit_delta(&mut w, &[], now, true);
-            self.state_of(&w)
-        };
-        self.emit(CoreEvent::RecordingChanged { state });
-        Ok(())
-    }
-
-    pub(crate) fn resume_recording_at(&self, now: i64) -> Result<(), CoreError> {
-        let state = {
-            let mut w = lock(&self.writer);
-            let Writer {
-                store, recording, ..
-            } = &mut *w;
-            let r = recording.as_mut().ok_or(CoreError::NotRecording)?;
-            if r.phase == RecordingPhase::Recording {
-                return Ok(());
-            }
-            r.phase = RecordingPhase::Recording;
-            r.running_since_ms = Some(now);
-            store.resume(r.session, now)?;
-            self.state_of(&w)
-        };
-        self.emit(CoreEvent::RecordingChanged { state });
-        Ok(())
-    }
-
-    pub(crate) fn stop_recording_at(&self, now: i64) -> Result<String, CoreError> {
-        let (uuid, state) = {
-            let mut w = lock(&self.writer);
-            if w.recording.is_none() {
-                return Err(CoreError::NotRecording);
-            }
-            self.commit(&mut w, now)?;
-            let r = w.recording.take().expect("recording");
-            let active = r.active_before_ms + r.running_since_ms.map_or(0, |s| now - s);
-            if r.phase == RecordingPhase::Paused {
-                w.store.resume(r.session, now)?;
-            }
-            w.store.finish(r.session, 2, now, active)?;
-            (r.uuid, self.state_of(&w))
-        };
-        self.emit(CoreEvent::RecordingChanged { state });
-        self.emit(CoreEvent::SessionsChanged);
-        Ok(uuid)
+    /// The writer's queue length after everything sent so far was handled (tests).
+    #[cfg(test)]
+    pub(crate) fn pending_len(&self) -> usize {
+        self.job(|r| r.pending.len()).unwrap_or(usize::MAX)
     }
 }
 
 #[uniffi::export]
 impl Core {
-    /// [F] Blocking; Kotlin calls it on `Dispatchers.IO` (§1.2). Opens or migrates `local.db` and marks a session
-    /// left open as Interrupted.
+    /// [F] Blocking; Kotlin calls it on `Dispatchers.IO` (§1.2). Opens or migrates `local.db`, marks a session left
+    /// open as Interrupted, and starts the actors.
     #[uniffi::constructor]
     pub fn open(config: CoreConfig, assets: CoreAssets) -> Result<Arc<Core>, CoreError> {
-        Core::open_at(config, assets, now_ms())
+        Core::open_with(config, assets, now_ms(), true)
     }
 
-    /// [W] Commit, then stop. Kotlin sees it as `closeCore`, because UniFFI objects already have
-    /// `AutoCloseable.close()` (which only frees the handle).
+    /// [W] Commit. Kotlin sees it as `closeCore`, because UniFFI objects already have `AutoCloseable.close()`
+    /// (which frees the handle; the actors end with it).
     #[uniffi::method(name = "close_core")]
-    pub fn close(&self) {
-        let mut w = lock(&self.writer);
-        let _ = self.commit(&mut w, now_ms());
+    pub fn close(&self) -> Result<(), CoreError> {
+        self.ask_unit(Event::Close {
+            now: EpochMs(now_ms()),
+        })
     }
 
     /// [N] 8.
-    pub fn api_version(&self) -> u32 {
-        API_VERSION
+    pub fn api_version(&self) -> Result<u32, CoreError> {
+        Ok(API_VERSION)
     }
 
-    /// [N]
-    pub fn set_listener(&self, listener: Option<Arc<dyn CoreListener>>) {
-        *lock(&*self.listener) = listener;
+    /// [W] The listener moves to `ct-notify`; deltas are built only while one is set.
+    pub fn set_listener(&self, listener: Option<Arc<dyn CoreListener>>) -> Result<(), CoreError> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.writer
+            .send(WriterMsg::Listener(listener, tx))
+            .map_err(closed)?;
+        match rx.recv().map_err(closed)? {
+            Reply::Failed(e) => Err(e),
+            Reply::Done | Reply::Session(_) | Reply::Ack(_) => Ok(()),
+        }
     }
 
-    /// [N] Emits `CoreEvent::DataInvalidated`.
-    pub fn set_display_filter(&self, filter: DisplayFilter) {
-        *lock(&self.display) = filter;
-        self.emit(CoreEvent::DataInvalidated {
-            reason: "display filter".into(),
-        });
+    /// [W] Emits `CoreEvent::DataInvalidated`; queries sent after it returns see the new filter.
+    pub fn set_display_filter(&self, filter: DisplayFilter) -> Result<(), CoreError> {
+        self.ask_unit(Event::SetDisplay {
+            hide_unnamed_apple: filter.hide_unnamed_apple,
+        })
     }
 
     /// [N] The chart rides on deltas (D-10).
-    pub fn set_live_focus(&self, _key: Option<DeviceKey>) {}
+    pub fn set_live_focus(&self, key: Option<DeviceKey>) -> Result<(), CoreError> {
+        let _ = key;
+        Ok(())
+    }
 
     // ---- §2.3 recording ----
 
@@ -766,33 +1071,30 @@ impl Core {
 
     /// [W] Footer change mid-session.
     pub fn configure_scan(&self, env: ScanEnvironment) -> Result<(), CoreError> {
-        let mut w = lock(&self.writer);
-        let r = w.recording.as_mut().ok_or(CoreError::NotRecording)?;
-        r.env = env;
-        Ok(())
+        self.ask_unit(Event::Configure { env })
     }
 
-    /// [N]
-    pub fn recording_state(&self) -> RecordingState {
-        let w = lock(&self.writer);
-        self.state_of(&w)
+    /// [W]
+    pub fn recording_state(&self) -> Result<RecordingState, CoreError> {
+        self.job(|r| r.state())
     }
 
     // ---- §2.4 ingest ----
 
-    /// [N] Validates (v3 rules: ≤ 64 rows, ≤ 1 MiB, raw ≤ 1650 B) and buffers until the next commit.
+    /// [W] Validates (v3 rules: ≤ 64 rows, ≤ 1 MiB, raw ≤ 1650 B) and buffers until the next commit. A failed
+    /// interval commit keeps the batch pending (StorageWarning) and still acknowledges it.
     pub fn ingest_scans(&self, batch: Vec<ScanObservationInput>) -> Result<IngestAck, CoreError> {
         self.ingest_scans_at(batch, now_ms())
     }
 
     /// [N] Fix ring + route (≤ 100 m accuracy, ≥ 5 m or 30 s).
-    pub fn ingest_location(&self, fix: LocationFix) {
-        self.ingest_location_at(fix);
+    pub fn ingest_location(&self, fix: LocationFix) -> Result<(), CoreError> {
+        self.tell(Event::Location { fix })
     }
 
     /// [N]
-    pub fn clear_location(&self) {
-        lock(&self.writer).fixes.clear();
+    pub fn clear_location(&self) -> Result<(), CoreError> {
+        self.tell(Event::ClearLocation)
     }
 
     /// [N]
@@ -800,28 +1102,16 @@ impl Core {
         new_uuid(now_ms())
     }
 
-    /// [P] The trigger advertisement from the device's latest payload.
-    /// The address and type come from the latest sighting, the current recording's uncommitted ones included.
-    /// `None` for a device the core has never seen.
-    pub async fn gatt_target(&self, key: DeviceKey) -> Option<GattTarget> {
-        self.gatt_target_of(key).ok().flatten()
+    /// [P] The trigger advertisement from the device's latest sighting, the current recording's uncommitted ones
+    /// included. `None` for a device the core has never seen.
+    pub async fn gatt_target(&self, key: DeviceKey) -> Result<Option<GattTarget>, CoreError> {
+        self.job_async(move |r| r.gatt_target(key)).await?
     }
 
     /// [W] Validates gatt/v1 (unchanged), writes `pending/gatt/v1` (plaintext), fills the gatt tables, and returns
     /// the view. Saving the same object again is idempotent.
     pub fn ingest_gatt(&self, gatt_v1_json: String) -> Result<GattView, CoreError> {
-        let file = crate::gatt::save(&self.data_dir, gatt_v1_json.as_bytes())?;
-        let (view, _) = gatt_view::view(&self.catalog, &gatt_v1_json)?;
-        {
-            let mut w = lock(&self.writer);
-            let tx = w.store.conn.transaction()?;
-            gatt_view::store(&tx, &gatt_v1_json)?;
-            tx.commit()?;
-        }
-        if !file.archived {
-            self.emit(CoreEvent::UploadNeeded);
-        }
-        Ok(view)
+        self.job(move |r| r.ingest_gatt(&gatt_v1_json))?
     }
 
     // ---- §2.5 queries ----
@@ -829,37 +1119,24 @@ impl Core {
     /// [P] Finished sessions, newest first, no empty ones.
     pub async fn sessions(&self) -> Result<Vec<SessionSummary>, CoreError> {
         self.read(|c, ctx| query::sessions(c, ctx, &|_| UploadState::Pending))
+            .await
     }
 
-    /// [N]
-    pub fn current_session(&self) -> Option<SessionSummary> {
+    /// [W]
+    pub fn current_session(&self) -> Result<Option<SessionSummary>, CoreError> {
         let now = now_ms();
-        let w = lock(&self.writer);
-        let r = w.recording.as_ref()?;
-        let ctx = Ctx {
-            catalog: &self.catalog,
-            hide_unnamed_apple: lock(&self.display).hide_unnamed_apple,
-            live: self.live_of(&w, now),
-        };
-        query::session_rows(&w.store.conn)
-            .ok()?
-            .into_iter()
-            .find(|s| s.id == r.session)
-            .map(|mut s| {
-                s.active_ms =
-                    r.active_before_ms + r.running_since_ms.map_or(0, |since| now - since);
-                query::summary(&ctx, &s, UploadState::Pending)
-            })
+        self.job(move |r| r.current_session(now))?
     }
 
     /// [P] Counters.
     pub async fn all_sessions_summary(&self) -> Result<AllSessionsSummary, CoreError> {
-        self.read(query::all_sessions_summary)
+        self.read(query::all_sessions_summary).await
     }
 
     /// [P] `getRecording` minus the points.
     pub async fn session_view(&self, scope: Scope) -> Result<SessionView, CoreError> {
-        self.read(|c, ctx| query::session_view(c, ctx, &scope))
+        self.read(move |c, ctx| query::session_view(c, ctx, &scope))
+            .await
     }
 
     /// [V Routes] GeoJSON LineStrings for "route"; multi-session: the routes meeting the viewport.
@@ -870,12 +1147,14 @@ impl Core {
         zoom: f64,
     ) -> Result<String, CoreError> {
         let _ = zoom;
-        self.read(|c, ctx| query::routes(c, ctx, &scope, viewport))
+        self.read(move |c, ctx| query::routes(c, ctx, &scope, viewport))
+            .await
     }
 
     /// [P] Every shown device, sorted ONCE by RSSI desc, ties by key (G-9).
     pub async fn device_order(&self, scope: Scope) -> Result<DeviceKeys, CoreError> {
-        self.read(|c, ctx| query::device_order(c, ctx, &scope))
+        self.read(move |c, ctx| query::device_order(c, ctx, &scope))
+            .await
     }
 
     /// [V AreaKeys] Keys passing the filter, in `device_order` order.
@@ -884,7 +1163,8 @@ impl Core {
         scope: Scope,
         filter: DeviceFilter,
     ) -> Result<DeviceKeys, CoreError> {
-        self.read(|c, ctx| query::device_keys(c, ctx, &scope, &filter))
+        self.read(move |c, ctx| query::device_keys(c, ctx, &scope, &filter))
+            .await
     }
 
     /// [P] ≤ 200 keys per call, in the given order.
@@ -893,7 +1173,8 @@ impl Core {
         scope: Scope,
         keys: Vec<DeviceKey>,
     ) -> Result<Vec<DeviceRow>, CoreError> {
-        self.read(|c, ctx| query::device_rows(c, ctx, &scope, &keys))
+        self.read(move |c, ctx| query::device_rows(c, ctx, &scope, &keys))
+            .await
     }
 
     /// [V AreaKeys] Faceted (D-3a): `filter.categories` ignored, every other constraint applied.
@@ -902,7 +1183,8 @@ impl Core {
         scope: Scope,
         filter: DeviceFilter,
     ) -> Result<Vec<CategoryCount>, CoreError> {
-        self.read(|c, ctx| query::category_counts(c, ctx, &scope, &filter))
+        self.read(move |c, ctx| query::category_counts(c, ctx, &scope, &filter))
+            .await
     }
 
     /// [V AreaProducts] Groups by the page's first category, "unidentified" last (D-2); `filter.page` ignored.
@@ -911,7 +1193,8 @@ impl Core {
         scope: Scope,
         filter: DeviceFilter,
     ) -> Result<Vec<CategoryGroup>, CoreError> {
-        self.read(|c, ctx| query::products(c, ctx, &scope, &filter))
+        self.read(move |c, ctx| query::products(c, ctx, &scope, &filter))
+            .await
     }
 
     /// [P] A `None` page is the Unidentified devices card.
@@ -921,7 +1204,8 @@ impl Core {
         page_id: Option<String>,
         filter: DeviceFilter,
     ) -> Result<Option<ProductDetail>, CoreError> {
-        self.read(|c, ctx| query::product(c, ctx, &scope, page_id.as_deref(), &filter))
+        self.read(move |c, ctx| query::product(c, ctx, &scope, page_id.as_deref(), &filter))
+            .await
     }
 
     /// [P]
@@ -930,7 +1214,8 @@ impl Core {
         scope: Scope,
         key: DeviceKey,
     ) -> Result<Option<DeviceDetail>, CoreError> {
-        self.read(|c, ctx| query::device(c, ctx, &scope, key))
+        self.read(move |c, ctx| query::device(c, ctx, &scope, key))
+            .await
     }
 
     /// [P] ≤ 10 000.
@@ -939,18 +1224,20 @@ impl Core {
         scope: Scope,
         key: DeviceKey,
     ) -> Result<Vec<Sighting>, CoreError> {
-        self.read(|c, ctx| query::device_sightings(c, ctx, &scope, key))
+        self.read(move |c, ctx| query::device_sightings(c, ctx, &scope, key))
+            .await
     }
 
     /// [N] D-10, live only.
-    pub fn device_chart(&self, key: DeviceKey) -> Option<LiveChart> {
+    pub fn device_chart(&self, key: DeviceKey) -> Result<Option<LiveChart>, CoreError> {
         let _ = key;
-        None
+        Ok(None)
     }
 
     /// [P] D-13.7.
     pub async fn device_gatt(&self, key: DeviceKey) -> Result<Option<GattView>, CoreError> {
-        self.read(|c, _| gatt_view::latest(c, &self.catalog, key))
+        self.read(move |c, ctx| gatt_view::latest(c, ctx.catalog, key))
+            .await
     }
 
     /// [V Search] Q-1/Q-2; `None` for a blank query; `device_order` order.
@@ -960,7 +1247,8 @@ impl Core {
         query: String,
         area: Option<Bbox>,
     ) -> Result<Option<DeviceKeys>, CoreError> {
-        self.read(|c, ctx| query::search(c, ctx, &scope, &query, area))
+        self.read(move |c, ctx| query::search(c, ctx, &scope, &query, area))
+            .await
     }
 
     /// [V MapPoints] "devices"/"density" for the viewport (+50 %: the bbox padded by a quarter of its width and
@@ -973,7 +1261,8 @@ impl Core {
         zoom: f64,
     ) -> Result<MapData, CoreError> {
         let _ = zoom;
-        self.read(|c, ctx| query::map_points(c, ctx, &scope, &filter, viewport))
+        self.read(move |c, ctx| query::map_points(c, ctx, &scope, &filter, viewport))
+            .await
     }
 
     // ---- §2.8 storage, export, delete, upload ----
@@ -1009,13 +1298,13 @@ impl Core {
     }
 
     /// [N]
-    pub fn upload_status(&self) -> UploadStatus {
-        UploadStatus::default()
+    pub fn upload_status(&self) -> Result<UploadStatus, CoreError> {
+        Ok(UploadStatus::default())
     }
 
     /// [N] Unchanged from v3.
-    pub fn pending_uploads(&self) -> Vec<PendingUpload> {
-        Vec::new()
+    pub fn pending_uploads(&self) -> Result<Vec<PendingUpload>, CoreError> {
+        Ok(Vec::new())
     }
 
     /// [F] Unchanged from v3: encrypts to `upload-cache/`.
@@ -1039,8 +1328,8 @@ impl Core {
 
 /// [N] Q-1, pure; the same function is registered as SQL `match_device(q, name, addr)`.
 #[uniffi::export]
-pub fn match_device(query: String, name: Option<String>, addr: String) -> bool {
-    super::search::matches(&query, name.as_deref(), &addr)
+pub fn match_device(query: String, name: Option<String>, addr: String) -> Result<bool, CoreError> {
+    Ok(super::search::matches(&query, name.as_deref(), &addr))
 }
 
 #[cfg(test)]

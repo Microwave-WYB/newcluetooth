@@ -19,7 +19,7 @@ fn invalid(detail: impl Into<String>) -> CoreError {
 /// `YYYY-MM-DDTHH:MM:SS.mmmZ` (the gatt/v1 timestamp form, already validated) → epoch ms.
 pub(crate) fn parse_ms(text: &str) -> Option<i64> {
     let b = text.as_bytes();
-    if b.len() != 24 || b[23] != b'Z' {
+    if b.len() != 24 || b.get(23) != Some(&b'Z') {
         return None;
     }
     let num = |r: std::ops::Range<usize>| text.get(r)?.parse::<i64>().ok();
@@ -68,14 +68,14 @@ fn value_text(catalog: &Catalog, uuid: &str, hex: &str) -> String {
     let Some(bytes) = hex_bytes(hex) else {
         return hex.to_owned();
     };
-    if uuid == "2A19" && bytes.len() == 1 {
-        return format!("{} %", bytes[0]);
-    }
-    if uuid == "2A01"
-        && bytes.len() == 2
-        && let Some(name) = catalog.appearance_name(u16::from_le_bytes([bytes[0], bytes[1]]))
-    {
-        return name;
+    match (uuid, bytes.as_slice()) {
+        ("2A19", [level]) => return format!("{level} %"),
+        ("2A01", [a, b]) => {
+            if let Some(name) = catalog.appearance_name(u16::from_le_bytes([*a, *b])) {
+                return name;
+            }
+        }
+        _ => {}
     }
     match std::str::from_utf8(&bytes) {
         Ok(text) if !text.is_empty() && !text.chars().any(char::is_control) => text.to_owned(),
@@ -225,9 +225,10 @@ pub(crate) fn view(catalog: &Catalog, json: &str) -> Result<(GattView, String), 
         None => all,
         Some(f) => {
             let mut steps: Vec<GattStep> = all.into_iter().take(failed_at + 1).collect();
-            let last = steps.last_mut().expect("at least the failed step");
-            last.state = GattStepState::Failed;
-            last.failure = Some(f);
+            if let Some(last) = steps.last_mut() {
+                last.state = GattStepState::Failed;
+                last.failure = Some(f);
+            }
             steps
         }
     };
@@ -238,10 +239,11 @@ pub(crate) fn view(catalog: &Catalog, json: &str) -> Result<(GattView, String), 
             started_ms,
             ok: outcome == "complete",
             steps,
-            services: if outcome == "failed" {
-                Vec::new()
-            } else {
+            // D-13.6: the services show only after a complete run
+            services: if outcome == "complete" {
                 services
+            } else {
+                Vec::new()
             },
         },
         outcome,

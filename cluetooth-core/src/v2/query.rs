@@ -95,8 +95,7 @@ pub(crate) fn resolve(
     let rows = session_rows(conn)?;
     if let (Some(live), SessionScope::Sessions { ids }, None) =
         (&ctx.live, &scope.sessions, &scope.filter)
-        && ids.len() == 1
-        && ids[0] == live.uuid
+        && matches!(ids.as_slice(), [only] if *only == live.uuid)
     {
         let sessions = rows.into_iter().filter(|s| s.id == live.session).collect();
         return Ok(Resolved {
@@ -129,10 +128,10 @@ pub(crate) fn resolve(
     let rel = if all_unfiltered {
         Rel::All
     } else {
-        match picked.len() {
-            0 => Rel::Empty,
-            1 => Rel::One(picked[0].id),
-            _ => Rel::Union(picked.iter().map(|s| s.id).collect()),
+        match picked.as_slice() {
+            [] => Rel::Empty,
+            [only] => Rel::One(only.id),
+            [_, _, ..] => Rel::Union(picked.iter().map(|s| s.id).collect()),
         }
     };
     Ok(Resolved {

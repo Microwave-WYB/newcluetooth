@@ -240,6 +240,9 @@ pub(crate) struct Store {
     pub fail_next_commit: bool,
 }
 
+/// The cache entries one commit learned: sha256 → payload id, and payload facts.
+type Learned = (HashMap<[u8; 32], i64>, HashMap<i64, PayloadInfo>);
+
 /// Bound of the in-memory sha256 → payload id map (§2.4: an LRU of 50k hashes, then the DB).
 const PAYLOAD_CACHE: usize = 50_000;
 
@@ -312,61 +315,62 @@ impl Store {
         if obs.is_empty() && route.is_empty() {
             return Ok(());
         }
-        // A rolled-back transaction frees the ids of the payloads it inserted, and SQLite hands them out again, so
-        // every cache entry this commit added is dropped on failure; otherwise a later payload would inherit the id
-        // and the earlier payload's rows would be attributed to it.
-        let mut added_payloads = Vec::new();
-        let mut added_info = Vec::new();
-        let result = self.commit_tx(
-            session,
-            obs,
-            route,
-            catalog,
-            &mut added_payloads,
-            &mut added_info,
-        );
-        if result.is_err() {
-            for sha in &added_payloads {
-                self.payloads.remove(sha);
-            }
-            for id in &added_info {
-                self.info.remove(id);
-            }
+        // The caches change only after the transaction commits. A rolled-back transaction frees the ids of the
+        // payloads it inserted and SQLite hands them out again, so caching them early would attribute a later
+        // payload's rows to the rolled-back one.
+        let (fresh_payloads, fresh_info) = self.commit_tx(session, obs, route, catalog)?;
+        if self.payloads.len() + fresh_payloads.len() > PAYLOAD_CACHE {
+            self.payloads.clear();
         }
-        result
+        self.payloads.extend(fresh_payloads);
+        if self.info.len() + fresh_info.len() > PAYLOAD_CACHE {
+            self.info.clear();
+        }
+        self.info.extend(fresh_info);
+        Ok(())
     }
 
+    /// One commit's transaction; returns the cache entries it learned, for the caller to keep once it committed.
     fn commit_tx(
         &mut self,
         session: i64,
         obs: &[Obs],
         route: &[RoutePoint],
         catalog: &Catalog,
-        added_payloads: &mut Vec<[u8; 32]>,
-        added_info: &mut Vec<i64>,
-    ) -> Result<(), CoreError> {
+    ) -> Result<Learned, CoreError> {
         let tx = self.conn.transaction()?;
-        let payload_ids = resolve_payloads(&tx, &mut self.payloads, obs, catalog, added_payloads)?;
+        let mut fresh_payloads = HashMap::new();
+        let payload_ids = resolve_payloads(&tx, &self.payloads, &mut fresh_payloads, obs, catalog)?;
+        // this batch's payload facts: the cache, else the DB (new ones only become cache entries after COMMIT)
+        let mut info: HashMap<i64, PayloadInfo> = HashMap::new();
+        let mut fresh_info = HashMap::new();
         for id in &payload_ids {
-            if !self.info.contains_key(id) {
-                let info = tx.query_row(
-                    "SELECT local_name, company_id, is_apple FROM payloads WHERE id = ?1",
-                    [id],
-                    |r| {
-                        Ok(PayloadInfo {
-                            local_name: r.get(0)?,
-                            company_id: r.get(1)?,
-                            is_apple: r.get(2)?,
-                        })
-                    },
-                )?;
-                self.info.insert(*id, info);
-                added_info.push(*id);
+            if info.contains_key(id) {
+                continue;
             }
+            let known = match self.info.get(id) {
+                Some(known) => known.clone(),
+                None => {
+                    let read = tx.query_row(
+                        "SELECT local_name, company_id, is_apple FROM payloads WHERE id = ?1",
+                        [id],
+                        |r| {
+                            Ok(PayloadInfo {
+                                local_name: r.get(0)?,
+                                company_id: r.get(1)?,
+                                is_apple: r.get(2)?,
+                            })
+                        },
+                    )?;
+                    fresh_info.insert(*id, read.clone());
+                    read
+                }
+            };
+            info.insert(*id, known);
         }
         merge_minutes(&tx, session, obs, &payload_ids)?;
         update_payload_stats(&tx, obs, &payload_ids)?;
-        let addrs = merge_session_devices(&tx, session, obs, &payload_ids, &self.info)?;
+        let addrs = merge_session_devices(&tx, session, obs, &payload_ids, &info)?;
         for addr in &addrs {
             refresh_device(&tx, *addr)?;
         }
@@ -379,24 +383,23 @@ impl Store {
             });
         }
         tx.commit()?;
-        if self.info.len() > PAYLOAD_CACHE {
-            self.info.clear();
-        }
-        Ok(())
+        Ok((fresh_payloads, fresh_info))
     }
 }
 
+/// Payload ids of the batch: the committed cache, then this transaction's new entries, then the DB, else a new
+/// payload (recorded in `fresh`).
 fn resolve_payloads(
     tx: &Transaction<'_>,
-    cache: &mut HashMap<[u8; 32], i64>,
+    cache: &HashMap<[u8; 32], i64>,
+    fresh: &mut HashMap<[u8; 32], i64>,
     obs: &[Obs],
     catalog: &Catalog,
-    added: &mut Vec<[u8; 32]>,
 ) -> Result<Vec<i64>, CoreError> {
     let mut out = Vec::with_capacity(obs.len());
     for o in obs {
         let sha: [u8; 32] = Sha256::digest(&o.raw).into();
-        if let Some(id) = cache.get(&sha) {
+        if let Some(id) = cache.get(&sha).or_else(|| fresh.get(&sha)) {
             out.push(*id);
             continue;
         }
@@ -411,11 +414,7 @@ fn resolve_payloads(
             Some(id) => id,
             None => insert_payload(tx, &sha, o, catalog)?,
         };
-        if cache.len() >= PAYLOAD_CACHE {
-            cache.clear();
-        }
-        cache.insert(sha, id);
-        added.push(sha);
+        fresh.insert(sha, id);
         out.push(id);
     }
     Ok(out)
@@ -924,10 +923,9 @@ pub(crate) fn refresh_device(tx: &Transaction<'_>, addr: i64) -> Result<(), Core
         tx.execute("DELETE FROM devices_rtree WHERE id = ?1", [addr])?;
         return Ok(());
     }
-    let latest = rows
-        .iter()
-        .max_by_key(|r| (r.last, r.session))
-        .expect("non-empty");
+    let Some(latest) = rows.iter().max_by_key(|r| (r.last, r.session)) else {
+        return Ok(());
+    };
     let named = rows
         .iter()
         .filter(|r| r.name.is_some())

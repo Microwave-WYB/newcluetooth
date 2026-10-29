@@ -98,4 +98,6 @@ sealed class CoreException(message: String) : Exception(message) {
     class NotRecording : CoreException("no recording is active")
     class AlreadyRecording : CoreException("a recording is already active")
     class Closed : CoreException("the core is closed")
+    /** A fault inside the core or its bindings (a Rust panic UniFFI caught, or a binding error). */
+    class Internal(val detail: String) : CoreException("core fault: $detail")
 }

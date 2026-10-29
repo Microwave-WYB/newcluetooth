@@ -64,69 +64,13 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.UploadStatus
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.coroutines.cancellation.CancellationException
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.AdStructure as GAdStructure
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.AdvFormat as GAdvFormat
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.AllSessionsSummary as GAllSessionsSummary
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.Bbox as GBbox
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.CategoryCount as GCategoryCount
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.CategoryGroup as GCategoryGroup
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreAssets as GCoreAssets
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreConfigV2 as GCoreConfig
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2 as GCoreError
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent as GCoreEvent
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.DecoderOutput as GDecoderOutput
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.DeleteOutcome as GDeleteOutcome
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.DeviceDetail as GDeviceDetail
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.DeviceFilter as GDeviceFilter
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.DeviceKeys as GDeviceKeys
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.DeviceLive as GDeviceLive
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.DeviceRow as GDeviceRow
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.DisplayFilter as GDisplayFilter
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.ExportFormatV2 as GExportFormat
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.FieldValue as GFieldValue
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.FixSummary as GFixSummary
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.GattFailure as GGattFailure
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.GattStep as GGattStep
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.GattStepKind as GGattStepKind
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.GattStepState as GGattStepState
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.GattTarget as GGattTarget
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.GattView as GGattView
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.GeoPoint as GGeoPoint
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.Identification as GIdentification
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.IngestAck as GIngestAck
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.LiveChart as GLiveChart
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.LiveDelta as GLiveDelta
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.LocationFix as GLocationFix
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.MapData as GMapData
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.MapMode as GMapMode
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.PageKind as GPageKind
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.PageRef as GPageRef
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.PendingUpload as GPendingUpload
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.PreparedExportV2 as GPreparedExport
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.PreparedUpload as GPreparedUpload
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.ProductCard as GProductCard
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.ProductDetail as GProductDetail
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.RecordingPhase as GRecordingPhase
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.RecordingState as GRecordingState
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.ScanEnvironment as GScanEnvironment
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.ScanObservationInput as GScanObservationInput
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.Scope as GScope
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.SessionFilter as GSessionFilter
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.SessionScope as GSessionScope
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.SessionStatus as GSessionStatus
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.SessionSummary as GSessionSummary
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.SessionView as GSessionView
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.Sighting as GSighting
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.StorageStats as GStorageStats
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.UploadState as GUploadState
-import edu.ucsd.sysnet.cluetoothscanner.core.generated.UploadStatus as GUploadStatus
 
 // ---- :core-api → bindings ----
 
 internal fun Scope.g() = GScope(
     when (val s = sessions) {
-        SessionScope.All -> GSessionScope.All
-        is SessionScope.Sessions -> GSessionScope.Sessions(s.ids)
+        SessionScope.All -> edu.ucsd.sysnet.cluetoothscanner.core.generated.SessionScope.All
+        is SessionScope.Sessions -> edu.ucsd.sysnet.cluetoothscanner.core.generated.SessionScope.Sessions(s.ids)
     },
     filter?.let { GSessionFilter(it.startedFromMs, it.startedToMs) },
 )
@@ -237,9 +181,9 @@ internal fun GDecoderOutput.api() = DecoderOutput(fields.map { f ->
     DecodedField(
         f.name,
         when (val v = f.value) {
-            is GFieldValue.Bool -> FieldValue.Bool(v.v)
-            is GFieldValue.Number -> FieldValue.Number(v.v)
-            is GFieldValue.Text -> FieldValue.Text(v.v)
+            is edu.ucsd.sysnet.cluetoothscanner.core.generated.FieldValue.Bool -> FieldValue.Bool(v.v)
+            is edu.ucsd.sysnet.cluetoothscanner.core.generated.FieldValue.Number -> FieldValue.Number(v.v)
+            is edu.ucsd.sysnet.cluetoothscanner.core.generated.FieldValue.Text -> FieldValue.Text(v.v)
         },
         f.unit, f.lookup,
     )
@@ -272,11 +216,11 @@ internal fun GMapData.api() = MapData(
 )
 
 internal fun GGattFailure.api(): GattFailure = when (this) {
-    GGattFailure.TimedOut -> GattFailure.TimedOut
-    GGattFailure.DisconnectedUnexpectedly -> GattFailure.DisconnectedUnexpectedly
-    GGattFailure.ConnectionFailed -> GattFailure.ConnectionFailed
-    GGattFailure.Cancelled -> GattFailure.Cancelled
-    is GGattFailure.Other -> GattFailure.Other(status)
+    edu.ucsd.sysnet.cluetoothscanner.core.generated.GattFailure.TimedOut -> GattFailure.TimedOut
+    edu.ucsd.sysnet.cluetoothscanner.core.generated.GattFailure.DisconnectedUnexpectedly -> GattFailure.DisconnectedUnexpectedly
+    edu.ucsd.sysnet.cluetoothscanner.core.generated.GattFailure.ConnectionFailed -> GattFailure.ConnectionFailed
+    edu.ucsd.sysnet.cluetoothscanner.core.generated.GattFailure.Cancelled -> GattFailure.Cancelled
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.GattFailure.Other -> GattFailure.Other(status)
 }
 
 internal fun GGattStep.api() = GattStep(
@@ -327,11 +271,11 @@ internal fun GLiveDelta.api() = LiveDelta(
 )
 
 internal fun GCoreEvent.api(): CoreEvent = when (this) {
-    is GCoreEvent.RecordingChanged -> CoreEvent.RecordingChanged(state.api())
-    GCoreEvent.SessionsChanged -> CoreEvent.SessionsChanged
-    is GCoreEvent.DataInvalidated -> CoreEvent.DataInvalidated(reason)
-    GCoreEvent.UploadNeeded -> CoreEvent.UploadNeeded
-    is GCoreEvent.StorageWarning -> CoreEvent.StorageWarning(message)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.RecordingChanged -> CoreEvent.RecordingChanged(state.api())
+    edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.SessionsChanged -> CoreEvent.SessionsChanged
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.DataInvalidated -> CoreEvent.DataInvalidated(reason)
+    edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.UploadNeeded -> CoreEvent.UploadNeeded
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.StorageWarning -> CoreEvent.StorageWarning(message)
 }
 
 internal fun GStorageStats.api() = StorageStats(
@@ -341,9 +285,9 @@ internal fun GStorageStats.api() = StorageStats(
 internal fun GPreparedExport.api() = PreparedExport(exportId, localPath, suggestedFileName, fileCount.toLong(), sizeBytes.toLong())
 
 internal fun GDeleteOutcome.api(): DeleteOutcome = when (this) {
-    is GDeleteOutcome.Deleted -> DeleteOutcome.Deleted(sessions.toInt())
-    is GDeleteOutcome.DeletedPendingKept -> DeleteOutcome.DeletedPendingKept(pending.toInt())
-    is GDeleteOutcome.Refused -> DeleteOutcome.Refused(reason)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.DeleteOutcome.Deleted -> DeleteOutcome.Deleted(sessions.toInt())
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.DeleteOutcome.DeletedPendingKept -> DeleteOutcome.DeletedPendingKept(pending.toInt())
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.DeleteOutcome.Refused -> DeleteOutcome.Refused(reason)
 }
 
 internal fun GUploadStatus.api() = UploadStatus(pendingCount.toInt(), pendingBytes.toLong(), failedCount.toInt(), lastError)
@@ -356,28 +300,41 @@ internal fun GPreparedUpload.api() = PreparedUpload(
 
 /** §2.9 → [CoreException]; `Cancelled` and `Superseded` become [CancellationException] (§2). */
 internal fun GCoreError.api(): Exception = when (this) {
-    is GCoreError.InvalidPayload -> CoreException.InvalidPayload(detail)
-    is GCoreError.InvalidConfig -> CoreException.InvalidConfig(detail)
-    is GCoreError.InputBatchTooLarge -> CoreException.InputBatchTooLarge(detail)
-    is GCoreError.UploadState -> CoreException.UploadState(detail)
-    is GCoreError.Encryption -> CoreException.Encryption(detail)
-    is GCoreError.Io -> CoreException.Io(detail)
-    is GCoreError.Parquet -> CoreException.Parquet(detail)
-    is GCoreError.Clock -> CoreException.Clock(detail)
-    is GCoreError.Db -> CoreException.Db(detail)
-    is GCoreError.SchemaTooNew -> CoreException.SchemaTooNew(found.toInt(), supported.toInt())
-    is GCoreError.InvalidBundle -> CoreException.InvalidBundle(detail)
-    is GCoreError.Backpressure -> CoreException.Backpressure()
-    is GCoreError.NotRecording -> CoreException.NotRecording()
-    is GCoreError.AlreadyRecording -> CoreException.AlreadyRecording()
-    is GCoreError.Closed -> CoreException.Closed()
-    is GCoreError.Cancelled -> CancellationException("query cancelled")
-    is GCoreError.Superseded -> CancellationException("query superseded by a newer one of its kind")
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.InvalidPayload -> CoreException.InvalidPayload(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.InvalidConfig -> CoreException.InvalidConfig(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.InputBatchTooLarge -> CoreException.InputBatchTooLarge(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.UploadState -> CoreException.UploadState(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Encryption -> CoreException.Encryption(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Io -> CoreException.Io(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Parquet -> CoreException.Parquet(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Clock -> CoreException.Clock(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Db -> CoreException.Db(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.SchemaTooNew -> CoreException.SchemaTooNew(found.toInt(), supported.toInt())
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.InvalidBundle -> CoreException.InvalidBundle(detail)
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Backpressure -> CoreException.Backpressure()
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.NotRecording -> CoreException.NotRecording()
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.AlreadyRecording -> CoreException.AlreadyRecording()
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Closed -> CoreException.Closed()
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Cancelled -> CancellationException("query cancelled")
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Superseded -> CancellationException("query superseded by a newer one of its kind")
 }
 
-/** Runs a binding call, rethrowing its error as :core-api's. */
+/**
+ * Every binding failure in :core-api's types: a core error maps to its [CoreException] (`Cancelled`/`Superseded` to
+ * [CancellationException]); a Rust panic UniFFI caught (`InternalException`) or any other binding fault becomes
+ * [CoreException.Internal]. A coroutine cancellation passes through.
+ */
+internal fun bindingFailure(e: Exception): Exception = when (e) {
+    is GCoreError -> e.api()
+    is CancellationException -> e
+    is CoreException -> e
+    is GInternalException -> CoreException.Internal(e.message ?: "core panic")
+    else -> CoreException.Internal(e.toString())
+}
+
+/** Runs a binding call; any failure is rethrown in :core-api's types ([bindingFailure]). */
 internal inline fun <T> call(block: () -> T): T = try {
     block()
-} catch (e: GCoreError) {
-    throw e.api()
+} catch (e: Exception) {
+    throw bindingFailure(e)
 }
