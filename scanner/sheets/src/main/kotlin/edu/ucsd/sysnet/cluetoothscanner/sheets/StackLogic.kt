@@ -66,10 +66,11 @@ enum class PopReason { Close, Back, Scrim, EmptyMap, Drag }
 
 /** What happens to the stack. */
 sealed interface StackEvent {
-    /** S-4, S-6: [camera] is the map's camera now, saved under the current top. */
+    /**
+     * S-4, S-6: [camera] is the map's camera now, saved under the current top. A device pushed while a device level
+     * is on top replaces it (S-4); a second Filter level is not opened.
+     */
     data class Push(val kind: SheetKind, val camera: CameraSnapshot?) : StackEvent
-    /** S-4: a device opened while a device level is on top replaces it. */
-    data class ReplaceTop(val kind: SheetKind) : StackEvent
     data class Pop(val reason: PopReason) : StackEvent
     /** V-7. */
     data object Reset : StackEvent
@@ -127,7 +128,6 @@ data class StackStep(val state: StackState, val effects: List<StackEffect> = emp
 /** The pure stack logic: the next state and the effects for [event]. */
 fun reduceStack(state: StackState, event: StackEvent): StackStep = when (event) {
     is StackEvent.Push -> push(state, event)
-    is StackEvent.ReplaceTop -> replaceTop(state, event.kind)
     is StackEvent.Pop -> pop(state, event.reason)
     StackEvent.Reset -> reset(state)
     is StackEvent.SetHeight -> setHeight(state, event.id, event.height)
@@ -181,7 +181,7 @@ private fun push(state: StackState, event: StackEvent.Push): StackStep {
     // at most one Filter level: the filter button is on the root's header only
     if (event.kind == SheetKind.Filter && state.levels.any { it.kind == SheetKind.Filter }) return StackStep(state)
     // S-4: a device over a device replaces it
-    if (event.kind is SheetKind.Device && state.top.kind is SheetKind.Device && state.pushed.isNotEmpty()) return replaceTop(state, event.kind)
+    if (event.kind is SheetKind.Device && state.top.kind is SheetKind.Device) return replaceTop(state, event.kind)
     val under = state.top
     val level = Level(
         SheetId(state.nextId), event.kind,
@@ -204,7 +204,8 @@ private fun push(state: StackState, event: StackEvent.Push): StackStep {
     return StackStep(next, effects)
 }
 
-private fun replaceTop(state: StackState, kind: SheetKind): StackStep {
+/** S-4: a device level replaces the device level on top, at the same height. */
+private fun replaceTop(state: StackState, kind: SheetKind.Device): StackStep {
     val old = state.pushed.lastOrNull() ?: return StackStep(state) // the root is never replaced
     val level = Level(SheetId(state.nextId), kind, old.height, old.panel)
     val next = state.copy(

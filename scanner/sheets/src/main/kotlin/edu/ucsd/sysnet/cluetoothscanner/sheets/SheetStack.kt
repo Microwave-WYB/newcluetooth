@@ -183,15 +183,13 @@ class SheetStackController(
         return top
     }
 
-    /** S-4: a device opened while a device sheet is on top replaces it, at the same level and height. */
-    fun replaceTop(kind: SheetKind): SheetEntry {
-        dispatch(StackEvent.ReplaceTop(kind))
-        return top
-    }
+    /** S-4: a device opened while a device sheet is on top replaces it, at the same level and height. Only a device
+     *  replaces a device; any other [kind] leaves the stack as it is. */
+    fun replaceTop(kind: SheetKind): SheetEntry =
+        if (kind is SheetKind.Device && state.top.kind is SheetKind.Device) push(kind) else top
 
     /** Opens a device: replacing a device sheet on top, otherwise pushing one (S-4). */
-    fun openDevice(key: DeviceKey): SheetEntry =
-        if (state.top.kind is SheetKind.Device) replaceTop(SheetKind.Device(key)) else push(SheetKind.Device(key))
+    fun openDevice(key: DeviceKey): SheetEntry = push(SheetKind.Device(key))
 
     /**
      * S-8: pops exactly one level. The revealed sheet gets back its saved height, scroll, view and filters, and the
