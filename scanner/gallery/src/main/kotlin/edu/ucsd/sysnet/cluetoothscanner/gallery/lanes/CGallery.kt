@@ -38,6 +38,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeState
+import edu.ucsd.sysnet.cluetoothscanner.chrome.gallery.chromeCells
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.gallery.DesignSystemGallery
 import edu.ucsd.sysnet.cluetoothscanner.gallery.GalleryEntry
@@ -48,6 +49,7 @@ object CGallery : LaneGallery {
     override val lane = "C"
     override val entries: List<GalleryEntry> = listOf(
         GalleryEntry("Design system (C-1 … C-17)") { CluetoothTheme { DesignSystemGallery() } },
+        GalleryEntry("Chrome cells (prototype #gallery)") { CluetoothTheme { DesignSystemGallery(cells = chromeCells()) } },
         GalleryEntry("Recorder (tap to morph)") { CluetoothTheme { RecorderDemo() } },
         GalleryEntry("Top chrome and search") { CluetoothTheme { SearchDemo() } },
         GalleryEntry("Sessions list") { CluetoothTheme { SessionsList(SessionsListState(null, AllSessionsSummary(5, 1277, null), emptyList(), Scope.All), {}, {}) } },

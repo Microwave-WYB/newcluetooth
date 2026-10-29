@@ -297,7 +297,8 @@ fun SearchBox(
 
 /**
  * Q-5: search state's bar, a full-width `--fill1` pill (44 dp, `--shadow-float`) with a `--t3` search icon, the
- * query (ellipsized; a tap reopens the page, Q-7) and a plain 40 dp X that leaves search state.
+ * query (ellipsized; a tap reopens the page, Q-7) and a 40 dp neutral X that leaves search state (the prototype's
+ * `.ib.neutral` outranks `.search-bar .ib { background: transparent }`, so the X sits on `--fill2`).
  */
 @Composable
 fun SearchBar(query: String, onEdit: () -> Unit, onExit: () -> Unit, modifier: Modifier = Modifier) {
@@ -324,7 +325,7 @@ fun SearchBar(query: String, onEdit: () -> Unit, onExit: () -> Unit, modifier: M
         }
         IconButton(
             Glyphs.close, Strings.ExitSearch, onExit,
-            Modifier.padding(end = Css.SearchBar_Ib.marginRight), kind = IconButtonKind.Plain, size = Css.SearchBar_Ib.width,
+            Modifier.padding(end = Css.SearchBar_Ib.marginRight), kind = IconButtonKind.Neutral, size = Css.SearchBar_Ib.width,
         )
     }
 }
