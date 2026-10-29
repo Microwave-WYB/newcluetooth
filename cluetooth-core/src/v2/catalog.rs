@@ -21,7 +21,11 @@ struct BundleJson {
     #[serde(default)]
     wiki_commit: Option<String>,
     rules_version: String,
-    vocabularies: Vocabularies,
+    #[serde(default)]
+    vocabularies: Option<Vocabularies>,
+    /// Schema 1 only: `[{id, label}]`, the category vocabulary.
+    #[serde(default)]
+    categories: Vec<VocabJson>,
     pages: Vec<PageJson>,
 }
 
@@ -37,6 +41,8 @@ struct Vocabularies {
 #[derive(Deserialize)]
 struct VocabJson {
     id: String,
+    /// Schema 2 `title`, schema 1 `label`.
+    #[serde(alias = "label")]
     title: String,
 }
 
@@ -128,16 +134,24 @@ fn invalid(detail: impl Into<String>) -> CoreError {
 
 impl Catalog {
     pub fn load(bundle_json: &str, sig_numbers_tsv: &str) -> Result<Self, CoreError> {
-        let bundle: BundleJson =
+        let mut bundle: BundleJson =
             serde_json::from_str(bundle_json).map_err(|e| invalid(e.to_string()))?;
-        if bundle.schema != 2 {
-            return Err(invalid(format!("bundle schema {} is not 2", bundle.schema)));
-        }
+        // Schema 1 (the v3 app's bundle) is read until the schema-2 export ships: its `categories` list is the
+        // category vocabulary, and it has no contexts, traits, decoders or vulnerability pages.
+        let vocabularies = match (bundle.schema, bundle.vocabularies.take()) {
+            (2, Some(v)) => v,
+            (1, None) => Vocabularies {
+                categories: std::mem::take(&mut bundle.categories),
+                contexts: Vec::new(),
+                traits: Vec::new(),
+            },
+            (schema, _) => return Err(invalid(format!("unsupported bundle schema {schema}"))),
+        };
         let vocab = |v: &[VocabJson]| v.iter().map(|x| x.id.clone()).collect::<BTreeSet<_>>();
         let (cats, contexts, traits) = (
-            vocab(&bundle.vocabularies.categories),
-            vocab(&bundle.vocabularies.contexts),
-            vocab(&bundle.vocabularies.traits),
+            vocab(&vocabularies.categories),
+            vocab(&vocabularies.contexts),
+            vocab(&vocabularies.traits),
         );
         let ids: BTreeSet<&str> = bundle.pages.iter().map(|p| p.id.as_str()).collect();
         let mut pages = Vec::with_capacity(bundle.pages.len());
@@ -190,8 +204,7 @@ impl Catalog {
         Ok(Self {
             pages,
             index,
-            categories: bundle
-                .vocabularies
+            categories: vocabularies
                 .categories
                 .iter()
                 .map(|c| (c.id.clone(), c.title.clone()))
@@ -392,6 +405,23 @@ pub(crate) mod tests {
         assert_eq!(page.as_deref(), Some("device--tile"));
     }
 
+    /// The v3 app's shipped bundle (schema 1) loads: its categories are the vocabulary, its rules compile.
+    #[test]
+    fn reads_the_shipped_schema_1_bundle() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../scanner/app/src/main/assets/wiki-bundle.json"
+        );
+        let c = Catalog::load(&std::fs::read_to_string(path).unwrap(), "").unwrap();
+        assert!(c.matcher.rule_count() > 0);
+        assert!(!c.categories.is_empty());
+        assert!(c.pages.iter().all(|p| {
+            p.categories
+                .iter()
+                .all(|x| c.categories.iter().any(|(id, _)| id == x))
+        }));
+    }
+
     #[test]
     fn vocabulary_violations_are_refused() {
         let bad = bundle().replace("\"no-local-name\"]", "\"nope\"]");
@@ -399,9 +429,9 @@ pub(crate) mod tests {
             Catalog::load(&bad, ""),
             Err(CoreError::InvalidBundle { .. })
         ));
-        let schema1 = bundle().replace("\"schema\":2", "\"schema\":1");
+        let schema3 = bundle().replace("\"schema\":2", "\"schema\":3");
         assert!(matches!(
-            Catalog::load(&schema1, ""),
+            Catalog::load(&schema3, ""),
             Err(CoreError::InvalidBundle { .. })
         ));
     }
