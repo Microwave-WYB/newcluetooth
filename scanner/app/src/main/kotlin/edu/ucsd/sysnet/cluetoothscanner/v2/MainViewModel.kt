@@ -176,6 +176,8 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             }
             launch { graph.recorder.state.map { it.phase }.distinctUntilChanged().collect { dispatch(MainEvent.RecorderChanged(it)) } }
             launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
+            // R-10: the core stopped writing for lack of space
+            launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFull.collect { dispatch(MainEvent.StorageFull(it)) } } }
             launch { viewWork(q) }
         }
     }
@@ -287,7 +289,19 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             MainEffect.TurnOnLocation -> _requests.emit(ActivityRequest.TurnOnLocation)
             MainEffect.OpenAppSettings -> graph.permissions.openAppSettings()
             MainEffect.UploadNow -> graph.uploads.uploadNow()
+            MainEffect.LoadReclaimable -> dispatch(MainEvent.ReclaimableRead(readReclaim()))
+            is MainEffect.FreeUpSpace -> {
+                val outcome = graph.storageCleanup.run(effect.cleanups)
+                outcome.failed.forEach { (c, error) -> Log.w(TAG, "$c: $error") }
+                dispatch(MainEvent.SpaceFreed(outcome, readReclaim()))
+            }
         }
+    }
+
+    /** R-10: the free space and what each cleanup frees, or null when the core cannot say. */
+    private suspend fun readReclaim(): Reclaim? = when (val r = graph.storageCleanup.reclaimable()) {
+        is CleanupResult.Ok -> r.value
+        is CleanupResult.Err -> null.also { Log.w(TAG, "reclaimable: ${r.error}") }
     }
 
     /** V-6's facts: a recording the recorder restored, the stored setting and how many sessions exist. */
