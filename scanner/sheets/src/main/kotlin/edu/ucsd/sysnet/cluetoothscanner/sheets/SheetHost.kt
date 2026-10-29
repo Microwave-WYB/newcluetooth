@@ -39,6 +39,7 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Handle
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.SheetFade
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Icon
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokenShadow
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Glyphs
@@ -213,7 +214,11 @@ fun SheetFrame(
             // the handle zone; 30 dp on tablet), with the prototype's 8 dp under it (`.sheet-top` min-height).
             Box(Modifier.fillMaxWidth().padding(top = Concentric.cornerButton(controller.tablet), bottom = HEADER_BELOW)) { header() }
         }
-        Box(Modifier.fillMaxWidth().weight(1f)) { body() }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            body()
+            // C-16: while the content is scrolled away from its top, a fade under the header; it takes no touches
+            SheetFade(scrolled = entry.content?.canScrollBackward == true, modifier = Modifier.align(Alignment.TopCenter))
+        }
     }
 }
 
