@@ -3,6 +3,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.api.platform
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContract
@@ -116,4 +117,12 @@ interface Permissions {
 interface LocationStatusSource {
     val status: StateFlow<LocationStatus>
     val myLocation: StateFlow<MyLocation?>
+
+    /**
+     * P-5 "Turn on" ([LocationStatus.Action.TurnOn]): `:platform` shows the Play services location settings dialog,
+     * falling back to the system location settings, which is also this default. "Allow" goes through [Permissions].
+     */
+    fun turnOn(activity: ComponentActivity) {
+        activity.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+    }
 }

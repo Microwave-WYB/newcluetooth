@@ -1,5 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.platform.fake
 
+import androidx.activity.ComponentActivity
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus.Action
@@ -20,6 +21,15 @@ class FakeLocationStatus(demo: LocationDemo = LocationDemo.Ok) : LocationStatusS
     private val _myLocation = MutableStateFlow(locationFor(demo))
     override val status: StateFlow<LocationStatus> = _status.asStateFlow()
     override val myLocation: StateFlow<MyLocation?> = _myLocation.asStateFlow()
+
+    var turnOnCalls = 0
+        private set
+
+    /** Plays the user turning location on: the status becomes Ok. */
+    override fun turnOn(activity: ComponentActivity) {
+        turnOnCalls++
+        set(LocationDemo.Ok)
+    }
 
     fun set(demo: LocationDemo) {
         _status.value = statusFor(demo)

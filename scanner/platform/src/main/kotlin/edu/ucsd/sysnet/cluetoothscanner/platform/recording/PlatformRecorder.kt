@@ -31,6 +31,9 @@ interface RecordingScanner {
     /** Observations the inbound queue dropped (§4.1). */
     val dropped: StateFlow<Long>
 
+    /** A scanner problem the user should see (for example scan settings that could not change); null when fine. */
+    val error: StateFlow<String?>
+
     /** Starts the scan (or defers it while Bluetooth is off). */
     fun start()
 
@@ -91,6 +94,7 @@ class PlatformRecorder(
     init {
         scope.launch { scanner.deferred.collect { deferred -> _state.update { it.copy(scannerDeferred = deferred) } } }
         scope.launch { scanner.dropped.collect { dropped -> _state.update { it.copy(dropped = dropped) } } }
+        scope.launch { scanner.error.collect { error -> if (error != null) _state.update { it.copy(error = error) } } }
         if (coreStates != null) {
             scope.launch {
                 coreStates.collect { core ->

@@ -1297,12 +1297,17 @@ interface Permissions {
     fun requestLauncherContract(): ActivityResultContract<Array<String>, Map<String, Boolean>>
     fun openAppSettings(); fun requestEnableBluetooth(activity: ComponentActivity)
 }
-interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLocation: StateFlow<MyLocation?> }
+interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLocation: StateFlow<MyLocation?>
+                                 fun turnOn(activity: ComponentActivity) }   // P-5 "Turn on" (additive)
 ```
 
 - `Permissions` names the permissions behind each `PermissionState` field: `Permissions.nearby(sdk)`,
   `Permissions.location()` and `Permissions.notifications(sdk)` (additive). Each O-2 "Allow" launches its own group.
   An empty input array requests every permission still missing.
+- `LocationStatusSource.turnOn(activity)` is P-5's "Turn on". It opens the Play services location settings dialog
+  (`SettingsClient`), falling back to `ACTION_LOCATION_SOURCE_SETTINGS`. "Allow" goes through `Permissions`
+  (additive, coordinator-approved). The interface default opens `ACTION_LOCATION_SOURCE_SETTINGS`, so existing
+  implementations (lane E's test doubles) keep compiling.
 - Because of `Permissions`, `:platform-api` and `:platform-fake` are Android libraries (§6.0). Every other type is plain
   Kotlin, and the fakes run in JVM unit tests.
 
