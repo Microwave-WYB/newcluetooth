@@ -270,12 +270,21 @@ Each component is built once. Its size, color and state rules come from these to
     search stay visible and tappable.
   - Pushed sheets also have Dismissed, below Collapsed. Reaching it pops the sheet.
 - **S-6 Opening a pushed sheet.** It slides up and opens at Half, or at Full when the sheet below was at Full.
-- **S-7 Coupling.** While a sheet is on top, every sheet below sits at exactly the top sheet's height (fully covered),
-  including during a drag.
+- **S-7 Only the top sheet is shown.** This applies on phone and tablet alike.
+  - Once a pushed sheet has finished sliding in, every sheet below it is hidden (not drawn, not laid out at a
+    coupled height). Its height state, scroll position, view and filters are saved.
+  - While the top sheet is dragged, nothing below it moves, and the map shows behind the top sheet.
+  - Hidden sheets never track the top sheet's height.
 - **S-8 Pop.**
   - X, system Back, a drag down from Collapsed, a tap on empty map, or a tap on the scrim each pop exactly one level.
-  - The sheet now on top returns to its saved height, scroll, view and filters, and the map returns to its saved
-    camera.
+  - Pop by X, Back, the scrim or an empty-map tap, while the top sheet rests at some offset:
+    1. Show the sheet below instantly at the top sheet's current offset, underneath it, so nothing visibly changes.
+    2. Slide the top sheet out.
+    3. Animate the revealed sheet from that offset to its saved height state (`--t-page`, `--ease`).
+  - Pop by dragging down from Collapsed: on release, show the sheet below at its saved height state while the top
+    sheet slides out of the screen.
+  - The revealed sheet gets back its saved scroll, view and filters, and the map returns to its saved camera.
+  - The result looks the same as the sheet below having stayed covered all along.
 - **S-9 Scrim.**
   - `--scrim` (black at 32% light, 50% dark), solid, directly under the top sheet.
   - It shows only while a pushed sheet is at Full. Tapping it pops one level.
@@ -290,8 +299,8 @@ Each component is built once. Its size, color and state rules come from these to
   rule, not the prototype, here.
   - Why the prototype lags: its `couple()` clears the dragged sheet's "dragging" flag on every move, which re-enables
     the sheet's transform transition. The sheet then chases the finger at 0.33 to 0.8 of its movement.
-  - The Android rule: while a pointer is down, the dragged sheet's offset is set directly from the finger. The sheets
-    below are coupled to that same offset with no animation. Snap animation runs only after release.
+  - The Android rule: while a pointer is down, the dragged sheet's offset is set directly from the finger. Only the top
+    sheet exists on screen (S-7), so nothing else needs updating. Snap animation runs only after release.
 - **S-11 Tap on the handle or header background.** From Collapsed it goes up one state; from any other state it goes to
   Collapsed.
 - **S-12 Header controls raise the root.** Tapping any control in the Discover sheet's header while it is Collapsed
@@ -570,7 +579,7 @@ Each component is built once. Its size, color and state rules come from these to
   - The sheet stack lives in one floating panel on the left: 400 dp wide (`--panel-w`), `--edge` from the left and
     bottom, its top at `--top-zone`.
   - Radius `--panel-radius` = 8 + 44/2 = 30 dp, with `--shadow-raised`.
-  - Only the top level is visible. Push, pop and restore follow S-4 and S-8, with no coupling needed.
+  - Only the top level is visible. Push, pop and restore follow S-4, S-7 and S-8.
 - **T-2 Panel states.**
   - Two states: Open (the full column, with native scrolling content) and Collapsed (the header only).
   - It opens Open. Tapping the header toggles between the two.
