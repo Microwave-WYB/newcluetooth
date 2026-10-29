@@ -8,6 +8,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import edu.ucsd.sysnet.cluetoothscanner.platform.TestCoreIngest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -29,12 +30,20 @@ class PlatformRecorderFailureTest {
     private var drainFails = false
     private var readThrows = false
     private var scannerStarts = 0
+    private var drains = 0
+    private val storageFull = MutableSharedFlow<Long>(extraBufferCapacity = 1)
 
     private val core = object : TestCoreIngest() {
         var phase = RecordingPhase.Idle
         override fun startRecording(env: ScanEnvironment): String {
             phase = RecordingPhase.Recording
             return "s1"
+        }
+
+        var full = false
+        override fun resumeRecording() {
+            if (full) throw IllegalStateException("storage is full")
+            phase = RecordingPhase.Recording
         }
 
         override fun stopRecording(): String {
@@ -59,7 +68,10 @@ class PlatformRecorderFailureTest {
             }
 
             override suspend fun stopAndDrain() = Unit
-            override suspend fun drain() = if (drainFails) DrainOutcome.Failed("the observations did not flush") else DrainOutcome.Drained
+            override suspend fun drain(): DrainOutcome {
+                drains++
+                return if (drainFails) DrainOutcome.Failed("the observations did not flush") else DrainOutcome.Drained
+            }
         },
         location = object : RecordingLocation {
             override fun startRecording() {
@@ -83,6 +95,7 @@ class PlatformRecorderFailureTest {
         environment = { ScanEnvironment("m", "15", 35, "0.1.0", true, true, 1650, "all_supported", false) },
         io = StandardTestDispatcher(testScheduler),
         scope = backgroundScope,
+        storageFull = storageFull,
     ).also { runCurrent() }
 
     @Test
@@ -132,5 +145,29 @@ class PlatformRecorderFailureTest {
         assertEquals(RecordingPhase.Idle, core.phase)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertTrue("the service was left", !foreground)
+    }
+
+    @Test
+    fun `R-10 a StorageFull event pauses the recording, keeps the service, and Resume goes through the core`() = runTest {
+        val recorder = recorder()
+        assertEquals("s1", recorder.start().getOrNull())
+        core.full = true
+        core.phase = RecordingPhase.Paused // the core paused itself
+        storageFull.emit(150_000_000)
+        runCurrent()
+        assertEquals(Phase.Paused, recorder.state.value.phase)
+        assertEquals(1, drains)
+        assertTrue("the service stays", foreground)
+        assertEquals(150_000_000L, recorder.storageFullBytes.value)
+        assertEquals(recorder.storageFullBytes, RecordingServiceLink.storageFull)
+
+        recorder.resume()
+        assertEquals("refused while full", Phase.Paused, recorder.state.value.phase)
+        assertEquals(1, scannerStarts)
+        core.full = false
+        recorder.resume()
+        assertEquals(Phase.Recording, recorder.state.value.phase)
+        assertEquals(2, scannerStarts)
+        assertEquals(null, recorder.storageFullBytes.value)
     }
 }
