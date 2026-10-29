@@ -242,6 +242,24 @@ Each component is built once. Its size, color and state rules come from these to
   This is intended; do not add a stop control near the bottom.
 - **R-9 Search state (phone).** The island sits centered directly below the search bar (top = `--edge` + 44 + 8 dp)
   and returns when search state ends.
+- **R-10 Storage full.**
+  - **Stop writing.** The core checks the data volume's free space on every commit tick. It stops writing when free
+    space falls below 200 MB, or when a write fails for lack of space, and reports a typed `StorageFull`. Nothing is
+    buffered without bound: scans that can't be stored are dropped and counted.
+  - **Pause.** The recording pauses (R-6: grey dot, Resume). The session stays open, and nothing already written is
+    lost.
+  - **Dialog.**
+    - Title "Storage is full". Body "Recording is paused because the phone is almost out of space. Free up some space
+      to continue." It shows the current free space.
+    - Two switches, both off by default. Each shows the space it frees:
+      - "Delete uploaded raw files": raw files that have already uploaded. Files not yet uploaded are never touched.
+      - "Clear local database": the stored history of every session except the current one. Raw files not yet
+        uploaded are kept, so they still upload.
+    - "Free up space" (primary) is enabled when at least one switch is on. "Not now" (text) closes the dialog.
+    - After "Free up space", the dialog shows how much was freed.
+    - If free space is back above the floor, "Resume" continues the recording. Otherwise the recording stays paused
+      and the dialog stays open.
+  - **Settings.** The same two actions are also in Settings › Storage (O-1 item 11).
 
 ## S. Sheets
 
@@ -593,7 +611,8 @@ Each component is built once. Its size, color and state rules come from these to
         - Table (CSV): converted row for row from the Parquet, with trailing `session_id` and `source_file` columns;
         - Database (SQLite): a snapshot of the aggregated, research-aligned tables;
     11. "Delete local data": choose the scope, then a confirmation. Un-uploaded data is kept until it has uploaded,
-        unless the user explicitly confirms losing it in a second step;
+        unless the user explicitly confirms losing it in a second step. It also offers the two storage-full actions
+        (R-10): "Delete uploaded raw files" and "Clear local database", each showing the space it frees;
     12. "App version".
 - **O-2 Onboarding.** On first launch, four full-screen steps. Each has "N of 4" (12.5 `--t3`), a 24/30 title, a body,
   and Back (tonal, from step 2) on the left with Next/Done (primary) on the right.
