@@ -49,8 +49,8 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
     /** The layers to add, bottom to top: [styleLayers] with `cells` and `cell-count` right after `cluster-count`. */
     fun layers(theme: MapTheme): List<JsonObject> {
         val base = styleLayers(theme)
-        val clusters = base.single { it.id == "clusters" }
-        val count = base.single { it.id == "cluster-count" }
+        val clusters = base.firstOrNull { it.id == "clusters" } ?: return base
+        val count = base.firstOrNull { it.id == "cluster-count" } ?: return base
         val out = base.toMutableList()
         out.addAll(out.indexOf(count) + 1, listOf(clusters.cloneAs(CELLS_LAYER), count.cloneAs(CELL_COUNT_LAYER)))
         return out
@@ -81,17 +81,18 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
     fun selection(addr: String?): List<SelectionProp> {
         val sel = runtime.obj("selection")
         val template = if (addr == null) sel.getValue("clear") else sel.getValue("set")
-        val props = template.jsonArray.map { row ->
-            val r = row.jsonArray
+        val props = template.jsonArray.mapNotNull { row ->
+            val r = row as? JsonArray ?: return@mapNotNull null
             SelectionProp(
-                layer = r[0].jsonPrimitive.content,
-                kind = when (r[1].jsonPrimitive.content) {
+                layer = (r.getOrNull(0) as? JsonPrimitive)?.content ?: return@mapNotNull null,
+                kind = when ((r.getOrNull(1) as? JsonPrimitive)?.content) {
                     "paint" -> SelectionProp.Kind.Paint
                     "filter" -> SelectionProp.Kind.Filter
-                    else -> error("unknown selection kind ${r[1]}")
+                    // export.mjs writes only paint and filter rows (MapStyleSpecTest checks the exact list)
+                    else -> return@mapNotNull null
                 },
-                property = (r[2] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content,
-                value = substitute(r[3], addr),
+                property = (r.getOrNull(2) as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content,
+                value = substitute(r.getOrNull(3) ?: return@mapNotNull null, addr),
             )
         }
         val clones = props.mapNotNull { p ->
@@ -111,6 +112,12 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
         else -> e
     }
 
+    /** [decode]'s result. */
+    sealed interface Decoded {
+        data class Ok(val spec: MapStyleSpec) : Decoded
+        data class Err(val reason: String) : Decoded
+    }
+
     companion object {
         const val CELLS = "cells"
         const val CELLS_LAYER = "cells"
@@ -118,7 +125,35 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
         private val CLONES = mapOf("clusters" to CELLS_LAYER, "cluster-count" to CELL_COUNT_LAYER)
         private val MINI_MAP_LAYERS = setOf("route", "end-dots", "end-labels")
 
-        fun parse(json: String): MapStyleSpec = MapStyleSpec(Json.parseToJsonElement(json).jsonObject)
+        /** Parses a map-style.json this module ships (its tests read the committed export); throws if it is broken. */
+        internal fun parse(json: String): MapStyleSpec = MapStyleSpec(Json.parseToJsonElement(json).jsonObject)
+
+        /**
+         * The spec, or why [json] is not a complete map-style.json: every accessor is read once here, so a decoded
+         * spec never fails later. (The committed export is checked by MapStyleSpecTest; this is the app's guard
+         * against a broken asset.)
+         */
+        fun decode(json: String): Decoded = try {
+            Decoded.Ok(parse(json).also { spec ->
+                for (theme in MapTheme.entries) {
+                    spec.baseStyleUrl(theme)
+                    spec.layers(theme)
+                    spec.miniMapLayers(theme)
+                }
+                spec.selection(null)
+                spec.selection("00:00:00:00:00:00")
+            })
+        } catch (e: Exception) {
+            Decoded.Err(e.toString())
+        }
+
+        /** The spec used when the asset is broken: the base maps without any overlay (so no value here is ever drawn). */
+        val Fallback: MapStyleSpec by lazy { parse(FALLBACK_JSON) }
+
+        private const val FALLBACK_JSON = """{"baseStyle":{"light":"https://tiles.openfreemap.org/styles/liberty","dark":"https://tiles.openfreemap.org/styles/dark"},""" +
+            """"sources":{},"layers":{"light":[],"dark":[]},"values":{"light":{"font":"Noto Sans Bold"},"dark":{"font":"Noto Sans Bold"}},""" +
+            """"runtime":{"routeOpacity":{"session":1,"allSessions":1},"dim":1,"selection":{"set":[],"clear":[]},""" +
+            """"ends":[{"kind":"start","label":"Start"},{"kind":"end","label":"End"}]}}"""
 
         private fun JsonObject.obj(key: String): JsonObject = getValue(key).jsonObject
         private val JsonObject.id: String get() = getValue("id").jsonPrimitive.content

@@ -3,6 +3,7 @@ package edu.ucsd.sysnet.cluetoothscanner.map.style
 import android.content.Context
 import org.maplibre.android.offline.OfflineManager
 import java.net.URLEncoder
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The map's own labels (M-4 cluster and cell counts, M-8 Start and End) draw from glyphs bundled in the assets, so
@@ -22,16 +23,25 @@ object BundledGlyphs {
     private const val DIR = "cluetooth-map-glyphs"
     /** Far enough ahead that MapLibre never revalidates the entry: about 100 years, in seconds. */
     private const val NEVER_EXPIRES_S = 100L * 365 * 24 * 3600
-    @Volatile private var seeded = false
+    private val seeded = AtomicBoolean(false)
 
-    /** Seeds the cache once per process. Call after MapLibre.getInstance and before a map or snapshotter loads. */
-    fun install(context: Context, spec: MapStyleSpec) {
-        if (seeded) return
-        synchronized(this) {
-            if (seeded) return
+    /**
+     * Seeds the cache once per process. Call after MapLibre.getInstance and before a map or snapshotter loads. A
+     * failure (no asset, no cache) comes back as a value; the labels then wait for the network as before.
+     */
+    fun install(context: Context, spec: MapStyleSpec): Seed {
+        if (!seeded.compareAndSet(false, true)) return Seed.Done
+        return try {
             seed(context, spec.font)
-            seeded = true
+            Seed.Done
+        } catch (e: Exception) {
+            Seed.Failed(e.toString())
         }
+    }
+
+    sealed interface Seed {
+        data object Done : Seed
+        data class Failed(val reason: String) : Seed
     }
 
     /** Writes every bundled range of [font] into the ambient cache. */

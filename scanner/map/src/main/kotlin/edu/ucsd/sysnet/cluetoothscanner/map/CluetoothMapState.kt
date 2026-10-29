@@ -1,50 +1,59 @@
 package edu.ucsd.sysnet.cluetoothscanner.map
 
-import edu.ucsd.sysnet.cluetoothscanner.map.camera.LocateLogic
-import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
-import edu.ucsd.sysnet.cluetoothscanner.map.camera.MoveClassifier
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
 import edu.ucsd.sysnet.cluetoothscanner.map.data.RouteGeoJson
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.DeviceAddr
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.Hit
-import edu.ucsd.sysnet.cluetoothscanner.map.interaction.TapAction
-import edu.ucsd.sysnet.cluetoothscanner.map.interaction.TapResolver
-import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
-import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
-import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
-import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
-import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
-import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MapEffect
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MapEvent
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MapReducer
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MapState
+import edu.ucsd.sysnet.cluetoothscanner.map.model.Notice
+import edu.ucsd.sysnet.cluetoothscanner.map.model.PayloadId
+import edu.ucsd.sysnet.cluetoothscanner.map.model.PlatformFailure
+import edu.ucsd.sysnet.cluetoothscanner.map.model.QueryKind
+import edu.ucsd.sysnet.cluetoothscanner.map.model.RequestId
+import edu.ucsd.sysnet.cluetoothscanner.map.model.Source
+import edu.ucsd.sysnet.cluetoothscanner.map.model.SourceData
+import edu.ucsd.sysnet.cluetoothscanner.map.model.UptimeMs
+import edu.ucsd.sysnet.cluetoothscanner.map.model.ViewInfo
+import edu.ucsd.sysnet.cluetoothscanner.map.model.RouteLine
+import edu.ucsd.sysnet.cluetoothscanner.map.model.Session
+import edu.ucsd.sysnet.cluetoothscanner.map.model.ViewState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
-import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
-import edu.ucsd.sysnet.cluetoothscanner.api.core.MapData
-import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
-import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
-import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapRequests
-import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
-import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionView
 import edu.ucsd.sysnet.cluetoothscanner.map.style.MapStyleSpec
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapRequests
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.math.abs
-import kotlin.math.max
 
 /**
- * The map's state holder and the [MapRequests] implementation (docs/v2-api.md §5.3, §6.6). It outlives the drawn
- * map: requests made while no map is attached are kept and applied when one attaches, and every source is replayed
- * when the style reloads (theme change, onStop/onStart).
+ * The map's runner and the [MapRequests] implementation (docs/v2-api.md §5.3, §6.6). Every decision is
+ * [MapReducer.reduce]'s; this class only feeds it events and executes the [MapEffect]s it returns:
+ * MapLibre calls on the attached [MapSurface], the core queries, and the [MapEvents] notices.
  *
- * Main thread only; [scope] must run on Dispatchers.Main (the app's ViewModel scope).
+ * It outlives the drawn map: requests made while no map is attached wait in the state and run when one attaches,
+ * and every source is replayed when the style reloads (theme change, onStop/onStart).
+ *
+ * Main thread only; [scope] must run on Dispatchers.Main (the app's ViewModel scope). The state has one owner: this
+ * runner, on the main thread. Events (including those a surface reports while an effect runs) go through one queue
+ * and are reduced one at a time. A MapLibre call or query that throws becomes an event, never a crash.
  *
  * - [show] with a new scope frames that session itself, without animation (M-10, V-7), from its SessionView.frame.
  *   :app never calls [frame] on a session switch (coordinator decision); [frame] is only the animated framing D-8
@@ -62,256 +71,152 @@ class CluetoothMapState(
 
     var events: MapEvents? = null
 
-    private val _ui = MutableStateFlow(
-        MapUiState(selection = null, routesFaint = false, cover = CoverInsets(0, 0, 0, 0), showLocate = false, showWarning = false),
-    )
+    private var model = MapState.Initial
+    private val _ui = MutableStateFlow(MapReducer.ui(model))
     val ui: StateFlow<MapUiState> = _ui.asStateFlow()
 
     private var surface: MapSurface? = null
-    private var lastCamera = CameraSnapshot(GeoPoint(0.0, 0.0), 1.0)
-    /** A camera move asked for while detached; applied on attach. */
-    private var pendingCamera: Pair<CameraSnapshot, Int>? = null
-    /** The last data of every source, replayed on attach and style reload. */
-    private val sourceData = LinkedHashMap<String, String>()
+    private val queue = ArrayDeque<MapEvent>()
+    private var draining = false
 
-    private var shownScope: Scope? = null
-    private var filter = DeviceFilter()
-    private var view: SessionView? = null
-    /** The one-session route, serialized incrementally as live points arrive. */
+    /** What the runner holds for the state: GeoJSON, or a route's append-only points. */
+    private sealed interface Payload {
+        class Json(val json: String) : Payload
+        class Points(val points: MutableList<GeoPoint>) : Payload
+    }
+
+    /** The payloads the state refers to by id; pruned to what the state still references after every drain. */
+    private val payloads = HashMap<PayloadId, Payload>()
+    private var nextPayload = 1L
+    /** What each source last received, so an unchanged payload is not parsed again (a replay always sets). */
+    private val applied = HashMap<Source<*>, String>()
     private val route = RouteGeoJson()
-    private var locatedOnce = false
+    private val running = HashMap<QueryKind, Job>()
 
-    private val moves = MoveClassifier()
-    private val locate = LocateLogic()
-
-    /** What map_points must serve; null until a scope is shown and a viewport is known. */
-    private data class PointsRequest(val scope: Scope, val filter: DeviceFilter, val viewport: Bbox, val zoom: Double, val nonce: Int)
-    /** What the last map_points request covers; mode is null while it is in flight. */
-    private data class Coverage(val scope: Scope, val filter: DeviceFilter, val area: Bbox, val zoom: Double, val mode: MapMode?, val nonce: Int)
-    private val pointsRequest = MutableStateFlow<PointsRequest?>(null)
-    private var coverage: Coverage? = null
-    private var nonce = 0
-    private var liveDirty = false
-    private var viewJob: Job? = null
-    private var sightingsJob: Job? = null
-    private var focusJob: Job? = null
+    private val failures = CoroutineExceptionHandler { _, e -> dispatch(MapEvent.PlatformFailed(PlatformFailure("coroutine", e.toString()))) }
 
     init {
-        scope.launch { pointsRequest.filterNotNull().collectLatest { load(it) } }
-        scope.launch {
-            combine(location.status, location.myLocation) { s, m -> s to m }.collect { (status, me) ->
-                locate.onStatus(status)
-                refreshLocateUi()
-                if (shownScope == null) {
-                    setSource("me", GeoJson.me(me?.at))
-                    // M-9: centre on the location once, at zoom 16, until a session is shown
-                    if (me != null && !locatedOnce) {
-                        locatedOnce = true
-                        moveCamera(CameraSnapshot(me.at, FIRST_RUN_ZOOM), 0)
-                    }
-                }
-            }
+        scope.launch(failures) {
+            combine(location.status, location.myLocation) { s, m -> s to m }
+                .collect { (status, me) -> dispatch(MapEvent.LocationChanged(status, me)) }
         }
-        scope.launch {
+        scope.launch(failures) {
             queries.live.collect { delta ->
-                val v = view ?: return@collect
-                if (!v.live || v.sessionIds.singleOrNull() != delta.sessionId) return@collect
-                if (delta.routeAppended.isNotEmpty()) {
-                    route.append(delta.routeAppended)
-                    setSource("route", route.geojson())
-                    setSource("ends", route.ends(style.endProperties))
-                }
-                if (delta.appended.isNotEmpty() || delta.changed.any { it.best != null }) liveDirty = true
+                dispatch(
+                    MapEvent.Live(
+                        delta.sessionId, delta.routeAppended,
+                        pointsChanged = delta.appended.isNotEmpty() || delta.changed.any { it.best != null },
+                    ),
+                )
             }
         }
         // §2.6 budget: the map applies live `best` changes and appends at most every 5 s
-        scope.launch {
+        scope.launch(failures) {
             while (true) {
                 delay(LIVE_POINTS_INTERVAL_MS)
-                if (liveDirty && view?.live == true) {
-                    liveDirty = false
-                    requestPoints(force = true)
-                }
+                dispatch(MapEvent.LiveTick)
             }
         }
     }
+
+    // ---- the queue ----
+
+    /**
+     * The one entry point for events. Each event is reduced and each of its effects executed inside [guarded], so
+     * any exception (in the reducer, a MapLibre call, a MapEvents listener) becomes a PlatformFailed event.
+     */
+    private fun dispatch(event: MapEvent) {
+        queue.addLast(event)
+        if (draining) return
+        draining = true
+        while (true) {
+            val next = queue.removeFirstOrNull() ?: break
+            val step = guarded("reduce ${next::class.simpleName}") { MapReducer.reduce(model, next) } ?: continue
+            model = step.state
+            for (effect in step.effects) guarded(effect::class.simpleName ?: "effect") { execute(effect) }
+        }
+        draining = false
+        prunePayloads()
+        _ui.value = MapReducer.ui(model)
+    }
+
+    /** Keeps the payloads a source or the shown view still refers to. */
+    private fun prunePayloads() {
+        val live = HashSet<PayloadId>()
+        for (data in model.sources.values) when (data) {
+            is SourceData.Stored -> live += data.id
+            is SourceData.Line -> live += data.route.base
+            SourceData.Empty, is SourceData.Ends, is SourceData.Me -> Unit
+        }
+        val view = ((model.session as? Session.Showing)?.view as? ViewState.Ready)?.info
+        if (view != null) live += view.route.base
+        payloads.keys.retainAll(live)
+    }
+
+    private fun store(json: String): PayloadId = PayloadId(nextPayload++).also { payloads[it] = Payload.Json(json) }
+
+    private fun storeRoute(points: List<GeoPoint>): PayloadId =
+        PayloadId(nextPayload++).also { payloads[it] = Payload.Points(points.toMutableList()) }
 
     // ---- attach / detach ----
 
     fun attach(surface: MapSurface) {
         this.surface = surface
-        replay(surface)
-        pendingCamera?.let { (c, d) -> surface.move(c, d) } ?: surface.move(lastCamera, 0)
-        pendingCamera = null
-        pendingFrame?.let { (b, d) -> pendingFrame = null; frameBbox(b, d) }
-        requestPoints(force = false)
+        val s = sample(surface) ?: return
+        dispatch(MapEvent.Attached(s.viewport, s.camera, s.bbox, guarded("styleReady") { surface.styleReady } ?: false))
     }
 
     fun detach(surface: MapSurface) {
         if (this.surface !== surface) return
-        lastCamera = surface.camera
+        val camera = guarded("camera") { surface.camera } ?: MapReducer.knownCamera(model)
         this.surface = null
+        dispatch(MapEvent.Detached(camera))
     }
 
-    /**
-     * Drops the cached point data (devices, density, cells, sightings) while the UI is hidden (§1.2.5: onStop and
-     * onTrimMemory(UI_HIDDEN)). The native sources keep drawing what they have; the data is queried again on the
-     * next attach, style load or idle.
-     */
-    fun trimMemory() {
-        for (id in TRIMMED_SOURCES) sourceData.remove(id)
-        coverage = null
-        trimmed = true
-    }
-    private var trimmed = false
+    /** §1.2.5: drop the cached point data while the UI is hidden (onStop, onTrimMemory(UI_HIDDEN)). */
+    fun trimMemory() = dispatch(MapEvent.Trim)
 
     /** The UI is shown again (onStart): query what [trimMemory] dropped. */
-    fun refillAfterTrim() {
-        if (!trimmed || surface == null) return
-        trimmed = false
-        requestPoints(force = true)
-        _ui.value.selection?.let(::loadSightings)
-    }
+    fun refillAfterTrim() = dispatch(MapEvent.Refill)
 
-    private fun replay(s: MapSurface) {
-        for ((id, json) in sourceData) s.setGeoJson(id, json)
-        refillAfterTrim()
-        s.setRouteOpacity(if (_ui.value.routesFaint) style.routeOpacityAllSessions else style.routeOpacitySession)
-        s.applySelection(style.selection(_ui.value.selection?.let(DeviceAddr::addrOf)))
-    }
+    /** The shell is about to set a new style: until it loads, nothing may touch its sources. */
+    internal fun onStyleLoading() = dispatch(MapEvent.StyleLoading)
 
-    private fun setSource(id: String, json: String) {
-        if (sourceData[id] == json) return
-        sourceData[id] = json
-        surface?.setGeoJson(id, json)
-    }
-
-    private fun moveCamera(camera: CameraSnapshot, durationMs: Int) {
-        val s = surface
-        if (s == null) {
-            pendingCamera = camera to durationMs
-            lastCamera = camera
-        } else s.move(camera, durationMs)
-    }
+    /** A MapLibre call outside this runner (the composable's shell) threw. */
+    internal fun onPlatformFailure(operation: String, e: Throwable) =
+        dispatch(MapEvent.PlatformFailed(PlatformFailure(operation, e.toString())))
 
     // ---- MapRequests ----
 
-    override fun show(scope: Scope, filter: DeviceFilter, routesFaint: Boolean) {
-        val scopeChanged = scope != shownScope
-        val filterChanged = filter != this.filter
-        _ui.update { it.copy(routesFaint = routesFaint) }
-        surface?.setRouteOpacity(if (routesFaint) style.routeOpacityAllSessions else style.routeOpacitySession)
-        this.filter = filter
-        if (scopeChanged) {
-            shownScope = scope
-            setSelection(null)
-            setSource("me", GeoJson.EMPTY)
-            loadView(scope)
-        } else if (filterChanged) requestPoints(force = true)
-    }
+    override fun show(scope: Scope, filter: DeviceFilter, routesFaint: Boolean) = dispatch(MapEvent.Show(scope, filter, routesFaint))
 
     /** D-8: animated framing of [bbox] (M-10 padding and maximum zoom). */
-    override fun frame(bbox: Bbox) = frameBbox(bbox, FRAME_EASE_MS)
+    override fun frame(bbox: Bbox) = dispatch(MapEvent.Frame(bbox))
 
-    private fun frameBbox(bbox: Bbox, durationMs: Int) {
-        val vp = surface?.viewport?.takeIf { it.widthDp > 0 && it.heightDp > 0 }
-            ?: return run { pendingFrame = bbox to durationMs }
-        moveCamera(MapGeometry.fit(bbox, vp, MapGeometry.framePadding(_ui.value.cover)), durationMs)
-    }
-    /** A frame asked for before any map was attached (the viewport size is unknown until then). */
-    private var pendingFrame: Pair<Bbox, Int>? = null
+    override fun focusDevice(key: DeviceKey, minZoom: Double) = dispatch(MapEvent.Focus(key, minZoom))
 
-    override fun focusDevice(key: DeviceKey, minZoom: Double) {
-        val s = shownScope ?: return
-        focusJob?.cancel()
-        focusJob = scope.launch {
-            val at = runCatchingQuery { queries.deviceRows(s, longArrayOf(key)).firstOrNull()?.best }
-                ?: runCatchingQuery { queries.deviceSightings(s, key).firstOrNull()?.at }
-                ?: return@launch
-            val zoom = max(camera().zoom, minZoom)
-            moveCamera(MapGeometry.centerFor(at, zoom, MapGeometry.focusPadding(_ui.value.cover)), FOCUS_EASE_MS)
-        }
-    }
+    override fun setSelection(key: DeviceKey?) = dispatch(MapEvent.Select(key))
 
-    override fun setSelection(key: DeviceKey?) {
-        _ui.update { it.copy(selection = key) }
-        surface?.applySelection(style.selection(key?.let(DeviceAddr::addrOf)))
-        sightingsJob?.cancel()
-        val s = shownScope
-        if (key == null || s == null) {
-            setSource("sightings", GeoJson.EMPTY)
-            return
-        }
-        loadSightings(key)
-    }
-
-    private fun loadSightings(key: DeviceKey) {
-        val s = shownScope ?: return
-        sightingsJob?.cancel()
-        sightingsJob = scope.launch {
-            val sightings = runCatchingQuery { queries.deviceSightings(s, key) } ?: return@launch
-            if (_ui.value.selection == key) setSource("sightings", GeoJson.sightings(sightings))
-        }
-    }
-
-    override fun camera(): CameraSnapshot = surface?.camera ?: lastCamera
+    override fun camera(): CameraSnapshot = surface?.let { s -> guarded("camera") { s.camera } } ?: MapReducer.knownCamera(model)
 
     /** S-8: the revealed sheet's saved camera, eased back (the prototype's 300 ms). */
-    override fun restore(camera: CameraSnapshot) = moveCamera(camera, RESTORE_EASE_MS)
+    override fun restore(camera: CameraSnapshot) = dispatch(MapEvent.Restore(camera))
 
-    override fun setCover(insets: CoverInsets) = _ui.update { it.copy(cover = insets) }
-
-    // ---- the locate button (P-4) ----
+    override fun setCover(insets: CoverInsets) = dispatch(MapEvent.Cover(insets))
 
     /** P-4: ease to the location at zoom max(current, 17) over 600 ms; the button hides again. */
-    fun locate() {
-        val me = location.myLocation.value ?: return
-        locate.onLocate()
-        refreshLocateUi()
-        val zoom = max(camera().zoom, MapGeometry.LOCATE_MIN_ZOOM)
-        moveCamera(MapGeometry.centerFor(me.at, zoom, MapGeometry.locatePadding(_ui.value.cover)), LOCATE_EASE_MS)
-    }
-
-    private fun refreshLocateUi() {
-        val status = location.status.value
-        val hasLocation = location.myLocation.value != null
-        _ui.update { it.copy(showLocate = locate.showLocate(status, hasLocation), showWarning = locate.showWarning(status)) }
-    }
+    fun locate() = dispatch(MapEvent.Locate(camera().zoom))
 
     // ---- surface events ----
 
-    override fun onMoveStarted(byGesture: Boolean) {
-        if (moves.onMoveStarted(byGesture, camera().zoom, clock())) events?.onUserGestureStart()
-    }
+    override fun onMoveStarted(byGesture: Boolean) = dispatch(MapEvent.MoveStarted(byGesture, camera().zoom, UptimeMs(clock())))
 
     override fun onIdle() {
-        val s = surface ?: return
-        val cam = s.camera
-        lastCamera = cam
-        val move = moves.onIdle(cam.zoom, clock())
-        if (move.byUser) {
-            val me = location.myLocation.value?.at
-            locate.onUserIdle(move.zoomed, me?.let { MapGeometry.locationOffset(it, cam, s.viewport, _ui.value.cover) })
-            refreshLocateUi()
-        }
-        events?.onCameraIdle(move.byUser, s.visibleBbox, cam.zoom)
-        requestPoints(force = false)
+        val s = surface?.let(::sample) ?: return
+        dispatch(MapEvent.Idle(s.camera, s.viewport, s.bbox, UptimeMs(clock())))
     }
 
-    override fun onTap(hit: Hit?) {
-        when (val action = TapResolver.resolve(hit)) {
-            is TapAction.OpenDevice -> events?.onDeviceTap(action.key)
-            is TapAction.ExpandCluster -> {
-                val s = surface ?: return
-                val z = s.clusterExpansionZoom(action.hit) ?: return
-                val at = action.hit.at ?: return
-                moveCamera(CameraSnapshot(at, TapResolver.clusterZoom(z)), CLUSTER_EASE_MS)
-            }
-            is TapAction.ZoomCell -> moveCamera(CameraSnapshot(action.at, TapResolver.cellZoom(camera().zoom)), CLUSTER_EASE_MS)
-            TapAction.Ignore -> Unit
-            TapAction.Empty -> events?.onEmptyTap()
-        }
-    }
+    override fun onTap(hit: Hit?) = dispatch(MapEvent.Tap(hit, camera().zoom))
 
     /** Style loads so far (instrumented tests wait on it). */
     internal var styleLoads = 0
@@ -320,94 +225,140 @@ class CluetoothMapState(
     /** The attached surface (instrumented tests reach MapLibre through it). */
     internal val attachedSurface: MapSurface? get() = surface
 
+    /** The current state (tests). */
+    internal val state: MapState get() = model
+
+    /** The GeoJSON this runner still holds per source and per payload (tests: Trim keeps none of the point data). */
+    internal fun retainedJson(): Map<String, Int> =
+        applied.entries.associate { (s, json) -> "applied ${s.id}" to json.length } +
+            payloads.entries.associate { (id, p) ->
+                "payload ${id.value}" to when (p) {
+                    is Payload.Json -> p.json.length
+                    is Payload.Points -> p.points.size
+                }
+            }
+
     override fun onStyleLoaded() {
         styleLoads++
-        surface?.let(::replay)
-        pendingFrame?.let { (b, d) -> pendingFrame = null; frameBbox(b, d) }
+        dispatch(MapEvent.StyleLoaded)
     }
 
-    // ---- data ----
+    // ---- effects (each runs inside dispatch's guarded) ----
 
-    private fun loadView(s: Scope) {
-        viewJob?.cancel()
-        coverage = null
-        viewJob = scope.launch {
-            val v = runCatchingQuery { queries.sessionView(s) } ?: return@launch
-            if (shownScope != s) return@launch
-            view = v
-            route.reset(v.route)
-            if (_ui.value.routesFaint) {
-                setSource("ends", GeoJson.EMPTY)
-            } else {
-                setSource("route", route.geojson())
-                setSource("ends", route.ends(style.endProperties))
+    private fun execute(effect: MapEffect) {
+        when (effect) {
+            is MapEffect.SetSource<*> -> setSource(effect.source, effect.data, force = false)
+            is MapEffect.ReplaySources -> {
+                // a (re)loaded style starts with every source empty: forget what the old one held
+                applied.clear()
+                for ((source, data) in effect.sources.entries) setSource(source, data, force = true)
             }
-            // M-10, V-7: a session switch refits without animation. The frame's idle may already have asked for
-            // this viewport; requestPoints then finds it covered, so the switch costs one map_points query.
-            v.frame?.let { frameBbox(it, 0) }
-            requestPoints(force = false)
-        }
-    }
-
-    private fun requestPoints(force: Boolean) {
-        val s = shownScope ?: return
-        val surf = surface ?: return
-        val vp = surf.visibleBbox
-        val zoom = surf.camera.zoom
-        if (!force) {
-            val c = coverage
-            if (c != null && c.scope == s && c.filter == filter && MapGeometry.contains(c.area, vp) &&
-                (c.mode == MapMode.Points || abs(c.zoom - zoom) < CELLS_RELOAD_DZ)
-            ) return
-        }
-        val r = PointsRequest(s, filter, vp, zoom, ++nonce)
-        coverage = Coverage(s, filter, MapGeometry.loadedArea(vp), zoom, mode = null, nonce = r.nonce)
-        pointsRequest.value = r
-    }
-
-    /** Superseded queries are dropped by collectLatest (and by the core, §2 "latest wins"). */
-    private suspend fun load(r: PointsRequest) {
-        val data: MapData = runCatchingQuery { queries.mapPoints(r.scope, r.filter, r.viewport, r.zoom) }
-            ?: return run { if (coverage?.nonce == r.nonce) coverage = null }
-        if (r.scope != shownScope || r.filter != filter) return
-        when (data.mode) {
-            MapMode.Points -> {
-                setSource("devices", data.geojson)
-                setSource(MapStyleSpec.CELLS, GeoJson.EMPTY)
+            is MapEffect.DropSources -> applied.keys.removeAll(effect.sources)
+            is MapEffect.ApplySelection -> surface?.applySelection(style.selection(effect.key?.let(DeviceAddr::addrOf)))
+            is MapEffect.SetRouteOpacity ->
+                surface?.setRouteOpacity(if (effect.faint) style.routeOpacityAllSessions else style.routeOpacitySession)
+            is MapEffect.Move -> surface?.move(effect.camera, effect.duration.value)
+            is MapEffect.QueryClusterExpansion -> {
+                val zoom = surface?.clusterExpansionZoom(effect.hit)
+                val at = effect.hit.at
+                if (zoom != null && at != null) dispatch(MapEvent.ClusterExpansion(at, zoom))
             }
-            MapMode.Cells -> {
-                setSource("devices", GeoJson.EMPTY)
-                setSource(MapStyleSpec.CELLS, data.geojson)
+            is MapEffect.Notify -> notify(effect.notice)
+            is MapEffect.Cancel -> running.remove(effect.kind)?.cancel()
+            is MapEffect.AppendRoute -> when (val p = payloads[effect.base]) {
+                is Payload.Points -> p.points.addAll(effect.points)
+                is Payload.Json, null -> dispatch(missing(effect.base))
+            }
+            is MapEffect.LoadView -> launchQuery(effect) {
+                val v = queries.sessionView(effect.scope)
+                val route = RouteLine(storeRoute(v.route), v.route.size, v.route.firstOrNull(), v.route.lastOrNull())
+                MapEvent.ViewLoaded(effect.request, ViewInfo(v.live, v.sessionIds, v.frame, route))
+            }
+            is MapEffect.LoadPoints -> launchQuery(effect) {
+                val data = queries.mapPoints(effect.scope, effect.filter, effect.viewport, effect.zoom)
+                MapEvent.PointsLoaded(effect.request, data.mode, store(data.geojson))
+            }
+            is MapEffect.LoadRoutes -> launchQuery(effect) {
+                MapEvent.RoutesLoaded(effect.request, store(queries.routes(effect.scope, effect.viewport, effect.zoom)))
+            }
+            is MapEffect.LoadSightings -> launchQuery(effect) {
+                MapEvent.SightingsLoaded(effect.request, store(GeoJson.sightings(queries.deviceSightings(effect.scope, effect.key))))
+            }
+            is MapEffect.ResolveFocus -> launchQuery(effect) {
+                val at = queries.deviceRows(effect.scope, longArrayOf(effect.key)).firstOrNull()?.best
+                    ?: queries.deviceSightings(effect.scope, effect.key).firstOrNull()?.at
+                if (at == null) MapEvent.QueryFailed(effect.request) else MapEvent.FocusResolved(effect.request, at, camera().zoom)
             }
         }
-        // M-5: the density wash is always on, one circle per device (per cell in Cells mode)
-        setSource("density", data.geojson)
-        if (coverage?.nonce == r.nonce) coverage = coverage?.copy(mode = data.mode)
-        if (_ui.value.routesFaint) {
-            runCatchingQuery { queries.routes(r.scope, r.viewport, r.zoom) }?.let { setSource("route", it) }
+    }
+
+    private fun notify(notice: Notice) {
+        val e = events ?: return
+        when (notice) {
+            Notice.GestureStart -> e.onUserGestureStart()
+            is Notice.CameraIdle -> e.onCameraIdle(notice.byUser, notice.viewport, notice.zoom)
+            is Notice.DeviceTap -> e.onDeviceTap(notice.key)
+            Notice.EmptyTap -> e.onEmptyTap()
         }
     }
 
-    /** A failed or cancelled query leaves the map as it was; cancellation still propagates. */
-    private suspend fun <T> runCatchingQuery(block: suspend () -> T): T? = try {
-        block()
-    } catch (e: CancellationException) {
-        throw e
+    private fun setSource(source: Source<*>, data: SourceData, force: Boolean) {
+        val json = when (data) {
+            SourceData.Empty -> GeoJson.EMPTY
+            is SourceData.Stored -> (payloads[data.id] as? Payload.Json)?.json ?: return dispatch(missing(data.id))
+            is SourceData.Line -> {
+                val points = (payloads[data.route.base] as? Payload.Points)?.points ?: return dispatch(missing(data.route.base))
+                if (points.size != data.route.length) return dispatch(missing(data.route.base))
+                route.render(points)
+            }
+            is SourceData.Ends -> GeoJson.ends(listOf(data.start, data.end), style.endProperties)
+            is SourceData.Me -> GeoJson.me(data.at)
+        }
+        if (!force && applied[source] == json) return
+        applied[source] = json
+        surface?.setGeoJson(source.id, json)
+    }
+
+    private fun missing(id: PayloadId) = MapEvent.PlatformFailed(PlatformFailure("payload", "no payload ${id.value}"))
+
+    /** A query on the scope; a newer query of its kind cancels it, and its result (or failure) comes back as an event. */
+    private fun launchQuery(effect: MapEffect.Query, block: suspend () -> MapEvent) {
+        running.remove(effect.kind)?.cancel()
+        running[effect.kind] = scope.launch(failures) {
+            val result = try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                MapEvent.QueryFailed(effect.request)
+            }
+            dispatch(result)
+        }
+    }
+
+    /**
+     * The runner's one wrapper: every effect, every surface read and every reduce step runs in it, and any exception
+     * becomes a PlatformFailed event instead of reaching the main thread.
+     */
+    private fun <T> guarded(operation: String, call: () -> T): T? = try {
+        call()
     } catch (e: Exception) {
+        dispatch(MapEvent.PlatformFailed(PlatformFailure(operation, e.toString())))
         null
     }
 
+    private data class Sample(val camera: CameraSnapshot, val viewport: edu.ucsd.sysnet.cluetoothscanner.map.camera.Viewport, val bbox: Bbox)
+
+    private fun sample(s: MapSurface): Sample? = guarded("sample") { Sample(s.camera, s.viewport, s.visibleBbox) }
+
     companion object {
-        const val FIRST_RUN_ZOOM = 16.0
-        const val FRAME_EASE_MS = 500
-        const val FOCUS_EASE_MS = 600
-        const val LOCATE_EASE_MS = 600
-        const val RESTORE_EASE_MS = 300
-        const val CLUSTER_EASE_MS = 500
+        const val FIRST_RUN_ZOOM = MapReducer.FIRST_RUN_ZOOM
+        val FRAME_EASE_MS = MapReducer.FRAME_EASE.value
+        val FOCUS_EASE_MS = MapReducer.FOCUS_EASE.value
+        val LOCATE_EASE_MS = MapReducer.LOCATE_EASE.value
+        val RESTORE_EASE_MS = MapReducer.RESTORE_EASE.value
+        val CLUSTER_EASE_MS = MapReducer.CLUSTER_EASE.value
         const val LIVE_POINTS_INTERVAL_MS = 5_000L
-        /** Cells are re-aggregated per zoom; Points cluster natively and reload only outside the loaded area. */
-        const val CELLS_RELOAD_DZ = 0.5
-        /** The sources [trimMemory] drops: the large, re-queryable ones. */
-        private val TRIMMED_SOURCES = listOf("devices", "density", MapStyleSpec.CELLS, "sightings")
+        const val CELLS_RELOAD_DZ = MapReducer.CELLS_RELOAD_DZ
     }
 }

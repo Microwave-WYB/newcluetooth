@@ -41,6 +41,19 @@ class RouteGeoJson {
         ).also { cached = it }
 
     /** Start and End, from the first and last points only. */
-    fun ends(properties: List<JsonObject>): String =
-        if (count < 2) GeoJson.EMPTY else GeoJson.ends(listOf(first!!, last!!), properties)
+    fun ends(properties: List<JsonObject>): String {
+        val start = first
+        val end = last
+        return if (count < 2 || start == null || end == null) GeoJson.EMPTY else GeoJson.ends(listOf(start, end), properties)
+    }
+
+    /**
+     * The GeoJSON of [points], appending only the new tail when [points] extends what is already serialized (a live
+     * route grows by appends), else serializing it again.
+     */
+    fun render(points: List<GeoPoint>): String {
+        val extends = count in 1..points.size && points.firstOrNull() == first && points.getOrNull(count - 1) == last
+        if (extends) append(points.subList(count, points.size)) else reset(points)
+        return geojson()
+    }
 }

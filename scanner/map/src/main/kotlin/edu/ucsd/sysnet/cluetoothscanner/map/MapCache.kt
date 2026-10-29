@@ -11,9 +11,17 @@ import java.io.File
 class MapLibreCacheInfo(context: Context) : MapCacheInfo {
     private val app = context.applicationContext
 
+    /**
+     * The cache's size; 0 when it cannot be read (the frozen `MapCacheInfo` returns a plain Long, so an unreadable
+     * cache reads as empty rather than throwing).
+     */
     override suspend fun sizeBytes(): Long = withContext(Dispatchers.IO) {
-        val dir = File(FileSource.getResourcesCachePath(app))
-        dir.listFiles { f -> f.isFile && f.name.startsWith(CACHE_DB) }?.sumOf { it.length() } ?: 0L
+        try {
+            val dir = File(FileSource.getResourcesCachePath(app))
+            dir.listFiles { f -> f.isFile && f.name.startsWith(CACHE_DB) }?.sumOf { it.length() } ?: 0L
+        } catch (e: Exception) {
+            0L
+        }
     }
 
     private companion object {

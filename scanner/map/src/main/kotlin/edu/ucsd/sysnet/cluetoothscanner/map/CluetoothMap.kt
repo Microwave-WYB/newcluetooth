@@ -46,14 +46,26 @@ fun CluetoothMap(
 ) {
     val context = LocalContext.current
     val spec = remember { MapAssets.style(context) }
-    val mapView = remember {
-        MapLibre.getInstance(context.applicationContext)
-        BundledGlyphs.install(context, spec)
-        // TextureView: the map is an ordinary view in the window, so Compose can slide, clip and fade it with the
-        // rest of the screen (L-1 slides the whole main screen; the tablet panel and sheets draw over it), and
-        // its frames are the window's frames (JankStats).
-        MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true))
+    // every MapLibre call below goes through this guard: a throw becomes the state's PlatformFailed event
+    fun <T> guard(operation: String, call: () -> T): T? = try {
+        call()
+    } catch (e: Exception) {
+        state.onPlatformFailure(operation, e)
+        null
     }
+    val mapView = remember {
+        guard("create MapView") {
+            MapLibre.getInstance(context.applicationContext)
+            when (val seed = BundledGlyphs.install(context, spec)) {
+                BundledGlyphs.Seed.Done -> Unit
+                is BundledGlyphs.Seed.Failed -> state.onPlatformFailure("seed glyphs", IllegalStateException(seed.reason))
+            }
+            // TextureView: the map is an ordinary view in the window, so Compose can slide, clip and fade it with
+            // the rest of the screen (L-1 slides the whole main screen; the tablet panel and sheets draw over it),
+            // and its frames are the window's frames (JankStats).
+            MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true))
+        }
+    } ?: return
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var surface by remember { mutableStateOf<MapLibreSurface?>(null) }
     var offline by remember { mutableStateOf(false) }
@@ -63,18 +75,18 @@ fun CluetoothMap(
     DisposableEffect(lifecycle, mapView) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_CREATE -> mapView.onCreate(null)
+                Lifecycle.Event.ON_CREATE -> guard("onCreate") { mapView.onCreate(null) }
                 Lifecycle.Event.ON_START -> {
-                    mapView.onStart()
+                    guard("onStart") { mapView.onStart() }
                     state.refillAfterTrim()
                 }
-                Lifecycle.Event.ON_RESUME -> mapView.onResume()
-                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                Lifecycle.Event.ON_RESUME -> guard("onResume") { mapView.onResume() }
+                Lifecycle.Event.ON_PAUSE -> guard("onPause") { mapView.onPause() }
                 Lifecycle.Event.ON_STOP -> {
-                    mapView.onStop()
+                    guard("onStop") { mapView.onStop() }
                     state.trimMemory()
                 }
-                else -> Unit
+                Lifecycle.Event.ON_DESTROY, Lifecycle.Event.ON_ANY -> Unit
             }
         }
         lifecycle.addObserver(observer)
@@ -82,9 +94,9 @@ fun CluetoothMap(
             lifecycle.removeObserver(observer)
             // the observer already paused and stopped the view if the lifecycle got there first; never twice
             val current = lifecycle.currentState
-            if (current.isAtLeast(Lifecycle.State.RESUMED)) mapView.onPause()
-            if (current.isAtLeast(Lifecycle.State.STARTED)) mapView.onStop()
-            mapView.onDestroy()
+            if (current.isAtLeast(Lifecycle.State.RESUMED)) guard("onPause") { mapView.onPause() }
+            if (current.isAtLeast(Lifecycle.State.STARTED)) guard("onStop") { mapView.onStop() }
+            guard("onDestroy") { mapView.onDestroy() }
         }
     }
 
@@ -98,45 +110,63 @@ fun CluetoothMap(
             @Deprecated("Deprecated in Java")
             override fun onLowMemory() = state.trimMemory()
         }
-        context.applicationContext.registerComponentCallbacks(callbacks)
-        onDispose { context.applicationContext.unregisterComponentCallbacks(callbacks) }
+        guard("registerComponentCallbacks") { context.applicationContext.registerComponentCallbacks(callbacks) }
+        onDispose { guard("unregisterComponentCallbacks") { context.applicationContext.unregisterComponentCallbacks(callbacks) } }
     }
 
     DisposableEffect(mapView) {
         var attached: MapLibreSurface? = null
-        mapView.getMapAsync { m ->
-            val s = MapLibreSurface(mapView, m, state, Tokens.dragSlop.value)
-            attached = s
-            map = m
-            surface = s
-            state.attach(s)
+        guard("getMapAsync") {
+            mapView.getMapAsync { m ->
+                val s = guard("create surface") {
+                    MapLibreSurface(mapView, m, state, Tokens.dragSlop.value) { op, e -> state.onPlatformFailure(op, e) }
+                } ?: return@getMapAsync
+                attached = s
+                map = m
+                surface = s
+                state.attach(s)
+            }
         }
         // A base map that does not load (offline) is replaced by a plain background carrying the same layers.
-        val failed = MapView.OnDidFailLoadingMapListener { if (map?.style?.isFullyLoaded != true) offline = true }
-        mapView.addOnDidFailLoadingMapListener(failed)
+        val failed = MapView.OnDidFailLoadingMapListener {
+            if (guard("isFullyLoaded") { map?.style?.isFullyLoaded } != true) offline = true
+        }
+        guard("addOnDidFailLoadingMapListener") { mapView.addOnDidFailLoadingMapListener(failed) }
         onDispose {
-            mapView.removeOnDidFailLoadingMapListener(failed)
-            attached?.let { state.detach(it); it.release() }
+            guard("removeOnDidFailLoadingMapListener") { mapView.removeOnDidFailLoadingMapListener(failed) }
+            attached?.let { s ->
+                state.detach(s)
+                guard("release") { s.release() }
+            }
         }
     }
 
     val theme = if (dark) MapTheme.Dark else MapTheme.Light
     LaunchedEffect(map, theme, offline, baseStyleJson) {
         val m = map ?: return@LaunchedEffect
-        val builder = when {
-            baseStyleJson != null -> Style.Builder().fromJson(baseStyleJson)
-            offline -> Style.Builder().fromJson(MapAssets.fallbackStyleJson(theme))
-            else -> Style.Builder().fromUri(spec.baseStyleUrl(theme))
-        }
-        m.setStyle(builder) { style ->
-            StyleInstaller.install(style, spec, theme)
-            surface?.style = style
-            state.onStyleLoaded()
+        // until the new style loads, nothing may touch the old one's sources
+        surface?.style = null
+        state.onStyleLoading()
+        guard("setStyle") {
+            val builder = when {
+                baseStyleJson != null -> Style.Builder().fromJson(baseStyleJson)
+                offline -> Style.Builder().fromJson(MapAssets.fallbackStyleJson(theme))
+                else -> Style.Builder().fromUri(spec.baseStyleUrl(theme))
+            }
+            m.setStyle(builder) { style ->
+                when (val installed = StyleInstaller.install(style, spec, theme)) {
+                    StyleInstaller.Installed.Ok -> {
+                        surface?.style = style
+                        state.onStyleLoaded()
+                    }
+                    is StyleInstaller.Installed.Err -> state.onPlatformFailure("install overlay", IllegalStateException(installed.reason))
+                }
+            }
         }
     }
 
     val ui by state.ui.collectAsState()
-    LaunchedEffect(surface, ui.cover) { surface?.setAttributionInset(ui.cover.bottom, ui.cover.left) }
+    LaunchedEffect(surface, ui.cover) { surface?.let { s -> guard("attribution") { s.setAttributionInset(ui.cover.bottom, ui.cover.left) } } }
 
     AndroidView(factory = { mapView }, modifier = modifier)
 }

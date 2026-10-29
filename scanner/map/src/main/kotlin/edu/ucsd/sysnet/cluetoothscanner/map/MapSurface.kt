@@ -11,6 +11,9 @@ import edu.ucsd.sysnet.cluetoothscanner.map.style.SelectionProp
  * tests. Main thread only.
  */
 interface MapSurface {
+    /** The style the overlay was installed in has loaded; until then no source, layer or camera call is made. */
+    val styleReady: Boolean get() = true
+
     val viewport: Viewport
     val camera: CameraSnapshot
     val visibleBbox: Bbox
