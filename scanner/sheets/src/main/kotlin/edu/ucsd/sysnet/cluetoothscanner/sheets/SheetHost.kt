@@ -227,11 +227,10 @@ fun SheetFrame(
 fun rememberSheetStackController(
     metrics: SheetMetrics = SheetMetrics(),
     hooks: SheetStackHooks = SheetStackHooks(),
-    root: SheetKind = SheetKind.Discover,
     rootHeight: SheetHeight = SheetHeight.Collapsed,
 ): SheetStackController {
     val scope = rememberCoroutineScope()
-    return remember { SheetStackController(scope, composeOffsetAnimator(metrics), metrics, hooks, root, rootHeight) }
+    return remember { SheetStackController(scope, composeOffsetAnimator(metrics), metrics, hooks, rootHeight) }
 }
 
 /** The space under a sheet's header line: `.sheet-top` min-height = corner + header / 2 + 8 px. */

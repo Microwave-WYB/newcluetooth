@@ -56,6 +56,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveChart
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ButtonKind
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Segmented
@@ -79,55 +80,60 @@ internal object DeviceTags {
     fun step(kind: GattStepKind) = "gatt-step-${kind.name}"
 }
 
-private enum class DeviceTab { Advertising, Gatt }
 
 /** The device sheet (D-9..D-13). */
 @Composable
 internal fun DeviceSheet(state: SheetsState, entry: SheetEntry, key: Long) {
-    var detail by remember { mutableStateOf<DeviceDetail?>(null) }
-    var chart by remember { mutableStateOf<LiveChart?>(null) }
-    var tab by remember { mutableStateOf(DeviceTab.Advertising) }
+    var content by remember { mutableStateOf(DeviceContent()) }
     val gatt = remember(entry.id) { state.gattFor(entry, key) }
     LaunchedEffect(key) {
-        val d = state.core.device(state.scope, key)
-        detail = d
-        if (gatt.state == GattUi.Idle) gatt.showLast(state.core.deviceGatt(key)) // D-13.7
+        content = content.withDetail(state.load(SheetQuery.Device(key)))
+        // D-13.7; a failed read shows the tab as never read
+        if (gatt.state == GattUi.Idle) (state.load(SheetQuery.LastGatt(key)) as? Outcome.Ok)?.let { gatt.showLast(it.value) }
     }
     if (state.live) {
         LaunchedEffect(key) { // D-10: the chart rides on the deltas of the focused key
-            state.core.setLiveFocus(key)
-            chart = state.core.deviceChart(key)
-            state.core.live.collect { delta -> delta.chart?.takeIf { it.key == key }?.let { chart = it } }
+            content = content.withChart(state.load(SheetQuery.Chart(key)))
+            state.chartUpdates(key).collect { content = content.withChart(it) }
         }
     }
-    val row = state.rows.rows[key]
+    val row = state.rows[key]
+    val detail = content.detail
     SheetFrame(state.stack, entry, state.metrics, header = {
-        PushedHeader(state) { detail?.let { DeviceHead(it, row?.rssi ?: it.rssi) } }
+        PushedHeader(state) { detail.valueOrNull()?.let { DeviceHead(it, row?.rssi ?: it.rssi) } }
     }) {
-        val d = detail ?: return@SheetFrame
-        val list = rememberSheetListState(entry)
-        LazyColumn(state = list) {
-            item {
-                val ch = chart
-                if (state.live && ch != null) {
-                    Box(Modifier.padding(start = Css.ChartWrap.padding.left, top = Css.ChartWrap.padding.top, end = Css.ChartWrap.padding.right)) {
-                        RssiChart(ch, row?.rssi ?: d.rssi)
-                    }
+        when (detail) {
+            Loaded.Pending, Loaded.Missing -> Unit
+            is Loaded.Failed -> EmptyText(detail.message)
+            is Loaded.Found -> DeviceBody(state, entry, content, detail.value, row?.rssi ?: detail.value.rssi, gatt) { content = content.withTab(it) }
+        }
+    }
+}
+
+@Composable
+private fun DeviceBody(state: SheetsState, entry: SheetEntry, content: DeviceContent, d: DeviceDetail, rssi: Int?, gatt: GattController, onTab: (DeviceTab) -> Unit) {
+    val list = rememberSheetListState(entry)
+    LazyColumn(state = list) {
+        item {
+            val chart = content.chart
+            if (state.live && chart is ChartState.Live) {
+                Box(Modifier.padding(start = Css.ChartWrap.padding.left, top = Css.ChartWrap.padding.top, end = Css.ChartWrap.padding.right)) {
+                    RssiChart(chart.chart, rssi)
                 }
-                Segmented(
-                    listOf(Strings.Advertising, Strings.Gatt),
-                    tab.ordinal,
-                    onSelect = { tab = DeviceTab.entries[it] }, // D-11: the height stays (S-16)
-                    modifier = Modifier.fillMaxWidth().padding(
-                        start = Css.DevTabs.padding.left, top = Css.DevTabs.padding.top,
-                        end = Css.DevTabs.padding.right, bottom = Css.DevTabs.padding.bottom,
-                    ).testTag(DeviceTags.TABS),
-                )
-                SwapContent(tab, { it.ordinal }) { t ->
-                    when (t) {
-                        DeviceTab.Advertising -> Advertising(d)
-                        DeviceTab.Gatt -> GattTab(gatt)
-                    }
+            }
+            Segmented(
+                listOf(Strings.Advertising, Strings.Gatt),
+                content.tab.ordinal,
+                onSelect = { onTab(DeviceTab.entries[it]) }, // D-11: the height stays (S-16)
+                modifier = Modifier.fillMaxWidth().padding(
+                    start = Css.DevTabs.padding.left, top = Css.DevTabs.padding.top,
+                    end = Css.DevTabs.padding.right, bottom = Css.DevTabs.padding.bottom,
+                ).testTag(DeviceTags.TABS),
+            )
+            SwapContent(content.tab, { it.ordinal }) { t ->
+                when (t) {
+                    DeviceTab.Advertising -> Advertising(d)
+                    DeviceTab.Gatt -> GattTab(gatt)
                 }
             }
         }
@@ -144,7 +150,8 @@ private fun DeviceHead(d: DeviceDetail, rssi: Int?) {
             Text(d.name ?: Strings.NoName, style = t.title, color = if (d.name == null) c.t3 else c.t1)
         }
         val page = d.page
-        if (page != null && d.wikiUrl != null) WikiLink(page.title, d.wikiUrl!!)
+        val url = d.wikiUrl
+        if (page != null && url != null) WikiLink(page.title, url)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(d.addr, style = t.sub.tabular(), color = c.t2)
             if (rssi != null) {

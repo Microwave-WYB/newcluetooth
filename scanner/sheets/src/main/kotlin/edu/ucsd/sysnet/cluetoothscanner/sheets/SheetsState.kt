@@ -3,17 +3,25 @@ package edu.ucsd.sysnet.cluetoothscanner.sheets
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CategoryCount
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CategoryGroup
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceDetail
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GattView
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Identification
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveChart
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
+import edu.ucsd.sysnet.cluetoothscanner.api.core.ProductDetail
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
@@ -23,6 +31,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 
 /**
@@ -40,13 +50,28 @@ class SheetsState internal constructor(
     /** The view is the live recording (V-2): Nearby, sparklines, the chart. */
     val live: Boolean,
     private val routesFaint: Boolean,
-    internal val core: CoreQueries,
+    private val core: CoreQueries,
     private val gattRunner: GattRunner,
     private val map: MapRequests?,
     internal val coroutines: CoroutineScope,
     internal val nowMs: () -> Long,
     internal val metrics: SheetMetrics,
 ) {
+    /**
+     * Launches [block] on the sheets' scope with its failure handled: the core and GATT calls already come back as
+     * [Outcome]s, and anything else that escapes moves Discover to Failed (Try again re-reads it) instead of
+     * reaching the scope.
+     */
+    private fun launch(block: suspend CoroutineScope.() -> Unit) = coroutines.launch {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            discover.fault(failureMessage(e))
+        }
+    }
+
     private val gatt = HashMap<Long, GattController>()
 
     /** The stack (S-4..S-9): the cover geometry is `offsetOf(top)` and `top.peek`, for MapRequests.setCover. */
@@ -66,12 +91,13 @@ class SheetsState internal constructor(
     internal val rows = RowStore(core, scope, coroutines)
 
     /** Category ids to their vocabulary labels (the core's, G-8), for headers and the Filter sheet. */
-    internal val categoryLabels = mutableStateMapOf<String, String>()
+    internal var categoryLabels by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
     /** The first sort has landed (S-7 content can show); derived from the model's phase, not a flag. */
     internal val opened: Boolean get() = discover.phase is DiscoverPhase.Ready
 
     private val sheetEvents = SheetMapEvents(stack) { byUser, viewport, zoom ->
-        coroutines.launch {
+        launch {
             discover.onCameraIdle(byUser, viewport, zoom)
             // D-4, S-17: This area followed the user's move; the map shows the new set
             if (byUser && discover.search == null && discover.segment == Segment.ThisArea) followDiscover()
@@ -95,13 +121,13 @@ class SheetsState internal constructor(
     fun handleBack(): Boolean {
         if (stack.handleBack()) return true
         if (discover.search == null) return false
-        coroutines.launch { discover.exitSearch() }
+        launch { discover.exitSearch() }
         return true
     }
 
     /** Q-5: a picked search result. The Discover sheet lists the matches; the picked device opens at Half. */
     fun enterSearch(query: String, area: Bbox?, reference: CameraSnapshot, picked: DeviceKey?) {
-        coroutines.launch {
+        launch {
             discover.enterSearch(query, area, reference)
             followTop(stack.root, opening = false)
             if (picked != null) openDevice(picked, fromList = true)
@@ -110,7 +136,7 @@ class SheetsState internal constructor(
 
     /** Q-7: the search bar's X. */
     fun exitSearch() {
-        coroutines.launch {
+        launch {
             discover.exitSearch()
             followTop(stack.root, opening = false)
         }
@@ -118,7 +144,7 @@ class SheetsState internal constructor(
 
     /** Q-6: the "Search this area" chip. */
     fun searchThisArea(viewport: Bbox, zoom: Double) {
-        coroutines.launch { discover.searchThisArea(viewport, zoom); followTop(stack.root, opening = false) }
+        launch { discover.searchThisArea(viewport, zoom); followTop(stack.root, opening = false) }
     }
 
     /** S-4: open a device; from a list (and search results) the camera eases to it (D-14). */
@@ -133,6 +159,33 @@ class SheetsState internal constructor(
 
     internal fun openFilter() {
         stack.push(SheetKind.Filter)
+    }
+
+    /** D-3a: the Filter sheet applies changes live. */
+    internal fun setFilter(filter: DeviceFilter) {
+        launch { discover.setFilter(filter) }
+    }
+
+    /** D-13.1: Try again after the first sort failed. */
+    internal fun retry() {
+        launch {
+            discover.retry()
+            followDiscover()
+        }
+    }
+
+    /** Runs one of the pushed sheets' reads: every screen reads the core through here, never directly. */
+    internal suspend fun <T> load(query: SheetQuery<T>): Outcome<T> = attempt { query.run(core, scope) }
+
+    /** D-10: the live charts of [key] from the deltas; the flow ends quietly if the live feed fails. */
+    internal fun chartUpdates(key: DeviceKey): Flow<LiveChart> = core.live.outcomes().transformWhile { delta ->
+        when (delta) {
+            is Outcome.Ok -> {
+                delta.value.chart?.takeIf { it.key == key }?.let { emit(it) }
+                true
+            }
+            is Outcome.Failed -> false
+        }
     }
 
     internal fun gattFor(entry: SheetEntry, key: DeviceKey): GattController =
@@ -160,7 +213,7 @@ class SheetsState internal constructor(
 
     /** D-1: a segment switch; S-17: the map shows the new point set. */
     internal fun selectSegment(segment: Segment) {
-        coroutines.launch {
+        launch {
             discover.selectSegment(segment)
             followDiscover()
         }
@@ -173,12 +226,9 @@ class SheetsState internal constructor(
 
     /** Called once by [start]: the labels (cosmetic: a failed read leaves the ids), then the model's first sort. */
     internal suspend fun open() {
-        try {
-            core.categoryCounts(scope, DeviceFilter()).forEach { categoryLabels[it.category] = it.label }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // the Filter sheet and product titles fall back to the category ids
+        when (val counts = attempt { core.categoryCounts(scope, DeviceFilter()) }) {
+            is Outcome.Ok -> categoryLabels = counts.value.associate { it.category to it.label }
+            is Outcome.Failed -> Unit // the Filter sheet and product titles fall back to the category ids
         }
         discover.open()
         followTop(stack.root, opening = false)
@@ -196,28 +246,63 @@ class SheetsState internal constructor(
                 map.setSelection(null)
                 val filter = productFilter(kind.pageId)
                 map.show(scope, filter, routesFaint)
-                if (opening) coroutines.launch { productFrame(filter)?.let(map::frame) } // D-8
+                if (opening) launch { (productFrame(filter) as? Outcome.Ok)?.value?.let(map::frame) } // D-8
             }
             is SheetKind.Device -> map.setSelection(kind.key) // M-6; D-14's ease is openDevice's (from a list only)
             SheetKind.Filter -> Unit // the map stays as it is
         }
     }
 
-    /** D-8: the bounding box of a product's devices' strongest points. */
-    private suspend fun productFrame(filter: DeviceFilter): Bbox? {
+    /** D-8: the bounding box of a product's devices' strongest points (none, or a failure: the camera stays). */
+    private suspend fun productFrame(filter: DeviceFilter): Outcome<Bbox?> = attempt {
         val keys = core.deviceKeys(scope, filter).keys
-        var west = Double.MAX_VALUE; var south = Double.MAX_VALUE; var east = -Double.MAX_VALUE; var north = -Double.MAX_VALUE
-        var any = false
-        for (chunk in keys.toList().chunked(RowStore.PAGE)) {
-            for (row in core.deviceRows(scope, chunk.toLongArray())) {
-                val p = row.best ?: continue
-                any = true
-                west = minOf(west, p.lon); east = maxOf(east, p.lon); south = minOf(south, p.lat); north = maxOf(north, p.lat)
-            }
-        }
-        return if (any) Bbox(west, south, east, north) else null
+        val points = keys.toList().chunked(RowStore.PAGE).flatMap { chunk -> core.deviceRows(scope, chunk.toLongArray()).mapNotNull { it.best } }
+        boundsOf(points)
     }
 }
+
+/** A read of the pushed sheets (their effects), run by [SheetsState.load]; the result comes back as an [Outcome]. */
+internal sealed interface SheetQuery<T> {
+    suspend fun run(core: CoreQueries, scope: Scope): T
+
+    /** D-9: the device's detail. */
+    data class Device(val key: DeviceKey) : SheetQuery<DeviceDetail?> {
+        override suspend fun run(core: CoreQueries, scope: Scope) = core.device(scope, key)
+    }
+
+    /** D-13.7: the device's stored GATT result. */
+    data class LastGatt(val key: DeviceKey) : SheetQuery<GattView?> {
+        override suspend fun run(core: CoreQueries, scope: Scope) = core.deviceGatt(key)
+    }
+
+    /** D-10: focus the live chart on [key] and read its chart so far. */
+    data class Chart(val key: DeviceKey) : SheetQuery<LiveChart?> {
+        override suspend fun run(core: CoreQueries, scope: Scope): LiveChart? {
+            core.setLiveFocus(key)
+            return core.deviceChart(key)
+        }
+    }
+
+    /** D-6, D-7: the product's detail. */
+    data class Product(val pageId: String?, val filter: DeviceFilter) : SheetQuery<ProductDetail?> {
+        override suspend fun run(core: CoreQueries, scope: Scope) = core.product(scope, pageId, filter)
+    }
+
+    /** D-2: the product cards. */
+    data class Products(val filter: DeviceFilter) : SheetQuery<List<CategoryGroup>> {
+        override suspend fun run(core: CoreQueries, scope: Scope) = core.products(scope, filter)
+    }
+
+    /** D-3a: the faceted category counts. */
+    data class Counts(val filter: DeviceFilter) : SheetQuery<List<CategoryCount>> {
+        override suspend fun run(core: CoreQueries, scope: Scope) = core.categoryCounts(scope, filter)
+    }
+}
+
+/** The bounding box of [points], or null when there are none. */
+internal fun boundsOf(points: List<GeoPoint>): Bbox? =
+    if (points.isEmpty()) null
+    else Bbox(points.minOf { it.lon }, points.minOf { it.lat }, points.maxOf { it.lon }, points.maxOf { it.lat })
 
 /** The sheets for [scope]; keyed by the scope and [live], so a new session view starts fresh (V-7). */
 @Composable
@@ -240,44 +325,128 @@ fun rememberSheetsState(
 }
 
 /**
+ * What the row logic tracks besides the rows: which keys are loading, the last live delta applied (§2.6), and
+ * [version], which counts changes to the rows. The rows themselves live in [RowStore]'s table, written only by
+ * [RowEffect.Put], so an update costs the changed rows, not a copy of every loaded one.
+ */
+internal data class RowState(
+    val loading: Set<Long> = emptySet(),
+    val seq: Long = -1,
+    val version: Long = 0,
+)
+
+internal sealed interface RowEvent {
+    data class Requested(val keys: List<Long>) : RowEvent
+    data class ChunkLoaded(val rows: List<DeviceRow>) : RowEvent
+    data class LoadEnded(val keys: List<Long>) : RowEvent
+    data class Live(val delta: LiveDelta) : RowEvent
+}
+
+internal sealed interface RowEffect {
+    /** Read [keys] in pages of ≤ 200 (§2.5). */
+    data class Load(val keys: List<Long>) : RowEffect
+    /** G-9: new devices of the live view are appended to the order. */
+    class AppendToOrder(val keys: LongArray) : RowEffect
+    /** Write [rows] into the table: new rows, or loaded rows updated in place. */
+    class Put(val rows: List<DeviceRow>) : RowEffect
+}
+
+internal data class RowStep(val state: RowState, val effects: List<RowEffect> = emptyList())
+
+/**
+ * The pure row logic: what to load, and how a live delta changes the loaded rows in place. [rows] is the table as
+ * it is now, read only; the writes are [RowEffect.Put]s, and every write bumps [RowState.version].
+ */
+internal fun reduceRows(state: RowState, rows: Map<Long, DeviceRow>, event: RowEvent): RowStep = when (event) {
+    is RowEvent.Requested -> {
+        val missing = event.keys.filter { it !in rows && it !in state.loading }.distinct()
+        if (missing.isEmpty()) RowStep(state) else RowStep(state.copy(loading = state.loading + missing), listOf(RowEffect.Load(missing)))
+    }
+    is RowEvent.ChunkLoaded ->
+        if (event.rows.isEmpty()) RowStep(state)
+        else RowStep(state.copy(version = state.version + 1), listOf(RowEffect.Put(event.rows)))
+    is RowEvent.LoadEnded -> RowStep(state.copy(loading = state.loading - event.keys.toSet()))
+    is RowEvent.Live -> {
+        val delta = event.delta
+        if (delta.seq <= state.seq) RowStep(state)
+        else {
+            val changed = delta.changed.mapNotNull { c ->
+                rows[c.key]?.let { row ->
+                    row.copy(
+                        rssi = c.rssi, inRange = c.inRange, spark = c.spark,
+                        name = c.name ?: row.name, page = c.page ?: row.page, best = c.best ?: row.best,
+                    )
+                }
+            }
+            val put = changed + delta.appended
+            RowStep(
+                state.copy(seq = delta.seq, version = if (put.isEmpty()) state.version else state.version + 1),
+                listOfNotNull(
+                    RowEffect.Put(put).takeIf { put.isNotEmpty() },
+                    RowEffect.AppendToOrder(delta.appended.map { it.key }.toLongArray()).takeIf { delta.appended.isNotEmpty() },
+                ),
+            )
+        }
+    }
+}
+
+/**
  * Device rows by key, loaded on demand in pages of ≤ 200 (§2.5) and kept current by the live deltas (§2.6): values
- * update in place, new devices are appended to the session order (G-9).
+ * update in place, new devices are appended to the session order (G-9). The runner of [reduceRows]:
+ * - the table is a plain map that only this runner writes (the [RowEffect.Put]s), on the UI thread;
+ * - [state] is immutable and compared by reference, and [get] reads it, so a reader recomposes on every write
+ *   without an equality check over the rows;
+ * - a failed page read leaves those keys unloaded (their rows stay placeholders); a failed live feed stops updating.
  */
 internal class RowStore(private val core: CoreQueries, private val scope: Scope, private val coroutines: CoroutineScope) {
-    val rows = mutableStateMapOf<Long, DeviceRow>()
-    private val loading = HashSet<Long>()
+    private val table = HashMap<Long, DeviceRow>()
+    private var state by mutableStateOf(RowState(), referentialEqualityPolicy())
+
+    /** The row of [key] if loaded; reading [state] first subscribes the caller to row writes. */
+    operator fun get(key: Long): DeviceRow? = state.let { table[key] }
+
+    /** The number of row writes so far (tests). */
+    internal val version: Long get() = state.version
 
     /** Loads the rows of [keys] that are not loaded yet. */
     fun ensure(keys: List<Long>) {
-        val missing = keys.filter { it !in rows && it !in loading }
-        if (missing.isEmpty()) return
-        loading += missing
-        coroutines.launch {
-            try {
-                for (chunk in missing.chunked(PAGE)) core.deviceRows(scope, chunk.toLongArray()).forEach { rows[it.key] = it }
-            } finally {
-                loading -= missing.toSet()
-            }
-        }
+        for (effect in apply(RowEvent.Requested(keys))) if (effect is RowEffect.Load) load(effect.keys)
     }
 
     /** §2.6: applies live deltas to the loaded rows and appends new devices to the order. */
     suspend fun followLive(discover: DiscoverModel) {
-        var seq = -1L
-        core.live.collect { delta ->
-            if (delta.seq <= seq) return@collect
-            seq = delta.seq
-            for (c in delta.changed) {
-                val row = rows[c.key] ?: continue
-                rows[c.key] = row.copy(
-                    rssi = c.rssi, inRange = c.inRange, spark = c.spark,
-                    name = c.name ?: row.name, page = c.page ?: row.page, best = c.best ?: row.best,
-                )
+        core.live.outcomes().collect { delta ->
+            when (delta) {
+                is Outcome.Ok -> for (effect in apply(RowEvent.Live(delta.value))) run(effect, discover)
+                is Outcome.Failed -> Unit // the feed ended: the rows keep their last values
             }
-            if (delta.appended.isNotEmpty()) {
-                delta.appended.forEach { rows[it.key] = it }
-                discover.appendLive(delta.appended.map { it.key }.toLongArray())
+        }
+    }
+
+    private fun apply(event: RowEvent): List<RowEffect> {
+        val step = reduceRows(state, table, event)
+        for (effect in step.effects) if (effect is RowEffect.Put) for (row in effect.rows) table[row.key] = row
+        state = step.state
+        return step.effects
+    }
+
+    private suspend fun run(effect: RowEffect, discover: DiscoverModel) {
+        when (effect) {
+            is RowEffect.Put -> Unit // written by [apply], with the state
+            is RowEffect.AppendToOrder -> discover.appendLive(effect.keys)
+            is RowEffect.Load -> load(effect.keys)
+        }
+    }
+
+    private fun load(keys: List<Long>) {
+        coroutines.launch {
+            for (chunk in keys.chunked(PAGE)) {
+                when (val page = attempt { core.deviceRows(scope, chunk.toLongArray()) }) {
+                    is Outcome.Ok -> apply(RowEvent.ChunkLoaded(page.value))
+                    is Outcome.Failed -> break // the keys stay unloaded; a later scroll asks again
+                }
             }
+            apply(RowEvent.LoadEnded(keys))
         }
     }
 
