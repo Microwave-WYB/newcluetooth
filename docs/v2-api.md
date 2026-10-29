@@ -1506,7 +1506,8 @@ data class SearchPageState(val query: String, val area: Bbox?, val results: Orde
 data class SettingsUi(val settings: Settings, val uploads: UploadStatus, val storage: StorageUi)
 data class StorageUi(val databaseBytes: Long, val rawFilesBytes: Long, val mapCacheBytes: Long?, val pendingCount: Int,
                      val exportScope: Scope, val exportFormat: ExportFormat?, val exporting: Boolean,
-                     val deleteConfirm: DeleteConfirm?)       // O-1 items 8–11
+                     val deleteConfirm: DeleteConfirm?,       // O-1 items 8–11
+                     val deleteScope: Scope = exportScope)    // item 11's own scope (additive); never changes Export's
 /** Confirm: the scope's deletion, keeping un-uploaded data; LoseUnuploaded: the explicit second step. */
 enum class DeleteConfirm { Confirm, LoseUnuploaded }
 data class OnboardingUi(val step: Int, val permissions: PermissionState, val userId: String,
