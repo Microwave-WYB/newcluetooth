@@ -577,7 +577,9 @@
 
   /** The main map: one instance for the whole app. A session shows its route and one point per device. */
   function createMainMap(container) {
-    const map = new maplibregl.Map({ container, style: MAP_STYLE(), attributionControl: false, center: ME.at, zoom: 16 });
+    // clickTolerance: a pointer that moves less than --drag-slop is a tap (a click, never a pan, so never a user move)
+    const map = new maplibregl.Map({ container, style: MAP_STYLE(), attributionControl: false, center: ME.at, zoom: 16,
+      clickTolerance: parseFloat(tok("--drag-slop")) || 8 });
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
     container._map = map; // a handle for the screenshot tests
     const M = { sel: null, points: [], at: {}, ready: false, pending: [] };
@@ -597,11 +599,13 @@
         else map.setPaintProperty(layer, prop, value);
       }
     }
-    // taps: a point opens its device, a cluster zooms in, empty map clears the selection
+    // taps: a point opens its device, a cluster zooms in, a sighting of the selected device does nothing (for now),
+    // empty map clears the selection
     map.on("click", (e) => {
       const r = 8, box = [[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]];
-      const f = map.queryRenderedFeatures(box, { layers: ["clusters", "points"] })[0];
+      const f = map.queryRenderedFeatures(box, { layers: ["clusters", "points", "sightings"] })[0];
       if (!f) return Stack.entries.length > 1 ? Stack.pop() : M.clear(true);
+      if (f.layer.id === "sightings") return;
       if (f.properties.cluster) return M.zoomCluster(f.properties.cluster_id, f.geometry.coordinates);
       openDevice(f.properties.addr, false);
     });
