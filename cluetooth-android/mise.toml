@@ -47,8 +47,16 @@ depends = ["wiki-bundle-install"]
 dir = "tools/wiki-bundle"
 run = 'node export-bundle.mjs --wiki "${WIKI_DIR:-$HOME/Projects/wiki-snapshot}"'
 
+[tasks.design-export]
+description = "Regenerate design/ui-v2/tokens.json and map-style.json from tokens.css and map-style.js"
+run = "node design/ui-v2/export.mjs"
+
+[tasks.design-export-check]
+description = "Fail if the committed design/ui-v2 JSON exports are out of date"
+run = "node design/ui-v2/export.mjs --check"
+
 [tasks.check]
-run = ["mise run //cluetooth-android:host-guard-check", "mise run //cluetooth-android:wiki-bundle-test", "mise run //cluetooth-android:test", "mise run //cluetooth-android:lint"]
+run = ["mise run //cluetooth-android:host-guard-check", "mise run //cluetooth-android:design-export-check", "mise run //cluetooth-android:wiki-bundle-test", "mise run //cluetooth-android:test", "mise run //cluetooth-android:lint"]
 
 [tasks.build]
 description = "Product debug APKs (requires matching .debug Firebase client); no install or launch"
