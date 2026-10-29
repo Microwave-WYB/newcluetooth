@@ -118,6 +118,29 @@ class FakeCoreTest {
         assertEquals(two.sumOf { cat -> c.deviceKeys(Scope.All, DeviceFilter(categories = setOf(cat))).keys.size }, union)
     }
 
+    /**
+     * Lane D's D-3a contract on the real fake data: for every wiki category (present or not) and with each switch
+     * (none, Readable, Trackers, Vulnerable), the facet count equals the length of the list that filter produces.
+     */
+    @Test
+    fun facetCountEqualsListLengthPerCategoryAndSwitch() = runTest {
+        val c = core(FakeDemo.Recording)
+        val switches = mapOf(
+            "none" to DeviceFilter(), "readable" to DeviceFilter(readable = true),
+            "trackers" to DeviceFilter(trackers = true), "vulnerable" to DeviceFilter(vulnerable = true),
+        )
+        for (scope in listOf(Scope.All, Scope.session("r1"), c.initialScope!!)) {
+            for ((name, base) in switches) {
+                val counts = c.categoryCounts(scope, base).associate { it.category to it.deviceCount }
+                assertTrue("$scope $name has a category", counts.isNotEmpty())
+                for (category in FakeCatalog.CATEGORIES.map { it.id }) {
+                    val list = c.deviceKeys(scope, base.copy(categories = setOf(category))).keys.size
+                    assertEquals("$scope $name $category", list, counts[category] ?: 0)
+                }
+            }
+        }
+    }
+
     /** §2.2: Unidentified with any page constraint is empty; presets AND. */
     @Test
     fun presetsAndIdentificationCombine() = runTest {
