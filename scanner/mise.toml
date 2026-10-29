@@ -55,6 +55,10 @@ run = "node design/ui-v2/export.mjs"
 description = "Fail if the committed design/ui-v2 JSON exports are out of date"
 run = "node design/ui-v2/export.mjs --check"
 
+[tasks.crash-guard]
+description = "Fail on the constructs AGENTS.md bans from v2 production Kotlin (!!, lateinit, unchecked as, error/check/require, TODO(), runBlocking, GlobalScope); exceptions in tools/crash-guard/allowlist.txt"
+run = ["python3 tools/crash-guard/crash_guard.py --self-test", "python3 tools/crash-guard/crash_guard.py"]
+
 [tasks.core-test]
 description = "Lane A's v2 Kotlin modules: JVM tests of :core-api, :core-fake and :core-bridge (real bindings)"
 run = "./gradlew --no-daemon --max-workers=2 :core-api:test :core-fake:test :core-bridge:testDebugUnitTest"
@@ -91,6 +95,7 @@ run = "./gradlew --no-daemon --max-workers=2 :designsystem:testDebugUnitTest -Pc
 run = [
   "mise run //scanner:host-guard-check",
   "mise run //scanner:design-export-check",
+  "mise run //scanner:crash-guard",
   "mise run //scanner:wiki-bundle-test",
   "mise run //scanner:test",
   "mise run //scanner:core-test",
