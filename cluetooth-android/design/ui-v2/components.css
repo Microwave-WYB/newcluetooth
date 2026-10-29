@@ -327,7 +327,7 @@ button.item:active { background: var(--fill2); }
 /* MenuButton: rides the sidebar's edge (4 px in), its icon turning from ☰ into "collapse sidebar" */
 .menu-btn { position: absolute; z-index: 45; top: var(--edge); left: var(--edge); transition: left var(--t-std) var(--ease), opacity var(--t-fast); }
 .menu-btn .icon { grid-area: 1 / 1; transition: opacity var(--t-std) var(--ease), transform var(--t-std) var(--ease); }
-.menu-btn .i-b { opacity: 0; transform: rotate(-90deg) scale(0.6); }
+.menu-btn .i-b, .menu-btn .i-c { opacity: 0; transform: rotate(-90deg) scale(0.6); }
 .menu-btn.open { left: calc(var(--side-w) - var(--rb) - 4px); }
 .menu-btn.open .i-a { opacity: 0; transform: rotate(90deg) scale(0.6); }
 .menu-btn.open .i-b { opacity: 1; transform: none; }
@@ -485,35 +485,48 @@ button.item:active { background: var(--fill2); }
 .g-sw { width: 72px; height: 44px; border-radius: var(--r-item); box-shadow: inset 0 0 0 1px var(--div); }
 
 /* ================================================================================================================
-   Tablet layout (layoutMode medium / expanded, >= --bp-medium): a floating left panel holds the sheet stack.
+   Tablet layout (layoutMode medium / expanded, >= --bp-medium). One top row above a floating left panel: ☰ and a
+   permanent search field. The panel holds the sheet stack; ☰ swaps its content for the sessions list.
    ================================================================================================================ */
-.phone.tablet { --side-w: min(var(--drawer-tablet-w), 80cqw); --corner-r: var(--panel-radius); }
-/* the panel: every sheet of the stack, floating at the left; open (full height) or collapsed (its header) */
+.phone.tablet { --corner-r: var(--panel-radius); }
+/* the top row: ☰ and the always expanded field, in the panel's columns (--panel-inset) */
+.phone.tablet .menu-btn, .phone.tablet .menu-btn.open { top: var(--edge); left: calc(var(--edge) + var(--panel-inset)); z-index: 96; }
+.phone.tablet .menu-btn .i-b { display: none; }
+.phone.tablet .menu-btn.open .i-c { opacity: 1; transform: none; } /* ☰ -> X: close the sessions list */
+.phone.tablet .search-box, .phone.tablet .search-box.open {
+  top: var(--edge); right: auto; left: calc(var(--edge) + var(--panel-inset) + var(--rb) + 8px);
+  width: calc(var(--panel-w) - 2 * var(--panel-inset) - var(--rb) - 8px); background: var(--fill2); z-index: 96;
+}
+.phone.tablet .search-box input { opacity: 1; }
+.phone.tablet .search-box .sbx-btn .i-b { display: none; }
+.phone.tablet .search-box .sbx-btn .i-a { opacity: 1; transform: none; width: var(--icon); height: var(--icon); color: var(--t3); }
+.phone.tablet .search-box:focus-within { background: var(--field); outline: var(--focus-w) solid var(--focus-color); outline-offset: calc(-1 * var(--focus-w)); }
+.phone.tablet.searching .menu-btn, .phone.tablet.searching .search-box { display: grid; }
+.phone.tablet.searching .search-box { display: block; }
+.phone.tablet .search-bar { display: none; } /* the field itself shows the query */
+.phone.tablet.side-open .search-box, .phone.tablet.side-open .main { transform: none; }
+/* the panel: every sheet of the stack, below the top row; open (full height) or collapsed (its header) */
 .phone.tablet .sheet:not(.static) {
-  left: var(--edge); right: auto; top: var(--edge); bottom: auto; width: var(--panel-w); height: calc(100% - 2 * var(--edge));
+  left: var(--edge); right: auto; top: var(--top-zone); bottom: auto; width: var(--panel-w); height: calc(100% - var(--top-zone) - var(--edge));
   border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transition: height var(--t-std) var(--ease), opacity var(--t-fast), visibility var(--t-fast);
 }
-.phone.tablet .disc-head { padding: 0 var(--corner-btn) 10px; } /* below the ☰ / search row (which holds the corners); the view switch stays in ☰'s column */
+.phone.tablet .disc-head { padding: var(--corner-btn) var(--corner-btn) 10px; } /* the corner buttons concentric with the panel */
 .phone.tablet .sheet.sheet.open { transform: none; }
 .phone.tablet .sheet:not(.open) { opacity: 0; pointer-events: none; }
 .phone.tablet .sheet.open.collapsed { height: var(--peek); }
-.phone.tablet .disc-sheet { padding-top: var(--panel-row); }
-.phone.tablet .disc-sheet.open.collapsed { height: var(--peek); }
 .phone.tablet .sheet.following { opacity: 0; visibility: hidden; pointer-events: none; } /* only the top level shows */
 .phone.tablet .handle::before { opacity: 0; }
 .phone.tablet .sheet .sheet-body { overflow-y: auto; touch-action: pan-y; }
 .phone.tablet .disc-head, .phone.tablet .sheet-top, .phone.tablet .handle { cursor: pointer; }
-/* ☰ and search sit in the panel's header row */
-.phone.tablet .menu-btn { top: calc(var(--edge) + var(--panel-inset)); left: calc(var(--edge) + var(--panel-inset)); box-shadow: none; z-index: 96; }
-.phone.tablet .search-box { top: calc(var(--edge) + var(--panel-inset)); right: calc(100% - var(--edge) - var(--panel-w) + var(--panel-inset)); box-shadow: none; background: var(--fill2); }
-.phone.tablet .search-box.open { width: calc(var(--panel-w) - 2 * var(--panel-inset)); }
-
-.phone.tablet.side-open .search-box, .phone.tablet.side-open .main { transform: none; }
-/* search: results in the panel, no full-screen page; search state's bar in the panel's header row */
-.phone.tablet .page.search-page { left: var(--edge); top: var(--edge); bottom: var(--edge); right: auto; width: var(--panel-w); border-radius: var(--corner-r); box-shadow: var(--shadow-raised); background: var(--panel); overflow: hidden; }
-.phone.tablet .scroll.search-results { top: var(--panel-row); }
-.phone.tablet .search-bar { top: calc(var(--edge) + var(--panel-inset)); left: calc(var(--edge) + var(--panel-inset)); right: auto; width: calc(var(--panel-w) - 2 * var(--panel-inset)); box-shadow: none; background: var(--fill2); }
+/* search: typing shows the results in the panel */
+.phone.tablet .page.search-page { left: var(--edge); top: var(--top-zone); bottom: var(--edge); right: auto; width: var(--panel-w); border-radius: var(--corner-r); box-shadow: var(--shadow-raised); background: var(--panel); overflow: hidden; }
+.phone.tablet .scroll.search-results { top: 0; }
 .phone.tablet .search-area, .phone.tablet.recording .search-area { top: var(--edge); left: calc((var(--edge) + var(--panel-w) + 100%) / 2); }
+/* ☰: the sessions list takes the panel's place (no drawer, no dim); X or Back gives the Discover stack back */
+.phone.tablet .side { top: var(--top-zone); left: var(--edge); bottom: var(--edge); width: var(--panel-w); z-index: 99; border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transform: none; opacity: 0; transition: opacity var(--t-fast), visibility var(--t-fast); overflow: hidden; }
+.phone.tablet.side-open .side { opacity: 1; }
+.phone.tablet .side-head { height: auto; padding: var(--corner-btn) var(--gutter) 4px; }
+.phone.tablet .main-dim { display: none; }
 /* the recorder stays at the bottom right of the map: the FAB widens in place into the capsule (FAB height) and its
    panel grows upward; locate / warning sit right above it and move up while the panel is open */
 .phone.tablet .recorder { right: var(--edge); bottom: calc(var(--edge) + 12px); }
@@ -521,7 +534,3 @@ button.item:active { background: var(--fill2); }
 .phone.tablet .locate-btn, .phone.tablet .loc-warn { left: auto; right: calc(var(--edge) + (var(--fab) - var(--rb)) / 2); bottom: calc(var(--edge) + 12px + var(--rec-h, var(--fab)) + 12px); }
 .phone.tablet .loc-pop { left: auto; right: var(--edge); bottom: calc(var(--edge) + 12px + var(--rec-h, var(--fab)) + 12px + var(--rb) + 8px); }
 .phone.tablet.rec-top-open .menu-btn, .phone.tablet.rec-top-open .search-box { opacity: 1; pointer-events: auto; }
-/* a pushed level on top of the panel: its own header shows, not ☰ and search */
-.phone.tablet.stacked .menu-btn, .phone.tablet.stacked .search-box:not(.open):not(.lift) { opacity: 0; pointer-events: none; }
-/* the sessions sidebar: an overlay drawer over the panel and the map (no push) */
-.phone.tablet .side { z-index: 95; box-shadow: var(--shadow-raised); }

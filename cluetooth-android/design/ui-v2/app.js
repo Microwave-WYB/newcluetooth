@@ -89,7 +89,7 @@
 
     /** MenuButton: ☰ at the map's top-left; with the sidebar out, it rides the sidebar's edge as "collapse sidebar". */
     menuButton: (open, cls = "") =>
-      `<button class="rb menu-btn ${open ? "open" : ""} ${cls}" data-action="sidebar" aria-label="${open ? "Close sidebar" : "Sessions and settings"}" aria-expanded="${open}">${icon("menu", "i-a")}${icon("panelClose", "i-b")}</button>`,
+      `<button class="rb menu-btn ${open ? "open" : ""} ${cls}" data-action="sidebar" aria-label="${open ? "Close sidebar" : "Sessions and settings"}" aria-expanded="${open}">${icon("menu", "i-a")}${icon("panelClose", "i-b")}${icon("close", "i-c")}</button>`,
 
     /** Recorder: idle FAB, recording capsule (dot, time, Pause/Resume, Stop) and the panel above it. */
     recorder: ({ state, paused, time, meta, mapId = "", cls = "" }) => `
@@ -627,6 +627,7 @@
     };
     /** The camera to the user's location, at street level (or closer if already closer); an app move. */
     M.locate = () => whenReady(() => map.easeTo({ center: ME.at, zoom: Math.max(map.getZoom(), 17), padding: { top: 0, bottom: sheetCover(), left: panelLeft(), right: 0 }, duration: 600 }));
+    M.whenLoaded = (f) => whenReady(f);
     M.fit = (coords) => whenReady(() => coords.length && map.fitBounds(boundsOf(coords), { padding: pad(), maxZoom: 17 }));
     M.select = (addr, move) => whenReady(() => {
       M.sel = addr;
@@ -698,7 +699,7 @@
   /** ☰ and search show on the map only (not over Settings). */
   function updateChrome() {
     const t = top();
-    $(".menu-btn", phone).classList.toggle("gone", t !== "main");
+    $(".menu-btn", phone).classList.toggle("gone", !(t === "main" || (t === "search" && isTablet()))); // tablet: the row stays while results show
     $(".search-box", phone).classList.toggle("gone", !(t === "main" || t === "search") || !S.session);
   }
 
@@ -1127,6 +1128,7 @@
   /** The search box expands from the button to the full-width field (back arrow + input) while the page fades in;
    *  closing reverses it. From search state the bar is already full width: the box opens and closes in place. */
   function morphSearchBox(open) {
+    if (isTablet()) return; // tablet: the field is always expanded
     const box = $(".search-box", phone), input = $("#search-q"), inPlace = !!S.search;
     if (inPlace) { box.classList.add("no-anim"); box.getBoundingClientRect(); }
     if (open) box.classList.add("lift");
@@ -1200,8 +1202,20 @@
     const el = $("#search-area");
     if (el) el.classList.toggle("gone", !(S.search && S.search.moved));
   }
+  /** Tablet: the permanent field above the panel. Typing shows the results in the panel (a panel-shaped page over the
+   *  stack); clearing the query (the field's clear, or Esc) restores the panel's content and leaves search state. */
+  function tabletSearch(q) {
+    if (q.trim()) {
+      if (top() !== "search") { S.page = { bbox: S.map.bbox() }; push("search", UI.searchPage(), { cls: "search-page" }); }
+      renderResults(q);
+      return;
+    }
+    if (top() === "search") pop();
+    if (S.search) exitSearch();
+  }
   function exitSearch() {
     if (!S.search) return;
+    if (isTablet()) $("#search-q").value = "";
     const saved = S.search.saved;
     S.search = null;
     Stack.reset();
@@ -1287,7 +1301,7 @@
       else refreshSheets();
     },
     "disc-view": () => { S.discView = S.discView === "list" ? "categories" : "list"; renderDiscover(); $("#disc-body").scrollTop = 0; },
-    "search-open": () => (top() === "search" ? pop() : openSearchPage()), // open: it is the panel's Back
+    "search-open": () => (isTablet() ? $("#search-q").focus() : top() === "search" ? pop() : openSearchPage()), // phone, open: it is the page's Back
     "search-edit": () => openSearchPage(),
     "search-exit": () => exitSearch(),
     "search-area": () => searchThisArea(),
@@ -1298,6 +1312,7 @@
     "search-everywhere": () => searchEverywhere(),
     "search-pick": (el) => {
       const addr = el.dataset.value, q = $("#search-q").value, wasSearching = !!S.search;
+      if (isTablet()) { pop(); enterSearch(q, S.page.bbox); openDevice(addr, true); return; } // the field keeps the query
       pop(); // the page fades out and the field shrinks back into the button
       const go = () => { enterSearch(q, S.page.bbox); openDevice(addr, true); };
       if (wasSearching) go(); else setTimeout(go, parseFloat(tok("--t-fade")) * 1000); // then search state
@@ -1335,7 +1350,9 @@
   // Escape stands in for system back: the topmost layer closes first.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || location.hash) return;
-    if ($("#loc-pop").innerHTML) setLocPop(false);
+    if (isTablet() && document.activeElement && document.activeElement.id === "search-q" && document.activeElement.value) {
+      document.activeElement.value = ""; tabletSearch("");
+    } else if ($("#loc-pop").innerHTML) setLocPop(false);
     else if (S.stack.length) pop(); // a page (the search page, Settings) closes first
     else if (Stack.entries.length > 1) Stack.pop();
     else if (phone.classList.contains("side-open")) setDrawer(false);
@@ -1343,7 +1360,7 @@
     else if (S.search) exitSearch();
   });
   phone.addEventListener("input", (e) => {
-    if (e.target.id === "search-q") renderResults(e.target.value);
+    if (e.target.id === "search-q") (isTablet() ? tabletSearch(e.target.value) : renderResults(e.target.value));
   });
 
   /** Launch. Recording when "Record when the app opens" is on; otherwise All sessions, or only the location for a
@@ -1375,6 +1392,8 @@
     if (state === 4) showSession("r1", false);
     if (state === 1 || state === 5) showDefault();
     updateLocate(false, false); // at launch only the warning can show; the locate button waits for a user move
+    if (params.get("side")) setDrawer(true);
+    if (params.get("q") && isTablet()) { const i = $("#search-q"); i.value = params.get("q"); S.map.whenLoaded(() => tabletSearch(i.value)); }
   }
   /** Not recording: All sessions, or nothing but the location when there are no recordings at all. */
   function showDefault() {
@@ -1408,6 +1427,8 @@
         <a href="./?layout=tablet&state=2">Tablet · 2 recording</a>
         <a href="./?layout=tablet&state=3">Tablet · 3</a>
         <a href="./?layout=tablet&state=4">Tablet · 4</a>
+        <a href="./?layout=tablet&state=4&side=1">Tablet · sessions in the panel</a>
+        <a href="./?layout=tablet&state=4&q=go">Tablet · search typing</a>
         <a href="./?layout=phone&state=1">Phone frame</a>
         <a href="./?state=1&loc=denied">Location: permission off</a>
         <a href="./?state=1&loc=off">Location: turned off</a>
