@@ -117,7 +117,8 @@ fun MainScreen(vm: MainViewModel) {
         }
         // P-3: the FAB sits above the root's collapsed peek (and the navigation bar); a rising sheet covers it
         val rootPeekPx = sheets?.stack?.root?.peek?.takeUnless { it.isNaN() }
-        val sheetCover = if (sheets != null && !tablet) with(density) { (rootPeekPx ?: PlaceholderPeek.toPx()).toDp() } + nav else 0.dp
+        val sheetCover = fabLayerCover(tablet, sheets?.let { with(density) { (rootPeekPx ?: PlaceholderPeek.toPx()).toDp() } }, nav)
+        val recorderInset = Modifier.padding(top = recorderTopInset(tablet, status))
         // M-10 / D-14: the map's padding is what the top sheet (phone) or the panel (tablet) covers
         val heightPx = with(density) { maxHeight.toPx() }
         val topOffsetPx = sheets?.let { it.stack.offsetOf(it.stack.top) }
@@ -144,11 +145,13 @@ fun MainScreen(vm: MainViewModel) {
                 mapUi, if (tablet) LocatePlacement.Tablet(recH) else LocatePlacement.Phone(sheetCover),
                 onLocate = { dispatch(MainEvent.Locate) }, onWarning = { dispatch(MainEvent.SetLocationPopover(!ui.locationPopoverOpen)) },
             )
-            if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, miniMap = miniMap)
+            if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, recorderInset, bottomCover = sheetCover, miniMap = miniMap)
             // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
             if (sheets != null && !(tablet && ui.sidebarOpen)) SheetsLayer(sheets, tablet)
             if (tablet && ui.sidebarOpen) SessionsPanel { sessions(Modifier) }
-            if (form != RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
+            if (form != RecorderUi.Form.Fab) {
+                RecorderControl(recorderUi, recorderActions, tablet, recorderInset, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
+            }
             if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, { dispatch(MainEvent.LocationFix(it)) }) {
                 dispatch(MainEvent.SetLocationPopover(false))
             }

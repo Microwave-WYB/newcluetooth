@@ -2,6 +2,8 @@ package edu.ucsd.sysnet.cluetoothscanner.v2
 
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 
 /** §5.4 / G-2: one layout mode from the window width (Material window size classes). */
@@ -73,3 +75,16 @@ fun launchTarget(liveSessionId: String?, recordOnOpen: Boolean, sessionCount: In
 fun bboxOf(points: List<GeoPoint>): Bbox? = if (points.isEmpty()) null else Bbox(
     west = points.minOf { it.lon }, south = points.minOf { it.lat }, east = points.maxOf { it.lon }, north = points.maxOf { it.lat },
 )
+
+/**
+ * P-3 / P-5: what the FAB layer (the FAB, locate and the warning) sits above on phone: the root sheet's peek plus the
+ * navigation bar, or the navigation bar alone without a sheet. The tablet's layers are already inside the safe area.
+ */
+fun fabLayerCover(tablet: Boolean, sheetPeek: Dp?, navigationBar: Dp): Dp = when {
+    tablet -> 0.dp
+    sheetPeek != null -> sheetPeek + navigationBar
+    else -> navigationBar
+}
+
+/** R-3 / R-4 / R-9: the phone island and panel sit on the ☰/search row, which starts below the status bar. */
+fun recorderTopInset(tablet: Boolean, statusBar: Dp): Dp = if (tablet) 0.dp else statusBar
