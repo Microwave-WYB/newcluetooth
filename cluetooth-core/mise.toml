@@ -22,10 +22,10 @@ run = "cargo build --locked --example prepare_encrypted_payload"
 
 [tasks.fixture]
 description = "Regenerate the synthetic checked-in Rust/Polars fixture"
-run = "cargo run --locked --example generate_payload_v2_fixture -- ../cluetooth-sync/tests/fixtures/payload-v2"
+run = "cargo run --locked --example generate_payload_v2_fixture -- ../data-sync/tests/fixtures/payload-v2"
 
 [tasks.bindings]
-run = "bash scripts/generate-kotlin-bindings.sh ../cluetooth-android/app/build/generated/source/uniffi"
+run = "bash scripts/generate-kotlin-bindings.sh ../scanner/app/build/generated/source/uniffi"
 
 [tasks.native-install]
 description = "Install all four Android Rust targets and pinned cargo-ndk in isolated mise homes"
@@ -33,4 +33,4 @@ run = ['rustup target add --toolchain "$RUSTUP_TOOLCHAIN" aarch64-linux-android 
 
 [tasks.build-android]
 description = "Build the ABIs in CLUETOOTH_ABIS (default arm64-v8a; e.g. arm64-v8a,x86_64) at API 24; requires explicit SDK/NDK and cargo-ndk installation"
-run = "bash scripts/build-android.sh ../cluetooth-android/app/build/generated/jniLibs"
+run = "bash scripts/build-android.sh ../scanner/app/build/generated/jniLibs"

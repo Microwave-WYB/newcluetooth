@@ -49,11 +49,11 @@ Generate reproducibly from the host release library on Linux (`.so`) or macOS (`
 mise run //cluetooth-core:bindings
 ```
 
-The equivalent Gradle task is `../cluetooth-android/gradlew -p ../cluetooth-android :app:generateCluetoothCoreBindings`. The package and native-library name are pinned in `uniffi.toml`. Generated Kotlin is build output and is not tracked. Binding generation requires Bash plus a native Rust host toolchain and fails with an explicit unsupported-host error outside Linux/macOS; native Windows binding generation is not implemented.
+The equivalent Gradle task is `../scanner/gradlew -p ../scanner :app:generateCluetoothCoreBindings`. The package and native-library name are pinned in `uniffi.toml`. Generated Kotlin is build output and is not tracked. Binding generation requires Bash plus a native Rust host toolchain and fails with an explicit unsupported-host error outside Linux/macOS; native Windows binding generation is not implemented.
 
 ## Android API 24 native libraries
 
-NDK `27.2.12479018`, `cargo-ndk 4.1.2`, API 24, and all four Rust targets are required. Host `mise install` deliberately excludes optional Android targets. Follow [Android setup](../cluetooth-android/README.md), then install all four targets and cargo-ndk explicitly:
+NDK `27.2.12479018`, `cargo-ndk 4.1.2`, API 24, and all four Rust targets are required. Host `mise install` deliberately excludes optional Android targets. Follow [Android setup](../scanner/README.md), then install all four targets and cargo-ndk explicitly:
 
 ```sh
 mise run //cluetooth-core:native-install  # cargo install cargo-ndk --version 4.1.2 --locked
@@ -67,7 +67,7 @@ Build the requested ABIs at API 24 (default `arm64-v8a`; opt in to others with `
 mise run //cluetooth-core:build-android
 ```
 
-Or run `../cluetooth-android/gradlew -p ../cluetooth-android :app:buildCluetoothCoreAndroid`. The output contains exactly the requested ABIs. Android uses the same list as its ABI split allowlist with no universal APK, so transitive `armeabi`, MIPS, or MIPS64 artifacts cannot create an APK that lacks `libcluetooth_core.so`.
+Or run `../scanner/gradlew -p ../scanner :app:buildCluetoothCoreAndroid`. The output contains exactly the requested ABIs. Android uses the same list as its ABI split allowlist with no universal APK, so transitive `armeabi`, MIPS, or MIPS64 artifacts cannot create an APK that lacks `libcluetooth_core.so`.
 
 `[profile.release] strip = "symbols"` reproducibly removes static symbols and debug sections while preserving the generated dynamic UniFFI API. Validate the current exports from each built ABI with the pinned NDK's `llvm-readelf --dyn-syms`; exact counts change when UniFFI surface metadata changes and are not a stable release invariant. Cargo's default unwind panic strategy is unchanged. Binding generation explicitly disables stripping only for its ignored host cdylib because UniFFI bindgen needs its static metadata; that host artifact is not packaged.
 

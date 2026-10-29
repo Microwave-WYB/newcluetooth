@@ -6,7 +6,7 @@
 //! ```
 //!
 //! A [`RuleMatcher`] is built once from the app's wiki bundle (see
-//! `cluetooth-android/tools/wiki-bundle`) and then matches advertisements:
+//! `scanner/tools/wiki-bundle`) and then matches advertisements:
 //! raw bytes plus the address and address type when known; an `addr` rule never
 //! matches when the address is unknown. The result is the ids of the matching
 //! pages, in bundle order.

@@ -1,12 +1,12 @@
 monorepo_root = true
 
 [monorepo]
-config_roots = ["db", "cluetooth-sync", "cluetooth-core", "cluetooth-android"]
+config_roots = ["db", "data-sync", "cluetooth-core", "scanner"]
 
 [tools]
 python = "3.14"
 uv = "latest"
-node = "24.22.0"                          # cluetooth-android wiki-bundle exporter
+node = "24.22.0"                          # scanner wiki-bundle exporter
 dbmate = "2.32.0"
 gcloud = "587.0.0"
 "aqua:cloudflare/cloudflared" = "2026.10.0"   # db:connect
@@ -40,12 +40,12 @@ run = 'cloudflared access tcp --hostname db.wirelesswiki.org --url "127.0.0.1:${
 
 [tasks.install]
 description = "Install locked Python dependencies (run mise install for tool binaries first)"
-depends = ["//cluetooth-sync:install"]
+depends = ["//data-sync:install"]
 
 [tasks.check]
 description = "Host checks: Rust, Android JVM, Python/Parquet interoperability and disposable DB (Docker required); no APK/device/upload"
 # Serialize the heavyweight host stages instead of compiling Polars and Gradle together.
-run = ["mise run //cluetooth-core:check", "mise run //cluetooth-android:check", "mise run //cluetooth-sync:check"]
+run = ["mise run //cluetooth-core:check", "mise run //scanner:check", "mise run //data-sync:check"]
 
 [tasks.native-check]
 description = "Build the Android API-24 native ABIs in CLUETOOTH_ABIS (default arm64-v8a); separate from host tests and product APKs"

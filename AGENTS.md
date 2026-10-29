@@ -21,7 +21,7 @@ The design goal is:
     payloads are schema v3, v2 stays readable) and local `gatt/v1` object storage.
   - Owns the on-device wiki rule matcher (`src/matcher/`, `RuleMatcher` over UniFFI).
   - Uses Rust, Polars, UUIDv7, Zstd Parquet, and UniFFI.
-- `cluetooth-android/`
+- `scanner/`
   - Owns BLE/location/UI/Firebase/WorkManager platform integration. Phase 4
     forwards new observations to Rust, uploads Rust-prepared ciphertext (scan v2
     and v3, `gatt/v1`), runs the manual GATT engine (debug trigger only), and
@@ -29,12 +29,20 @@ The design goal is:
   - Also keeps the phone-local stores (`local/`: seen products, recordings,
     sighting history, route) and the build-time wiki bundle exporter
     (`tools/wiki-bundle/`, Node); see `docs/local-data.md`.
-- `cluetooth-sync/`
+- `data-sync/`
   - Owns the sync and ingestion pipeline.
   - Uses Python, Polars, ADBC PostgreSQL, PyNaCl, Google Cloud Storage, Typer,
     Ruff, basedpyright, pytest, and testcontainers.
 - `cluetooth-agents/`
   - Placeholder for agent/research-oriented code.
+- `infra/data/`
+  - The production data stack: `compose.yaml` (postgres, migrate, sync,
+    sync-continuous, wigle-upload; project name pinned to `newcluetooth`),
+    `.env.example`, the PostGIS image (`postgres/`) and the host-local,
+    gitignored `secrets/` mount point. Run `docker compose` from here; see
+    `docs/operations.md`.
+- `infra/fleet/`
+  - Placeholder for the planned research agent fleet.
 
 Payload contracts: `docs/payload-schema-v2.md` (identity, batching, upload
 state), `docs/payload-schema-v3.md` (scan v3 columns/footer and `gatt/v1`).
@@ -130,7 +138,7 @@ ids plus the remainder. Nothing protocol-specific is decoded at ingest.
 
 ## Python Sync Pipeline
 
-`cluetooth-sync/src/cluetooth_sync/pipeline/` is split by stage:
+`data-sync/src/cluetooth_sync/pipeline/` is split by stage:
 
 - `storage.py`
   - Defines the `StorageClient` protocol.
@@ -272,7 +280,7 @@ Important current messages:
 
 ## Testing
 
-`cluetooth-sync/tests/` contains integration-style tests for ingest and pipeline
+`data-sync/tests/` contains integration-style tests for ingest and pipeline
 stages.
 
 Current test approach:
@@ -292,7 +300,7 @@ prebuild the Rust encryption example via mise. Guarded Android host tasks leave
 Google Services unapplied only for exact JVM/lint selectors and exclude native
 packaging, never compilation/JVM tests/lint; success
 is not proof of APK/native/device behavior. SDK licenses/packages and all four
-Android targets/cargo-ndk use explicit setup tasks; see `cluetooth-android/README.md`.
+Android targets/cargo-ndk use explicit setup tasks; see `scanner/README.md`.
 Product config is production-associated and does not match `.debug`. Do not run
 app/device/cloud operations in default checks or read service-account secrets.
 
