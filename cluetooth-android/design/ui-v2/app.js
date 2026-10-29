@@ -286,6 +286,7 @@
         <div class="handle"></div>
         <div class="disc-head" id="disc-head"></div>
         <div class="disc-chips" id="disc-chips"></div>
+        <div class="sheet-fade"></div>
         <div class="sheet-body" id="disc-body"></div>
       </section>
       <div class="recorder-catch" data-action="recorder-close"></div>
@@ -732,7 +733,7 @@
       el.dataset.snaps = "dismissed collapsed half full";
       el.setAttribute("aria-label", kind === "device" ? "Device" : "Product");
       el.style.zIndex = 81 + this.entries.length * 2;
-      el.innerHTML = `<div class="handle"></div><div class="sheet-top"></div><div class="sheet-body"></div>`;
+      el.innerHTML = `<div class="handle"></div><div class="sheet-top"></div><div class="sheet-fade"></div><div class="sheet-body"></div>`;
       phone.append(el);
       const entry = { el, kind, props };
       this.entries.push(entry);
@@ -844,7 +845,10 @@
   // Dragging. On the handle and header the sheet moves directly. On the Discover sheet's content (Google Maps
   // style) dragging up first raises the sheet to Full and only then scrolls; dragging down first scrolls the
   // content back to its top and then lowers the sheet.
-  let suppressClick = false;
+  const SLOP = parseFloat(tok("--drag-slop")) || 8; // a pointer that moves less is a tap
+  let suppressClick = false, headDrag = false;
+  // while a header drag moves the sheet, its touch is ours: no browser scroll or fling (which would eat the next tap)
+  phone.addEventListener("touchmove", (e) => { if (headDrag && e.cancelable) e.preventDefault(); }, { passive: false });
   phone.addEventListener("click", (e) => { if (suppressClick) { suppressClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
   phone.addEventListener("pointerdown", (e) => {
     const sheet = e.target.closest(".sheet.open:not(.static)");
@@ -853,15 +857,24 @@
     // touches on the Discover sheet's content are handled by the touch listeners below (native scrolling)
     const body = e.pointerType !== "touch" && e.target.closest(".sheet-body, .disc-chips");
     if (!onHead && !body) return;
-    if (onHead && e.target.closest("a, button") && !e.target.closest(".handle")) return; // header controls are taps
+    // The whole header drags the sheet, controls included: under --drag-slop it is a tap and the control works;
+    // past it, vertically, it is a drag and the control does not fire. A mostly horizontal move is left alone.
     const scroller = $(".sheet-body", sheet);
     const offs = snapOffsets(sheet), top = offs[offs.length - 1].y, bottom = offs[0].y;
     const from = sheetState(sheet);
     let y = (offs.find((o) => o.st === from) || offs[0]).y, lastY = e.clientY, moved = false, sheetMoved = false;
-    const y0 = e.clientY, samples = [[performance.now(), e.clientY]];
+    const y0 = e.clientY, x0 = e.clientX, samples = [[performance.now(), e.clientY]];
     const move = (ev) => {
-      if (!moved && Math.abs(ev.clientY - y0) < 6) return;
-      if (!moved) { moved = true; sheet.setPointerCapture(ev.pointerId); sheet.classList.add("dragging"); }
+      if (!moved) {
+        const dx = Math.abs(ev.clientX - x0), dy0 = Math.abs(ev.clientY - y0);
+        if (Math.max(dx, dy0) < SLOP) return;
+        if (dx > dy0) return up(null, true); // horizontal: not ours
+        moved = true;
+        headDrag = true;
+        sheet.setPointerCapture(ev.pointerId); // the control under the pointer no longer gets the pointer: no click
+        sheet.classList.add("dragging");
+        document.activeElement && document.activeElement.blur();
+      }
       let dy = ev.clientY - lastY;
       lastY = ev.clientY;
       if (body && !onHead) {
@@ -875,12 +888,14 @@
       samples.push([performance.now(), ev.clientY]);
       if (samples.length > 5) samples.shift();
     };
-    const up = () => {
+    const up = (ev, aborted) => {
       sheet.removeEventListener("pointermove", move);
       sheet.removeEventListener("pointerup", up);
       sheet.removeEventListener("pointercancel", up);
       sheet.classList.remove("dragging");
       sheet.style.transform = "";
+      headDrag = false;
+      if (aborted || (ev && ev.type === "pointercancel" && !moved)) return; // the browser took it (a horizontal pan)
       if (!moved) {
         // a tap on the handle: collapsed rises one step, anything else goes back down
         if (onHead && !e.target.closest("a, button")) setSheetState(sheet, sheetState(sheet) === "collapsed" ? nextUp(sheet) : "collapsed");
@@ -909,7 +924,7 @@
     const move = (ev) => {
       const cy = ev.touches[0].clientY;
       if (!mode) {
-        if (Math.abs(cy - y0) < 6) return;
+        if (Math.abs(cy - y0) < SLOP) return;
         const atTop = from === offs[offs.length - 1].st; // Full, or the device sheet's open state
         mode = !atTop || (scroller.scrollTop <= 0 && cy > y0) ? "sheet" : "native";
         if (mode === "sheet") sheet.classList.add("dragging");
@@ -1092,6 +1107,11 @@
   phone.addEventListener("scroll", (e) => {
     const f = e.target.parentElement && e.target.parentElement.querySelector(":scope > .top-fade.when-scrolled");
     if (f) f.classList.toggle("on", e.target.scrollTop > 0);
+    // a sheet's content fades out under its header once it is scrolled
+    if (e.target.classList && e.target.classList.contains("sheet-body")) {
+      const fade = e.target.previousElementSibling;
+      if (fade && fade.classList.contains("sheet-fade")) fade.classList.toggle("on", e.target.scrollTop > 0);
+    }
   }, true);
 
   // an empty search field closes when it loses focus

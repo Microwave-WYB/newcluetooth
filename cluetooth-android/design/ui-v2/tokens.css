@@ -91,6 +91,8 @@
   --icon-btn: 40px;         /* round icon button: also its touch target */
   --icon-btn-glyph: 16px;
   --gmark: 12px;            /* a GATT step's status mark */
+  --sheet-fade-h: 24px;      /* the fade under a sheet's header while its content is scrolled */
+  --drag-slop: 8px;         /* a pointer moving less is a tap; more, vertically, drags the sheet */
   --chip-h: 34px;
   --chip-pad: 14px;
   --chip-gap: 6px;
