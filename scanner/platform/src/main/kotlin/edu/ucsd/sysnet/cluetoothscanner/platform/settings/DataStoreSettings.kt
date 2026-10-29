@@ -44,8 +44,12 @@ class DataStoreSettings(
     override suspend fun update(transform: (Settings) -> Settings) {
         store.edit { prefs ->
             val next = transform(toSettings(prefs))
-            next.userId?.let { require(Settings.isValidUserId(it)) { "User ID must be lowercase letters and digits, 1-9" } }
-            if (next.userId == null) prefs.remove(USER_ID) else prefs[USER_ID] = next.userId!!
+            val userId = next.userId
+            // The API's documented refusal: the caller (the O-2 form) shows the rule; nothing is written.
+            if (userId != null && !Settings.isValidUserId(userId)) {
+                throw IllegalArgumentException("User ID must be lowercase letters and digits, 1-9")
+            }
+            if (userId == null) prefs.remove(USER_ID) else prefs[USER_ID] = userId
             prefs[RECORD_ON_OPEN] = next.recordOnOpen
             prefs[WIFI_ONLY] = next.wifiOnlyUpload
             prefs[CODED_PHY] = next.scanCodedPhy

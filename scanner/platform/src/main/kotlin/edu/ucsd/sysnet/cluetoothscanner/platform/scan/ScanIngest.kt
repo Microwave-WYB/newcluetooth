@@ -95,7 +95,10 @@ class ScanIngest(
                 continue
             }
             val batch = ArrayList<ScanObservationInput>(maxBatch)
-            batch += (first as Next.Observation).value
+            when (first) {
+                is Next.Observation -> batch += first.value
+                is Next.Flush, Next.Timeout -> continue // a flush was handled above; a timeout needs a batch
+            }
             val deadline = nowMs() + maxDelayMs
             var flush: CompletableDeferred<Unit>? = null
             while (batch.size < maxBatch && flush == null) {

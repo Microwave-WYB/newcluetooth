@@ -28,7 +28,9 @@ object GattJson {
 
     fun encode(result: GattDiscoveryResult): String = toJson(result).toString()
 
-    fun toJson(result: GattDiscoveryResult): JsonObject = stripNul(build(result)) as JsonObject
+    fun toJson(result: GattDiscoveryResult): JsonObject = stripNulObject(build(result))
+
+    private fun stripNulObject(element: JsonObject): JsonObject = JsonObject(element.mapValues { (_, value) -> stripNul(value) })
 
     /** PostgreSQL cannot store NUL; names and error strings come from the peer and the stack. */
     private fun stripNul(element: JsonElement): JsonElement = when (element) {
