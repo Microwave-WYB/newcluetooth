@@ -111,8 +111,8 @@ Each component is built once. Its size, color and state rules come from these to
 - **C-3 Chip and ChipRow.**
   - Chip: 34 dp tall pill with 14 dp horizontal padding and 14 sp text. Unselected: `--chip-bg` (`--fill2`) with
     `--chip-fg` (`--t2`). Selected: `--chip-on-bg` (`--t1`) with `--chip-on-fg` (`--bg`) at weight 500.
-  - ChipRow: horizontally scrollable with no scrollbar, a 6 dp gap and `--edge` side padding. Order: All,
-    Unidentified, then the categories (Audio, Lighting, Sensors, Trackers, Wearables, Vehicles, Medical).
+  - ChipRow: horizontally scrollable with no scrollbar, a 6 dp gap and `--edge` side padding. The Discover sheet
+    has no chip row; filtering lives in the Filter sheet (D-3a).
 - **C-4 Segmented.**
   - A `--fill2` pill track with 2 dp padding. The selected thumb is `--seg` with `--t1`, weight 500 and
     `--shadow-thumb`. Unselected labels are `--t2`. Text is 14 sp.
@@ -247,6 +247,10 @@ Each component is built once. Its size, color and state rules come from these to
 
 - **S-1 One component.** Every bottom sheet is the same component: a `--panel` surface with `--shadow-sheet` and top
   corners of radius `--sheet-radius`.
+  - On phone a sheet always reaches the very bottom edge of the screen, full width, with square bottom corners, so it
+    covers the bottom corners on any screen shape.
+  - Its content gets bottom padding of the navigation-bar inset, and the background runs under the gesture bar. The
+    peek height excludes that inset.
 - **S-2 Corner buttons (phone).**
   - `--sheet-radius` = `--edge` + `--rb`/2 = 34 dp.
   - The corner buttons (the view switch at top-left, the X at top-right) are 40 dp. Their center x is 34 dp from the
@@ -337,7 +341,9 @@ Each component is built once. Its size, color and state rules come from these to
   - The centered segmented control:
     - [Nearby | All] while recording (default Nearby);
     - [This area | All] for history and All sessions (default All, reset to All on every session change).
-  - An empty right column.
+  - The filter button in the right column (D-3a). It is the same round IconButton as the view switch, with a
+    funnel icon, mirroring it at the corner, with its center under the search button's center. While any filter
+    is active it takes the selected style and shows a count badge. It is shown in both views.
 - **D-1a View switch transition.** Toggling categories ⇄ list crossfades the content and the chip row (`--t-fast`,
   no slide); the sheet height doesn't change.
 - **D-2 Categories view (default).** CategorySections built from the session:
@@ -345,8 +351,27 @@ Each component is built once. Its size, color and state rules come from these to
   - "Unidentified devices" comes last as a single card.
   - Nearby keeps only products with a non-stale device. All keeps every product the session saw.
 - **D-3 List view.**
-  - The ChipRow sits under the header, followed by DeviceRows in the session's fixed order (G-9).
-  - The category chip filters rows. Nearby hides stale rows.
+  - DeviceRows sit directly under the header, in the session's fixed order (G-9). There is no chip row.
+  - Nearby hides stale rows. The filters come from the Filter sheet (D-3a).
+- **D-3a Filter sheet.** A pushed sheet titled "Filter", with the X and the usual exit logic.
+  - From top to bottom:
+    1. switches, AND-combined:
+       - Readable: the matched wiki page has a `decoder.js`, so the advertisement is decodable without connecting.
+         Decoding itself is deferred to issue #39.
+       - Trackers: the `asset-tracker` category.
+       - Vulnerable: the matched page links a vulnerability page.
+    2. "Identification" [Any | Identified | Unidentified], default Any;
+    3. "Categories": a checkbox list of every category present in the scope (data-driven from the wiki; a device
+       matches any checked category);
+    4. a "Clear" text button.
+  - Changes apply live.
+  - Category counts are faceted: each count is the devices that would show after checking that category. They
+    apply every other active constraint (the switches, Identification, This area, Nearby, the Apple filter) but not the
+    category facet itself, so a count always equals the resulting list length.
+  - The row order is fixed when the sheet opens. Counts update in place. A row at 0 stays in place, dimmed, and
+    can still be unchecked.
+  - All filters reset when the session view changes. Search ignores the filters, which come back unchanged when
+    search state ends.
 - **D-4 This area.**
   - With This area selected, the content (list rows, category cards and their counts, product device lists) includes
     only devices whose point lies in the current map viewport.
@@ -560,7 +585,16 @@ Each component is built once. Its size, color and state rules come from these to
     6. a "Filters" section label;
     7. switch "Hide unnamed Apple devices" (default on), with "Only what you see; scanning and recording keep
        everything";
-    8. "App version".
+    8. a "Storage" section label;
+    9. "Storage used", with the total and a breakdown (database / raw files / map cache);
+    10. "Export data": choose the scope (one session or All sessions), then the format, then hand off to the system
+        share sheet or save to Downloads. The formats are:
+        - Raw (Parquet): plaintext payload v3 plus the gatt/v1 JSON;
+        - Table (CSV): converted row for row from the Parquet, with trailing `session_id` and `source_file` columns;
+        - Database (SQLite): a snapshot of the aggregated, research-aligned tables;
+    11. "Delete local data": choose the scope, then a confirmation. Un-uploaded data is kept until it has uploaded,
+        unless the user explicitly confirms losing it in a second step;
+    12. "App version".
 - **O-2 Onboarding.** On first launch, four full-screen steps. Each has "N of 4" (12.5 `--t3`), a 24/30 title, a body,
   and Back (tonal, from step 2) on the left with Next/Done (primary) on the right.
   1. Permissions: Nearby devices, Precise location and Notifications (optional), each with a one-line reason and a
@@ -581,10 +615,20 @@ Each component is built once. Its size, color and state rules come from these to
   - Radius `--panel-radius` = 8 + 44/2 = 30 dp, with `--shadow-raised`.
   - Only the top level is visible. Push, pop and restore follow S-4, S-7 and S-8.
 - **T-2 Panel states.**
-  - Two states: Open (the full column, with native scrolling content) and Collapsed (the header only).
-  - It opens Open. Tapping the header toggles between the two.
-  - The bottom sheet's Half, drag snapping and wheel rules do not apply.
-  - No scrim; the map stays usable.
+  - Two states: Open (the full column) and Partial (the top edge stays put and the height shrinks to
+    `--panel-partial-h`, 45% of the column, never less than the header plus about 3 rows).
+  - The content stays scrollable in both states, and the panel clips its content to its rounded shape. The chip row
+    and everything else stay inside it.
+  - A user pan or zoom of the map moves Open to Partial; app camera moves don't. Tapping the header toggles Open and
+    Partial. Every level behaves the same: Discover, product, device, sessions and search results. Sessions and
+    search results have no header to tap.
+  - In Partial, the panel's bottom shows a ~48 dp gradient from transparent to `--panel` with no blur, and on it a
+    centered, handle-sized (~36 dp wide) shallow V chevron in `--t2`. The chevron has a tap target of about
+    120 × 44 dp and expands the panel to Open. Both fade out in Open.
+  - No level can ever be header-only. A saved or restored "collapsed" state maps to Partial. A pushed level opens
+    at Open, and popping restores the state below (Open or Partial).
+  - The bottom sheet's Half, drag snapping and wheel rules do not apply. There is no scrim, so the map stays usable.
+  - Height changes animate with `--t-std` / `--ease`.
 - **T-3 Concentric corners.** The panel has no handle zone. Its header buttons sit on the panel's corner arcs: center
   depth and inset are 30 dp. Inner rows follow G-13a: 8 dp inset with radius 22.
 - **T-4 Top row.**
@@ -617,7 +661,7 @@ The UI gets data only through these functions. Their Compose and Rust equivalent
 
 | Function | Returns |
 |---|---|
-| `getCategories()` | the chip-row categories, Unidentified first |
+| `getCategoryCounts(scope, opts)` | categories present in a scope with device counts (respecting the display filter) |
 | `getRecordings()` | finished sessions, newest first |
 | `getCurrentRecording()` | the recording session, or null |
 | `getRecording(id)` | one session: route plus one strongest point per device; `"all"` works as an id |

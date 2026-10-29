@@ -1,0 +1,705 @@
+{
+  "generatedBy": "cluetooth-android/design/ui-v2/export.mjs",
+  "source": "map-style.js",
+  "baseStyle": {
+    "light": "https://tiles.openfreemap.org/styles/liberty",
+    "dark": "https://tiles.openfreemap.org/styles/dark"
+  },
+  "sources": {
+    "route": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": []
+      }
+    },
+    "ends": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": []
+      }
+    },
+    "density": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": []
+      }
+    },
+    "devices": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": []
+      },
+      "cluster": true,
+      "clusterRadius": 50,
+      "clusterMaxZoom": 18
+    },
+    "sightings": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": []
+      }
+    },
+    "me": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": []
+      }
+    }
+  },
+  "values": {
+    "light": {
+      "route": "#0064d4",
+      "routeOpacity": 0.35,
+      "density": "#0064d4",
+      "densityOpacity": 0.035,
+      "densityRadius": 16,
+      "point": "#0064d4",
+      "stroke": "#ffffff",
+      "clusterText": "#ffffff",
+      "selected": "#111112",
+      "me": "#0064d4",
+      "rssiStrong": "#1c8a4c",
+      "rssiFair": "#b26b00",
+      "rssiWeak": "#c4372f",
+      "start": "#1c8a4c",
+      "end": "#111112",
+      "endText": "#111112",
+      "halo": "#ffffff",
+      "font": "Noto Sans Bold"
+    },
+    "dark": {
+      "route": "#3b9bff",
+      "routeOpacity": 0.35,
+      "density": "#3b9bff",
+      "densityOpacity": 0.035,
+      "densityRadius": 16,
+      "point": "#3b9bff",
+      "stroke": "#ffffff",
+      "clusterText": "#ffffff",
+      "selected": "#f5f5f6",
+      "me": "#3b9bff",
+      "rssiStrong": "#4cc27f",
+      "rssiFair": "#f0b03a",
+      "rssiWeak": "#ff6b62",
+      "start": "#4cc27f",
+      "end": "#f5f5f6",
+      "endText": "#f5f5f6",
+      "halo": "#28292b",
+      "font": "Noto Sans Bold"
+    }
+  },
+  "layers": {
+    "light": [
+      {
+        "id": "route",
+        "type": "line",
+        "source": "route",
+        "layout": {
+          "line-cap": "round",
+          "line-join": "round"
+        },
+        "paint": {
+          "line-color": "#0064d4",
+          "line-width": 4,
+          "line-opacity": 0.35
+        }
+      },
+      {
+        "id": "density",
+        "type": "circle",
+        "source": "density",
+        "paint": {
+          "circle-radius": 16,
+          "circle-color": "#0064d4",
+          "circle-opacity": 0.035
+        }
+      },
+      {
+        "id": "clusters",
+        "type": "circle",
+        "source": "devices",
+        "filter": [
+          "has",
+          "point_count"
+        ],
+        "paint": {
+          "circle-color": "#0064d4",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
+          "circle-radius": [
+            "step",
+            [
+              "get",
+              "point_count"
+            ],
+            13,
+            10,
+            16,
+            50,
+            20,
+            200,
+            24
+          ],
+          "circle-opacity": 1,
+          "circle-stroke-opacity": 1
+        }
+      },
+      {
+        "id": "cluster-count",
+        "type": "symbol",
+        "source": "devices",
+        "filter": [
+          "has",
+          "point_count"
+        ],
+        "layout": {
+          "text-field": [
+            "get",
+            "point_count_abbreviated"
+          ],
+          "text-font": [
+            "Noto Sans Bold"
+          ],
+          "text-size": 12,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true
+        },
+        "paint": {
+          "text-color": "#ffffff",
+          "text-opacity": 1
+        }
+      },
+      {
+        "id": "points",
+        "type": "circle",
+        "source": "devices",
+        "filter": [
+          "!",
+          [
+            "has",
+            "point_count"
+          ]
+        ],
+        "paint": {
+          "circle-radius": 5,
+          "circle-color": "#0064d4",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1.5,
+          "circle-opacity": 1,
+          "circle-stroke-opacity": 1
+        }
+      },
+      {
+        "id": "sightings",
+        "type": "circle",
+        "source": "sightings",
+        "paint": {
+          "circle-radius": 6,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+          "circle-color": [
+            "step",
+            [
+              "get",
+              "rssi"
+            ],
+            "#c4372f",
+            -80,
+            "#b26b00",
+            -65,
+            "#1c8a4c"
+          ]
+        }
+      },
+      {
+        "id": "point-selected",
+        "type": "circle",
+        "source": "devices",
+        "filter": [
+          "==",
+          [
+            "get",
+            "addr"
+          ],
+          ""
+        ],
+        "paint": {
+          "circle-radius": 8,
+          "circle-color": "#111112",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2
+        }
+      },
+      {
+        "id": "me",
+        "type": "circle",
+        "source": "me",
+        "paint": {
+          "circle-radius": 8,
+          "circle-color": "#0064d4",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 3
+        }
+      },
+      {
+        "id": "end-dots",
+        "type": "circle",
+        "source": "ends",
+        "paint": {
+          "circle-radius": 5,
+          "circle-color": [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "start",
+            "#1c8a4c",
+            "#111112"
+          ],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2
+        }
+      },
+      {
+        "id": "end-labels",
+        "type": "symbol",
+        "source": "ends",
+        "layout": {
+          "text-field": [
+            "get",
+            "label"
+          ],
+          "text-font": [
+            "Noto Sans Bold"
+          ],
+          "text-size": 12,
+          "text-anchor": [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "start",
+            "bottom",
+            "top"
+          ],
+          "text-offset": [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "start",
+            [
+              "literal",
+              [
+                0,
+                -0.8
+              ]
+            ],
+            [
+              "literal",
+              [
+                0,
+                0.8
+              ]
+            ]
+          ],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true
+        },
+        "paint": {
+          "text-color": [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "start",
+            "#1c8a4c",
+            "#111112"
+          ],
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 2
+        }
+      }
+    ],
+    "dark": [
+      {
+        "id": "route",
+        "type": "line",
+        "source": "route",
+        "layout": {
+          "line-cap": "round",
+          "line-join": "round"
+        },
+        "paint": {
+          "line-color": "#3b9bff",
+          "line-width": 4,
+          "line-opacity": 0.35
+        }
+      },
+      {
+        "id": "density",
+        "type": "circle",
+        "source": "density",
+        "paint": {
+          "circle-radius": 16,
+          "circle-color": "#3b9bff",
+          "circle-opacity": 0.035
+        }
+      },
+      {
+        "id": "clusters",
+        "type": "circle",
+        "source": "devices",
+        "filter": [
+          "has",
+          "point_count"
+        ],
+        "paint": {
+          "circle-color": "#3b9bff",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
+          "circle-radius": [
+            "step",
+            [
+              "get",
+              "point_count"
+            ],
+            13,
+            10,
+            16,
+            50,
+            20,
+            200,
+            24
+          ],
+          "circle-opacity": 1,
+          "circle-stroke-opacity": 1
+        }
+      },
+      {
+        "id": "cluster-count",
+        "type": "symbol",
+        "source": "devices",
+        "filter": [
+          "has",
+          "point_count"
+        ],
+        "layout": {
+          "text-field": [
+            "get",
+            "point_count_abbreviated"
+          ],
+          "text-font": [
+            "Noto Sans Bold"
+          ],
+          "text-size": 12,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true
+        },
+        "paint": {
+          "text-color": "#ffffff",
+          "text-opacity": 1
+        }
+      },
+      {
+        "id": "points",
+        "type": "circle",
+        "source": "devices",
+        "filter": [
+          "!",
+          [
+            "has",
+            "point_count"
+          ]
+        ],
+        "paint": {
+          "circle-radius": 5,
+          "circle-color": "#3b9bff",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1.5,
+          "circle-opacity": 1,
+          "circle-stroke-opacity": 1
+        }
+      },
+      {
+        "id": "sightings",
+        "type": "circle",
+        "source": "sightings",
+        "paint": {
+          "circle-radius": 6,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+          "circle-color": [
+            "step",
+            [
+              "get",
+              "rssi"
+            ],
+            "#ff6b62",
+            -80,
+            "#f0b03a",
+            -65,
+            "#4cc27f"
+          ]
+        }
+      },
+      {
+        "id": "point-selected",
+        "type": "circle",
+        "source": "devices",
+        "filter": [
+          "==",
+          [
+            "get",
+            "addr"
+          ],
+          ""
+        ],
+        "paint": {
+          "circle-radius": 8,
+          "circle-color": "#f5f5f6",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2
+        }
+      },
+      {
+        "id": "me",
+        "type": "circle",
+        "source": "me",
+        "paint": {
+          "circle-radius": 8,
+          "circle-color": "#3b9bff",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 3
+        }
+      },
+      {
+        "id": "end-dots",
+        "type": "circle",
+        "source": "ends",
+        "paint": {
+          "circle-radius": 5,
+          "circle-color": [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "start",
+            "#4cc27f",
+            "#f5f5f6"
+          ],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2
+        }
+      },
+      {
+        "id": "end-labels",
+        "type": "symbol",
+        "source": "ends",
+        "layout": {
+          "text-field": [
+            "get",
+            "label"
+          ],
+          "text-font": [
+            "Noto Sans Bold"
+          ],
+          "text-size": 12,
+          "text-anchor": [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "start",
+            "bottom",
+            "top"
+          ],
+          "text-offset": [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "start",
+            [
+              "literal",
+              [
+                0,
+                -0.8
+              ]
+            ],
+            [
+              "literal",
+              [
+                0,
+                0.8
+              ]
+            ]
+          ],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true
+        },
+        "paint": {
+          "text-color": [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "start",
+            "#4cc27f",
+            "#f5f5f6"
+          ],
+          "text-halo-color": "#28292b",
+          "text-halo-width": 2
+        }
+      }
+    ]
+  },
+  "runtime": {
+    "routeOpacity": {
+      "session": 0.35,
+      "allSessions": 0.18
+    },
+    "dim": 0.42,
+    "selection": {
+      "doc": "map-style.js selectionProps(addr, dim): [layerId, kind, property, value] to set; addr null clears",
+      "set": [
+        [
+          "points",
+          "paint",
+          "circle-opacity",
+          [
+            "case",
+            [
+              "==",
+              [
+                "get",
+                "addr"
+              ],
+              "ADDR"
+            ],
+            1,
+            "DIM"
+          ]
+        ],
+        [
+          "points",
+          "paint",
+          "circle-stroke-opacity",
+          [
+            "case",
+            [
+              "==",
+              [
+                "get",
+                "addr"
+              ],
+              "ADDR"
+            ],
+            1,
+            "DIM"
+          ]
+        ],
+        [
+          "clusters",
+          "paint",
+          "circle-opacity",
+          "DIM"
+        ],
+        [
+          "clusters",
+          "paint",
+          "circle-stroke-opacity",
+          "DIM"
+        ],
+        [
+          "cluster-count",
+          "paint",
+          "text-opacity",
+          "DIM"
+        ],
+        [
+          "point-selected",
+          "filter",
+          null,
+          [
+            "==",
+            [
+              "get",
+              "addr"
+            ],
+            "ADDR"
+          ]
+        ]
+      ],
+      "clear": [
+        [
+          "points",
+          "paint",
+          "circle-opacity",
+          1
+        ],
+        [
+          "points",
+          "paint",
+          "circle-stroke-opacity",
+          1
+        ],
+        [
+          "clusters",
+          "paint",
+          "circle-opacity",
+          1
+        ],
+        [
+          "clusters",
+          "paint",
+          "circle-stroke-opacity",
+          1
+        ],
+        [
+          "cluster-count",
+          "paint",
+          "text-opacity",
+          1
+        ],
+        [
+          "point-selected",
+          "filter",
+          null,
+          [
+            "==",
+            [
+              "get",
+              "addr"
+            ],
+            ""
+          ]
+        ]
+      ]
+    },
+    "ends": [
+      {
+        "kind": "start",
+        "label": "Start"
+      },
+      {
+        "kind": "end",
+        "label": "End"
+      }
+    ]
+  }
+}
