@@ -56,6 +56,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveChart
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ButtonKind
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Segmented
@@ -86,23 +87,24 @@ internal fun DeviceSheet(state: SheetsState, entry: SheetEntry, key: Long) {
     var content by remember { mutableStateOf(DeviceContent()) }
     val gatt = remember(entry.id) { state.gattFor(entry, key) }
     LaunchedEffect(key) {
-        content = content.withDetail(state.core.device(state.scope, key))
-        if (gatt.state == GattUi.Idle) gatt.showLast(state.core.deviceGatt(key)) // D-13.7
+        content = content.withDetail(state.load(SheetQuery.Device(key)))
+        // D-13.7; a failed read shows the tab as never read
+        if (gatt.state == GattUi.Idle) (state.load(SheetQuery.LastGatt(key)) as? Outcome.Ok)?.let { gatt.showLast(it.value) }
     }
     if (state.live) {
         LaunchedEffect(key) { // D-10: the chart rides on the deltas of the focused key
-            state.core.setLiveFocus(key)
-            content = content.withChart(state.core.deviceChart(key))
-            state.core.live.collect { delta -> delta.chart?.takeIf { it.key == key }?.let { content = content.withChart(it) } }
+            content = content.withChart(state.load(SheetQuery.Chart(key)))
+            state.chartUpdates(key).collect { content = content.withChart(it) }
         }
     }
-    val row = state.rows.rows[key]
+    val row = state.rows[key]
     val detail = content.detail
     SheetFrame(state.stack, entry, state.metrics, header = {
         PushedHeader(state) { detail.valueOrNull()?.let { DeviceHead(it, row?.rssi ?: it.rssi) } }
     }) {
         when (detail) {
             Loaded.Pending, Loaded.Missing -> Unit
+            is Loaded.Failed -> EmptyText(detail.message)
             is Loaded.Found -> DeviceBody(state, entry, content, detail.value, row?.rssi ?: detail.value.rssi, gatt) { content = content.withTab(it) }
         }
     }

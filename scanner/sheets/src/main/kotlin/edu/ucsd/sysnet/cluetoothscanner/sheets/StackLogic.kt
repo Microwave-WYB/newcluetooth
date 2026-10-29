@@ -10,11 +10,14 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 @JvmInline
 value class SheetId(val raw: Long)
 
-/** One level: what it shows, its saved phone height and tablet panel state (S-7), and the camera saved under it. */
-data class Level(
+/**
+ * One level: what it shows, its saved phone height and tablet panel state (S-7), and the camera saved under it. The
+ * kind is in the type, so the root is a `Level<SheetKind.Discover>` and a pushed level a `Level<PushedKind>`.
+ */
+data class Level<out K : SheetKind>(
     val id: SheetId,
-    val kind: SheetKind,
-    val height: SheetHeight,
+    val kind: K,
+    val height: RestHeight,
     val panel: PanelHeight,
     val camera: CameraSnapshot? = null,
 )
@@ -31,33 +34,66 @@ sealed interface StackTransition {
     data class SlidingIn(val under: SheetId) : StackTransition
 
     /** Popped levels sliding out over the revealed top, the most recent first in the list's draw order. */
-    data class SlidingOut(val leaving: List<Level>) : StackTransition
+    data class SlidingOut(val leaving: List<Level<PushedKind>>) : StackTransition
 }
 
 /**
- * The stack: [root] (Discover) never closes, so it is not part of [pushed]; [pushed] is ordered bottom to top.
- * There is at most one Filter level, and a device level is never directly over another device level (S-4).
+ * What sits directly on the root when it is not a product: one device, or the Filter sheet (opened from the root's
+ * header only, so there is at most one) with at most one device over it.
+ */
+sealed interface Base {
+    data class Device(val device: Level<SheetKind.Device>) : Base
+    data class Filter(val filter: Level<SheetKind.Filter>, val device: Level<SheetKind.Device>? = null) : Base
+}
+
+/** A product level with at most one device level over it. */
+data class ProductFrame(val product: Level<SheetKind.Product>, val device: Level<SheetKind.Device>? = null)
+
+/**
+ * The stack, bottom to top: [root] (Discover, never closes), then [base], then [frames]. The shape is the rule: a
+ * device level only ever sits on the root, the Filter sheet or a product (S-4: never on a device), and there is at
+ * most one Filter level, directly on the root.
  */
 data class StackState(
-    val root: Level,
-    val pushed: List<Level> = emptyList(),
+    val root: Level<SheetKind.Discover>,
+    val base: Base? = null,
+    val frames: List<ProductFrame> = emptyList(),
     val transition: StackTransition = StackTransition.Idle,
     val tablet: Boolean = false,
     val nextId: Long = root.id.raw + 1,
 ) {
-    val levels: List<Level> get() = listOf(root) + pushed
-    val top: Level get() = pushed.lastOrNull() ?: root
+    /** The pushed levels, bottom to top. */
+    val pushed: List<Level<PushedKind>>
+        get() = buildList {
+            when (base) {
+                null -> Unit
+                is Base.Device -> add(base.device)
+                is Base.Filter -> {
+                    add(base.filter)
+                    base.device?.let(::add)
+                }
+            }
+            for (frame in frames) {
+                add(frame.product)
+                frame.device?.let(::add)
+            }
+        }
+
+    val levels: List<Level<SheetKind>> get() = listOf(root) + pushed
+    val top: Level<SheetKind> get() = pushed.lastOrNull() ?: root
 
     /** The level with [id] in the stack or sliding out; null once it has gone. */
-    fun levelOf(id: SheetId): Level? =
+    fun levelOf(id: SheetId): Level<SheetKind>? =
         levels.firstOrNull { it.id == id } ?: (transition as? StackTransition.SlidingOut)?.leaving?.firstOrNull { it.id == id }
 
     /** S-9: only while a pushed level is at Full, never on the tablet panel. */
-    val scrimVisible: Boolean get() = !tablet && pushed.isNotEmpty() && top.height == SheetHeight.Full
+    val scrimVisible: Boolean get() = !tablet && pushed.isNotEmpty() && top.height == RestHeight.Full
 
     companion object {
-        fun initial(root: SheetKind, rootHeight: SheetHeight) =
-            StackState(Level(SheetId(1), root, rootHeight, rootHeight.toPanel()))
+        fun initial(rootHeight: SheetHeight): StackState {
+            val height = rootHeight.rest() ?: RestHeight.Collapsed // the root has no Dismissed
+            return StackState(Level(SheetId(1), SheetKind.Discover, height, height.toPanel()))
+        }
     }
 }
 
@@ -68,9 +104,9 @@ enum class PopReason { Close, Back, Scrim, EmptyMap, Drag }
 sealed interface StackEvent {
     /**
      * S-4, S-6: [camera] is the map's camera now, saved under the current top. A device pushed while a device level
-     * is on top replaces it (S-4); a second Filter level is not opened.
+     * is on top replaces it (S-4); the Filter sheet opens only on the root alone (its button is the root's).
      */
-    data class Push(val kind: SheetKind, val camera: CameraSnapshot?) : StackEvent
+    data class Push(val kind: PushedKind, val camera: CameraSnapshot?) : StackEvent
     data class Pop(val reason: PopReason) : StackEvent
     /** V-7. */
     data object Reset : StackEvent
@@ -119,7 +155,7 @@ sealed interface StackEffect {
     /** S-17: the map follows the new top; [opening] is false when it was revealed by a pop. */
     data class TopChanged(val id: SheetId, val opening: Boolean) : StackEffect
     /** D-13.8: a level left the stack. */
-    data class Removed(val level: Level) : StackEffect
+    data class Removed(val level: Level<PushedKind>) : StackEffect
 }
 
 /** The reducer's result. */
@@ -134,11 +170,11 @@ fun reduceStack(state: StackState, event: StackEvent): StackStep = when (event) 
     is StackEvent.SetPanel -> StackStep(state.update(event.id) { it.copy(panel = event.panel) })
     is StackEvent.TapHeader -> tapHeader(state, event.id)
     StackEvent.RootHeaderControl ->
-        if (!state.tablet && state.pushed.isEmpty() && state.root.height == SheetHeight.Collapsed) setHeight(state, state.root.id, SheetHeight.Half)
+        if (!state.tablet && state.pushed.isEmpty() && state.root.height == RestHeight.Collapsed) setHeight(state, state.root.id, SheetHeight.Half)
         else StackStep(state)
     is StackEvent.MapUserGesture -> when {
         state.tablet -> StackStep(state.update(state.top.id) { it.copy(panel = PanelHeight.Partial) })
-        event.dragging || state.top.height == SheetHeight.Collapsed -> StackStep(state)
+        event.dragging || state.top.height == RestHeight.Collapsed -> StackStep(state)
         else -> setHeight(state, state.top.id, SheetHeight.Collapsed)
     }
     StackEvent.ExpandPanel -> StackStep(state.update(state.top.id) { it.copy(panel = PanelHeight.Open) })
@@ -151,7 +187,7 @@ fun reduceStack(state: StackState, event: StackEvent): StackStep = when (event) 
         when {
             level == null -> StackStep(state)
             event.target != null -> setHeight(state, event.id, event.target)
-            event.resettle -> setHeight(state, event.id, level.height)
+            event.resettle -> setHeight(state, event.id, level.height.sheet)
             else -> StackStep(state)
         }
     }
@@ -170,30 +206,77 @@ fun reduceStack(state: StackState, event: StackEvent): StackStep = when (event) 
     }
 }
 
-private fun StackState.update(id: SheetId, f: (Level) -> Level): StackState = when (id) {
-    root.id -> copy(root = f(root))
-    else -> copy(pushed = pushed.map { if (it.id == id) f(it) else it })
+/** [f]'s height, panel and camera on this level; its id and kind stay. */
+private fun <K : SheetKind> Level<K>.with(f: (Level<SheetKind>) -> Level<SheetKind>): Level<K> =
+    f(this).let { copy(height = it.height, panel = it.panel, camera = it.camera) }
+
+/** Every level through [f], keeping the stack's shape. */
+private fun StackState.mapLevels(f: (Level<SheetKind>) -> Level<SheetKind>): StackState = copy(
+    root = root.with(f),
+    base = when (val b = base) {
+        null -> null
+        is Base.Device -> Base.Device(b.device.with(f))
+        is Base.Filter -> Base.Filter(b.filter.with(f), b.device?.with(f))
+    },
+    frames = frames.map { ProductFrame(it.product.with(f), it.device?.with(f)) },
+)
+
+private fun StackState.update(id: SheetId, f: (Level<SheetKind>) -> Level<SheetKind>): StackState =
+    mapLevels { if (it.id == id) f(it) else it }
+
+private fun StackState.leavingLevels(): List<Level<PushedKind>> = (transition as? StackTransition.SlidingOut)?.leaving.orEmpty()
+
+/** The device level on top, if the top is one. */
+private fun StackState.topDevice(): Level<SheetKind.Device>? {
+    val last = frames.lastOrNull()
+    return if (last != null) last.device
+    else when (val b = base) {
+        null -> null
+        is Base.Device -> b.device
+        is Base.Filter -> b.device
+    }
 }
 
-private fun StackState.leavingLevels(): List<Level> = (transition as? StackTransition.SlidingOut)?.leaving.orEmpty()
+/** [device] on top: over the top product or Filter sheet, on the root, or in place of the device on top. */
+private fun StackState.withTopDevice(device: Level<SheetKind.Device>): StackState {
+    val last = frames.lastOrNull()
+    if (last != null) return copy(frames = frames.dropLast(1) + last.copy(device = device))
+    return when (val b = base) {
+        null, is Base.Device -> copy(base = Base.Device(device))
+        is Base.Filter -> copy(base = b.copy(device = device))
+    }
+}
+
+/** The stack without its top pushed level; null when only the root is left. */
+private fun StackState.withoutTop(): StackState? {
+    val last = frames.lastOrNull()
+    if (last != null) return copy(frames = frames.dropLast(1) + listOfNotNull(last.copy(device = null).takeIf { last.device != null }))
+    return when (val b = base) {
+        null -> null
+        is Base.Device -> copy(base = null)
+        is Base.Filter -> copy(base = if (b.device != null) b.copy(device = null) else null)
+    }
+}
 
 private fun push(state: StackState, event: StackEvent.Push): StackStep {
-    // at most one Filter level: the filter button is on the root's header only
-    if (event.kind == SheetKind.Filter && state.levels.any { it.kind == SheetKind.Filter }) return StackStep(state)
-    // S-4: a device over a device replaces it
-    if (event.kind is SheetKind.Device && state.top.kind is SheetKind.Device) return replaceTop(state, event.kind)
     val under = state.top
-    val level = Level(
-        SheetId(state.nextId), event.kind,
-        if (under.height == SheetHeight.Full) SheetHeight.Full else SheetHeight.Half,
+    fun <K : PushedKind> opened(kind: K) = Level(
+        SheetId(state.nextId), kind,
+        if (under.height == RestHeight.Full) RestHeight.Full else RestHeight.Half,
         PanelHeight.Open,
     )
-    val saved = state.update(under.id) { it.copy(camera = event.camera) }
-    val next = saved.copy(
-        pushed = saved.pushed + level,
-        transition = if (state.tablet) StackTransition.Idle else StackTransition.SlidingIn(under.id),
-        nextId = state.nextId + 1,
-    )
+    val saved = state.update(under.id) { it.copy(camera = event.camera) }.copy(nextId = state.nextId + 1)
+    val (next, level) = when (val kind = event.kind) {
+        // the filter button is on the root's header only
+        SheetKind.Filter -> if (state.pushed.isNotEmpty()) return StackStep(state) else opened(SheetKind.Filter).let { saved.copy(base = Base.Filter(it)) to it }
+        is SheetKind.Device -> {
+            // S-4: a device over a device replaces it
+            val old = state.topDevice()
+            if (old != null) return replaceDevice(state, old, kind)
+            opened(kind).let { saved.withTopDevice(it) to it }
+        }
+        is SheetKind.Product -> opened(kind).let { saved.copy(frames = saved.frames + ProductFrame(it)) to it }
+    }
     val effects = buildList {
         add(StackEffect.Stop(under.id))
         add(StackEffect.Rest(under.id))
@@ -201,15 +284,13 @@ private fun push(state: StackState, event: StackEvent.Push): StackStep {
         if (!state.tablet) add(StackEffect.SlideIn(level.id))
         add(StackEffect.TopChanged(level.id, opening = true))
     }
-    return StackStep(next, effects)
+    return StackStep(next.copy(transition = if (state.tablet) StackTransition.Idle else StackTransition.SlidingIn(under.id)), effects)
 }
 
 /** S-4: a device level replaces the device level on top, at the same height. */
-private fun replaceTop(state: StackState, kind: SheetKind.Device): StackStep {
-    val old = state.pushed.lastOrNull() ?: return StackStep(state) // the root is never replaced
+private fun replaceDevice(state: StackState, old: Level<SheetKind.Device>, kind: SheetKind.Device): StackStep {
     val level = Level(SheetId(state.nextId), kind, old.height, old.panel)
-    val next = state.copy(
-        pushed = state.pushed.dropLast(1) + level,
+    val next = state.withTopDevice(level).copy(
         // S-7: the replacement rests at once, whatever the slide-in was doing
         transition = if (state.transition is StackTransition.SlidingIn) StackTransition.Idle else state.transition,
         nextId = state.nextId + 1,
@@ -222,8 +303,8 @@ private fun replaceTop(state: StackState, kind: SheetKind.Device): StackStep {
 
 private fun pop(state: StackState, reason: PopReason): StackStep {
     val out = state.pushed.lastOrNull() ?: return StackStep(state)
-    val remaining = state.pushed.dropLast(1)
-    val revealed = remaining.lastOrNull() ?: state.root
+    val remaining = state.withoutTop() ?: return StackStep(state)
+    val revealed = remaining.top
     val effects = mutableListOf<StackEffect>(StackEffect.Stop(out.id))
     val transition = if (state.tablet) {
         effects += StackEffect.Removed(out)
@@ -238,7 +319,7 @@ private fun pop(state: StackState, reason: PopReason): StackStep {
     }
     revealed.camera?.let { effects += StackEffect.RestoreCamera(it) }
     effects += StackEffect.TopChanged(revealed.id, opening = false)
-    return StackStep(state.copy(pushed = remaining, transition = transition), effects)
+    return StackStep(remaining.copy(transition = transition), effects)
 }
 
 private fun reset(state: StackState): StackStep {
@@ -247,21 +328,24 @@ private fun reset(state: StackState): StackStep {
         state.pushed.forEach { add(StackEffect.Removed(it)) }
         add(StackEffect.Rest(state.root.id))
     }
-    return StackStep(state.copy(pushed = emptyList(), transition = StackTransition.Idle), effects)
+    return StackStep(state.copy(base = null, frames = emptyList(), transition = StackTransition.Idle), effects)
 }
 
 private fun setHeight(state: StackState, id: SheetId, height: SheetHeight): StackStep {
     val level = state.levelOf(id) ?: return StackStep(state)
-    if (state.tablet) {
-        // the panel has its own state (T-2); the phone height is only kept for going back to phone (T-9)
-        return if (height == SheetHeight.Dismissed) StackStep(state) else StackStep(state.update(id) { it.copy(height = height) })
-    }
     val isTop = id == state.top.id
-    if (height == SheetHeight.Dismissed) {
-        return if (isTop && id != state.root.id) pop(state, PopReason.Drag) else setHeight(state, id, SheetHeight.Collapsed)
+    return when (val rest = height.rest()) {
+        // the panel has its own state (T-2); Dismissed means nothing there
+        null -> when {
+            state.tablet -> StackStep(state)
+            // S-5: past Collapsed a pushed top pops; the root stops at Collapsed
+            isTop && id != state.root.id -> pop(state, PopReason.Drag)
+            else -> setHeight(state, id, SheetHeight.Collapsed)
+        }
+        // the phone height is only kept for going back to phone (T-9)
+        else -> if (state.tablet) StackStep(state.update(id) { it.copy(height = rest) })
+        else StackStep(state.update(id) { it.copy(height = rest) }, if (isTop && level in state.levels) listOf(StackEffect.Ease(id)) else emptyList())
     }
-    val next = state.update(id) { it.copy(height = height) }
-    return StackStep(next, if (isTop && level in state.levels) listOf(StackEffect.Ease(id)) else emptyList())
 }
 
 private fun tapHeader(state: StackState, id: SheetId): StackStep {
@@ -270,26 +354,23 @@ private fun tapHeader(state: StackState, id: SheetId): StackStep {
     if (state.tablet) {
         return StackStep(state.update(id) { it.copy(panel = if (it.panel == PanelHeight.Open) PanelHeight.Partial else PanelHeight.Open) })
     }
-    val next = if (top.height == SheetHeight.Collapsed) stepUp(top.height) else SheetHeight.Collapsed
-    return setHeight(state, id, next)
+    val next = if (top.height == RestHeight.Collapsed) stepUp(top.height) else RestHeight.Collapsed
+    return setHeight(state, id, next.sheet)
 }
 
 /** S-11: one state up from [from] (Collapsed → Half → Full). */
-private fun stepUp(from: SheetHeight): SheetHeight = when (from) {
-    SheetHeight.Dismissed -> SheetHeight.Collapsed
-    SheetHeight.Collapsed -> SheetHeight.Half
-    SheetHeight.Half, SheetHeight.Full -> SheetHeight.Full
+private fun stepUp(from: RestHeight): RestHeight = when (from) {
+    RestHeight.Collapsed -> RestHeight.Half
+    RestHeight.Half, RestHeight.Full -> RestHeight.Full
 }
 
 private fun setLayout(state: StackState, tablet: Boolean): StackStep {
     if (tablet == state.tablet) return StackStep(state)
     val stops = (state.levels + state.leavingLevels()).flatMap { listOf(StackEffect.Stop(it.id), StackEffect.Rest(it.id)) }
     // T-9: phone to tablet opens every level; back, Partial comes back Collapsed and Open comes back Full
-    val map: (Level) -> Level =
-        if (tablet) { l -> l.copy(panel = PanelHeight.Open) }
-        else { l -> l.copy(height = if (l.panel == PanelHeight.Partial) SheetHeight.Collapsed else SheetHeight.Full) }
-    return StackStep(
-        state.copy(root = map(state.root), pushed = state.pushed.map(map), transition = StackTransition.Idle, tablet = tablet),
-        stops,
-    )
+    val next = state.mapLevels { l ->
+        if (tablet) l.copy(panel = PanelHeight.Open)
+        else l.copy(height = if (l.panel == PanelHeight.Partial) RestHeight.Collapsed else RestHeight.Full)
+    }
+    return StackStep(next.copy(transition = StackTransition.Idle, tablet = tablet), stops)
 }

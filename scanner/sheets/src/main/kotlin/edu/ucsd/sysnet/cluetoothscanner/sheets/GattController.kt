@@ -11,6 +11,8 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GattView
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 
 /** The device sheet's GATT tab state (docs/v2-api.md §5.4). */
@@ -43,8 +45,9 @@ class GattController(
     private val runner: GattRunner,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    var state by mutableStateOf<GattUi>(GattUi.Idle)
-        private set
+    private var gatt by mutableStateOf(GattState())
+
+    val state: GattUi get() = gatt.ui
 
     /** The running discovery: execution state, owned by this runner only. */
     private var run: Job? = null
@@ -64,20 +67,29 @@ class GattController(
     fun cancel() = dispatch(GattEvent.Cancel)
 
     private fun dispatch(event: GattEvent) {
-        val step = reduceGatt(state, event)
-        state = step.state
+        val step = reduceGatt(gatt, event)
+        gatt = step.state
         step.effects.forEach(::execute)
     }
 
     private fun execute(effect: GattEffect) {
         when (effect) {
-            GattEffect.StartRun -> run = scope.launch {
-                var last: GattView? = null
-                runner.discover(key).collect { view ->
-                    last = view
-                    dispatch(GattEvent.Progress(view))
+            is GattEffect.StartRun -> {
+                run?.cancel()
+                run = scope.launch {
+                    var last: GattView? = null
+                    // the runner's flow, through [outcomes]: a throw becomes RunFailed, never reaches the scope
+                    flow { emitAll(runner.discover(key)) }.outcomes().collect { view ->
+                        when (view) {
+                            is Outcome.Ok -> {
+                                last = view.value
+                                dispatch(GattEvent.Progress(effect.run, view.value))
+                            }
+                            is Outcome.Failed -> dispatch(GattEvent.RunFailed(effect.run))
+                        }
+                    }
+                    dispatch(GattEvent.Finished(effect.run, last))
                 }
-                dispatch(GattEvent.Finished(last))
             }
             GattEffect.CancelRun -> {
                 run?.cancel()
@@ -87,6 +99,9 @@ class GattController(
     }
 }
 
+/** The GATT tab's state: what it shows, and the number of the newest run (only its events count). */
+internal data class GattState(val ui: GattUi = GattUi.Idle, val run: Long = 0)
+
 /** What happens to the GATT tab (D-13). */
 internal sealed interface GattEvent {
     data class LastLoaded(val last: GattView?) : GattEvent
@@ -95,35 +110,63 @@ internal sealed interface GattEvent {
     data object TryAgain : GattEvent
     /** "I am authorized", at [startedMs] (the runner reads the clock). */
     data class Authorized(val key: DeviceKey, val startedMs: Long) : GattEvent
-    data class Progress(val view: GattView) : GattEvent
-    /** The runner's flow ended; [last] is its final view (null if it emitted none). */
-    data class Finished(val last: GattView?) : GattEvent
+    /** A view of run [run]. */
+    data class Progress(val run: Long, val view: GattView) : GattEvent
+    /** Run [run]'s flow ended; [last] is its final view (null if it emitted none). */
+    data class Finished(val run: Long, val last: GattView?) : GattEvent
+    /** Run [run]'s flow failed (the runner threw): the step that was running fails. */
+    data class RunFailed(val run: Long) : GattEvent
     data object Cancel : GattEvent
 }
 
-/** What the runner does: start the collector of `GattRunner.discover`, or cancel it (D-13.8). */
+/** What the runner does: start the collector of `GattRunner.discover` for run [StartRun.run], or cancel it (D-13.8). */
 internal sealed interface GattEffect {
-    data object StartRun : GattEffect
+    data class StartRun(val run: Long) : GattEffect
     data object CancelRun : GattEffect
 }
 
-internal data class GattStepResult(val state: GattUi, val effects: List<GattEffect> = emptyList())
+internal data class GattStepResult(val state: GattState, val effects: List<GattEffect> = emptyList())
 
-/** The pure D-13 logic. */
-internal fun reduceGatt(state: GattUi, event: GattEvent): GattStepResult = when (event) {
-    is GattEvent.LastLoaded -> {
-        val last = event.last
-        if (state != GattUi.Idle || last == null) GattStepResult(state) else GattStepResult(classify(last, final = true))
+/**
+ * The pure D-13 logic. A run's events count only while that run shows ([GattUi.Running] with its number): a
+ * cancelled or superseded run never changes the tab.
+ */
+internal fun reduceGatt(state: GattState, event: GattEvent): GattStepResult {
+    val ui = state.ui
+    fun show(next: GattUi) = GattStepResult(state.copy(ui = next))
+    fun current(run: Long) = ui is GattUi.Running && run == state.run
+    return when (event) {
+        is GattEvent.LastLoaded -> {
+            val last = event.last
+            if (ui != GattUi.Idle || last == null) GattStepResult(state) else show(classify(last, final = true))
+        }
+        GattEvent.Discover -> show(if (ui == GattUi.Idle) GattUi.Confirm else ui)
+        GattEvent.CancelPrompt -> show(if (ui == GattUi.Confirm) GattUi.Idle else ui)
+        GattEvent.TryAgain -> show(if (ui is GattUi.Failed) GattUi.Confirm else ui)
+        is GattEvent.Authorized ->
+            if (ui != GattUi.Confirm) GattStepResult(state)
+            else {
+                val run = state.run + 1
+                GattStepResult(GattState(GattUi.Running(starting(event.key, event.startedMs)), run), listOf(GattEffect.StartRun(run)))
+            }
+        is GattEvent.Progress -> if (current(event.run)) show(classify(event.view, final = false)) else GattStepResult(state)
+        is GattEvent.Finished ->
+            if (current(event.run)) show(event.last?.let { classify(it, final = true) } ?: GattUi.Idle) else GattStepResult(state)
+        is GattEvent.RunFailed -> {
+            val running = ui as? GattUi.Running
+            if (running == null || !current(event.run)) GattStepResult(state) else show(GattUi.Failed(failRunning(running.view)))
+        }
+        GattEvent.Cancel -> GattStepResult(state.copy(ui = if (ui is GattUi.Running) GattUi.Idle else ui), listOf(GattEffect.CancelRun))
     }
-    GattEvent.Discover -> GattStepResult(if (state == GattUi.Idle) GattUi.Confirm else state)
-    GattEvent.CancelPrompt -> GattStepResult(if (state == GattUi.Confirm) GattUi.Idle else state)
-    GattEvent.TryAgain -> GattStepResult(if (state is GattUi.Failed) GattUi.Confirm else state)
-    is GattEvent.Authorized ->
-        if (state != GattUi.Confirm) GattStepResult(state)
-        else GattStepResult(GattUi.Running(starting(event.key, event.startedMs)), listOf(GattEffect.StartRun))
-    is GattEvent.Progress -> GattStepResult(classify(event.view, final = false))
-    is GattEvent.Finished -> GattStepResult(event.last?.let { classify(it, final = true) } ?: GattUi.Idle)
-    GattEvent.Cancel -> GattStepResult(if (state is GattUi.Running) GattUi.Idle else state, listOf(GattEffect.CancelRun))
+}
+
+/** The view with its running step failed (no reason claimed: the runner gave none). */
+private fun failRunning(view: GattView): GattView {
+    val failing = view.steps.indexOfLast { it.state == GattStepState.Running }.takeIf { it >= 0 } ?: view.steps.lastIndex
+    return view.copy(
+        ok = false,
+        steps = view.steps.mapIndexed { i, step -> if (i == failing) step.copy(state = GattStepState.Failed) else step },
+    )
 }
 
 private fun starting(key: DeviceKey, startedMs: Long) = GattView(

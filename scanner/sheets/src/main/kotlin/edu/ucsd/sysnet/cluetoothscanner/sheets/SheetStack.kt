@@ -30,11 +30,11 @@ class SheetStackHooks(
  * read from the controller's immutable [StackState], plus the execution-layer state the runner and the composition
  * own: the animated offset, the drag session, the measured header and the composed lists with their saved scroll.
  */
-class SheetEntry internal constructor(val id: Long, val kind: SheetKind, private val owner: SheetStackController, private val initial: Level) {
-    private val level: Level get() = owner.state.levelOf(SheetId(id)) ?: initial
+class SheetEntry internal constructor(val id: Long, val kind: SheetKind, private val owner: SheetStackController, private val initial: Level<SheetKind>) {
+    private val level: Level<SheetKind> get() = owner.state.levelOf(SheetId(id)) ?: initial
 
     /** The saved phone height (S-5, S-7). */
-    val height: SheetHeight get() = level.height
+    val height: SheetHeight get() = level.height.sheet
 
     /** The tablet panel state (T-2). */
     var panel: PanelHeight
@@ -122,11 +122,10 @@ class SheetStackController(
     private val animator: OffsetAnimator,
     private val metrics: SheetMetrics = SheetMetrics(),
     private val hooks: SheetStackHooks = SheetStackHooks(),
-    root: SheetKind = SheetKind.Discover,
     rootHeight: SheetHeight = SheetHeight.Collapsed,
 ) {
     /** The stack's whole logical state. */
-    var state by mutableStateOf(StackState.initial(root, rootHeight))
+    var state by mutableStateOf(StackState.initial(rootHeight))
         private set
 
     private val handles = HashMap<Long, SheetEntry>()
@@ -176,7 +175,7 @@ class SheetStackController(
     // ---- Stack ----
 
     /** S-4, S-6: opens [kind] on top, at Half, or at Full when the sheet below is at Full. T-2: Open on tablet. */
-    fun push(kind: SheetKind): SheetEntry {
+    fun push(kind: PushedKind): SheetEntry {
         val under = top
         under.scroll = under.scrollReader?.invoke() ?: under.scroll
         dispatch(StackEvent.Push(kind, hooks.camera()))
@@ -185,7 +184,7 @@ class SheetStackController(
 
     /** S-4: a device opened while a device sheet is on top replaces it, at the same level and height. Only a device
      *  replaces a device; any other [kind] leaves the stack as it is. */
-    fun replaceTop(kind: SheetKind): SheetEntry =
+    fun replaceTop(kind: PushedKind): SheetEntry =
         if (kind is SheetKind.Device && state.top.kind is SheetKind.Device) push(kind) else top
 
     /** Opens a device: replacing a device sheet on top, otherwise pushing one (S-4). */
@@ -303,7 +302,7 @@ class SheetStackController(
         prune()
     }
 
-    private fun handle(level: Level): SheetEntry = handles.getOrPut(level.id.raw) { SheetEntry(level.id.raw, level.kind, this, level) }
+    private fun handle(level: Level<SheetKind>): SheetEntry = handles.getOrPut(level.id.raw) { SheetEntry(level.id.raw, level.kind, this, level) }
 
     private fun handleOf(id: SheetId): SheetEntry? = handles[id.raw] ?: state.levelOf(id)?.let(::handle)
 

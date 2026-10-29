@@ -80,7 +80,7 @@ class SheetsStateMapTest {
         val map = RecordingMap()
         val s = state(map)
         val before = map.cam
-        val page = s.core.products(s.scope, DeviceFilter()).flatMap { it.products }.first { it.id != UNIDENTIFIED }.id
+        val page = (s.load(SheetQuery.Products(DeviceFilter())) as Outcome.Ok).value.flatMap { it.products }.first { it.id != UNIDENTIFIED }.id
         s.openProduct(page)
         advanceUntilIdle()
         assertEquals(page, map.shown?.page)

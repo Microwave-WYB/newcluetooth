@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -29,6 +30,8 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.CategorySection
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.DeviceRow
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ButtonKind
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.IconButton
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.IconButtonKind
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ProductCard
@@ -48,6 +51,7 @@ internal object DiscoverTags {
     const val FILTER = "discover-filter"
     const val LIST = "discover-list"
     const val CATEGORIES = "discover-categories"
+    const val RETRY = "discover-retry"
 }
 
 /** The Discover sheet, the root (D-1..D-5; Q-5 in search state). */
@@ -59,8 +63,15 @@ internal fun DiscoverSheet(state: SheetsState, entry: SheetEntry) {
         state.stack, entry, state.metrics,
         header = { if (d.search != null) SearchHeader(d) else DiscoverHeader(state, tablet) },
     ) {
-        // the content needs the first sort: nothing while it loads, and no rows if it failed (DiscoverPhase)
-        if (d.phase !is DiscoverPhase.Ready) return@SheetFrame
+        // the content needs the first sort: nothing while it loads, and Try again if it failed (DiscoverPhase)
+        when (val phase = d.phase) {
+            is DiscoverPhase.Loading -> return@SheetFrame
+            is DiscoverPhase.Failed -> {
+                FailedNote(phase.message, onRetry = state::retry)
+                return@SheetFrame
+            }
+            is DiscoverPhase.Ready -> Unit
+        }
         when {
             d.search != null -> DeviceList(state, entry, d.rows, listKey = SEARCH_LIST, empty = {
                 EmptyText(if (d.search?.area != null) Strings.NoResultsInArea else Strings.NoDevicesMatch)
@@ -74,6 +85,15 @@ internal fun DiscoverSheet(state: SheetsState, entry: SheetEntry) {
                 }
             }
         }
+    }
+}
+
+/** The first sort failed: why, and Try again (back to Loading). */
+@Composable
+private fun FailedNote(message: String, onRetry: () -> Unit) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        EmptyText(message)
+        Button(Strings.TryAgain, onClick = onRetry, kind = ButtonKind.Tonal, modifier = Modifier.testTag(DiscoverTags.RETRY))
     }
 }
 
@@ -154,7 +174,7 @@ internal fun DeviceList(
         if (header != null) item(key = "header") { header() }
         if (keys.isEmpty()) item(key = "empty") { empty() }
         items(keys.asList(), key = { it }) { key ->
-            val row = state.rows.rows[key]
+            val row = state.rows[key]
             if (row == null) Box(Modifier.fillMaxWidth().height(Css.Row.minHeight)) else Row(state, row, tablet) { onOpen(key) }
         }
     }
@@ -180,16 +200,18 @@ private fun Categories(state: SheetsState, entry: SheetEntry) {
     var groups by remember { mutableStateOf<Loaded<List<CategoryGroup>>>(Loaded.Pending) }
     val filter = d.queryFilter()
     LaunchedEffect(filter, d.rows) {
-        groups = Loaded.Found(state.core.products(state.scope, filter))
+        groups = loadedOf(state.load(SheetQuery.Products(filter)))
         if (state.live) while (true) { // live cards update in place (§2.6); new ones are appended by the core order
             delay(LIVE_REFRESH_MS)
-            groups = Loaded.Found(state.core.products(state.scope, filter))
+            // a failed refresh keeps the cards shown
+            (state.load(SheetQuery.Products(filter)) as? Outcome.Ok)?.let { groups = Loaded.Found(it.value) }
         }
     }
     val listState = rememberSheetListState(entry, CATEGORIES_LIST)
     val tablet = state.stack.tablet
     val now = state.nowMs()
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag(DiscoverTags.CATEGORIES)) {
+        (groups as? Loaded.Failed)?.let { failed -> item { EmptyText(failed.message) } }
         val g = groups.valueOrNull() ?: return@LazyColumn
         if (g.isEmpty()) item { EmptyText(Strings.NoProductsMatch) }
         items(g, key = { it.category }) { group ->

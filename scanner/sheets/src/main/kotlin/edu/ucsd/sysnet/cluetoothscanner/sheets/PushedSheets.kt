@@ -17,7 +17,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,7 +25,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import edu.ucsd.sysnet.cluetoothscanner.api.core.CategoryCount
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Identification
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ProductDetail
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
@@ -48,7 +46,6 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.sp
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Glyphs
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
-import kotlinx.coroutines.launch
 
 internal object PushedTags {
     const val CLOSE = "sheet-close"
@@ -92,10 +89,10 @@ internal fun Kicker(text: String) {
 internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?) {
     var content by remember { mutableStateOf(ProductContent()) }
     val filter = state.productFilter(pageId)
-    LaunchedEffect(filter) { content = content.withDetail(state.core.product(state.scope, pageId, filter)) }
+    LaunchedEffect(filter) { content = content.withDetail(state.load(SheetQuery.Product(pageId, filter))) }
     // D-7.6: sorted once by RSSI (the session order), filtered by This area; G-9: live devices of the product
     // are appended as they arrive (the order only grows)
-    LaunchedEffect(filter, state.discover.liveAppends) { content = content.withKeys(state.discover.keysFor(filter)) }
+    LaunchedEffect(filter, state.discover.liveAppends, state.opened) { content = content.withKeys(state.discover.keysFor(filter)) }
     val tablet = state.stack.tablet
     val detail = content.detail
     SheetFrame(state.stack, entry, state.metrics, header = {
@@ -104,6 +101,7 @@ internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?
     }) {
         when (detail) {
             Loaded.Pending, Loaded.Missing -> Unit
+            is Loaded.Failed -> edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText(detail.message)
             is Loaded.Found -> DeviceList(state, entry, content.keys, SheetEntry.MAIN_LIST, empty = {
                 edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText(Strings.NoMatchingDevices)
             }, header = { ProductHead(state, detail.value, tablet) })
@@ -166,17 +164,18 @@ internal fun WikiLink(label: String, url: String, modifier: Modifier = Modifier)
 @Composable
 internal fun FilterSheet(state: SheetsState, entry: SheetEntry) {
     val d = state.discover
-    val scope = rememberCoroutineScope()
     var content by remember { mutableStateOf<FilterRows>(FilterRows.Pending) }
     // faceted counts: every constraint but the categories facet, with Nearby and This area (D-3a)
     val countsFilter = d.queryFilter()
     LaunchedEffect(countsFilter) {
-        val counts: List<CategoryCount> = state.core.categoryCounts(state.scope, countsFilter)
-        content = content.withCounts(counts, d.filter.categories) { state.categoryLabels[it] ?: it }
+        when (val counts = state.load(SheetQuery.Counts(countsFilter))) {
+            is Outcome.Ok -> content = content.withCounts(counts.value, d.filter.categories) { state.categoryLabels[it] ?: it }
+            is Outcome.Failed -> Unit // the rows keep their last counts (or none yet); the next filter change asks again
+        }
     }
     SheetFrame(state.stack, entry, state.metrics, header = { PushedHeader(state) { Kicker(Strings.Filter) } }) {
         val f = d.filter
-        val set = { next: edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter -> scope.launch { d.setFilter(next) }; Unit }
+        val set = { next: edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter -> state.setFilter(next) }
         val list = rememberSheetListState(entry)
         LazyColumn(state = list) {
             item {

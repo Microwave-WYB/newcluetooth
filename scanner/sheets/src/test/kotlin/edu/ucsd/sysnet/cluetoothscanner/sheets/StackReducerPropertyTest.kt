@@ -9,7 +9,7 @@ import kotlin.random.Random
 
 /** Fixed-seed random event sequences through the pure [reduceStack], with invariants after every step. */
 class StackReducerPropertyTest {
-    private val kinds = listOf(SheetKind.Product("p1"), SheetKind.Product(null), SheetKind.Device(1), SheetKind.Device(2), SheetKind.Filter)
+    private val kinds = listOf<PushedKind>(SheetKind.Product("p1"), SheetKind.Product(null), SheetKind.Device(1), SheetKind.Device(2), SheetKind.Filter)
     private val heights = SheetHeight.entries
     private val reasons = PopReason.entries
 
@@ -42,9 +42,13 @@ class StackReducerPropertyTest {
         val ids = s.levels.map { it.id.raw }
         assertEquals(ctx, ids.size, ids.toSet().size)
         assertTrue(ctx, ids.all { it < s.nextId })
-        // at most one Filter level; never a device directly over a device (S-4)
+        // the types make these hold; checked anyway on the flattened levels: the root is the only Discover, at most one
+        // Filter level and only directly on the root, never a device directly over a device (S-4)
+        assertTrue(ctx, s.pushed.none { it.kind == SheetKind.Discover })
         assertTrue(ctx, s.levels.count { it.kind == SheetKind.Filter } <= 1)
+        assertTrue(ctx, s.pushed.drop(1).none { it.kind == SheetKind.Filter })
         assertTrue(ctx, s.levels.zipWithNext().none { (a, b) -> a.kind is SheetKind.Device && b.kind is SheetKind.Device })
+        if (event is StackEvent.Push && event.kind == SheetKind.Filter && before.pushed.isNotEmpty()) assertEquals(ctx, before, s)
         // the transition is consistent with the levels
         when (val t = s.transition) {
             StackTransition.Idle -> Unit
@@ -58,7 +62,7 @@ class StackReducerPropertyTest {
             }
         }
         // S-9
-        assertEquals(ctx, !s.tablet && s.pushed.isNotEmpty() && s.top.height == SheetHeight.Full, s.scrimVisible)
+        assertEquals(ctx, !s.tablet && s.pushed.isNotEmpty() && s.top.height == RestHeight.Full, s.scrimVisible)
         // Back always pops exactly the top, and only a pushed level
         if (event is StackEvent.Pop) {
             if (before.pushed.isEmpty()) assertEquals(ctx, before, s)
@@ -77,7 +81,7 @@ class StackReducerPropertyTest {
     fun `random event sequences keep the stack invariants`() {
         for (seed in 1..20) {
             val rnd = Random(seed)
-            var s = StackState.initial(SheetKind.Discover, SheetHeight.Collapsed)
+            var s = StackState.initial(SheetHeight.Collapsed)
             val rootId = s.root.id
             repeat(500) {
                 val event = randomEvent(rnd, s)
@@ -91,11 +95,11 @@ class StackReducerPropertyTest {
     @Test
     fun `G-14 Back pops the top until only the root is left, then does nothing`() {
         val rnd = Random(3)
-        var s = StackState.initial(SheetKind.Discover, SheetHeight.Half)
+        var s = StackState.initial(SheetHeight.Half)
         repeat(30) { s = reduceStack(s, StackEvent.Push(kinds.random(rnd), null)).state }
         var depth = s.pushed.size
         while (depth > 0) {
-            val top = s.top
+            val top = s.pushed.last()
             val step = reduceStack(s, StackEvent.Pop(PopReason.Back))
             assertEquals(depth - 1, step.state.pushed.size)
             assertTrue(step.effects.contains(StackEffect.Removed(top)))
@@ -103,5 +107,18 @@ class StackReducerPropertyTest {
             depth--
         }
         assertEquals(s, reduceStack(s, StackEvent.Pop(PopReason.Back)).state)
+    }
+
+    @Test
+    fun `S-4 the Filter sheet opens only on the root alone, and a device over it is replaced, not stacked`() {
+        var s = StackState.initial(SheetHeight.Half)
+        s = reduceStack(s, StackEvent.Push(SheetKind.Product("p"), null)).state
+        assertEquals(s, reduceStack(s, StackEvent.Push(SheetKind.Filter, null)).state) // not over a product
+        s = StackState.initial(SheetHeight.Half)
+        s = reduceStack(s, StackEvent.Push(SheetKind.Filter, null)).state
+        s = reduceStack(s, StackEvent.Push(SheetKind.Device(1), null)).state
+        s = reduceStack(s, StackEvent.Push(SheetKind.Device(2), null)).state
+        assertEquals(listOf(SheetKind.Filter, SheetKind.Device(2)), s.pushed.map { it.kind })
+        assertEquals(SheetKind.Device(2), (s.base as? Base.Filter)?.device?.kind)
     }
 }

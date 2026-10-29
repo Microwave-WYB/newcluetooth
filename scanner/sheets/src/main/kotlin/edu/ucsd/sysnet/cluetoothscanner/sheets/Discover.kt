@@ -13,8 +13,8 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.SearchState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.movedAway
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 
 /** The Discover sheet's views (D-2, D-3) and segments (D-1); §5.4 `SheetContentState.Discover`. */
 enum class DiscoverView { Categories, List }
@@ -69,7 +69,8 @@ internal data class Searching(
  * - [Loading]: live appends that arrive now are kept in [Loading.pending] and applied when the order is ready;
  *   [Loading.requested] is true once the first sort has been asked for.
  * - [Ready]: the order (G-9), sorted once and grown only by appends.
- * - [Failed]: the first sort could not be read; the sheet shows no rows and nothing appends.
+ * - [Failed]: the first sort could not be read (or a failure escaped a runner); the sheet shows no rows, nothing
+ *   appends, and Try again goes back to [Loading].
  */
 sealed interface DiscoverPhase {
     data class Loading(val pending: List<Long> = emptyList(), val requested: Boolean = false) : DiscoverPhase
@@ -83,25 +84,67 @@ internal sealed interface RowsQuery {
     data class Devices(val filter: DeviceFilter) : RowsQuery
 }
 
-/** The Discover sheet's whole state (G-9, D-1..D-4, Q-5..Q-7). [rowsVersion] numbers the rows queries. */
+/** The selected segment (D-1). Only This area has an area (D-4). */
+internal sealed interface SegmentState {
+    val segment: Segment
+
+    data object Nearby : SegmentState {
+        override val segment: Segment get() = Segment.Nearby
+    }
+
+    data object All : SegmentState {
+        override val segment: Segment get() = Segment.All
+    }
+
+    /** D-4: the loaded area (none before the first answer), and the number of the area query it waits for. */
+    data class ThisArea(val area: AreaState? = null, val asked: Long = 0) : SegmentState {
+        override val segment: Segment get() = Segment.ThisArea
+    }
+
+    companion object {
+        fun of(segment: Segment): SegmentState = when (segment) {
+            Segment.Nearby -> Nearby
+            Segment.All -> All
+            Segment.ThisArea -> ThisArea()
+        }
+    }
+}
+
+/** What a search query is for (Q-4..Q-6): its answer is applied by purpose. */
+internal sealed interface SearchPurpose {
+    /** Q-5: a picked result enters search state. */
+    data class Enter(val reference: CameraSnapshot, val back: SearchReturn) : SearchPurpose
+    /** Q-6: "Search this area". */
+    data class Area(val zoom: Double) : SearchPurpose
+    /** Q-4: "Search everywhere". */
+    data object Everywhere : SearchPurpose
+    /** Q-5, G-9: new live devices that match are appended. */
+    data object Append : SearchPurpose
+}
+
+/**
+ * The Discover sheet's whole state (G-9, D-1..D-4, Q-5..Q-7). The versions number the queries: an answer is applied
+ * only if it answers the newest query of its kind, so a stale answer never wins.
+ */
 internal data class DiscoverState(
     val live: Boolean,
     val phase: DiscoverPhase = DiscoverPhase.Loading(),
     val view: DiscoverView = DiscoverView.Categories,
-    val segment: Segment = defaultSegment(live),
+    val segment: SegmentState = SegmentState.of(defaultSegment(live)),
     val filter: DeviceFilter = DeviceFilter(),
-    val area: AreaState? = null,
     val searching: Searching? = null,
     val rows: LongArray = LongArray(0),
     val rowsVersion: Long = 0,
+    val areaVersion: Long = 0,
+    val searchVersion: Long = 0,
     val liveAppends: Int = 0,
     val viewport: Bbox? = null,
 ) {
+    /** D-4: the area, only in This area. */
+    val area: AreaState? get() = (segment as? SegmentState.ThisArea)?.area
+
     /** The filter the core queries use: the sheet's filters plus Nearby and This area. */
-    fun queryFilter(): DeviceFilter = filter.copy(
-        inRangeOnly = segment == Segment.Nearby,
-        area = if (segment == Segment.ThisArea) area?.bbox else null,
-    )
+    fun queryFilter(): DeviceFilter = filter.copy(inRangeOnly = segment == SegmentState.Nearby, area = area?.bbox)
 }
 
 /** What happens to the Discover sheet; query results come back as events. */
@@ -109,19 +152,28 @@ internal sealed interface DiscoverEvent {
     data object OpenRequested : DiscoverEvent
     class OrderLoaded(val keys: LongArray) : DiscoverEvent
     data class OrderFailed(val message: String) : DiscoverEvent
+    /** D-13.1: Try again after a failure. */
+    data object RetryRequested : DiscoverEvent
+    /** A failure escaped a runner (the scope's handler): the sheet fails, and can be retried. */
+    data class Faulted(val message: String) : DiscoverEvent
     class LiveAppended(val keys: LongArray) : DiscoverEvent
-    class SearchAppendLoaded(val hits: DeviceKeys) : DiscoverEvent
     data object ViewToggled : DiscoverEvent
     data class SegmentSelected(val next: Segment) : DiscoverEvent
     data class FilterSet(val filter: DeviceFilter) : DiscoverEvent
     data class CameraIdle(val byUser: Boolean, val viewport: Bbox, val zoom: Double) : DiscoverEvent
-    class AreaLoaded(val bbox: Bbox, val inView: DeviceKeys) : DiscoverEvent
-    class SearchLoaded(val query: String, val area: Bbox?, val reference: CameraSnapshot, val hits: DeviceKeys, val back: SearchReturn) : DiscoverEvent
-    class SearchAreaLoaded(val viewport: Bbox, val zoom: Double, val hits: DeviceKeys) : DiscoverEvent
-    class SearchEverywhereLoaded(val hits: DeviceKeys) : DiscoverEvent
+    class AreaLoaded(val version: Long, val bbox: Bbox, val inView: DeviceKeys) : DiscoverEvent
+    data class AreaFailed(val version: Long) : DiscoverEvent
+    data class SearchRequested(val query: String, val area: Bbox?, val reference: CameraSnapshot, val back: SearchReturn) : DiscoverEvent
+    data class SearchAreaRequested(val viewport: Bbox, val zoom: Double) : DiscoverEvent
+    data object SearchEverywhereRequested : DiscoverEvent
+    /** The answer to [DiscoverEffect.LoadSearch] number [version]. */
+    class SearchLoaded(val version: Long, val query: String, val area: Bbox?, val purpose: SearchPurpose, val hits: DeviceKeys, val appendsAsked: Int) :
+        DiscoverEvent
     data object SearchExited : DiscoverEvent
     data object RefreshRequested : DiscoverEvent
     class RowsLoaded(val version: Long, val keys: DeviceKeys) : DiscoverEvent
+    /** A rows or search query failed: what is shown stays, the next change asks again. */
+    data class QueryFailed(val message: String) : DiscoverEvent
 }
 
 /** What the runner does: core queries, and requests to the sheet stack. */
@@ -133,8 +185,9 @@ internal sealed interface DiscoverEffect {
     sealed interface Async : DiscoverEffect
 
     data object LoadOrder : Async
-    data class LoadArea(val bbox: Bbox) : Async
-    data class LoadSearchAppend(val query: String, val area: Bbox?) : Async
+    data class LoadArea(val version: Long, val bbox: Bbox) : Async
+    /** [appendsAsked]: the live appends seen when asked; appends after it are searched again when it lands. */
+    data class LoadSearch(val version: Long, val query: String, val area: Bbox?, val purpose: SearchPurpose, val appendsAsked: Int) : Async
     /** Re-read the rows: the runner sends [DiscoverEvent.RefreshRequested], which yields [LoadRows]. */
     data object Refresh : Async
     data class LoadRows(val version: Long, val query: RowsQuery) : Async
@@ -148,6 +201,20 @@ internal sealed interface DiscoverEffect {
 
 internal data class DiscoverStep(val state: DiscoverState, val effects: List<DiscoverEffect> = emptyList())
 
+/** D-4: asks for the area of [viewport] in This area (the rows follow its answer); otherwise just the rows. */
+private fun DiscoverState.askArea(viewport: Bbox?, vararg first: DiscoverEffect): DiscoverStep {
+    val seg = segment as? SegmentState.ThisArea
+    if (seg == null || viewport == null || phase !is DiscoverPhase.Ready) return DiscoverStep(this, first.toList() + DiscoverEffect.Refresh)
+    val version = areaVersion + 1
+    return DiscoverStep(copy(segment = seg.copy(asked = version), areaVersion = version), first.toList() + DiscoverEffect.LoadArea(version, viewport))
+}
+
+/** Asks a search query; a new one makes every earlier answer stale. */
+private fun DiscoverState.askSearch(query: String, area: Bbox?, purpose: SearchPurpose): DiscoverStep {
+    val version = searchVersion + 1
+    return DiscoverStep(copy(searchVersion = version), listOf(DiscoverEffect.LoadSearch(version, query, area, purpose, liveAppends)))
+}
+
 /** The pure Discover logic. */
 internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): DiscoverStep {
     val ready = state.phase as? DiscoverPhase.Ready
@@ -160,28 +227,35 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
         is DiscoverEvent.OrderLoaded -> {
             val loading = state.phase as? DiscoverPhase.Loading ?: return DiscoverStep(state)
             val order = KeyOrder.of(event.keys).append(loading.pending.toLongArray())
-            val area = state.viewport?.takeIf { state.segment == Segment.ThisArea }
-            DiscoverStep(
-                state.copy(phase = DiscoverPhase.Ready(order)),
-                listOfNotNull(area?.let(DiscoverEffect::LoadArea), DiscoverEffect.Refresh),
-            )
+            state.copy(phase = DiscoverPhase.Ready(order)).askArea(state.viewport)
         }
         is DiscoverEvent.OrderFailed ->
             if (state.phase is DiscoverPhase.Loading) DiscoverStep(state.copy(phase = DiscoverPhase.Failed(event.message)))
             else DiscoverStep(state)
+        DiscoverEvent.RetryRequested ->
+            if (state.phase is DiscoverPhase.Failed) DiscoverStep(state.copy(phase = DiscoverPhase.Loading(requested = true)), listOf(DiscoverEffect.LoadOrder))
+            else DiscoverStep(state)
+        is DiscoverEvent.Faulted -> DiscoverStep(
+            // every pending answer goes stale; the segment keeps its choice but not its area
+            state.copy(
+                phase = DiscoverPhase.Failed(event.message), searching = null, rows = LongArray(0),
+                segment = SegmentState.of(state.segment.segment),
+                rowsVersion = state.rowsVersion + 1, searchVersion = state.searchVersion + 1,
+            ),
+        )
         is DiscoverEvent.LiveAppended -> when (val p = state.phase) {
             is DiscoverPhase.Loading -> DiscoverStep(state.copy(phase = p.copy(pending = p.pending + event.keys.asList())))
             is DiscoverPhase.Failed -> DiscoverStep(state)
-            is DiscoverPhase.Ready -> DiscoverStep(
-                state.copy(phase = DiscoverPhase.Ready(p.order.append(event.keys)), liveAppends = state.liveAppends + 1),
+            is DiscoverPhase.Ready -> {
+                val next = state.copy(phase = DiscoverPhase.Ready(p.order.append(event.keys)), liveAppends = state.liveAppends + 1)
+                val s = state.searching
                 // Q-5: a new device that matches the search shows too (as on the map), after the present matches
-                listOfNotNull(state.searching?.let { DiscoverEffect.LoadSearchAppend(it.query, it.area) }, DiscoverEffect.Refresh),
-            )
-        }
-        is DiscoverEvent.SearchAppendLoaded -> {
-            val s = state.searching
-            if (s == null || ready == null) DiscoverStep(state)
-            else DiscoverStep(state.copy(searching = s.copy(order = s.order.append(ready.order.visible(event.hits)))))
+                if (s == null) DiscoverStep(next, listOf(DiscoverEffect.Refresh))
+                else DiscoverStep(
+                    next,
+                    listOf(DiscoverEffect.LoadSearch(state.searchVersion, s.query, s.area, SearchPurpose.Append, next.liveAppends), DiscoverEffect.Refresh),
+                )
+            }
         }
         DiscoverEvent.ViewToggled -> DiscoverStep(
             state.copy(view = if (state.view == DiscoverView.Categories) DiscoverView.List else DiscoverView.Categories),
@@ -189,14 +263,8 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
         )
         is DiscoverEvent.SegmentSelected -> when {
             event.next !in segmentsFor(state.live) -> DiscoverStep(state) // D-1: not offered in this view
-            event.next == state.segment -> DiscoverStep(state, listOf(DiscoverEffect.RaiseRoot))
-            else -> {
-                val area = state.viewport?.takeIf { event.next == Segment.ThisArea && ready != null }
-                DiscoverStep(
-                    state.copy(segment = event.next, area = if (event.next == Segment.ThisArea) state.area else null),
-                    listOfNotNull(DiscoverEffect.RaiseRoot, area?.let(DiscoverEffect::LoadArea), DiscoverEffect.Refresh),
-                )
-            }
+            event.next == state.segment.segment -> DiscoverStep(state, listOf(DiscoverEffect.RaiseRoot))
+            else -> state.copy(segment = SegmentState.of(event.next)).askArea(state.viewport, DiscoverEffect.RaiseRoot)
         }
         is DiscoverEvent.FilterSet -> DiscoverStep(state.copy(filter = event.filter), listOf(DiscoverEffect.Refresh))
         is DiscoverEvent.CameraIdle -> {
@@ -212,61 +280,44 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
                     }
                     DiscoverStep(next.copy(searching = moved))
                 }
-                ready != null && event.byUser && state.segment == Segment.ThisArea ->
-                    DiscoverStep(next, listOf(DiscoverEffect.LoadArea(event.viewport), DiscoverEffect.Refresh))
+                event.byUser && state.segment is SegmentState.ThisArea && ready != null -> next.askArea(event.viewport)
                 else -> DiscoverStep(next)
             }
         }
         is DiscoverEvent.AreaLoaded -> {
-            if (ready == null) DiscoverStep(state)
+            val seg = state.segment as? SegmentState.ThisArea
+            if (ready == null || seg == null || event.version != seg.asked) DiscoverStep(state) // stale: a newer area is asked
             else {
-                val kept = state.area?.order?.visible(event.inView) ?: LongArray(0)
-                DiscoverStep(state.copy(area = AreaState(event.bbox, KeyOrder.of(kept).append(ready.order.visible(event.inView)))))
+                val kept = seg.area?.order?.visible(event.inView) ?: LongArray(0)
+                val area = AreaState(event.bbox, KeyOrder.of(kept).append(ready.order.visible(event.inView)))
+                DiscoverStep(state.copy(segment = seg.copy(area = area)), listOf(DiscoverEffect.Refresh))
             }
+        }
+        is DiscoverEvent.AreaFailed -> {
+            val seg = state.segment as? SegmentState.ThisArea
+            // the newest area failed: the rows follow the area as it was
+            if (seg == null || event.version != seg.asked) DiscoverStep(state) else DiscoverStep(state, listOf(DiscoverEffect.Refresh))
+        }
+        is DiscoverEvent.SearchRequested ->
+            if (ready == null) DiscoverStep(state)
+            else state.askSearch(event.query, event.area, SearchPurpose.Enter(event.reference, event.back))
+        is DiscoverEvent.SearchAreaRequested -> {
+            val s = state.searching
+            if (s == null) DiscoverStep(state) else state.askSearch(s.query, event.viewport, SearchPurpose.Area(event.zoom))
+        }
+        DiscoverEvent.SearchEverywhereRequested -> {
+            val s = state.searching
+            if (s == null) DiscoverStep(state) else state.askSearch(s.query, null, SearchPurpose.Everywhere)
         }
         is DiscoverEvent.SearchLoaded -> {
-            if (ready == null) DiscoverStep(state)
-            else {
-                val s = state.searching
-                val searching = Searching(
-                    query = event.query, area = event.area, reference = event.reference, movedAway = false,
-                    order = KeyOrder.of(ready.order.visible(event.hits)),
-                    savedFilter = s?.savedFilter ?: state.filter, back = s?.back ?: event.back,
-                )
-                DiscoverStep(
-                    state.copy(searching = searching, view = DiscoverView.List),
-                    listOf(DiscoverEffect.ResetStack, DiscoverEffect.Refresh),
-                )
-            }
-        }
-        is DiscoverEvent.SearchAreaLoaded -> {
-            val s = state.searching
-            if (s == null || ready == null) DiscoverStep(state)
-            else {
-                val order = KeyOrder.of(s.order.visible(event.hits)).append(ready.order.visible(event.hits))
-                val next = s.copy(area = event.viewport, order = order, reference = viewportCamera(event.viewport, event.zoom), movedAway = false)
-                DiscoverStep(state.copy(searching = next), listOf(DiscoverEffect.Refresh))
-            }
-        }
-        is DiscoverEvent.SearchEverywhereLoaded -> {
-            val s = state.searching
-            if (s == null || ready == null) DiscoverStep(state)
-            else DiscoverStep(
-                state.copy(searching = s.copy(area = null, order = KeyOrder.of(ready.order.visible(event.hits)), movedAway = false)),
-                listOf(DiscoverEffect.Refresh),
-            )
+            if (ready == null || event.version != state.searchVersion) DiscoverStep(state) // stale: a newer search is asked
+            else searchAnswered(state, ready, event)
         }
         DiscoverEvent.SearchExited -> {
             val s = state.searching ?: return DiscoverStep(state)
             // D-4: the camera may have moved during search; This area follows the current view again
-            val area = state.viewport?.takeIf { ready != null && state.segment == Segment.ThisArea }
-            DiscoverStep(
-                state.copy(searching = null, filter = s.savedFilter, view = s.back.view),
-                listOfNotNull(
-                    DiscoverEffect.ResetStack, DiscoverEffect.RestoreRoot(s.back),
-                    area?.let(DiscoverEffect::LoadArea), DiscoverEffect.Refresh,
-                ),
-            )
+            state.copy(searching = null, filter = s.savedFilter, view = s.back.view, searchVersion = state.searchVersion + 1)
+                .askArea(state.viewport, DiscoverEffect.ResetStack, DiscoverEffect.RestoreRoot(s.back))
         }
         DiscoverEvent.RefreshRequested -> {
             if (ready == null) DiscoverStep(state)
@@ -280,12 +331,37 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
         is DiscoverEvent.RowsLoaded -> {
             if (ready == null || event.version != state.rowsVersion) DiscoverStep(state) // a newer query is on its way
             else {
-                val s = state.searching
-                val order = s?.order ?: state.area?.takeIf { state.segment == Segment.ThisArea }?.order ?: ready.order
+                val order = state.searching?.order ?: state.area?.order ?: ready.order
                 DiscoverStep(state.copy(rows = order.visible(event.keys)))
             }
         }
+        is DiscoverEvent.QueryFailed -> DiscoverStep(state)
     }
+}
+
+/** Q-4..Q-6: the newest search answer. Appends that came in while it was asked are searched again. */
+private fun searchAnswered(state: DiscoverState, ready: DiscoverPhase.Ready, event: DiscoverEvent.SearchLoaded): DiscoverStep {
+    val s = state.searching
+    val inOrder = ready.order.visible(event.hits)
+    val next = when (val purpose = event.purpose) {
+        is SearchPurpose.Enter -> Searching(
+            query = event.query, area = event.area, reference = purpose.reference, movedAway = false,
+            order = KeyOrder.of(inOrder), savedFilter = s?.savedFilter ?: state.filter, back = s?.back ?: purpose.back,
+        )
+        is SearchPurpose.Area -> s?.copy(
+            area = event.area, order = KeyOrder.of(s.order.visible(event.hits)).append(inOrder),
+            reference = event.area?.let { viewportCamera(it, purpose.zoom) } ?: s.reference, movedAway = false,
+        )
+        SearchPurpose.Everywhere -> s?.copy(area = null, order = KeyOrder.of(inOrder), movedAway = false)
+        SearchPurpose.Append -> s?.copy(order = s.order.append(inOrder))
+    } ?: return DiscoverStep(state)
+    val stale = state.liveAppends != event.appendsAsked && event.purpose != SearchPurpose.Append
+    val again = DiscoverEffect.LoadSearch(state.searchVersion, next.query, next.area, SearchPurpose.Append, state.liveAppends).takeIf { stale }
+    val enter = event.purpose is SearchPurpose.Enter
+    return DiscoverStep(
+        state.copy(searching = next, view = if (enter) DiscoverView.List else state.view),
+        listOfNotNull(DiscoverEffect.ResetStack.takeIf { enter }, again, DiscoverEffect.Refresh),
+    )
 }
 
 /**
@@ -294,15 +370,17 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
  *
  * This is the runner: the logic is [reduceDiscover] over one immutable [DiscoverState]. Each call sends an event,
  * executes the effects (core queries, stack requests) and sends their results back as events, so every transition
- * acts on the current state. Live appends while the first sort loads are kept by [DiscoverPhase.Loading].
+ * acts on the current state. Every query goes through [attempt]: a failure comes back as a typed event, never a
+ * throw. Live appends while the first sort loads are kept by [DiscoverPhase.Loading].
  */
 class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, private val stack: SheetStackController) {
     private var state by mutableStateOf(DiscoverState(live))
-    private val settled = CompletableDeferred<Unit>()
+    /** The phase, for [awaitReady] (a state flow, so a retry is awaited too). */
+    private val phases = MutableStateFlow<DiscoverPhase>(state.phase)
 
     val phase: DiscoverPhase get() = state.phase
     val view: DiscoverView get() = state.view
-    val segment: Segment get() = state.segment
+    val segment: Segment get() = state.segment.segment
     val filter: DeviceFilter get() = state.filter
     val area: AreaState? get() = state.area
 
@@ -317,6 +395,12 @@ class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, pri
 
     /** Loading → Ready (or Failed), once. Live appends kept while loading are applied to the new order. */
     suspend fun open() = send(DiscoverEvent.OpenRequested)
+
+    /** D-13.1: Failed → Loading, and the first sort is read again. */
+    suspend fun retry() = send(DiscoverEvent.RetryRequested)
+
+    /** A failure escaped a runner: the sheet shows Failed, with Try again. */
+    internal fun fault(message: String) = sendNow(DiscoverEvent.Faulted(message))
 
     /** The order's keys among [keys], in order; none before the order exists. */
     fun ordered(keys: DeviceKeys): LongArray = (state.phase as? DiscoverPhase.Ready)?.order?.visible(keys) ?: LongArray(0)
@@ -347,29 +431,25 @@ class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, pri
         if (q.isEmpty()) return
         awaitReady() ?: return
         val back = stack.root.let { SearchReturn(state.view, it.height, it.panel, it.scrollReader?.invoke() ?: it.scroll) }
-        val hits = queries.search(q, area) ?: NONE
-        send(DiscoverEvent.SearchLoaded(q, area, reference, hits, back))
+        send(DiscoverEvent.SearchRequested(q, area, reference, back))
     }
 
     /** Q-6: "Search this area": matches still present keep their order, new ones are appended, others hide. */
-    suspend fun searchThisArea(viewport: Bbox, zoom: Double) {
-        val s = state.searching ?: return
-        send(DiscoverEvent.SearchAreaLoaded(viewport, zoom, queries.search(s.query, viewport) ?: NONE))
-    }
+    suspend fun searchThisArea(viewport: Bbox, zoom: Double) = send(DiscoverEvent.SearchAreaRequested(viewport, zoom))
 
     /** Q-4: "Search everywhere" re-runs without a bbox. */
-    suspend fun searchEverywhere() {
-        val s = state.searching ?: return
-        send(DiscoverEvent.SearchEverywhereLoaded(queries.search(s.query, null) ?: NONE))
-    }
+    suspend fun searchEverywhere() = send(DiscoverEvent.SearchEverywhereRequested)
 
     /** Q-7: the bar's X, or Back with only the root left. Restores the view, filters, height and scroll. */
     suspend fun exitSearch() = send(DiscoverEvent.SearchExited)
 
-    /** G-9: the keys passing [filter] in the session order (a product's devices, D-7.6); none if the sort failed. */
+    /** G-9: the keys passing [filter] in the session order (a product's devices, D-7.6); none if a read failed. */
     suspend fun keysFor(filter: DeviceFilter): LongArray {
-        val ready = awaitReady() ?: return LongArray(0)
-        return ready.order.visible(queries.deviceKeys(filter))
+        awaitReady() ?: return LongArray(0)
+        return when (val keys = attempt { queries.deviceKeys(filter) }) {
+            is Outcome.Ok -> ordered(keys.value)
+            is Outcome.Failed -> LongArray(0)
+        }
     }
 
     /** G-14: pushed sheets first, search state last. */
@@ -386,17 +466,15 @@ class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, pri
     // ---- Runner ----
 
     /** The order once the phase has left Loading; null if the first sort failed. */
-    private suspend fun awaitReady(): DiscoverPhase.Ready? {
-        settled.await()
-        return state.phase as? DiscoverPhase.Ready
-    }
+    private suspend fun awaitReady(): DiscoverPhase.Ready? =
+        phases.first { it !is DiscoverPhase.Loading } as? DiscoverPhase.Ready
 
     /** Applies [event] and runs its effects to the end (queries included). */
     private suspend fun send(event: DiscoverEvent) {
         for (effect in apply(event)) run(effect)
     }
 
-    /** For events whose effects are all [DiscoverEffect.Immediate] (the view switch). */
+    /** For events whose effects are all [DiscoverEffect.Immediate] (the view switch, a fault). */
     private fun sendNow(event: DiscoverEvent) {
         for (effect in apply(event)) if (effect is DiscoverEffect.Immediate) runNow(effect)
     }
@@ -404,34 +482,40 @@ class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, pri
     private fun apply(event: DiscoverEvent): List<DiscoverEffect> {
         val step = reduceDiscover(state, event)
         state = step.state
-        if (state.phase !is DiscoverPhase.Loading) settled.complete(Unit)
+        phases.value = state.phase
         return step.effects
     }
+
+    /** Runs a core query through [attempt] and sends its answer, or its failure, as an event. */
+    private suspend fun <T> ask(query: suspend () -> T, failed: (String) -> DiscoverEvent, answered: (T) -> DiscoverEvent) =
+        send(
+            when (val outcome = attempt(query)) {
+                is Outcome.Ok -> answered(outcome.value)
+                is Outcome.Failed -> failed(outcome.message)
+            },
+        )
 
     private suspend fun run(effect: DiscoverEffect) {
         when (effect) {
             is DiscoverEffect.Immediate -> runNow(effect)
-            DiscoverEffect.LoadOrder -> send(
-                try {
-                    DiscoverEvent.OrderLoaded(queries.deviceOrder().keys)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    DiscoverEvent.OrderFailed(e.message ?: e.toString())
-                },
-            )
-            is DiscoverEffect.LoadArea -> send(DiscoverEvent.AreaLoaded(effect.bbox, queries.deviceKeys(DeviceFilter(area = effect.bbox))))
-            is DiscoverEffect.LoadSearchAppend -> send(DiscoverEvent.SearchAppendLoaded(queries.search(effect.query, effect.area) ?: NONE))
+            DiscoverEffect.LoadOrder -> ask({ queries.deviceOrder() }, DiscoverEvent::OrderFailed) { DiscoverEvent.OrderLoaded(it.keys) }
+            is DiscoverEffect.LoadArea -> ask(
+                { queries.deviceKeys(DeviceFilter(area = effect.bbox)) },
+                { DiscoverEvent.AreaFailed(effect.version) },
+            ) { DiscoverEvent.AreaLoaded(effect.version, effect.bbox, it) }
+            is DiscoverEffect.LoadSearch -> ask({ queries.search(effect.query, effect.area) ?: NONE }, DiscoverEvent::QueryFailed) {
+                DiscoverEvent.SearchLoaded(effect.version, effect.query, effect.area, effect.purpose, it, effect.appendsAsked)
+            }
             DiscoverEffect.Refresh -> send(DiscoverEvent.RefreshRequested)
-            is DiscoverEffect.LoadRows -> send(
-                DiscoverEvent.RowsLoaded(
-                    effect.version,
+            is DiscoverEffect.LoadRows -> ask(
+                {
                     when (val q = effect.query) {
                         is RowsQuery.Search -> queries.search(q.query, q.area) ?: NONE
                         is RowsQuery.Devices -> queries.deviceKeys(q.filter)
-                    },
-                ),
-            )
+                    }
+                },
+                DiscoverEvent::QueryFailed,
+            ) { DiscoverEvent.RowsLoaded(effect.version, it) }
             is DiscoverEffect.RestoreRoot -> {
                 val root = stack.root
                 // both saved states come back; the one of the current layout shows (T-2 panel, S-5 height)
