@@ -30,8 +30,10 @@
   CATEGORIES.unshift({ id: "unidentified", label: "Unidentified", icon: "unknown" });
 
   // ---- products (wiki families) ----
+  // readable: the wiki page has a decoder (the advertisement decodes without connecting);
+  // vulnerable: the page links a known vulnerability
   const PRODUCTS = [
-    { id: "govee", name: "Govee lighting and sensors", category: "lighting", company: null, service: "EC88",
+    { id: "govee", readable: true, name: "Govee lighting and sensors", category: "lighting", company: null, service: "EC88",
       description: "Govee and ihoment strip lights, bulbs and thermo-hygrometers.", places: 20, last: "just now" },
     { id: "airpods", name: "Apple AirPods and Beats (Proximity Pairing)", category: "audio", company: 76,
       description: "Apple and Beats earbuds and headphones announcing their case and battery state.", places: 64, last: "just now" },
@@ -41,9 +43,9 @@
       description: "Bose headphones advertising the Bose app service.", places: 11, last: "4 min ago" },
     { id: "hue", name: "Philips Hue Bluetooth lights", category: "lighting", company: null, service: "FE0F",
       description: "Hue bulbs and lamps that pair over Bluetooth without a bridge.", places: 3, last: "just now" },
-    { id: "xiaomi", name: "Xiaomi Mi Home BLE sensors (MiBeacon)", category: "sensors", company: null, service: "FE95",
+    { id: "xiaomi", readable: true, name: "Xiaomi Mi Home BLE sensors (MiBeacon)", category: "sensors", company: null, service: "FE95",
       description: "Xiaomi thermometers and sensors sending MiBeacon service data.", places: 9, last: "just now" },
-    { id: "switchbot", name: "SwitchBot Meter and Hub sensors", category: "sensors", company: 2409, service: "FD3D",
+    { id: "switchbot", readable: true, name: "SwitchBot Meter and Hub sensors", category: "sensors", company: 2409, service: "FD3D",
       description: "SwitchBot meters advertising temperature and humidity.", places: 4, last: "just now" },
     { id: "tile", name: "Tile trackers", category: "trackers", company: null, service: "FEED",
       description: "Tile Mate, Slim and Pro item trackers.", places: 38, last: "just now" },
@@ -51,7 +53,7 @@
       description: "Samsung trackers broadcasting for SmartThings Find.", places: 26, last: "just now" },
     { id: "fitbit", name: "Fitbit and Google Pixel Watch wearables", category: "wearables", company: null, service: "FEAA",
       description: "Fitbit trackers and Pixel Watch advertising for phone sync.", places: 15, last: "2 min ago" },
-    { id: "tesla", name: "Tesla vehicle phone key", category: "vehicles", company: null, service: null,
+    { id: "tesla", vulnerable: true, name: "Tesla vehicle phone key", category: "vehicles", company: null, service: null,
       description: "Tesla cars advertising for phone-as-key.", places: 6, last: "just now" },
     // seen before only (All)
     { id: "inkbird", name: "Inkbird IBS-TH temperature and humidity sensors", category: "sensors", company: null, service: "FFF0",
@@ -310,6 +312,7 @@
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const WIKI = "https://wirelesswiki.org/p/"; // the wiki's family page route (wiki-site src/pages/p/[id])
   const withProduct = (d) => ({ ...clone(d), productName: d.product ? PRODUCT[d.product].name : null,
+    readable: !!(d.product && PRODUCT[d.product].readable), vulnerable: !!(d.product && PRODUCT[d.product].vulnerable),
     wikiUrl: d.product ? WIKI + d.product : null,
     companyName: d.company != null ? COMPANY_NAMES[d.company] || null : null });
 
@@ -379,11 +382,16 @@
       });
     },
     /** The categories present in a scope (a session id, or "all"), with their device counts: Unidentified first,
-     *  then by count (ties in CATEGORIES order). [{ id, label, icon, count }] */
-    getCategoryCounts: (scope) => {
+     *  then by count (ties in CATEGORIES order). [{ id, label, icon, count }]. hideUnnamedApple: the display
+     *  filter (G-12) leaves out unnamed 0x004C devices. */
+    getCategoryCounts: (scope, { hideUnnamedApple = false } = {}) => {
       const r = session(scope), count = {};
       if (!r) return [];
-      for (const p of r.points) { const c = DEVICE[p.addr].category; count[c] = (count[c] || 0) + 1; }
+      for (const p of r.points) {
+        const d = DEVICE[p.addr];
+        if (hideUnnamedApple && d.company === 76 && !d.name) continue;
+        count[d.category] = (count[d.category] || 0) + 1;
+      }
       const present = CATEGORIES.filter((c) => count[c.id]).map((c) => ({ ...c, count: count[c.id] }));
       return clone([...present.filter((c) => c.id === "unidentified"), ...present.filter((c) => c.id !== "unidentified").sort((a, b) => b.count - a.count)]);
     },

@@ -113,18 +113,23 @@
     /** Chip and ChipRow. */
     chip: ({ label, on, action, value }) =>
       `<button class="chip ${on ? "on" : ""}" data-action="${action}" data-value="${esc(value)}" aria-pressed="${on}">${esc(label)}</button>`,
-    /** The list view's chip row: the Filter chip (round; selected style and a count while categories are selected),
-     *  All, then cats (Unidentified, selected categories outside the top ones, the top ones). selected: category ids. */
-    chipRow: (cats, selected, cls = "") =>
-      `<div class="chips ${cls}"><button class="chip chip-icon ${selected.length ? "on" : ""}" data-action="filter-open" aria-label="Filter${selected.length ? `, ${selected.length} selected` : ""}">${icon("filter")}${selected.length ? `<span class="chip-count">${selected.length}</span>` : ""}</button>${
-        UI.chip({ label: "All", on: !selected.length, action: "dev-cat", value: "all" })}${
-        cats.map((c) => UI.chip({ label: c.label, on: selected.includes(c.id), action: "dev-cat", value: c.id })).join("")}</div>`,
-    /** The Filter sheet's body: every category of the scope as a checkbox row with its device count, and Clear. */
-    filterList: (cats, selected) => `<div class="filter-list">${cats.map((c) => `
-      <button class="item filter-item" role="checkbox" aria-checked="${selected.includes(c.id)}" data-action="dev-cat" data-value="${c.id}">
+    /** The list view's chip row: All (on while no filter at all; tapping it clears every filter), then the preset
+     *  filters as toggles. on: the preset ids that are on. */
+    chipRow: (on, all, cls = "") =>
+      `<div class="chips ${cls}">${UI.chip({ label: "All", on: all, action: "filter-preset", value: "all" })}${
+        PRESETS.map((p) => UI.chip({ label: p.label, on: on.includes(p.id), action: "filter-preset", value: p.id })).join("")}</div>`,
+    /** The Filter sheet's body: the presets as switches, Identification, the categories of the scope as checkbox
+     *  rows with their device counts (cats: [{ id, label, count }]), and Clear. f: { presets, ident, cats }. */
+    filterSheet: (cats, f) => `<div class="filter-sheet">
+      ${PRESETS.map((p) => `<div class="item"><span class="item-text"><span class="item-title">${p.label}</span></span>${UI.switch(f.presets.includes(p.id), "filter-preset", p.id)}</div>`).join("")}
+      <div class="sect">Identification</div>
+      <div class="filter-seg">${UI.segmented([{ id: "any", label: "Any" }, { id: "identified", label: "Identified" }, { id: "unidentified", label: "Unidentified" }], f.ident, "filter-ident")}</div>
+      <div class="sect">Categories</div>
+      <div class="filter-list">${cats.map((c) => `
+      <button class="item filter-item" role="checkbox" aria-checked="${f.cats.includes(c.id)}" data-action="filter-cat" data-value="${c.id}">
         <span class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5 10 17l9-10"/></svg></span>
         <span class="item-text"><span class="item-title">${esc(c.label)}</span></span><span class="item-end">${c.count}</span></button>`).join("")}
-      </div><div class="filter-foot"><button class="text-btn" data-action="filter-clear">Clear</button></div>`,
+      </div><div class="filter-foot"><button class="text-btn" data-action="filter-clear">Clear</button></div></div>`,
 
     /** Sparkline: the last minute, 30 samples. */
     sparkline: (h) => {
@@ -187,10 +192,12 @@
     /** DiscoverHead: the view switch (it shows the view it switches TO), then Nearby / All while recording, or
      *  This area / All for history and All sessions.
      */
-    discoverHead: ({ view, live, mode, hist = "all" }) => `${UI.iconButton({ name: view === "list" ? "grid" : "list", label: view === "list" ? "Show categories" : "Show the device list", action: "disc-view" })}
+    discoverHead: ({ view, live, mode, hist = "all", filters = 0 }) => `${UI.iconButton({ name: view === "list" ? "grid" : "list", label: view === "list" ? "Show categories" : "Show the device list", action: "disc-view" })}
          ${live ? UI.segmented([{ id: "nearby", label: "Nearby" }, { id: "all", label: "All" }], mode, "disc-mode")
            : UI.segmented([{ id: "area", label: "This area" }, { id: "all", label: "All" }], hist, "hist-mode")}
-         <span></span>`,
+         <span class="disc-filter">${UI.filterButton(filters)}</span>`,
+    /** FilterButton: the view switch's IconButton with a funnel; selected style and a count while filters are on. */
+    filterButton: (n) => `<button class="ib neutral filter-btn ${n ? "on" : ""}" data-action="filter-open" aria-label="Filter${n ? `, ${n} active` : ""}">${icon("filter")}${n ? `<span class="count-badge">${n}</span>` : ""}</button>`,
 
     /** ProductView: a product sheet's content; the background map shows the product's points. */
     productView: (p, rows) => `
@@ -304,6 +311,12 @@
   const ME = D.getMyLocation();
   const locationText = () => `${ME.lat.toFixed(5)}, ${ME.lon.toFixed(5)} ±${ME.accuracy} m`;
   const hiddenByFilter = (d) => S.settings.hideUnnamedApple && d.company === 76 && !d.name;
+  /** The preset filters (the list view's chips): curated, each a test on a device. */
+  const PRESETS = [
+    { id: "readable", label: "Readable", test: (d) => d.readable },     // its wiki page has a decoder
+    { id: "trackers", label: "Trackers", test: (d) => d.category === "trackers" },
+    { id: "vulnerable", label: "Vulnerable", test: (d) => d.vulnerable }, // its wiki page links a known vulnerability
+  ];
 
   // ---- Formatting ----
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -364,17 +377,18 @@
     const sig = `${S.discView}|${S.live}`, seg = $(".seg", head);
     if (head.dataset.sig === sig && seg) setSegValue(seg, S.live ? mode : S.histMode);
     else { head.innerHTML = UI.discoverHead({ view: S.discView, live: S.live, mode, hist: S.histMode }); head.dataset.sig = sig; }
+    $(".disc-filter", head).innerHTML = UI.filterButton(filterCount());
     if (S.discView === "list") {
       const left = $(".chips", chips) ? $(".chips", chips).scrollLeft : 0; // a chip tap keeps the row where it was
-      chips.innerHTML = UI.chipRow(chipCats(), S.devCats, "inline");
+      chips.innerHTML = UI.chipRow(S.filter.presets, !filterCount(), "inline");
       $(".chips", chips).scrollLeft = left;
       body.innerHTML = `<div class="rows">${sessionRows(mode)}</div>`;
     } else {
       chips.innerHTML = "";
-      const area = areaCounts();
+      const c = cardCounts();
       const groups = D.getProducts(mode, S.session)
-        .map((g) => ({ ...g, products: g.products.filter((p) => !area || area.count[p.id])
-          .map((p) => (area ? { ...p, count: area.count[p.id], inRange: Math.min(p.inRange, area.live[p.id] || 0) } : p)) }))
+        .map((g) => ({ ...g, products: g.products.filter((p) => (mode === "all" ? c.count[p.id] : c.live[p.id]))
+          .map((p) => ({ ...p, count: c.count[p.id], inRange: Math.min(p.inRange, c.live[p.id] || 0) })) }))
         .filter((g) => g.products.length);
       body.innerHTML = groups.map(UI.categorySection).join("") || `<div class="empty">No products match</div>`;
     }
@@ -451,19 +465,19 @@
   function sessionRows(mode) {
     const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
     return (S.area ? S.areaOrder : S.order).map((a) => byAddr[a])
-      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && (!S.devCats.length || S.devCats.includes(d.category)))
+      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && matchesFilter(d))
       .map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
   }
   // ---- "This area" (history and All sessions): the sheets list only devices whose point is in the viewport ----
   // It re-filters once each time the map comes to rest after the user dragged or zoomed it (not during the move,
   // not after the app's own camera moves). Rows still in view keep their order, rows that left hide, new ones append.
   const inArea = (addr) => !S.area || S.area.has(addr);
-  /** Per product, how many of the session's devices are in the area (null when This area is off). */
-  function areaCounts() {
-    if (!S.area) return null;
+  /** Per product, how many of the session's devices the cards count: in the area (when This area is on), not hidden
+   *  by the display filter (G-12), matching the filters. live: those not stale. */
+  function cardCounts() {
     const count = {}, live = {};
     for (const d of D.getSessionDevices(S.session)) {
-      if (!S.area.has(d.addr)) continue;
+      if (!inArea(d.addr) || hiddenByFilter(d) || !matchesFilter(d)) continue;
       const k = d.product || "unidentified";
       count[k] = (count[k] || 0) + 1;
       if (!d.stale) live[k] = (live[k] || 0) + 1;
@@ -722,7 +736,7 @@
     session: null, live: false, order: [], layout: null,
     recorder: "idle", paused: false, recMap: null,
     discoverMode: "nearby", discView: "categories",
-    devCats: [], topCats: [], search: null, page: null, locZoomed: false, // search: { query, bbox, order, ref, moved, saved } in search state; page: the search page's scope
+    filter: null, search: null, page: null, locZoomed: false, // search: { query, bbox, order, ref, moved, saved } in search state; page: the search page's scope
     histMode: "all", area: null, areaOrder: [], // area: the devices in view while "This area" is on
     settings: { ...SETTINGS }, stack: [], map: null,
     ob: 0, obAuto: true, obAllowed: [false, false, false],
@@ -791,7 +805,7 @@
     S.histMode = "all"; S.area = null; S.areaOrder = []; // per session view
     if (S.search) { S.search = null; phone.classList.remove("searching"); $("#search-bar").innerHTML = ""; } // a new view leaves search
     S.order = id ? D.getSessionDevices(id).sort((a, b) => b.rssi - a.rssi).map((d) => d.addr) : []; // sorted once
-    S.topCats = id ? D.getCategoryCounts(id).filter((c) => c.id !== "unidentified").slice(0, TOP_CATS).map((c) => c.id) : []; // fixed for the view
+    S.filter = noFilter(); // per session view
     const sess = id && D.getRecording(id);
     S.map.setSession(sess, id ? sessionPoints() : []);
     renderDiscover();
@@ -799,11 +813,16 @@
     const r = $(".recorder", phone);
     $(".rec-meta", r).textContent = S.recorder === "idle" ? "" : `${D.getCurrentRecording().devices} devices · ${locationText()}`;
   }
-  /** The chip row's categories: Unidentified, the selected ones outside the top ones (in the order picked), the top
-   *  ones (by device count, fixed per session view, so the row never reorders by itself). */
-  const TOP_CATS = 4;
-  const catOf = (id) => CATS.find((c) => c.id === id);
-  const chipCats = () => ["unidentified", ...S.devCats.filter((id) => id !== "unidentified" && !S.topCats.includes(id)), ...S.topCats].map(catOf);
+  /** The filters: the presets (chip row and the sheet's switches), Identification and the categories (the sheet).
+   *  Presets combine with AND, the categories with any-of, and the three groups with AND. */
+  const noFilter = () => ({ presets: [], ident: "any", cats: [] });
+  const filterCount = () => S.filter.presets.length + (S.filter.ident !== "any") + S.filter.cats.length;
+  function matchesFilter(d) {
+    const f = S.filter;
+    return f.presets.every((id) => PRESETS.find((p) => p.id === id).test(d))
+      && (f.ident === "any" || (f.ident === "identified") === !!d.product)
+      && (!f.cats.length || f.cats.includes(d.category));
+  }
   const sessionPoints = () => D.getSessionDevices(S.session).filter((d) => !S.search || S.search.order.includes(d.addr)).map((d) => ({ addr: d.addr, at: d.best, rssi: d.rssi, category: d.category, product: d.product || "unidentified" }));
 
   /** The recorder: "idle" (FAB), "capsule" or "panel". The capsule's width and the panel's height are measured. */
@@ -981,8 +1000,15 @@
       body.innerHTML = UI.deviceBody(d, { tab: entry.props.tab, gatt: null, chartW: phone.clientWidth - 32 });
       $("#dev-tab", body).innerHTML = entry.props.tab === "adv" ? UI.advertising(d) : gattTabNow(d.addr);
     } else if (entry.kind === "filter") {
-      top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">Filter</span>`);
-      body.innerHTML = UI.filterList(entry.props.cats, S.devCats);
+      const f = S.filter, fs = $(".filter-sheet", body);
+      if (!fs) {
+        top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">Filter</span>`);
+        body.innerHTML = UI.filterSheet(entry.props.cats, f);
+      } else {
+        fs.querySelectorAll('[data-action="filter-preset"]').forEach((b) => b.setAttribute("aria-checked", f.presets.includes(b.dataset.value)));
+        setSegValue($(".seg", fs), f.ident);
+        fs.querySelectorAll(".filter-item").forEach((b) => b.setAttribute("aria-checked", f.cats.includes(b.dataset.value)));
+      }
     } else {
       const p = D.getProduct(entry.props.id);
       top.innerHTML = UI.sheetTop(`<span class="sheet-kicker">${esc((CATS.find((c) => c.id === p.category) || { label: "Unidentified" }).label)}</span>`);
@@ -1355,15 +1381,22 @@
       const go = $(".gatt-go", tab);
       requestAnimationFrame(() => ACTIONS["gatt-go"](go)); // straight to the prompt
     },
-    // "All" clears the category filter; a category toggles (a device matches any selected category)
-    "dev-cat": (el) => {
-      const id = el.dataset.value;
-      S.devCats = id === "all" ? [] : S.devCats.includes(id) ? S.devCats.filter((c) => c !== id) : [...S.devCats, id];
+    // a preset (chip or switch) toggles; "All" clears every filter. Changes apply live.
+    "filter-preset": (el) => {
+      const id = el.dataset.value, p = S.filter.presets;
+      if (id === "all") S.filter = noFilter();
+      else S.filter.presets = p.includes(id) ? p.filter((x) => x !== id) : [...p, id];
       refreshSheets();
     },
-    "filter-clear": () => { S.devCats = []; refreshSheets(); },
-    // the categories (and counts) of the scope, taken when the sheet opens
-    "filter-open": () => Stack.push("filter", { cats: D.getCategoryCounts(S.session) }),
+    "filter-ident": (el) => { S.filter.ident = el.dataset.value; refreshSheets(); },
+    "filter-cat": (el) => {
+      const id = el.dataset.value, c = S.filter.cats;
+      S.filter.cats = c.includes(id) ? c.filter((x) => x !== id) : [...c, id];
+      refreshSheets();
+    },
+    "filter-clear": () => { S.filter = noFilter(); refreshSheets(); },
+    // the categories of the scope and their counts (without hidden devices), taken when the sheet opens
+    "filter-open": () => Stack.push("filter", { cats: D.getCategoryCounts(S.session, { hideUnnamedApple: S.settings.hideUnnamedApple }).filter((c) => c.id !== "unidentified") }),
     recorder: () => { if (S.recorder === "idle") startRecording(); },
     "recorder-open": () => { if (S.recorder === "capsule") setRecorder("panel"); },
     "recorder-close": () => setRecorder("capsule"),
@@ -1574,10 +1607,12 @@
         ${cell("panel", UI.recorder({ state: "panel", paused: false, time: "12:34", meta: "26 devices · 32.88012, -117.23421 ±8 m", mapId: "g-rec-map", cls: "static" }), "width: 412px; height: 260px")}
       </div>
       ${sect("ChipRow", ".chips / .chip · --chip-h, --chip-bg, --chip-fg, --chip-on-bg, --chip-on-fg")}
-      <div class="g-row">${cell("All selected", UI.chipRow(CATS.slice(0, 4), [], "static"), "width: 412px; overflow: hidden")}
-        ${cell("Audio and Unidentified selected", UI.chipRow(CATS.slice(0, 4), ["unidentified", "audio"], "static"), "width: 412px; overflow: hidden")}</div>
-      ${sect("Filter sheet", ".filter-item (role checkbox) / .check · --check-size, --check-r, --chip-on-bg; .text-btn Clear")}
-      <div class="g-row">${cell("two selected", `<section class="sheet static stack-sheet"><div class="handle"></div><div class="sheet-top">${UI.sheetTop(`<span class="sheet-kicker">Filter</span>`)}</div><div class="sheet-body">${UI.filterList(D.getCategoryCounts("all"), ["unidentified", "audio"])}</div></section>`, "width: 412px; padding: 0")}</div>
+      <div class="g-row">${cell("All (no filter)", UI.chipRow([], true, "static"), "width: 412px; overflow: hidden")}
+        ${cell("Readable and Trackers on", UI.chipRow(["readable", "trackers"], false, "static"), "width: 412px; overflow: hidden")}</div>
+      ${sect("FilterButton", ".filter-btn (.ib) in the Discover header's right column · .on = --chip-on-bg; .count-badge --count-badge, --blue")}
+      <div class="g-row">${cell("off", UI.filterButton(0))}${cell("3 filters", UI.filterButton(3))}</div>
+      ${sect("Filter sheet", "switches (presets), .seg Identification, .filter-item (role checkbox) / .check · --check-size, --check-r, --chip-on-bg; .text-btn Clear")}
+      <div class="g-row">${cell("Trackers, Identified, Audio", `<section class="sheet static stack-sheet"><div class="handle"></div><div class="sheet-top">${UI.sheetTop(`<span class="sheet-kicker">Filter</span>`)}</div><div class="sheet-body">${UI.filterSheet(D.getCategoryCounts("all", { hideUnnamedApple: true }).filter((c) => c.id !== "unidentified"), { presets: ["trackers"], ident: "identified", cats: ["audio"] })}</div></section>`, "width: 412px; padding: 0")}</div>
       ${sect("DeviceRow", ".row · --row-h, --spark-w, --rssi-w, --rssi-strong/fair/weak, --dim")}
       <div class="g-row">
         ${cell("normal", UI.deviceRow(normal), "width: 412px; padding: 0")}
@@ -1640,7 +1675,7 @@
       ${sect("Discover sheet", ".disc-sheet · three snaps: collapsed (peek), --discover-sheet-half (67%), --discover-sheet-full; view switch shows the view it switches TO")}
       <div class="g-row">
         ${cell("live, categories", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: true, mode: "nearby" })}</div><div class="sheet-body">${UI.categorySection({ ...groups[1], products: groups[1].products.slice(0, 2) })}</div></section>`, "width: 412px; padding: 0")}
-        ${cell("live, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: true, mode: "all" })}</div><div class="disc-chips">${UI.chipRow(CATS.slice(0, 5), [], "inline")}</div><div class="sheet-body"><div class="rows">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}</div></div></section>`, "width: 412px; padding: 0")}
+        ${cell("live, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: true, mode: "all" })}</div><div class="disc-chips">${UI.chipRow([], true, "inline")}</div><div class="sheet-body"><div class="rows">${devs.slice(0, 3).map((d) => UI.deviceRow(d)).join("")}</div></div></section>`, "width: 412px; padding: 0")}
         ${cell("history, categories: This area / All", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "categories", live: false })}</div></section>`, "width: 412px; padding: 0")}
         ${cell("history, list", `<section class="sheet static disc-sheet"><div class="handle"></div><div class="disc-head">${UI.discoverHead({ view: "list", live: false })}</div></section>`, "width: 412px; padding: 0")}
         ${cell("product sheet", `<section class="sheet static stack-sheet"><div class="handle"></div><div class="sheet-top">${UI.sheetTop(`<span class="sheet-kicker">Lighting</span>`)}</div><div class="sheet-body">${UI.productView(D.getProduct("govee"), D.getProduct("govee").devices.slice(0, 2).map((d) => UI.deviceRow(d, { spark: false })).join(""))}</div></section>`, "width: 412px; padding: 0")}
