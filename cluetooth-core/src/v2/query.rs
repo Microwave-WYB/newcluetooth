@@ -33,6 +33,8 @@ pub(crate) struct Live {
     pub uuid: String,
     pub stale_before_ms: i64,
     pub seq: u64,
+    /// The latest RSSI per device ("live: current", §2.5).
+    pub current: std::sync::Arc<HashMap<i64, i16>>,
 }
 
 /// The query context: the catalog, the display filter and the current recording.
@@ -289,12 +291,22 @@ fn keys_query(
         Some(f) => predicate(ctx, r, f, true, &mut params),
         None => predicate(ctx, r, &DeviceFilter::default(), true, &mut params),
     };
-    let sql =
-        format!("{with} SELECT d.addr FROM d WHERE {filter} ORDER BY d.rssi_max DESC, d.addr");
+    let sql = format!(
+        "{with} SELECT d.addr, d.rssi_max FROM d WHERE {filter} ORDER BY d.rssi_max DESC, d.addr"
+    );
     let mut stmt = conn.prepare(&sql)?;
-    let keys = stmt
-        .query_map(params.refs().as_slice(), |row| row.get::<_, i64>(0))?
+    let mut rows = stmt
+        .query_map(params.refs().as_slice(), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
+    // live: sorted by the current RSSI (G-9 builds the order once from this)
+    if let (true, Some(live)) = (r.live, &ctx.live) {
+        let rssi =
+            |(k, max): &(i64, Option<i64>)| live.current.get(k).map(|v| i64::from(*v)).or(*max);
+        rows.sort_by(|a, b| rssi(b).cmp(&rssi(a)).then(a.0.cmp(&b.0)));
+    }
+    let keys: Vec<i64> = rows.into_iter().map(|(k, _)| k).collect();
     Ok(DeviceKeys {
         le_i64: pack(&keys),
         seq: seq_of(ctx, r),
@@ -382,6 +394,15 @@ fn d_rows(
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    let mut rows = rows;
+    // live: the current RSSI; frozen: the strongest (§2.5)
+    if let (true, Some(live)) = (r.live, &ctx.live) {
+        for d in &mut rows {
+            if let Some(v) = live.current.get(&d.addr) {
+                d.rssi_max = Some(i64::from(*v));
+            }
+        }
+    }
     Ok(rows)
 }
 

@@ -6,6 +6,7 @@ mod core;
 mod db;
 mod error;
 mod keys;
+mod live;
 mod query;
 mod search;
 mod store;

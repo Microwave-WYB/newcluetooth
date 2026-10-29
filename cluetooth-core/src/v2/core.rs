@@ -8,7 +8,7 @@
 //! deltas, GATT, uploads, export and delete follow in the next slices and return `Db { "not implemented" }` here.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
@@ -25,6 +25,7 @@ use super::catalog::Catalog;
 use super::db;
 use super::error::CoreError;
 use super::keys::key_of;
+use super::live::{self, LiveState};
 use super::query::{self, Ctx};
 use super::store::{Obs, RoutePoint, Store, haversine_m};
 use super::types::*;
@@ -61,6 +62,107 @@ struct Writer {
     store: Store,
     recording: Option<Recording>,
     fixes: RecentLocationFixes,
+    live: LiveState,
+}
+
+/// What `ct-notify` delivers to the listener, in order.
+enum Note {
+    Live(Box<LiveDelta>),
+    Event(CoreEvent),
+}
+
+type Listener = Arc<Mutex<Option<Arc<dyn CoreListener>>>>;
+
+/// `ct-notify` (§1.3): calls the listener off the ingest path; while it is busy, queued deltas coalesce (§2.6).
+fn spawn_notify(listener: Listener) -> Result<mpsc::Sender<Note>, CoreError> {
+    let (tx, rx) = mpsc::channel::<Note>();
+    std::thread::Builder::new()
+        .name("ct-notify".into())
+        .spawn(move || {
+            while let Ok(first) = rx.recv() {
+                let mut notes = vec![first];
+                notes.extend(rx.try_iter());
+                let mut pending: Option<LiveDelta> = None;
+                let mut out = Vec::new();
+                for note in notes {
+                    match note {
+                        Note::Live(d) => {
+                            pending = Some(match pending.take() {
+                                None => *d,
+                                Some(prev) => coalesce(prev, *d),
+                            })
+                        }
+                        Note::Event(e) => {
+                            if let Some(d) = pending.take() {
+                                out.push(Note::Live(Box::new(d)));
+                            }
+                            out.push(Note::Event(e));
+                        }
+                    }
+                }
+                if let Some(d) = pending {
+                    out.push(Note::Live(Box::new(d)));
+                }
+                let current = lock(&listener).clone();
+                let Some(l) = current else { continue };
+                for note in out {
+                    match note {
+                        Note::Live(d) => l.on_live(*d),
+                        Note::Event(e) => l.on_event(e),
+                    }
+                }
+            }
+        })
+        .map_err(CoreError::from_io)?;
+    Ok(tx)
+}
+
+/// §2.6 coalescing: the latest values per key, appends concatenated, one `seq` (the newer).
+fn coalesce(mut a: LiveDelta, b: LiveDelta) -> LiveDelta {
+    for c in b.changed {
+        if let Some(row) = a.appended.iter_mut().find(|r| r.key == c.key) {
+            row.rssi = c.rssi;
+            row.in_range = c.in_range;
+            if c.name.is_some() {
+                row.name = c.name;
+            }
+            if c.best.is_some() {
+                row.best = c.best;
+            }
+            if let Some(page) = c.page {
+                row.page = Some(page);
+            }
+        } else if let Some(prev) = a.changed.iter_mut().find(|p| p.key == c.key) {
+            prev.rssi = c.rssi;
+            prev.in_range = c.in_range;
+            prev.spark = c.spark;
+            prev.name = c.name.or(prev.name.take());
+            prev.page = c.page.or(prev.page.take());
+            prev.best = c.best.or(prev.best.take());
+        } else {
+            a.changed.push(c);
+        }
+    }
+    a.appended.extend(b.appended);
+    for p in b.products {
+        match a.products.iter_mut().find(|x| x.id == p.id) {
+            Some(x) => *x = p,
+            None => a.products.push(p),
+        }
+    }
+    a.route_appended.extend(b.route_appended);
+    LiveDelta {
+        session_id: b.session_id,
+        seq: b.seq,
+        at_ms: b.at_ms,
+        state: b.state,
+        changed: a.changed,
+        appended: a.appended,
+        products: a.products,
+        route_appended: a.route_appended,
+        fix: b.fix.or(a.fix),
+        chart: b.chart.or(a.chart),
+    }
 }
 
 #[derive(uniffi::Object)]
@@ -70,7 +172,8 @@ pub struct Core {
     writer: Mutex<Writer>,
     reader: Mutex<Connection>,
     display: Mutex<DisplayFilter>,
-    listener: Mutex<Option<Arc<dyn CoreListener>>>,
+    listener: Listener,
+    notify: Mutex<mpsc::Sender<Note>>,
 }
 
 fn now_ms() -> i64 {
@@ -140,17 +243,21 @@ impl Core {
             )?;
         }
         let reader = db::open_reader(&db_path)?;
+        let listener: Listener = Arc::new(Mutex::new(None));
+        let notify = spawn_notify(listener.clone())?;
         Ok(Arc::new(Core {
             writer: Mutex::new(Writer {
                 store: Store::new(conn),
                 recording: None,
                 fixes: RecentLocationFixes::new(32, config.location_max_age_ms),
+                live: LiveState::default(),
             }),
             reader: Mutex::new(reader),
             display: Mutex::new(DisplayFilter {
                 hide_unnamed_apple: true,
             }),
-            listener: Mutex::new(None),
+            listener,
+            notify: Mutex::new(notify),
             catalog,
             config,
         }))
@@ -161,7 +268,8 @@ impl Core {
             session: r.session,
             uuid: r.uuid.clone(),
             stale_before_ms: now - self.config.stale_after_ms as i64,
-            seq: 0,
+            seq: w.live.seq,
+            current: w.live.current.clone(),
         })
     }
 
@@ -182,9 +290,38 @@ impl Core {
     }
 
     fn emit(&self, event: CoreEvent) {
-        let listener = lock(&self.listener).clone();
-        if let Some(l) = listener {
-            l.on_event(event);
+        let _ = lock(&self.notify).send(Note::Event(event));
+    }
+
+    /// Builds and queues the live delta after a commit (§2.6); nothing is built without a listener.
+    fn emit_delta(&self, w: &mut Writer, route: &[RoutePoint], now: i64, force: bool) {
+        if lock(&self.listener).is_none() {
+            return;
+        }
+        let state = self.state_of(w);
+        let Some(r) = w.recording.as_ref() else {
+            return;
+        };
+        let input = live::DeltaInput {
+            conn: &w.store.conn,
+            catalog: &self.catalog,
+            hide_unnamed_apple: lock(&self.display).hide_unnamed_apple,
+            session: r.session,
+            uuid: &r.uuid,
+            now,
+            stale_after_ms: self.config.stale_after_ms as i64,
+            state,
+            route,
+            force,
+        };
+        match live::delta(&mut w.live, input) {
+            Ok(Some(d)) => {
+                let _ = lock(&self.notify).send(Note::Live(Box::new(d)));
+            }
+            Ok(None) => {}
+            Err(e) => self.emit(CoreEvent::StorageWarning {
+                message: e.to_string(),
+            }),
         }
     }
 
@@ -224,7 +361,7 @@ impl Core {
         }
     }
 
-    /// The commit of §2.4 step 5 for the current recording.
+    /// The commit of §2.4 step 5 for the current recording, then its live delta.
     fn commit(&self, w: &mut Writer, now: i64) -> Result<(), CoreError> {
         let Writer {
             store, recording, ..
@@ -236,10 +373,13 @@ impl Core {
         let route = std::mem::take(&mut r.route);
         let result = store.commit(r.session, &obs, &route, &self.catalog);
         r.last_commit_ms = now;
-        if let Err(e) = &result {
-            self.emit(CoreEvent::StorageWarning {
+        let recording = r.phase == RecordingPhase::Recording;
+        match &result {
+            Err(e) => self.emit(CoreEvent::StorageWarning {
                 message: e.to_string(),
-            });
+            }),
+            Ok(()) if recording => self.emit_delta(w, &route, now, false),
+            Ok(()) => {}
         }
         result
     }
@@ -317,6 +457,9 @@ impl Core {
             ack.accepted += 1;
         }
         let due = {
+            for o in &rows {
+                w.live.hear(o.addr, o.rssi);
+            }
             let r = w.recording.as_mut().expect("recording");
             r.pending.extend(rows);
             now - r.last_commit_ms >= self.config.durability_interval_ms as i64
@@ -333,6 +476,7 @@ impl Core {
         }
         let mut w = lock(&self.writer);
         w.fixes.push(fix.clone());
+        w.live.fix = Some((fix.lat, fix.lon, fix.accuracy_meters, fix.observed_at_ms));
         let Some(r) = w.recording.as_mut() else {
             return;
         };
@@ -370,6 +514,7 @@ impl Core {
             }
             let uuid = new_uuid(now)?;
             let session = w.store.create_session(&uuid, now)?;
+            w.live = LiveState::default();
             w.recording = Some(Recording {
                 session,
                 uuid,
@@ -407,6 +552,8 @@ impl Core {
             r.running_since_ms = None;
             r.phase = RecordingPhase::Paused;
             store.pause(r.session, now)?;
+            // deltas stop after the one that carries Paused (§2.6)
+            self.emit_delta(&mut w, &[], now, true);
             self.state_of(&w)
         };
         self.emit(CoreEvent::RecordingChanged { state });
@@ -477,7 +624,7 @@ impl Core {
 
     /// [N]
     pub fn set_listener(&self, listener: Option<Arc<dyn CoreListener>>) {
-        *lock(&self.listener) = listener;
+        *lock(&*self.listener) = listener;
     }
 
     /// [N] Emits `CoreEvent::DataInvalidated`.
@@ -777,4 +924,94 @@ impl Core {
 #[uniffi::export]
 pub fn match_device(query: String, name: Option<String>, addr: String) -> bool {
     super::search::matches(&query, name.as_deref(), &addr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> RecordingState {
+        RecordingState {
+            phase: RecordingPhase::Recording,
+            session_id: Some("s".into()),
+            started_ms: Some(0),
+            active_before_ms: 0,
+            running_since_ms: Some(0),
+            device_count: 0,
+            distance_m: 0.0,
+        }
+    }
+
+    fn delta(seq: u64, changed: Vec<DeviceLive>, appended: Vec<DeviceRow>) -> LiveDelta {
+        LiveDelta {
+            session_id: "s".into(),
+            seq,
+            at_ms: seq as i64,
+            state: state(),
+            changed,
+            appended,
+            products: vec![],
+            route_appended: vec![GeoPoint {
+                lon: seq as f64,
+                lat: 0.0,
+            }],
+            fix: None,
+            chart: None,
+        }
+    }
+
+    fn live(key: i64, rssi: i16, name: Option<&str>) -> DeviceLive {
+        DeviceLive {
+            key,
+            rssi: Some(rssi),
+            in_range: true,
+            spark: vec![],
+            name: name.map(Into::into),
+            page: None,
+            best: None,
+        }
+    }
+
+    /// §2.6 coalescing: latest values per key (a change never drops an earlier name), appends concatenated with
+    /// later changes folded in, routes concatenated, one seq (the newer).
+    #[test]
+    fn coalescing_keeps_latest_values_and_concatenates_appends() {
+        let row = DeviceRow {
+            key: 3,
+            addr: "00:00:00:00:00:03".into(),
+            name: None,
+            page: None,
+            categories: vec![],
+            traits: vec![],
+            readable: false,
+            vulnerable: false,
+            icon: None,
+            rssi: Some(-80),
+            in_range: true,
+            spark: None,
+            best: None,
+            last_seen_ms: 0,
+        };
+        let a = delta(1, vec![live(1, -70, Some("one"))], vec![row]);
+        let b = delta(
+            2,
+            vec![
+                live(1, -60, None),
+                live(2, -50, None),
+                live(3, -40, Some("three")),
+            ],
+            vec![],
+        );
+        let m = coalesce(a, b);
+        assert_eq!(m.seq, 2);
+        assert_eq!(m.changed.len(), 2);
+        let one = m.changed.iter().find(|c| c.key == 1).unwrap();
+        assert_eq!((one.rssi, one.name.as_deref()), (Some(-60), Some("one")));
+        assert_eq!(m.appended.len(), 1);
+        assert_eq!(
+            (m.appended[0].rssi, m.appended[0].name.as_deref()),
+            (Some(-40), Some("three"))
+        );
+        assert_eq!(m.route_appended.len(), 2);
+    }
 }

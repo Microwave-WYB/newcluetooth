@@ -633,3 +633,198 @@ fn every_payload_round_trips() {
         assert_eq!(dupes, 0);
     });
 }
+
+#[derive(Default)]
+struct Collect {
+    deltas: std::sync::Mutex<Vec<LiveDelta>>,
+    events: std::sync::Mutex<Vec<CoreEvent>>,
+}
+
+impl super::core::CoreListener for Collect {
+    fn on_live(&self, delta: LiveDelta) {
+        self.deltas.lock().unwrap().push(delta);
+    }
+    fn on_event(&self, event: CoreEvent) {
+        self.events.lock().unwrap().push(event);
+    }
+}
+
+fn wait_for(c: &Collect, n: usize) -> Vec<LiveDelta> {
+    for _ in 0..200 {
+        if c.deltas.lock().unwrap().len() >= n {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    c.deltas.lock().unwrap().clone()
+}
+
+fn obs(addr: &str, rssi: i16, at: i64, nanos: u64, name: &str) -> ScanObservationInput {
+    let mut raw = vec![2, 1, 6, name.len() as u8 + 1, 9];
+    raw.extend(name.as_bytes());
+    ScanObservationInput {
+        addr: addr.into(),
+        rssi: Some(rssi),
+        scanned_at_ms: at,
+        elapsed_realtime_nanos: nanos,
+        raw,
+        local_name: Some(name.into()),
+        tx_power: None,
+        is_connectable: Some(true),
+        is_legacy: Some(true),
+        primary_phy: Some(1),
+        secondary_phy: Some(0),
+        adv_sid: None,
+        adv_tx_power: None,
+        periodic_interval: None,
+        data_status: Some(0),
+        addr_type: Some(1),
+    }
+}
+
+/// §2.6 (first cut): one delta per commit with appends, changes, staleness flips and the route; `seq` grows and
+/// matches the snapshot; the delta carrying Paused is the last; live rows and order use the current RSSI.
+#[test]
+fn live_deltas_per_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let t0 = 1_761_000_000_000i64;
+    let core = Core::open_at(
+        config(dir.path()),
+        CoreAssets {
+            wiki_bundle_json: resource("fake-bundle.json"),
+            sig_numbers_tsv: String::new(),
+        },
+        t0,
+    )
+    .unwrap();
+    let c = Arc::new(Collect::default());
+    core.set_listener(Some(c.clone()));
+    let id = core.start_recording_at(env(), t0).unwrap();
+    let live = Scope {
+        sessions: SessionScope::Sessions {
+            ids: vec![id.clone()],
+        },
+        filter: None,
+    };
+    let fix = |at: i64, nanos: u64| LocationFix {
+        lat: 32.88,
+        lon: -117.234 + (at - t0) as f64 * 1e-9,
+        accuracy_meters: 5.0,
+        observed_at_ms: at,
+        elapsed_realtime_nanos: nanos,
+    };
+    // commit 1 at +5 s: A and B appear
+    core.ingest_location_at(fix(t0 + 1_000, 1_000_000_000));
+    core.ingest_scans_at(
+        vec![obs(
+            "AA:00:00:00:00:01",
+            -70,
+            t0 + 1_000,
+            1_000_000_000,
+            "A",
+        )],
+        t0 + 1_000,
+    )
+    .unwrap();
+    core.ingest_scans_at(
+        vec![obs(
+            "AA:00:00:00:00:02",
+            -50,
+            t0 + 5_000,
+            5_000_000_000,
+            "B",
+        )],
+        t0 + 5_000,
+    )
+    .unwrap();
+    let d = wait_for(&c, 1);
+    assert_eq!(d.len(), 1, "events: {:?}", c.events.lock().unwrap());
+    assert_eq!(d[0].seq, 1);
+    assert_eq!(d[0].session_id, id);
+    let appended: Vec<i64> = d[0].appended.iter().map(|r| r.key).collect();
+    assert_eq!(appended, vec![0xAA0000000001, 0xAA0000000002]);
+    assert_eq!(d[0].route_appended.len(), 1);
+    assert!(
+        d[0].products
+            .iter()
+            .any(|p| p.id == "unidentified" && p.count == 2 && p.live)
+    );
+    // the snapshot carries the seq of the last delta; the order is by current RSSI
+    let snap = block(core.device_order(live.clone())).unwrap();
+    assert_eq!(snap.seq, 1);
+    assert_eq!(keys(&snap), vec![0xAA0000000002, 0xAA0000000001]);
+    // commit 2 at +30 s: A is heard stronger now, B went stale
+    core.ingest_scans_at(
+        vec![obs(
+            "AA:00:00:00:00:01",
+            -40,
+            t0 + 30_000,
+            30_000_000_000,
+            "A",
+        )],
+        t0 + 30_000,
+    )
+    .unwrap();
+    let d = wait_for(&c, 2);
+    assert_eq!(d.len(), 2);
+    assert_eq!(d[1].seq, 2);
+    assert!(d[1].appended.is_empty());
+    let a = d[1]
+        .changed
+        .iter()
+        .find(|x| x.key == 0xAA0000000001)
+        .unwrap();
+    assert_eq!((a.rssi, a.in_range), (Some(-40), true));
+    let b = d[1]
+        .changed
+        .iter()
+        .find(|x| x.key == 0xAA0000000002)
+        .unwrap();
+    assert!(!b.in_range);
+    let rows = block(core.device_rows(live.clone(), vec![0xAA0000000001])).unwrap();
+    assert_eq!(rows[0].rssi, Some(-40));
+    assert!(block(core.session_view(live.clone())).unwrap().live);
+    // pause: one forced delta carrying Paused, then nothing
+    core.pause_recording_at(t0 + 31_000).unwrap();
+    let d = wait_for(&c, 3);
+    assert_eq!(d.len(), 3);
+    assert_eq!(d[2].state.phase, RecordingPhase::Paused);
+    assert_eq!(
+        core.ingest_scans_at(
+            vec![obs(
+                "AA:00:00:00:00:03",
+                -60,
+                t0 + 40_000,
+                40_000_000_000,
+                "C"
+            )],
+            t0 + 40_000
+        )
+        .unwrap()
+        .ignored_not_recording,
+        1
+    );
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert_eq!(c.deltas.lock().unwrap().len(), 3);
+    core.stop_recording_at(t0 + 50_000).unwrap();
+    for _ in 0..200 {
+        if c.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, CoreEvent::SessionsChanged))
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let events = c.events.lock().unwrap().clone();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, CoreEvent::SessionsChanged))
+    );
+    // frozen after stop: the strongest RSSI again
+    let rows = block(core.device_rows(live, vec![0xAA0000000001])).unwrap();
+    assert_eq!(rows[0].rssi, Some(-40));
+}
