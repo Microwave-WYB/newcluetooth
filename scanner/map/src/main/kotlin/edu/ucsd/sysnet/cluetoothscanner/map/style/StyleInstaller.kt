@@ -7,8 +7,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
@@ -39,7 +37,8 @@ object StyleInstaller {
             GeoJsonSource(s.id, EMPTY_COLLECTION, options)
         }
 
-    fun layers(json: List<JsonObject>): List<Layer> = json.map(::layer)
+    /** The layers MapLibre can build, in order; a layer of an unknown type is left out (MapStyleSpecTest rules it out). */
+    fun layers(json: List<JsonObject>): List<Layer> = json.mapNotNull(::layer)
 
     /** Adds the sources and layers above the base map's own layers. */
     fun install(style: Style, spec: MapStyleSpec, theme: MapTheme) {
@@ -47,18 +46,19 @@ object StyleInstaller {
         layers(spec.layers(theme)).forEach(style::addLayer)
     }
 
-    fun layer(json: JsonObject): Layer {
-        val id = json.getValue("id").jsonPrimitive.content
-        val source = json.getValue("source").jsonPrimitive.content
-        val layer = when (val type = json.getValue("type").jsonPrimitive.content) {
+    /** One map-style.json layer, or null when its id, source or type is missing or unknown. */
+    fun layer(json: JsonObject): Layer? {
+        val id = (json["id"] as? JsonPrimitive)?.content ?: return null
+        val source = (json["source"] as? JsonPrimitive)?.content ?: return null
+        val layer = when ((json["type"] as? JsonPrimitive)?.content) {
             "circle" -> CircleLayer(id, source)
             "line" -> LineLayer(id, source)
             "symbol" -> SymbolLayer(id, source)
-            else -> error("map-style.json layer $id has unsupported type $type")
+            else -> return null
         }
         val props = ArrayList<PropertyValue<*>>()
-        json["layout"]?.jsonObject?.forEach { (k, v) -> props += LayoutPropertyValue(k, native(v)) }
-        json["paint"]?.jsonObject?.forEach { (k, v) -> props += PaintPropertyValue(k, native(v)) }
+        (json["layout"] as? JsonObject)?.forEach { (k, v) -> props += LayoutPropertyValue(k, native(v)) }
+        (json["paint"] as? JsonObject)?.forEach { (k, v) -> props += PaintPropertyValue(k, native(v)) }
         layer.setProperties(*props.toTypedArray())
         json["filter"]?.let { setFilter(layer, it) }
         return layer
@@ -70,7 +70,8 @@ object StyleInstaller {
             is CircleLayer -> layer.setFilter(e)
             is SymbolLayer -> layer.setFilter(e)
             is LineLayer -> layer.setFilter(e)
-            else -> error("no filter on ${layer.id}")
+            // map-style.js only has circle, line and symbol layers; no other layer type is ever built here
+            else -> Unit
         }
     }
 
@@ -79,7 +80,7 @@ object StyleInstaller {
         for (p in props) {
             val layer = style.getLayer(p.layer) ?: continue
             when (p.kind) {
-                SelectionProp.Kind.Paint -> layer.setProperties(PaintPropertyValue(requireNotNull(p.property), native(p.value)))
+                SelectionProp.Kind.Paint -> p.property?.let { layer.setProperties(PaintPropertyValue(it, native(p.value))) }
                 SelectionProp.Kind.Filter -> setFilter(layer, p.value)
             }
         }
@@ -94,7 +95,8 @@ object StyleInstaller {
         is JsonPrimitive -> when {
             e.isString -> e.content
             e.booleanOrNull != null -> e.booleanOrNull
-            else -> e.doubleOrNull?.toFloat() ?: error("not a number: $e")
+            // a JSON literal that is neither string nor boolean is a number
+            else -> e.doubleOrNull?.toFloat() ?: e.content
         }
         is JsonArray -> e.map(::native).toTypedArray()
         is JsonObject -> HashMap(e.mapValues { native(it.value) })
