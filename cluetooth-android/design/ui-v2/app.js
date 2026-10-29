@@ -463,10 +463,15 @@
 
   // ---- List view: the session's devices (the old Scan list), in the order sorted once ----
   function sessionRows(mode) {
+    return listedDevices(mode).map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
+  }
+  /** The devices the list shows, in its order: This area, the display filter (G-12), Nearby (mode), the filters.
+   *  cats false leaves out the categories facet (the Filter sheet's counts, so a count is exactly the list after
+   *  checking that category). */
+  function listedDevices(mode, cats = true) {
     const byAddr = Object.fromEntries(D.getSessionDevices(S.session).map((d) => [d.addr, d]));
     return (S.area ? S.areaOrder : S.order).map((a) => byAddr[a])
-      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && matchesFilter(d))
-      .map((d) => UI.deviceRow(d, { spark: S.live })).join("") || `<div class="empty">No matching devices</div>`;
+      .filter((d) => d && inArea(d.addr) && !hiddenByFilter(d) && (mode === "all" || !d.stale) && matchesFilter(d, cats));
   }
   // ---- "This area" (history and All sessions): the sheets list only devices whose point is in the viewport ----
   // It re-filters once each time the map comes to rest after the user dragged or zoomed it (not during the move,
@@ -824,11 +829,11 @@
       && (f.ident === "any" || (f.ident === "identified") === !!d.product)
       && (!cats || !f.cats.length || f.cats.includes(d.category));
   }
-  /** The Filter sheet's faceted counts: per category, the session's devices (G-12 applied) that match every other
-   *  filter, i.e. what checking that category would add. */
+  /** The Filter sheet's faceted counts: per category, the devices the list would show with every constraint but the
+   *  categories facet (presets, Identification, This area, Nearby, G-12): what checking that category gives. */
   function facetCounts() {
     const count = {};
-    for (const d of D.getSessionDevices(S.session)) if (!hiddenByFilter(d) && matchesFilter(d, false)) count[d.category] = (count[d.category] || 0) + 1;
+    for (const d of listedDevices(S.live ? S.discoverMode : "all", false)) count[d.category] = (count[d.category] || 0) + 1;
     return count;
   }
   const sessionPoints = () => D.getSessionDevices(S.session).filter((d) => !S.search || S.search.order.includes(d.addr)).map((d) => ({ addr: d.addr, at: d.best, rssi: d.rssi, category: d.category, product: d.product || "unidentified" }));
