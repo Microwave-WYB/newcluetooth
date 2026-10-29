@@ -1,0 +1,36 @@
+# infra/data tasks. Run from anywhere as `mise run //infra/data:<task>`; they use compose.yaml here.
+# AndroZoo steps in order: androzoo-schema, androzoo-initial-load, androzoo-schedule; then
+# androzoo-sync whenever a check should run now.
+
+[tasks.androzoo-schema]
+description = "Create the androzoo schema, apks table and androzoo_ro role on the running Postgres (idempotent; no restart)"
+dir = "{{config_root}}"
+run = "sed '/^-- migrate:down/,$d' ../../db/db/migrations/20261029120000_androzoo_apks.sql | docker compose exec -T postgres psql -U cluetooth -d cluetooth -v ON_ERROR_STOP=1"
+
+[tasks.androzoo-sync]
+description = "Run the AndroZoo list check now: HEAD, and download + load if it changed (append --force to reload anyway)"
+dir = "{{config_root}}"
+run = 'docker compose --profile androzoo run --rm androzoo-sync node src/sync.mjs'
+
+[tasks.androzoo-initial-load]
+description = "One-off: load an existing latest.csv.gz (default: the agents' old copy) without downloading"
+dir = "{{config_root}}"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -f .env ]] && set -a && . ./.env && set +a
+vol="${ANDROZOO_INITIAL_VOLUME:-research-agent_agent-workspace}"
+path="${ANDROZOO_INITIAL_PATH:-sources/androzoo/latest.csv.gz}"
+docker compose --profile androzoo run --rm -v "$vol:/initial:ro" androzoo-sync \
+  node src/sync.mjs --initial-file "/initial/$path"
+'''
+
+[tasks.androzoo-schedule]
+description = "Start the daily AndroZoo check (container androzoo-sync, runs at ANDROZOO_SYNC_AT UTC)"
+dir = "{{config_root}}"
+run = "docker compose --profile androzoo up -d --build androzoo-sync"
+
+[tasks.androzoo-test]
+description = "AndroZoo sync tests (range download with a fake server; load and swap against a throwaway Postgres 18, skipped without Docker)"
+dir = "{{config_root}}/androzoo"
+run = ["npm ci --no-audit --no-fund", "node --test 'test/*.test.mjs'"]

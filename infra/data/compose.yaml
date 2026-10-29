@@ -168,8 +168,36 @@ services:
       - db-tunnel-token
     restart: unless-stopped
 
+  # The AndroZoo APK list in Postgres (androzoo.apks). Profile androzoo; a daily check at
+  # ANDROZOO_SYNC_AT (UTC) HEADs the list and, if ETag/Last-Modified/Content-Length changed,
+  # downloads it in 10 range segments, COPYs it into staging and swaps the table in one
+  # transaction. The list is public: no AndroZoo key. Manual run and the one-off first load:
+  # `mise run //infra/data:androzoo-sync`, `mise run //infra/data:androzoo-initial-load`.
+  androzoo-sync:
+    profiles:
+      - androzoo
+    build:
+      context: ./androzoo
+    image: cluetooth-androzoo-sync:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ANDROZOO_DATABASE_URL: postgresql://cluetooth:infra_wireless_scanning@postgres:5432/cluetooth?sslmode=disable
+      ANDROZOO_LIST_URL: ${ANDROZOO_LIST_URL:-https://androzoo.uni.lu/static/lists/latest.csv.gz}
+      ANDROZOO_DATA_DIR: /var/lib/androzoo-sync
+      ANDROZOO_SYNC_AT: ${ANDROZOO_SYNC_AT:-03:30}
+      ANDROZOO_SEGMENTS: ${ANDROZOO_SEGMENTS:-10}
+    volumes:
+      # Its own download directory, outside the agents' workspace; holds only the newest list.
+      - ${ANDROZOO_DATA_SOURCE:-androzoo-data}:/var/lib/androzoo-sync
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  androzoo-data:
 
 secrets:
   cluetooth-private-key:

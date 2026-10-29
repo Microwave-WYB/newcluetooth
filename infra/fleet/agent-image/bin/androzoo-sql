@@ -1,0 +1,7 @@
+#!/bin/sh
+# Read-only SQL against the AndroZoo APK list (androzoo.apks, role androzoo_ro), e.g.
+#   androzoo-sql "select vercode, sha256 from androzoo.apks where pkg_name = 'com.example' order by vercode desc limit 1"
+# The URL is a file (~/.config/androzoo-db/url), passed to wiki-sql for this process only.
+url_file="$HOME/.config/androzoo-db/url"
+[ -r "$url_file" ] || { echo "androzoo-sql: $url_file is missing (see infra/fleet/README.md)" >&2; exit 1; }
+WIKI_DB_URL="$(cat "$url_file")" exec wiki-sql "$@"

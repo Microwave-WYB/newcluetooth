@@ -27,6 +27,7 @@ SECRETS=(
   "gitea-runner-registration-token|no|fleet:register-runners only (first registration of a runner)"
   "wiki-db-url|no|research-agent: ~/.config/wiki-db/url for wiki-sql (scan DB, read-only role wiki_ro)"
   "wigle-db-url|no|research-agent: ~/.config/wigle/db-url for wigle (its call archive, role wigle_writer)"
+  "androzoo-db-url|no|research-agent: ~/.config/androzoo-db/url for androzoo-sql (AndroZoo list, role androzoo_ro)"
   "agent-runtime.env|no|research-agent: environment, PASEO_PASSWORD only"
 )
 # Variables that must never be in agent-runtime.env: keys belong to keyproxy, and the DB URLs
@@ -46,10 +47,12 @@ gitea() { need_gitea_dir; docker compose -p wirelesswiki-gitea --profile gitea "
 # the agent container as files.
 agent() {
   need_gitea_dir
-  local wiki="" wigle=""
+  local wiki="" wigle="" androzoo=""
   [[ -r "$SECRETS_DIR/wiki-db-url" ]] && wiki="$(<"$SECRETS_DIR/wiki-db-url")"
   [[ -r "$SECRETS_DIR/wigle-db-url" ]] && wigle="$(<"$SECRETS_DIR/wigle-db-url")"
-  FLEET_WIKI_DB_URL="$wiki" FLEET_WIGLE_DB_URL="$wigle" docker compose -p research-agent --profile agent "$@"
+  [[ -r "$SECRETS_DIR/androzoo-db-url" ]] && androzoo="$(<"$SECRETS_DIR/androzoo-db-url")"
+  FLEET_WIKI_DB_URL="$wiki" FLEET_WIGLE_DB_URL="$wigle" FLEET_ANDROZOO_DB_URL="$androzoo" \
+    docker compose -p research-agent --profile agent "$@"
 }
 
 cmd_secrets() {
@@ -147,7 +150,7 @@ cmd_config() {
   # --no-env-resolution: plain `config` would print the values of agent-runtime.env.
   need_gitea_dir
   # Secret values (DB URLs) are not printed: config shows secret sources, not contents.
-  FLEET_WIKI_DB_URL="" FLEET_WIGLE_DB_URL="" docker compose --profile '*' config --no-env-resolution
+  FLEET_WIKI_DB_URL="" FLEET_WIGLE_DB_URL="" FLEET_ANDROZOO_DB_URL="" docker compose --profile '*' config --no-env-resolution
 }
 
 cmd_register_runners() {

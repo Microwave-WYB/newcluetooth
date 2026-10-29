@@ -13,7 +13,7 @@
 #
 # Secrets: files in FLEET_SECRETS_DIR (default ~/.config/cluetooth-fleet/secrets, mode 600),
 # outside the repo. API keys are mounted only into keyproxy; the research agent gets no keys,
-# and its two scan-database URLs arrive as files, not environment variables.
+# and its scan-database URLs arrive as files, not environment variables.
 # Host-specific, non-secret settings come from .env next to this file (see .env.example).
 
 services:
@@ -174,6 +174,11 @@ services:
         uid: "1001"
         gid: "1001"
         mode: 0400
+      - source: androzoo-db-url
+        target: /home/agent/.config/androzoo-db/url
+        uid: "1001"
+        gid: "1001"
+        mode: 0400
     depends_on: [keyproxy]
     # As on simi today: wirelesswiki (Gitea), scandb (cluetooth-db), default (keyproxy).
     networks: [default, wirelesswiki, scandb]
@@ -227,3 +232,5 @@ secrets:
     environment: FLEET_WIKI_DB_URL
   wigle-db-url:
     environment: FLEET_WIGLE_DB_URL
+  androzoo-db-url:
+    environment: FLEET_ANDROZOO_DB_URL
