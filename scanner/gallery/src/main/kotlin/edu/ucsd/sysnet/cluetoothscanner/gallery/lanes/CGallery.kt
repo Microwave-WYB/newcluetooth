@@ -106,6 +106,7 @@ private fun SettingsDemo() {
         SettingsActions(
             onBack = {}, onSettings = { s = it(s) }, onUploadNow = {}, onExportScope = { st = st.copy(exportScope = it) },
             onExportFormat = { st = st.copy(exportFormat = it) }, onShare = {}, onSaveToDownloads = {},
+            onDeleteScope = { st = st.copy(deleteScope = it) },
             onDeleteRequest = { st = st.copy(deleteConfirm = DeleteConfirm.Confirm) },
             onDeleteConfirm = { st = st.copy(deleteConfirm = DeleteConfirm.LoseUnuploaded) },
             onDelete = { st = st.copy(deleteConfirm = null) }, onDeleteCancel = { st = st.copy(deleteConfirm = null) },

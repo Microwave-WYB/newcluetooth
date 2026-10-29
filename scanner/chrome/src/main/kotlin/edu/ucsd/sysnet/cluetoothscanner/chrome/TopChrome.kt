@@ -46,6 +46,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.SpecValues
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Chip
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.DeviceRow
@@ -182,7 +183,7 @@ fun PhoneTopChrome(
 
         // ☰: at the top-left; with the sidebar out it rides the panel's edge, 4 dp in (L-1)
         if (!searching || state.sidebarOpen) {
-            val menuX by animateDpAsState(if (state.sidebarOpen) sideW - Tokens.rb - MenuRide else edge, m.std(), label = "menuX")
+            val menuX by animateDpAsState(if (state.sidebarOpen) sideW - Tokens.rb - SpecValues.menuRide else edge, m.std(), label = "menuX")
             MenuButton(
                 state.sidebarOpen, false, actions.onMenu,
                 Modifier.offset { IntOffset(menuX.roundToPx(), (statusInset + edge).roundToPx()) }.alpha(if (pageOpen) 0f else rowAlpha),
@@ -222,8 +223,6 @@ fun PhoneTopChrome(
     }
 }
 
-/** L-1: ☰ rides the sidebar's edge 4 dp in (`left: calc(var(--side-w) - var(--rb) - 4px)`). */
-private val MenuRide = Dp(4f)
 
 /**
  * Q-3: the search button (a 44 dp `--fill1` FloatButton) that expands in place into the full-width field on `--fill2`,

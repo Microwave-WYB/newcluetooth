@@ -103,19 +103,24 @@ class TokensTest {
         assertTrue(Glyphs.all.map { it.name }.containsAll(names))
     }
 
-    /** No hex color, dp, sp or em literal in hand-written main code (generated code, the gallery and SpecValues aside). */
+    /**
+     * No hex color, dp, sp or em literal (`12.dp`, `Dp(4f)`) in hand-written main code of :designsystem and :chrome;
+     * generated code, the gallery and SpecValues aside. Zero is allowed.
+     */
     @Test
     fun noLiteralValuesOutsideGeneratedCode() {
-        val src = moduleDir.resolve("src/main/kotlin")
+        val sources = listOf(moduleDir, moduleDir.resolveSibling("chrome")).map { it.resolve("src/main/kotlin") }
+        assertTrue(sources.all { it.isDirectory })
         val allowed = setOf("SpecValues.kt")
-        val literal = Regex("""(?<![\w.])(?:\d+\.)?\d+\.(?:dp|sp|em)\b|Color\(0x[0-9A-Fa-f]+|#[0-9A-Fa-f]{6,8}\b""")
-        val offenders = src.walkTopDown()
+        val literal = Regex("""(?<![\w.])(?:\d+\.)?\d+\.(?:dp|sp|em)\b|\bDp\(\s*[\d.]+f?\s*\)|Color\(0x[0-9A-Fa-f]+|#[0-9A-Fa-f]{6,8}\b""")
+        val zero = Regex("""^(?:0\.dp|Dp\(\s*0f?\s*\))$""")
+        val offenders = sources.flatMap { it.walkTopDown().toList() }
             .filter { it.isFile && it.extension == "kt" && it.name !in allowed && "gallery" !in it.path }
             .flatMap { f ->
                 f.readLines().withIndex()
                     .filter { (_, line) -> !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//") }
                     .flatMap { (i, line) ->
-                        literal.findAll(line.substringBefore("//")).map { it.value }.filter { it != "0.dp" }
+                        literal.findAll(line.substringBefore("//")).map { it.value }.filterNot { zero.matches(it) }
                             .map { "${f.name}:${i + 1}: $it" }
                     }
             }.toList()

@@ -59,6 +59,8 @@ data class StorageUi(
     val exportFormat: ExportFormat?,
     val exporting: Boolean,
     val deleteConfirm: DeleteConfirm?,
+    /** O-1 item 11's own scope, independent of Export's; it starts like [exportScope]. */
+    val deleteScope: Scope = exportScope,
 )
 
 /** Confirm: the scope's deletion, keeping un-uploaded data; LoseUnuploaded: the explicit second step. */
@@ -73,6 +75,8 @@ class SettingsActions(
     val onExportFormat: (ExportFormat) -> Unit,
     val onShare: () -> Unit,
     val onSaveToDownloads: () -> Unit,
+    /** Delete's scope choice; it never changes Export's ([onExportScope]). */
+    val onDeleteScope: (Scope) -> Unit,
     /** Delete: the user tapped Delete (→ [DeleteConfirm.Confirm]). */
     val onDeleteRequest: () -> Unit,
     /** The confirmation's Delete: :app moves to [DeleteConfirm.LoseUnuploaded] when files are pending, else deletes. */
@@ -207,18 +211,19 @@ private fun ExportBlock(st: StorageUi, a: SettingsActions, sessionLabel: String?
 private fun DeleteBlock(st: StorageUi, a: SettingsActions, sessionLabel: String?, sessionScope: Scope?) {
     val c = CluetoothTheme.colors
     ListItem(Strings.DeleteLocalData, sub = Strings.DeleteSub)
-    ScopeChoice(st.exportScope, a.onExportScope, sessionLabel, sessionScope)
+    ScopeChoice(st.deleteScope, a.onDeleteScope, sessionLabel, sessionScope)
     when (st.deleteConfirm) {
         null -> Box(Modifier.padding(horizontal = Tokens.gutter, vertical = Css.Item.padding.top)) {
             Button(Strings.Delete, a.onDeleteRequest, kind = ButtonKind.Tonal, small = true)
         }
         DeleteConfirm.Confirm -> ConfirmCard(
-            Strings.deleteConfirmTitle(scopeName(st.exportScope, sessionLabel)), Strings.DeleteConfirmBody,
-            Strings.Cancel to a.onDeleteCancel, Strings.Delete to a.onDeleteConfirm,
+            Strings.deleteConfirmTitle(scopeName(st.deleteScope, sessionLabel)), Strings.DeleteConfirmBody,
+            secondary = Strings.Cancel to a.onDeleteCancel, primary = Strings.Delete to a.onDeleteConfirm,
         )
         DeleteConfirm.LoseUnuploaded -> ConfirmCard(
             Strings.deleteLoseTitle(st.pendingCount), Strings.DeleteLoseBody,
-            Strings.KeepUntilUploaded to { a.onDelete(false) }, Strings.DeleteNow to { a.onDelete(true) },
+            // §2.8: keeping un-uploaded data is the primary choice; losing it is the secondary one
+            secondary = Strings.DeleteNow to { a.onDelete(true) }, primary = Strings.KeepUntilUploaded to { a.onDelete(false) },
         )
     }
 }
@@ -240,8 +245,8 @@ private fun ConfirmCard(
         Text(title, style = CluetoothTheme.type.title)
         Text(body, style = CluetoothTheme.type.sub, color = c.t2)
         Row(horizontalArrangement = Arrangement.spacedBy(Css.BtnRow.gap), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(secondary.first, secondary.second)
-            Button(primary.first, primary.second, kind = ButtonKind.Primary, small = true)
+            TextButton(secondary.first, secondary.second, Modifier.testTag("secondary:${secondary.first}"))
+            Button(primary.first, primary.second, Modifier.testTag("primary:${primary.first}"), kind = ButtonKind.Primary, small = true)
         }
     }
 }

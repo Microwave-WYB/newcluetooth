@@ -16,6 +16,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -84,6 +87,7 @@ class PagesScreenTest {
         val a = SettingsActions(
             onBack = {}, onSettings = { s = it(s) }, onUploadNow = {}, onExportScope = { st = st.copy(exportScope = it) },
             onExportFormat = { st = st.copy(exportFormat = it) }, onShare = {}, onSaveToDownloads = {},
+            onDeleteScope = { st = st.copy(deleteScope = it) },
             onDeleteRequest = { st = st.copy(deleteConfirm = DeleteConfirm.Confirm) },
             onDeleteConfirm = { st = st.copy(deleteConfirm = if (st.pendingCount > 0) DeleteConfirm.LoseUnuploaded else null) },
             onDelete = { deletes += it; st = st.copy(deleteConfirm = null) }, onDeleteCancel = { st = st.copy(deleteConfirm = null) },
@@ -112,6 +116,29 @@ class PagesScreenTest {
         compose.onNodeWithText("Keep until uploaded").performScrollTo().performClick(); compose.waitForIdle()
         assertEquals(listOf(false), deletes) // the default keeps un-uploaded data (§2.8)
         assertEquals(ExportFormat.Csv, st.exportFormat)
+        // the two scope choices are independent: Export's (the first "All sessions") and Delete's (the second)
+        compose.onAllNodesWithText("All sessions").let { it[it.fetchSemanticsNodes().size - 1] }.performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(Scope.All, st.deleteScope); assertEquals(Scope.session("r1"), st.exportScope) }
+        compose.onAllNodesWithText("All sessions")[0].performScrollTo().performClick()
+        compose.onAllNodesWithText("6:05 PM").let { it[it.fetchSemanticsNodes().size - 1] }.performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(Scope.session("r1"), st.deleteScope); assertEquals(Scope.All, st.exportScope) }
+    }
+
+    /** §2.8: in the second step "Keep until uploaded" is the primary button and "Delete now" the secondary one. */
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
+    @Test fun loseStepButtonRoles() {
+        val deletes = mutableListOf<Boolean>()
+        val a = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, { deletes += it }, {})
+        compose.setContent {
+            CluetoothTheme(reducedMotion = true) {
+                SettingsPage(true, SettingsUi(settings, uploads, storage(DeleteConfirm.LoseUnuploaded)), a, sessionLabel = "6:05 PM", sessionScope = Scope.session("r1"))
+            }
+        }
+        compose.onNodeWithText("Keep until uploaded").performScrollTo().assert(hasClickAction())
+        compose.onNodeWithTag("primary:Keep until uploaded", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("secondary:Delete now", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("Delete now").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(true), deletes) }
     }
 
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun settingsPhoneLight() = settingsShot("412x915", false)

@@ -4,6 +4,7 @@ import androidx.compose.ui.unit.Dp
 import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.SpecValues
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 
@@ -43,11 +44,8 @@ data class RecorderGeometry(
     val bottom: Dp get() = y + height
 
     companion object {
-        /** app.js setRecorder adds 2 px to the measured panel height … */
-        private val PanelSlack = Dp(2f)
-
-        /** … and 4 px between the group and the buttons to the measured capsule width. */
-        private val CapsuleSlack = Dp(4f)
+        private val PanelSlack = SpecValues.recorderPanelSlack
+        private val CapsuleSlack = SpecValues.recorderCapsuleSlack
 
         /** The width of the Pause–Stop pair. */
         fun buttonsWidth(tablet: Boolean): Dp =

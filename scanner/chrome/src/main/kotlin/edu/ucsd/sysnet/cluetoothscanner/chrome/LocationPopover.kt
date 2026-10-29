@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.Dp
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.SpecValues
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ButtonKind
@@ -38,9 +39,6 @@ fun locationActionLabel(action: LocationStatus.Action?): String? = when (action)
     null -> null
 }
 
-/** The popover's width cap (`width: min(260px, calc(100% - 2 * var(--edge)))`). */
-private val PopoverMaxWidth = Dp(260f)
-
 /**
  * P-5: the location popover's content, anchored by :map above the warning button (E places it). At most 260 dp
  * wide, `--panel`, radius 28 (concentric with its small pill button), 12 dp padding, `--shadow-raised`. A tap outside
@@ -52,7 +50,7 @@ fun LocationPopover(status: LocationStatus, onAction: (LocationStatus.Action) ->
     val shape = RoundedCornerShape(Concentric.popover)
     Column(
         modifier
-            .widthIn(max = PopoverMaxWidth)
+            .widthIn(max = SpecValues.popoverMaxWidth)
             .tokenShadow(CluetoothTheme.shadows.shadowRaised, shape)
             .clip(shape)
             .background(CluetoothTheme.colors.panel)
