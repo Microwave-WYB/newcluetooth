@@ -23,4 +23,7 @@ object SpecValues {
 
     /** L-1: ☰ rides the open sidebar's edge 4 dp in (`.menu-btn.open { left: calc(var(--side-w) - var(--rb) - 4px) }`). */
     val menuRide = 4.dp
+
+    /** T-8: the gap between the tablet recorder's top and the locate button or warning (the `+ 12px` in `.phone.tablet .locate-btn`). */
+    val locateAboveRecorder = 12.dp
 }

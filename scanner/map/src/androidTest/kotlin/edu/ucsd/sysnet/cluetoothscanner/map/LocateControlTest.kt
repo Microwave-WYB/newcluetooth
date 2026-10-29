@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -32,7 +33,7 @@ class LocateControlTest {
     private val taps = mutableListOf<String>()
 
     private fun setUp() = rule.setContent {
-        CluetoothTheme(darkTheme = false) {
+        CluetoothTheme(darkTheme = false, reducedMotion = false) {
             Box(Modifier.size(360.dp, 640.dp)) {
                 LocateControl(ui.value, placement.value, onLocate = { taps += "locate" }, onWarning = { taps += "warn" })
             }
@@ -75,4 +76,25 @@ class LocateControlTest {
     }
 
     private fun node() = rule.onNodeWithContentDescription(Strings.LocationProblem)
+
+    /** components.css .loc-warn / .locate-btn: opacity over --t-std, never a snap (app.js updateLocate). */
+    @Test fun p5_p4_theWarningAndTheButtonFadeOverTStd() {
+        setUp()
+        for ((shown, label) in listOf(hidden.copy(showWarning = true) to Strings.LocationProblem, hidden.copy(showLocate = true) to Strings.ShowMyLocation)) {
+            rule.runOnIdle { ui.value = shown }
+            rule.waitForIdle()
+            rule.mainClock.autoAdvance = false
+            rule.runOnIdle { ui.value = hidden }
+            rule.mainClock.advanceTimeBy(Tokens.tStdMs / 2L)
+            assertEquals("$label is still fading out halfway through --t-std", true, exists(label))
+            rule.mainClock.advanceTimeBy(Tokens.tStdMs.toLong() + 100)
+            assertEquals("$label is gone after --t-std", false, exists(label))
+            rule.runOnIdle { ui.value = shown }
+            rule.mainClock.advanceTimeByFrame()
+            assertEquals("$label starts fading in at once", true, exists(label))
+            rule.mainClock.autoAdvance = true
+            rule.runOnIdle { ui.value = hidden }
+            rule.waitForIdle()
+        }
+    }
 }

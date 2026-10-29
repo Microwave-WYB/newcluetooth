@@ -9,10 +9,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.SpecValues
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.FloatButton
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Glyphs
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 
@@ -37,15 +38,20 @@ fun BoxScope.LocateControl(
     onWarning: () -> Unit,
 ) {
     val position = when (placement) {
-        // components.css .locate-btn: left --edge, bottom --rec-lift + --edge + 12 + (--fab − --rb) / 2
-        is LocatePlacement.Phone -> Modifier.align(Alignment.BottomStart)
-            .padding(start = Tokens.edge, bottom = placement.recLift + Tokens.edge + 12.dp + (Tokens.fab - Tokens.rb) / 2)
-        // .phone.tablet .locate-btn: right --edge + (--fab − --rb) / 2, bottom --edge + 12 + --rec-h + 12
-        is LocatePlacement.Tablet -> Modifier.align(Alignment.BottomEnd)
-            .padding(end = Tokens.edge + (Tokens.fab - Tokens.rb) / 2, bottom = Tokens.edge + 12.dp + placement.recorderHeight + 12.dp)
+        // components.css .locate-btn: left --edge, bottom --rec-lift + (--edge + 12) + (--fab − --rb) / 2; the
+        // (--edge + 12) is the recorder's own bottom, so the button's centre is level with the FAB's
+        is LocatePlacement.Phone -> Modifier.align(Alignment.BottomStart).padding(
+            start = Css.LocateBtn.left,
+            bottom = placement.recLift + Css.PhoneTablet_Recorder.bottom + (Tokens.fab - Tokens.rb) / 2,
+        )
+        // .phone.tablet .locate-btn: right --edge + (--fab − --rb) / 2, bottom (--edge + 12) + --rec-h + 12
+        is LocatePlacement.Tablet -> Modifier.align(Alignment.BottomEnd).padding(
+            end = Css.PhoneTablet_LocateBtn.right,
+            bottom = Css.PhoneTablet_Recorder.bottom + placement.recorderHeight + SpecValues.locateAboveRecorder,
+        )
     }
     val motion = CluetoothTheme.motion
-    // .locate-btn fades with opacity var(--t-std)
+    // .locate-btn and .loc-warn both fade with opacity var(--t-std)
     AnimatedVisibility(
         visible = ui.showLocate && !ui.showWarning,
         modifier = position,
@@ -54,7 +60,12 @@ fun BoxScope.LocateControl(
     ) {
         FloatButton(Glyphs.locate, Strings.ShowMyLocation, onLocate)
     }
-    if (ui.showWarning) {
-        FloatButton(Glyphs.locateOff, Strings.LocationProblem, onWarning, position, tint = CluetoothTheme.colors.warn)
+    AnimatedVisibility(
+        visible = ui.showWarning,
+        modifier = position,
+        enter = fadeIn(motion.std()),
+        exit = fadeOut(motion.std()),
+    ) {
+        FloatButton(Glyphs.locateOff, Strings.LocationProblem, onWarning, tint = CluetoothTheme.colors.warn)
     }
 }

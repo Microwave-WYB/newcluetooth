@@ -126,16 +126,6 @@ object MapGeometry {
     }
 
     /**
-     * M-11: the view has moved away from [reference] when the zoom differs by 1 or more, or the reference centre is
-     * more than 25 % of the viewport away from the current centre on either axis.
-     */
-    fun movedAway(reference: CameraSnapshot, current: CameraSnapshot, view: Viewport): Boolean {
-        if (abs(current.zoom - reference.zoom) >= 1) return true
-        val (x, y) = toScreen(reference.center, current, view)
-        return abs(x - view.widthDp / 2) / view.widthDp > 0.25 || abs(y - view.heightDp / 2) / view.heightDp > 0.25
-    }
-
-    /**
      * The area map_points loaded for [viewport]: the core serves the viewport + 50 % (§2.5), which is a quarter of
      * the width and height added on each side (confirmed with lane A).
      */
