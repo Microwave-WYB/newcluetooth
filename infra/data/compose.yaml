@@ -127,6 +127,47 @@ services:
       WIGLE_API_KEY: ${WIGLE_API_KEY:-}
     restart: "no"
 
+  # Opt-in (profile pgweb): a read-only SQL browser on simi's loopback. Not running today; the
+  # owner's planned dashboard is Grafana at dash.wirelesswiki.org. The connection string (use a
+  # read-only role such as wiki_ro) is a secret file, never an environment value in this file.
+  pgweb:
+    profiles:
+      - pgweb
+    image: sosedoff/pgweb:0.17.0
+    container_name: cluetooth-pgweb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The secret file is mode 600 and owned by the host account that runs compose.
+    user: "${CLUETOOTH_HOST_UID:-1000}:${CLUETOOTH_HOST_GID:-1000}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'PGWEB_DATABASE_URL="$$(cat /run/secrets/pgweb-database-url)" exec pgweb --bind=0.0.0.0 --listen=8081 --readonly'
+    ports:
+      - "127.0.0.1:${PGWEB_PORT:-8081}:8081"
+    secrets:
+      - pgweb-database-url
+    restart: unless-stopped
+
+  # Opt-in (profile db-tunnel): db.wirelesswiki.org on its own Cloudflare tunnel. TODAY THAT
+  # ROUTE IS SERVED BY THE FLEET'S TUNNEL (infra/fleet, wirelesswiki-gitea-cloudflared-1, which
+  # joins this project's network and forwards db.wirelesswiki.org to tcp://cluetooth-db:5432
+  # behind a Cloudflare Access app). Enable this only after creating a separate tunnel whose
+  # token is in secrets/db-tunnel-token and moving the db route to it.
+  db-tunnel:
+    profiles:
+      - db-tunnel
+    image: cloudflare/cloudflared:2026.10.0
+    container_name: cluetooth-db-tunnel
+    command: [tunnel, --no-autoupdate, run, --token-file, /run/secrets/db-tunnel-token]
+    user: "${CLUETOOTH_HOST_UID:-1000}:${CLUETOOTH_HOST_GID:-1000}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - db-tunnel-token
+    restart: unless-stopped
+
 volumes:
   postgres-data:
 
@@ -135,3 +176,8 @@ secrets:
     file: ./secrets/private-key.txt
   google-service-account:
     file: ./secrets/service-account-key.json
+  # Only needed by the opt-in services above.
+  pgweb-database-url:
+    file: ./secrets/pgweb-database-url
+  db-tunnel-token:
+    file: ./secrets/db-tunnel-token

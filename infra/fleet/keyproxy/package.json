@@ -1,0 +1,13 @@
+{
+  "name": "cluetooth-keyproxy",
+  "private": true,
+  "description": "Key-injecting proxy for the research agent fleet (Gitea, WiGLE, AndroZoo). Node built-ins only.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

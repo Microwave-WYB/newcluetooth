@@ -1,0 +1,120 @@
+# Research-agent environment. `mise install && mise run setup` works on a plain Linux
+# host and in the Docker image alike (the Dockerfile only adds the system layer).
+#
+# Pinned here: node, gh, ripgrep (mise.lock records checksums).
+# Pinned in package.json + package-lock.json: pi, Claude Code, Paseo, Playwright and its
+# MCP server, and the pi packages, installed with `npm ci` (task setup:tools).
+# From the system (apt in the image): git, curl, jq, python3, stow, binutils (strings), unzip,
+# binwalk, and blutter's C++ toolchain.
+# The agents' own tools (PDF, APK retrieval, the reverse-engineering toolchain) are in the wiki
+# repo's mise.toml, which the container uses as its global config; this file is the system
+# config (/etc/mise/config.toml) beneath it.
+
+min_version = "2026.8.0"
+
+[settings]
+lockfile = true
+experimental = true
+
+[tools]
+node = "22.23.4"
+"aqua:cli/cli" = "2.103.2"
+"aqua:BurntSushi/ripgrep" = "15.2.0"
+# Job queue for heavy work (decompilers, Ghidra); the entrypoint starts pueued, the wiki repo
+# holds the wrappers that submit to it.
+"http:pueue" = { version = "4.0.4", url = "https://github.com/Nukesor/pueue/releases/download/v4.0.4/pueue-x86_64-unknown-linux-musl", bin = "pueue" }
+"http:pueued" = { version = "4.0.4", url = "https://github.com/Nukesor/pueue/releases/download/v4.0.4/pueued-x86_64-unknown-linux-musl", bin = "pueued" }
+
+[env]
+# Each JVM (jadx, apktool, Ghidra) gets at most a quarter of the memory limit. Their default
+# of 70% let two jadx runs exhaust simi's 64 GB on 2026-10-27.
+JAVA_TOOL_OPTIONS = "-XX:MaxRAMPercentage=25"
+# Where the locked npm toolset lives. Override to relocate. Chromium goes to
+# Playwright's default (~/.cache/ms-playwright) unless PLAYWRIGHT_BROWSERS_PATH is set.
+RESEARCH_AGENT_HOME = "{{ get_env(name='RESEARCH_AGENT_HOME', default=env.HOME ~ '/.local/share/research-agent') }}"
+_.path = ["{{ config_root }}/bin", "{{ get_env(name='RESEARCH_AGENT_HOME', default=env.HOME ~ '/.local/share/research-agent') }}/bin", "{{ get_env(name='RESEARCH_AGENT_HOME', default=env.HOME ~ '/.local/share/research-agent') }}/tools/node_modules/.bin"]
+
+[tasks.setup]
+description = "Install and configure everything (tools, pi, Claude Code, Playwright, Paseo)"
+depends = ["setup:pi", "setup:claude", "setup:playwright", "setup:paseo"]
+
+[tasks."setup:tools"]
+description = "Install the locked npm toolset (npm ci) into $RESEARCH_AGENT_HOME/tools"
+run = '''
+#!/usr/bin/env bash
+set -euxo pipefail
+dest="$RESEARCH_AGENT_HOME/tools"
+mkdir -p "$dest"
+cp "$MISE_PROJECT_ROOT/package.json" "$MISE_PROJECT_ROOT/package-lock.json" "$dest/"
+(cd "$dest" && npm ci --no-audit --no-fund)
+'''
+
+[tasks."setup:home"]
+description = "Link the managed configuration into $HOME (cheap; run at container start)"
+run = '''
+#!/usr/bin/env bash
+set -euxo pipefail
+cd "$MISE_PROJECT_ROOT/home"
+# pi's settings name packages under ~/.local/share/research-agent; link there if relocated.
+default="$HOME/.local/share/research-agent"
+if [[ "$RESEARCH_AGENT_HOME" != "$default" ]]; then
+  mkdir -p "$(dirname "$default")"
+  ln -sfn "$RESEARCH_AGENT_HOME" "$default"
+fi
+for pkg in pi claude; do stow --restow --no-folding -v -t "$HOME" "$pkg"; done
+# Skills live in the wiki repo (.agents/skills); drop links left by images that shipped them.
+find "$HOME/.agents/skills" "$HOME/.claude/skills" -xtype l -delete 2>/dev/null || true
+find "$HOME/.agents/skills" "$HOME/.claude/skills" -depth -type d -empty -delete 2>/dev/null || true
+'''
+
+[tasks."setup:pi"]
+description = "pi: settings (packages), built-in MCP config (the entrypoint writes the global AGENTS.md: policy first)"
+depends = ["setup:tools"]
+run = '''
+#!/usr/bin/env bash
+set -euxo pipefail
+command -v pi >/dev/null || { echo 'required command missing: pi' >&2; exit 1; }
+default="$HOME/.local/share/research-agent"
+if [[ "$RESEARCH_AGENT_HOME" != "$default" ]]; then
+  mkdir -p "$(dirname "$default")"; ln -sfn "$RESEARCH_AGENT_HOME" "$default"
+fi
+cd "$MISE_PROJECT_ROOT/home"
+stow --restow --no-folding -v -t "$HOME" pi
+'''
+
+[tasks."setup:claude"]
+description = "Claude Code: user-level Playwright MCP server (the entrypoint links CLAUDE.md)"
+depends = ["setup:tools"]
+run = '''
+#!/usr/bin/env bash
+set -euxo pipefail
+command -v claude >/dev/null || { echo 'required command missing: claude' >&2; exit 1; }
+cd "$MISE_PROJECT_ROOT/home"
+stow --restow --no-folding -v -t "$HOME" claude
+spec="$(jq -c '.mcpServers.playwright' "$HOME/.config/research-agent/claude-mcp.json")"
+claude mcp remove --scope user playwright >/dev/null 2>&1 || true
+claude mcp add-json --scope user playwright "$spec"
+'''
+
+[tasks."setup:playwright"]
+description = "Chromium for Playwright at the build the lockfile pins (system libraries: see README)"
+depends = ["setup:tools"]
+run = '''
+#!/usr/bin/env bash
+set -euxo pipefail
+PLAYWRIGHT_BROWSERS_PATH="$RESEARCH_AGENT_HOME/browsers" playwright-core install chromium
+'''
+
+[tasks."deps:playwright"]
+description = "System libraries for headless Chromium on a Debian/Ubuntu host (needs root)"
+run = "playwright-core install-deps chromium"
+
+[tasks."setup:paseo"]
+description = "Paseo CLI/daemon home (~/.paseo)"
+depends = ["setup:tools"]
+run = '''
+#!/usr/bin/env bash
+set -euxo pipefail
+mkdir -p "$HOME/.paseo"
+paseo --version
+'''

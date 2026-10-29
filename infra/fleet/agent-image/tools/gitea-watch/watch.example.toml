@@ -1,0 +1,13 @@
+gitea_url   = "http://keyproxy:8080/gitea"
+token_env   = "none"                 # keyproxy adds the token; "GITEA_TOKEN" etc. reads it from that variable
+repos       = ["y2wei/wirelesswiki"]
+bots        = ["wiki-bot"]           # accounts treated as bots; may list several
+interval    = 60                     # seconds, minimum 30
+state_dir   = "~/.local/state/gitea-watch"
+protected_refs = ["main"]            # commits pushed to these branches are reported whoever pushed them
+# page_size = 50                     # feed page size (Gitea caps it by [api] MAX_RESPONSE_ITEMS)
+
+[ack]
+enabled  = true
+reaction = "eyes"                    # must be in the list Gitea's [ui] REACTIONS allows
+on       = ["comment_issue", "comment_pull"]   # optionally add create_issue, create_pull_request

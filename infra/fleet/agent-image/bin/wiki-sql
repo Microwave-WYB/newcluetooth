@@ -1,0 +1,37 @@
+#!/usr/bin/env node
+// Read-only SQL against the scan database (role wiki_ro: SELECT on all public tables,
+// read-only transactions, 120 s statement timeout, 5 connections).
+// Usage: wiki-sql "select ..." [--limit N] [--csv]   (or SQL on stdin)
+// Scan data may inform attribution, but must never be copied into wiki pages.
+// `pg` is pinned in package.json and installed by `npm ci` into $RESEARCH_AGENT_HOME/tools.
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+const toolsHome = process.env.RESEARCH_AGENT_HOME || `${homedir()}/.local/share/research-agent`;
+const require = createRequire(`${toolsHome}/tools/node_modules/`);
+const { Client } = require("pg");
+const args = process.argv.slice(2);
+let limit = 200, sep = "\t", sql = "";
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--limit") limit = Number(args[++i]);
+  else if (args[i] === "--csv") sep = ",";
+  else sql = args[i];
+}
+if (!sql) sql = readFileSync(0, "utf8");
+const url = process.env.WIKI_DB_URL || readFileSync(`${homedir()}/.config/wiki-db/url`, "utf8").trim();
+const cell = (v) => {
+  if (v === null || v === undefined) return "";
+  const s = v instanceof Date ? v.toISOString() : Buffer.isBuffer(v) ? v.toString("hex") : typeof v === "object" ? JSON.stringify(v) : String(v);
+  return sep === "," && /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s.replaceAll("\t", " ").replaceAll("\n", " ");
+};
+const client = new Client({ connectionString: url });
+try {
+  await client.connect();
+  const res = await client.query(sql);
+  const r = Array.isArray(res) ? res.at(-1) : res;
+  if (!r.fields?.length) { console.log("(no result set)"); process.exit(0); }
+  console.log(r.fields.map((f) => f.name).join(sep));
+  for (const row of r.rows.slice(0, limit)) console.log(r.fields.map((f) => cell(row[f.name])).join(sep));
+  if (r.rows.length > limit) console.error(`... ${r.rows.length - limit} more rows truncated (use --limit N)`);
+} catch (e) { console.error(`wiki-sql: ${e.message}`); process.exit(1); }
+finally { await client.end().catch(() => {}); }

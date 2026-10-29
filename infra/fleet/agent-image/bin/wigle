@@ -1,0 +1,4 @@
+#!/bin/sh
+# WiGLE search CLI with a Postgres archive (tools/wigle); a single Node ES module plus pg.
+dir=$(dirname "$(readlink -f "$0")")
+exec node "$dir/../tools/wigle/wigle.mjs" "$@"

@@ -1,0 +1,14 @@
+log:
+  level: info
+runner:
+  file: .runner
+  capacity: 1
+  timeout: 1h
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  labels: ["ubuntu-latest:host", "linux:host"]
+cache:
+  enabled: true
+  dir: /data/cache
+host:
+  workdir_parent: /data/work
