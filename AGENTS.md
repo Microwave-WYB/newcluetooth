@@ -343,6 +343,14 @@ tables.
 
 ## Conventions
 
+Design principles for app and core code (they take precedence over the more specific rules below):
+- **Types guard the logic.** Make illegal states unrepresentable: sealed states carry exactly the data valid
+  in that state, value classes / newtypes for ids and units, exhaustive `when`/`match` with no catch-all.
+- **Side effects are explicitly defined.** Every effect is a named case of a sealed `Effect` type returned by
+  the logic; nothing in the logic calls Android, MapLibre, SQLite, the network or the clock directly.
+- **Execution is separate from logic.** Pure `(state, event) -> (state, effects)` functions decide; a thin
+  runner executes effects and feeds results back as events. Test the logic without a device.
+
 - Prefer simple stage boundaries over defensive wrappers.
 - If a function interacts with GCS, pass a `StorageClient` or GCS client
   explicitly.
