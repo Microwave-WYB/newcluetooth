@@ -184,8 +184,13 @@ fun PhoneTopChrome(
             }
         }
 
+        // R-4 (`.phone.rec-top-open .menu-btn, .search-box { pointer-events: none }`): under the open panel ☰ and
+        // search must not take its taps (Stop and Pause sit over them), and Compose has no pointer-events: none, so
+        // they leave the composition while it is open; the panel covers their row, and they fade back in after
+        val rowShown = !state.recorderPanelOpen
+
         // ☰: at the top-left; with the sidebar out it rides the panel's edge, 4 dp in (L-1)
-        if (!searching || state.sidebarOpen) {
+        if (rowShown && (!searching || state.sidebarOpen)) {
             val menuX by animateDpAsState(if (state.sidebarOpen) sideW - Tokens.rb - SpecValues.menuRide else edge, m.std(), label = "menuX")
             MenuButton(
                 state.sidebarOpen, false, actions.onMenu,
@@ -194,7 +199,7 @@ fun PhoneTopChrome(
         }
 
         // the search button, expanding into the field (Q-3); it moves with the main screen while the sidebar is out
-        if (state.hasSession && (!searching || pageOpen)) {
+        if (rowShown && state.hasSession && (!searching || pageOpen)) {
             val shift by animateDpAsState(if (state.sidebarOpen) sideW else 0.dp, m.std(), label = "searchShift")
             SearchBox(
                 open = pageOpen,
