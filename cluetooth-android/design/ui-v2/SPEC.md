@@ -65,7 +65,8 @@ expanded (G-2).
 - **G-9 No self-reordering.** A list the user can tap never reorders by itself:
   - It is sorted once, by RSSI descending, when a session view opens.
   - Live values update in place and new rows are appended. Filters (category, area, search, Apple) only hide rows.
-  - Only an explicit user action builds a new order (S-6, M-9, Q-7).
+  - Only an explicit user action builds a new order: opening a session view, opening a product sheet, a search,
+    or the re-sort button (D-1c).
   - Keep each list's order as explicit state (a list of keys), not as a sort applied on every update.
 - **G-9a Scanning warm-up (#91).** When a recording has just started, the live Discover view waits 3 s of scanning
   before its first order.
@@ -378,6 +379,11 @@ Each component is built once. Its size, color and state rules come from these to
   - The filter button in the right column (D-3a). It is the same round IconButton as the view switch, with a
     funnel icon, mirroring it at the corner, with its center under the search button's center. While any filter
     is active it takes the selected style and shows a count badge. It is shown in both views.
+  - The re-sort button, directly left of the filter button (D-1c).
+- **D-1c Re-sort.** An icon-only button (a sort glyph in `--t2`, no background, 40 dp touch target) directly left of
+  the filter button, in both views and in every session view. Tapping it builds a new order from the current values
+  (live RSSI while recording, the strongest seen otherwise), scrolls the list to the top and crossfades
+  (`--t-fast`). It is the explicit user action G-9 allows; nothing re-sorts by itself. Hidden in search state.
 - **D-1a View switch transition.** Toggling categories ⇄ list crossfades the content and the chip row (`--t-fast`,
   no slide); the sheet height doesn't change.
 - **D-1b Remembered view.** The Discover view (categories or list) is remembered: it is saved when the user switches
