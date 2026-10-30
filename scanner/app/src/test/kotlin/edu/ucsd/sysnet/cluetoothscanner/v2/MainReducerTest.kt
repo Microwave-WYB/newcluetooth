@@ -90,7 +90,7 @@ class MainScopeTest {
         assertEquals(false, step.state.sidebarOpen)
         assertNull(step.state.searchQuery)
         assertNull(step.state.page)
-        assertEquals(listOf(MainEffect.LoadSessions), step.effects)
+        assertEquals(listOf(MainEffect.LoadSessions(1)), step.effects)
     }
 
     @Test fun settingsStaysOpenOverAScopeSwitch() {
@@ -116,7 +116,7 @@ class MainScopeTest {
         assertEquals(sessionA, stopped.state.scope)
         assertEquals(recording.epoch.next(), stopped.state.epoch)
         assertEquals(RecorderMirror.Idle, stopped.state.recorder)
-        assertEquals(listOf(MainEffect.LoadSessions), stopped.effects)
+        assertEquals(listOf(MainEffect.LoadSessions(2)), stopped.effects)
         // a phase change that is not a stop re-reads nothing
         assertEquals(recording.epoch, recording.on(MainEvent.RecorderChanged(Phase.Paused)).epoch)
         assertTrue(recording.on(MainEvent.RecorderChanged(Phase.Paused)).recorderPanelOpen)
@@ -140,21 +140,22 @@ class MainScopeTest {
     @Test fun onlyTheCurrentKeysViewIsShown() {
         val s = MainUiState().on(MainEvent.SelectScope(sessionA))
         val read = ViewData(s.viewKey, view(sessionA))
-        assertEquals(read.view, shownView(s, read))
-        assertNull(shownView(s.on(MainEvent.SelectScope(sessionA)), read))
-        assertNull(shownView(s.on(MainEvent.SelectScope(null)), ViewData(ViewKey(null, s.epoch.next()), view(sessionA))))
+        val shown = s.on(MainEvent.ViewRead(read))
+        assertEquals(read.view, shownView(shown))
+        assertNull(shownView(shown.on(MainEvent.SelectScope(sessionA))))
+        assertNull(shownView(shown.on(MainEvent.SelectScope(null))))
     }
 
     @Test fun theSessionsListSelectsTheShownScope() {
         val list = SessionsListState(null, AllSessionsSummary(1, 2, null), emptyList(), selected = Scope.All)
-        assertEquals(sessionB, shownSessions(MainUiState(scope = sessionB), list)?.selected)
+        assertEquals(sessionB, shownSessions(MainUiState(scope = sessionB, sessionsData = SessionsData(1, list)))?.selected)
     }
 
     @Test fun deletingTheShownDataOpensTheLaunchViewAgain() {
         val s = MainUiState(scope = sessionA)
-        assertEquals(listOf(MainEffect.LoadStorage, MainEffect.LoadSessions, MainEffect.ReadLaunchFacts),
+        assertEquals(listOf(MainEffect.LoadStorage, MainEffect.LoadSessions(1), MainEffect.ReadLaunchFacts),
             reduce(s, MainEvent.DeleteFinished(Scope.All, deleted = true)).effects)
-        assertEquals(listOf(MainEffect.LoadStorage, MainEffect.LoadSessions), reduce(s, MainEvent.DeleteFinished(sessionB, deleted = true)).effects)
+        assertEquals(listOf(MainEffect.LoadStorage, MainEffect.LoadSessions(1)), reduce(s, MainEvent.DeleteFinished(sessionB, deleted = true)).effects)
         assertEquals(emptyList<MainEffect>(), reduce(s, MainEvent.DeleteFinished(sessionA, deleted = false)).effects)
     }
 }
@@ -207,13 +208,17 @@ class MainSearchTest {
         val s = base.on(MainEvent.OpenSearch, MainEvent.SetQuery("tile"))
         val key = s.searchKey ?: error("the page is open")
         val results = SearchResults(key, OrderedKeys(longArrayOf(1, 2)), emptyList())
-        assertSame(results.order, shownSearch(s, results)?.first?.results)
+        val shown = s.on(MainEvent.SearchRead(results))
+        assertSame(results.order, shownSearch(shown)?.first?.results)
         // the next query's results replace these when they arrive; until then these stay
-        assertSame(results.order, shownSearch(s.on(MainEvent.SetQuery("tiles")), results)?.first?.results)
+        val typed = shown.on(MainEvent.SetQuery("tiles"))
+        assertSame(results.order, shownSearch(typed)?.first?.results)
+        // the old query's results arriving late are dropped (MainFeedsTest has every order)
+        assertEquals(Step(typed), reduce(typed, MainEvent.SearchRead(results)))
         // a new view's page never shows the old view's results
-        val other = s.on(MainEvent.SelectScope(sessionB), MainEvent.OpenSearch)
-        assertNull(shownSearch(other, results)?.first?.results)
-        assertNull(shownSearch(s.on(MainEvent.ClosePage), results))
+        val other = shown.on(MainEvent.SelectScope(sessionB), MainEvent.OpenSearch)
+        assertNull(shownSearch(other)?.first?.results)
+        assertNull(shownSearch(shown.on(MainEvent.ClosePage)))
     }
 }
 
@@ -223,8 +228,8 @@ class MainSettingsTest {
         val first = reduce(MainUiState(), MainEvent.SettingsLoaded(settings(done = false, userId = "ab1"), perms))
         assertEquals("ab1", first.state.onboarding?.ui?.userId)
         assertEquals(true, first.state.onboarding?.ui?.userIdValid)
-        assertEquals(listOf(MainEffect.LoadSessions), first.effects)
-        assertEquals(listOf(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts),
+        assertEquals(listOf(MainEffect.LoadSessions(1)), first.effects)
+        assertEquals(listOf(MainEffect.LoadSessions(1), MainEffect.ReadLaunchFacts),
             reduce(MainUiState(), MainEvent.SettingsLoaded(settings(done = true), perms)).effects)
     }
 
@@ -233,7 +238,7 @@ class MainSettingsTest {
         assertEquals(listOf(MainEffect.SaveOnboarding("x7", false)), reduce(ob, MainEvent.FinishOnboarding).effects)
         val saved = reduce(ob, MainEvent.OnboardingSaved)
         assertNull(saved.state.onboarding)
-        assertEquals(listOf(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts), saved.effects)
+        assertEquals(listOf(MainEffect.LoadSessions(2), MainEffect.ReadLaunchFacts), saved.effects)
     }
 
     @Test fun storageKeepsTheChosenScopesAndFormat() {
@@ -296,7 +301,7 @@ class MainFailureTest {
 
     @Test fun whatTheScreenWaitsForFallsBack() {
         // no settings: the launch view still opens; no launch facts: the first run
-        assertEquals(listOf(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts), failed(MainUiState(), MainTask.Effect(MainEffect.LoadSettings)).effects)
+        assertEquals(listOf(MainEffect.LoadSessions(1), MainEffect.ReadLaunchFacts), failed(MainUiState(), MainTask.Effect(MainEffect.LoadSettings)).effects)
         val first = failed(MainUiState(scope = sessionA), MainTask.Effect(MainEffect.ReadLaunchFacts)).state
         assertNull(first.scope)
         // no storage stats: the section shows zeros
@@ -344,8 +349,8 @@ class MainFailureTest {
 
     @Test fun otherFailuresLeaveTheStateAlone() {
         val s = MainUiState(scope = sessionA, searchQuery = "tile").on(MainEvent.OpenSearch)
-        listOf(MainTask.View(s.viewKey), MainTask.Sessions, MainTask.CoreEvents, MainTask.Platform,
-            MainTask.Effect(MainEffect.SheetsBack),
+        listOf(MainTask.View(s.viewKey), MainTask.Effect(MainEffect.LoadSessions(1)), MainTask.CoreEvents, MainTask.Platform,
+            MainTask.Effect(MainEffect.SheetsBack), MainTask.DiscoveryRate(DiscoveryKey("a", 1)),
         ).forEach { assertEquals(Step(s), failed(s, it)) }
         // what the user asked for is not one of them: a refused recorder action, a delete or a settings write says why
         // and offers it again (MainRecorderRefusedTest)
@@ -359,10 +364,16 @@ class MainFailureTest {
 
     /** R-4a: an unreadable discovery rate is never only a log line: the notice says why and reads it again. */
     @Test fun anUnreadableDiscoveryRateSaysWhyAndRetries() {
-        val s = MainUiState(scope = sessionA)
-        val failed = failed(s, MainTask.DiscoveryRate).state
+        val s = MainUiState(scope = sessionA).on(MainEvent.RecorderChanged(Phase.Recording, sessionId = "a"))
+        val key = s.discoveryKey ?: error("recording")
+        val failed = failed(s, MainTask.DiscoveryRate(key)).state
         assertEquals(Notice("Could not read the discovery rate: boom", retry = MainEffect.ReloadDiscoveryRate), failed.notice)
         assertEquals(Step(s, listOf(MainEffect.ReloadDiscoveryRate)), reduce(failed, MainEvent.RetryNotice))
+        // the runner answers the Retry with RereadDiscovery: a new read of the same session
+        assertEquals(DiscoveryKey("a", key.request + 1), s.on(MainEvent.RereadDiscovery).discoveryKey)
+        // a superseded read's failure is moot: no notice
+        val reread = s.on(MainEvent.CoreDataInvalidated)
+        assertEquals(Step(reread), failed(reread, MainTask.DiscoveryRate(key)))
     }
 }
 
@@ -371,8 +382,8 @@ class GuardedTest {
     @Test fun aThrowIsReportedWithItsTask() {
         val reported = mutableListOf<Pair<MainTask, Throwable>>()
         val e = IllegalArgumentException("x")
-        assertNull(guarded(MainTask.Sessions, { t, err -> reported += t to err }) { throw e })
-        assertEquals(listOf<Pair<MainTask, Throwable>>(MainTask.Sessions to e), reported)
+        assertNull(guarded(MainTask.CoreEvents, { t, err -> reported += t to err }) { throw e })
+        assertEquals(listOf<Pair<MainTask, Throwable>>(MainTask.CoreEvents to e), reported)
         assertEquals(3, guarded(MainTask.Platform, { _, _ -> reported.clear() }) { 3 })
         assertEquals(1, reported.size)
     }

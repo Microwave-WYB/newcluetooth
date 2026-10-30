@@ -22,6 +22,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.RecorderUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SearchPageState
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
+import edu.ucsd.sysnet.cluetoothscanner.chrome.DiscoveryBins
 import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.onboardingSteps
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
@@ -59,11 +60,10 @@ sealed interface MainTask {
     data object Link : MainTask
     data class View(val key: ViewKey) : MainTask
     data class Search(val key: SearchKey) : MainTask
-    data object Sessions : MainTask
     /** The core's event subscription (§2.6). */
     data object CoreEvents : MainTask
-    /** R-4a: the recorder panel's discovery rate, its snapshot and its deltas. */
-    data object DiscoveryRate : MainTask
+    /** R-4a: one read of the recorder panel's discovery rate, its snapshot and its deltas. */
+    data class DiscoveryRate(val key: DiscoveryKey) : MainTask
     /** A call into the map or the sheets from a map callback or the cover. */
     data object Platform : MainTask
     /** An Activity launch the user asked for (a permission request, enable Bluetooth, the location settings). */
@@ -111,6 +111,12 @@ data class ViewData(val key: ViewKey, val view: SessionView)
 
 /** The search page's results, owned by the search job and tagged with the key they were read for. */
 data class SearchResults(val key: SearchKey, val order: OrderedKeys?, val rows: List<DeviceRow>)
+
+/** The sessions list as one read returned it, tagged with the number of the request it answered. */
+data class SessionsData(val request: Int, val list: SessionsListState)
+
+/** R-4a: what keys one read of the discovery rate: the recording's session and the read's number. */
+data class DiscoveryKey(val sessionId: String, val request: Int)
 
 /** What V-6 decides on: the recorder's restored session, the stored setting and the core's session count. */
 data class LaunchFacts(val liveSessionId: String?, val recordOnOpen: Boolean, val sessionCount: Int)
@@ -167,6 +173,20 @@ data class MainUiState(
     val notice: Notice? = null,
     /** D-1b: the remembered Discover view (UI state, not a setting); every new session view opens on it. */
     val discoverView: RememberedView = RememberedView.Unread,
+    /** The session view as last read, for the key it was read for; [shownView] shows it only for the current key. */
+    val viewData: ViewData? = null,
+    /** The search page's results of the current query as last read; see [shownSearch]. */
+    val searchResults: SearchResults? = null,
+    /** How many sessions-list reads were asked for; each read answers with its number ([MainEvent.SessionsRead]). */
+    val sessionsAsked: Int = 0,
+    /** The newest sessions list read so far; see [shownSessions]. */
+    val sessionsData: SessionsData? = null,
+    /** R-4a: how many discovery-rate reads were asked for, across sessions, so no two reads share a key. */
+    val discoveryAsked: Int = 0,
+    /** R-4a: the read of the recording's rate the runner works on; null while not recording. */
+    val discoveryKey: DiscoveryKey? = null,
+    /** R-4a: the recording's rate as shown: empty for a new session until its first read, kept while it is re-read. */
+    val discovery: DiscoveryBins = DiscoveryBins.Empty,
 ) {
     val viewKey: ViewKey get() = ViewKey(scope, epoch)
     val searchPage: Page.SearchPage? get() = page as? Page.SearchPage
@@ -207,8 +227,12 @@ sealed interface MainEvent {
     data class SettingsLoaded(val settings: Settings, val permissions: PermissionState) : MainEvent
     data class PermissionsChanged(val permissions: PermissionState) : MainEvent
     data class LaunchFactsRead(val facts: LaunchFacts) : MainEvent
-    /** The recorder's phase and, while paused, why (`RecorderState.pause`). */
-    data class RecorderChanged(val phase: RecorderState.Phase, val pause: RecorderState.PauseReason? = null) : MainEvent
+    /** The recorder's phase, while paused why (`RecorderState.pause`), and its session (`RecorderState.sessionId`). */
+    data class RecorderChanged(
+        val phase: RecorderState.Phase,
+        val pause: RecorderState.PauseReason? = null,
+        val sessionId: String? = null,
+    ) : MainEvent
     data class RecordingStarted(val sessionId: String) : MainEvent
     data class StorageLoaded(val facts: StorageFacts) : MainEvent
     data object ExportFinished : MainEvent
@@ -221,6 +245,20 @@ sealed interface MainEvent {
     data class DiscoverViewChosen(val view: DiscoverView) : MainEvent
     /** D-1b: the remembered view, read from the UI-state store at launch. */
     data class UiStateRead(val discoverView: DiscoverView) : MainEvent
+    /** V-2: the session view read for [data]'s key; dropped unless that is still the view's key. */
+    data class ViewRead(val data: ViewData) : MainEvent
+    /** Q-3: the search results read for [results]' key; dropped unless that is still the page's query. */
+    data class SearchRead(val results: SearchResults) : MainEvent
+    /** The sessions list read for request [request]; dropped if a newer request's list is already shown. */
+    data class SessionsRead(val request: Int, val list: SessionsListState) : MainEvent
+    /** The core's `SessionsChanged`: the sessions list is read again. */
+    data object CoreSessionsChanged : MainEvent
+    /** The core's `DataInvalidated` (e.g. the display filter changed which devices count): what it covers is read again. */
+    data object CoreDataInvalidated : MainEvent
+    /** R-4a: the rate read for [key] (its snapshot, then once per delta); dropped unless [key] is still the read wanted. */
+    data class DiscoveryRead(val key: DiscoveryKey, val bins: DiscoveryBins) : MainEvent
+    /** R-4a: the notice's Retry: the recording's rate is read again. */
+    data object RereadDiscovery : MainEvent
 
     // ---- intents ----
     data class SelectScope(val scope: Scope?) : MainEvent
@@ -288,8 +326,8 @@ sealed interface MainEvent {
 sealed interface MainEffect {
     /** V-6 / O-2: read the stored settings and the grants → [MainEvent.SettingsLoaded]. */
     data object LoadSettings : MainEffect
-    /** Re-read the sessions list (the core's). */
-    data object LoadSessions : MainEffect
+    /** Read the sessions list (the core's) → [MainEvent.SessionsRead] with this [request]'s number. */
+    data class LoadSessions(val request: Int) : MainEffect
     /** V-6: read the [LaunchFacts] → [MainEvent.LaunchFactsRead]. */
     data object ReadLaunchFacts : MainEffect
     /** R-2 → [MainEvent.RecordingStarted]. */
@@ -374,11 +412,11 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     }
     // O-2 on first launch; otherwise V-6 decides on the stored settings, not the defaults
     is MainEvent.SettingsLoaded ->
-        if (e.settings.onboardingDone) s.with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
+        if (e.settings.onboardingDone) s.loadingSessions { listOf(it, MainEffect.ReadLaunchFacts) }
         else {
             val id = e.settings.userId
             val ui = OnboardingUi(1, e.permissions, id.orEmpty(), id?.let(Settings::isValidUserId) ?: false, true)
-            s.copy(onboarding = OnboardingFlow(ui, onboardingSteps(true, e.permissions))).with(MainEffect.LoadSessions)
+            s.copy(onboarding = OnboardingFlow(ui, onboardingSteps(true, e.permissions))).loadingSessions { listOf(it) }
         }
     is MainEvent.PermissionsChanged -> s.copy(onboarding = s.onboarding?.let { it.copy(ui = it.ui.copy(permissions = e.permissions)) }).only()
     // V-6: a live recording first; else record on open; else All sessions if any exist; else the first run
@@ -395,7 +433,7 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
             Page.Settings -> Page.Settings
             is Page.SearchPage, null -> null
         },
-    ).let { if (e.scope != null) it.with(MainEffect.LoadSessions) else it.only() }
+    ).let { if (e.scope != null) it.loadingSessions { load -> listOf(load) } else it.only() }
     is MainEvent.RecorderChanged -> {
         val idle = e.phase == RecorderState.Phase.Idle
         val storagePause = e.pause as? RecorderState.PauseReason.StorageFull
@@ -405,7 +443,7 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
         val next = if (idle) RecorderMirror.Idle else RecorderMirror.Active(s.recorderPanelOpen, storagePause != null, failurePause != null)
         // #79: the failure pause shows its notice; a paused recording's notice goes only when the recording is no
         // longer paused (Resume accepted, here or from the notification, or Stop); another notice that came in stays
-        val mirrored = s.copy(
+        val mirrored = s.discoveryFor(e.sessionId.takeIf { !idle }).copy(
             recorder = next,
             notice = when {
                 failurePause != null && !wasFailurePause -> storageFailedNotice(failurePause.message)
@@ -465,6 +503,16 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.ExitSearch -> s.copy(searchQuery = null).with(MainEffect.SheetsExitSearch)
     is MainEvent.CameraIdle -> s.copy(camera = e.camera).only()
     is MainEvent.SheetsAttached -> s.copy(sheets = SheetsLink.Attached(e.sheets)).only()
+    // the reads: each result counts only for the request it answers, so a stale one (an earlier view, an old query,
+    // an older sessions read, a previous read of the rate) is dropped whatever order they arrive in
+    is MainEvent.ViewRead -> (if (e.data.key == s.viewKey) s.copy(viewData = e.data) else s).only()
+    is MainEvent.SearchRead -> (if (e.results.key == s.searchKey) s.copy(searchResults = e.results) else s).only()
+    is MainEvent.SessionsRead ->
+        (if (e.request > (s.sessionsData?.request ?: 0)) s.copy(sessionsData = SessionsData(e.request, e.list)) else s).only()
+    MainEvent.CoreSessionsChanged -> s.loadingSessions { listOf(it) }
+    MainEvent.CoreDataInvalidated -> s.rereadDiscovery().loadingSessions { listOf(it) }
+    is MainEvent.DiscoveryRead -> (if (e.key == s.discoveryKey) s.copy(discovery = e.bins) else s).only()
+    MainEvent.RereadDiscovery -> s.rereadDiscovery().only()
     // D-1b: the user's switch is remembered (search's forced list never comes here: the sheets don't emit it)
     is MainEvent.DiscoverViewChosen ->
         if (s.discoverView == RememberedView.Known(e.view)) s.only()
@@ -507,8 +555,8 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     is MainEvent.DeleteFinished ->
         if (!e.deleted) s.only()
         else if (s.scope != null && (e.scope.sessions == SessionScope.All || s.scope == e.scope)) {
-            s.with(MainEffect.LoadStorage, MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
-        } else s.with(MainEffect.LoadStorage, MainEffect.LoadSessions)
+            s.loadingSessions { listOf(MainEffect.LoadStorage, it, MainEffect.ReadLaunchFacts) }
+        } else s.loadingSessions { listOf(MainEffect.LoadStorage, it) }
     is MainEvent.EditOnboarding -> s.copy(onboarding = s.onboarding?.let { it.copy(ui = e.transform(it.ui)) }).only()
     is MainEvent.RequestPermission -> s.with(MainEffect.RequestPermissions(e.which))
     MainEvent.EnableBluetooth -> s.with(MainEffect.EnableBluetooth)
@@ -542,7 +590,7 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     } ?: s.only()
     // O-2 Done: save, then the first run (recording straight away if the switch was left on)
     MainEvent.FinishOnboarding -> s.onboarding?.let { s.with(MainEffect.SaveOnboarding(it.ui.userId, it.ui.autoRecord)) } ?: s.only()
-    MainEvent.OnboardingSaved -> s.copy(onboarding = null).with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
+    MainEvent.OnboardingSaved -> s.copy(onboarding = null).loadingSessions { listOf(it, MainEffect.ReadLaunchFacts) }
     MainEvent.DismissNotice -> s.copy(notice = null).only()
     MainEvent.RetryNotice -> {
         val notice = s.notice
@@ -574,7 +622,7 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
     }
     is MainTask.Effect -> when (task.effect) {
         // without stored settings the launch view still opens (its own facts fall back to the first run)
-        MainEffect.LoadSettings -> s.with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
+        MainEffect.LoadSettings -> s.loadingSessions { listOf(it, MainEffect.ReadLaunchFacts) }
         MainEffect.ReadLaunchFacts -> reduce(s, MainEvent.LaunchFactsRead(LaunchFacts(null, recordOnOpen = false, sessionCount = 0)))
         MainEffect.LoadStorage -> reduce(s, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)))
         MainEffect.LoadReclaimable -> reduce(s, MainEvent.ReclaimableRead(CleanupResult.Err(CleanupError.Failed(error.message ?: error::class.simpleName.orEmpty()))))
@@ -599,7 +647,7 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         // the user asked for these too: say why they didn't happen, and offer them again
         is MainEffect.Delete -> s.copy(notice = Notice("$DELETE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
         is MainEffect.UpdateSettings -> s.copy(notice = Notice("$SAVE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
-        MainEffect.LoadSessions, MainEffect.ReloadDiscoveryRate, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
+        is MainEffect.LoadSessions, MainEffect.ReloadDiscoveryRate, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
         is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch,
         is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation -> s.only()
         // D-1b: UI state, so no notice: a failed read keeps Categories (the runner logged it); a failed write never
@@ -608,10 +656,12 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
     }
     // the user asked for it and nothing happened: say why
     MainTask.Launch -> s.copy(notice = Notice(error.userMessage())).only()
-    // R-4a: the panel's chart has no data; say why, and offer to read it again
-    MainTask.DiscoveryRate -> s.copy(notice = Notice("$RATE_FAILED: ${error.userMessage()}", retry = MainEffect.ReloadDiscoveryRate)).only()
+    // R-4a: the panel's chart has no data; say why, and offer to read it again (a superseded read's failure is moot)
+    is MainTask.DiscoveryRate ->
+        if (task.key != s.discoveryKey) s.only()
+        else s.copy(notice = Notice("$RATE_FAILED: ${error.userMessage()}", retry = MainEffect.ReloadDiscoveryRate)).only()
     // the keyed work keeps its last data, which the selectors show only for its own key
-    is MainTask.View, is MainTask.Search, MainTask.Sessions, MainTask.CoreEvents, MainTask.Platform -> s.only()
+    is MainTask.View, is MainTask.Search, MainTask.CoreEvents, MainTask.Platform -> s.only()
 }
 
 private const val EXPORT_FAILED = "Export failed"
@@ -649,11 +699,11 @@ private fun spaceFreed(s: MainUiState, e: MainEvent.SpaceFreed): Step {
             cleanupFailure = outcome.failed.entries.firstOrNull()?.let { (c, err) -> CleanupFailure(c, reason(err)) },
         )
     }
-    val effects = buildList {
-        if (s.storage != null) add(MainEffect.LoadStorage)
-        if (Cleanup.LocalDatabase in outcome.freed) { add(MainEffect.LoadSessions); if (s.scope != null) add(MainEffect.ReadLaunchFacts) }
-    }
-    return Step(s.copy(storageFull = dialog, storage = storage), effects)
+    val next = s.copy(storageFull = dialog, storage = storage)
+    val storageRead = listOfNotNull(MainEffect.LoadStorage.takeIf { s.storage != null })
+    // the history is gone: the sessions list and the launch view are read again
+    return if (Cleanup.LocalDatabase !in outcome.freed) Step(next, storageRead)
+    else next.loadingSessions { storageRead + it + listOfNotNull(MainEffect.ReadLaunchFacts.takeIf { s.scope != null }) }
 }
 
 /** The dialog after a read: its sizes and free space, or the read's failure (the last free space stays, explained). */
@@ -716,7 +766,7 @@ fun recorderForm(phase: RecorderState.Phase, panelOpen: Boolean): RecorderUi.For
 }
 
 /** The shown session view: only data read for the current key, so a stale read never shows (V-7). */
-fun shownView(s: MainUiState, data: ViewData?): SessionView? = data?.takeIf { s.scope != null && it.key == s.viewKey }?.view
+fun shownView(s: MainUiState): SessionView? = s.viewData?.takeIf { s.scope != null && it.key == s.viewKey }?.view
 
 /** A scope's live flag, as last read from its view. */
 data class ViewLive(val scope: Scope, val live: Boolean)
@@ -737,11 +787,28 @@ fun viewLive(scope: Scope?, live: Boolean?, last: ViewLive?): ViewLive? = when {
  * The search page as chrome draws it: the page's query and area, with the latest results of this session view
  * (the previous query's stay until the new query's arrive, so typing does not blank the list).
  */
-fun shownSearch(s: MainUiState, results: SearchResults?): Pair<SearchPageState, List<DeviceRow>>? {
+fun shownSearch(s: MainUiState): Pair<SearchPageState, List<DeviceRow>>? {
     val page = s.searchPage ?: return null
-    val r = results?.takeIf { it.key.view == s.viewKey }
+    val r = s.searchResults?.takeIf { it.key.view == s.viewKey }
     return SearchPageState(page.query, page.area, r?.order, page.searchedEverywhere) to r?.rows.orEmpty()
 }
 
 /** The sessions list with the shown scope selected (the list is the core's; the selection is always the scope). */
-fun shownSessions(s: MainUiState, list: SessionsListState?): SessionsListState? = list?.copy(selected = s.scope)
+fun shownSessions(s: MainUiState): SessionsListState? = s.sessionsData?.list?.copy(selected = s.scope)
+
+/** Asks for the sessions list: the read answers with this request's number ([MainEvent.SessionsRead]). */
+private fun MainUiState.loadingSessions(effects: (MainEffect) -> List<MainEffect>): Step {
+    val n = sessionsAsked + 1
+    return Step(copy(sessionsAsked = n), effects(MainEffect.LoadSessions(n)))
+}
+
+/** R-4a: the recording's session: a new one (or none) shows empty, and a new one asks for its rate. */
+private fun MainUiState.discoveryFor(sessionId: String?): MainUiState = when {
+    sessionId == discoveryKey?.sessionId -> this
+    sessionId == null -> copy(discoveryKey = null, discovery = DiscoveryBins.Empty)
+    else -> copy(discoveryAsked = discoveryAsked + 1, discoveryKey = DiscoveryKey(sessionId, discoveryAsked + 1), discovery = DiscoveryBins.Empty)
+}
+
+/** R-4a: the same session's rate read again (Retry, `DataInvalidated`); the shown rate stays until the new one comes. */
+private fun MainUiState.rereadDiscovery(): MainUiState =
+    discoveryKey?.let { copy(discoveryAsked = discoveryAsked + 1, discoveryKey = it.copy(request = discoveryAsked + 1)) } ?: this

@@ -10,16 +10,10 @@ sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:65 
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:144  execution layer: screen facts (height, density, insets) set by the host on layout
 map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/CluetoothMap.kt:69  execution layer: the MapLibre map handle (platform object), set once by the view callback
 map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/CluetoothMap.kt:70  execution layer: the MapLibre surface handle (platform object), set once by the view callback
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainScreen.kt:308  rememberViewLive: the last value of the pure viewLive(scope, live, last), written in a SideEffect
+app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainScreen.kt:304  rememberViewLive: the last value of the pure viewLive(scope, live, last), written in a SideEffect
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/Discover.kt:499  DiscoverModel runner: a mirror of the state's phase for awaitReady, written only in apply with the state
 map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/CluetoothMapState.kt:78  map runner: the single UI state, written only as MapReducer.ui(model) after each reduce
 chrome/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/chrome/Recorder.kt:64  a ticking clock for the elapsed time (now(), set by a frame loop), not async content
 app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/CoreOpener.kt:58  CoreOpener runner: the single CoreState, written only as reduce(current, event)
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:84  MainViewModel runner: the single MainUiState, written only as reduce(current, event) in the event loop
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:87  keyed-work data feed: the view of one ViewKey, one writer per key, read only for its own key (coordinator to rule, lane C)
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:91  keyed-work data feed: the search results of one SearchKey, one writer per key (coordinator to rule, lane C)
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:95  keyed-work data feed: the sessions list, one writer (coordinator to rule, lane C)
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:101  keyed-work data feed: the discovery-rate bins, one writer (coordinator to rule, lane C)
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:105  a request trigger (a counter to re-read), not state
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:120  a one-shot event channel (activity requests), not state
-app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/DiscoveryRates.kt:108  a request trigger (invalidations counter), not state
+app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:83  MainViewModel runner: the single MainUiState, written only as reduce(current, event) in the event loop
+app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainViewModel.kt:102  a one-shot event channel (activity requests), not state

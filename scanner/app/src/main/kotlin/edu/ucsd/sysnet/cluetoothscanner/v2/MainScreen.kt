@@ -72,11 +72,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 @Composable
 fun MainScreen(vm: MainViewModel) {
     val ui by vm.ui.collectAsState()
-    val viewData by vm.view.collectAsState()
-    val searchResults by vm.search.collectAsState()
-    val sessionsList by vm.sessions.collectAsState()
     val rec by vm.recorder.collectAsState()
-    val discovery by vm.discovery.collectAsState()
     val settings by vm.settings.collectAsState()
     val location by vm.location.collectAsState()
     val coreState by vm.coreState.collectAsState()
@@ -96,10 +92,10 @@ fun MainScreen(vm: MainViewModel) {
         SideEffect { if (ui.layout != layout) dispatch(MainEvent.SetLayout(layout)) }
         val tablet = layout.tablet
         val hasSession = ui.scope != null
-        val view = shownView(ui, viewData)
+        val view = shownView(ui)
         val live = view?.live == true
         val form = recorderForm(rec.phase, ui.recorderPanelOpen)
-        val recorderUi = RecorderUi(form, rec.phase == RecorderState.Phase.Paused, rememberElapsedMs(rec.activeBeforeMs, rec.runningSinceMs), discovery)
+        val recorderUi = RecorderUi(form, rec.phase == RecorderState.Phase.Paused, rememberElapsedMs(rec.activeBeforeMs, rec.runningSinceMs), ui.discovery)
         val recorderActions = remember(vm) {
             RecorderActions({ dispatch(MainEvent.StartRecording) }, { dispatch(MainEvent.SetRecorderPanel(true)) },
                 { dispatch(MainEvent.SetRecorderPanel(false)) }, { dispatch(MainEvent.PauseRecording) }, { dispatch(MainEvent.ResumeRecording) },
@@ -137,7 +133,7 @@ fun MainScreen(vm: MainViewModel) {
             )
         }
         // the list is the core's; only its selection follows the scope, so it is rebuilt only when either changes
-        val sessionsShown = remember(ui.scope, sessionsList) { shownSessions(ui, sessionsList) }
+        val sessionsShown = remember(ui.scope, ui.sessionsData) { shownSessions(ui) }
         val sessions = @Composable { m: Modifier ->
             sessionsShown?.let { SessionsList(it, { sc -> dispatch(MainEvent.SelectScope(sc)) }, { dispatch(MainEvent.OpenSettings) }, m, tablet = tablet, bottomInset = if (tablet) 0.dp else nav) }
         }
@@ -170,7 +166,7 @@ fun MainScreen(vm: MainViewModel) {
             }
         }
 
-        val searchShown = remember(ui.searchPage, ui.viewKey, searchResults) { shownSearch(ui, searchResults) }
+        val searchShown = remember(ui.searchPage, ui.viewKey, ui.searchResults) { shownSearch(ui) }
         val searchRows = searchShown?.second.orEmpty()
         val topState = TopChromeState(
             hasSession = hasSession, sidebarOpen = ui.sidebarOpen && !tablet, recorderPanelOpen = form == RecorderUi.Form.Panel && !tablet,
@@ -199,7 +195,7 @@ fun MainScreen(vm: MainViewModel) {
         ui.storage?.let { st ->
             val shown = ui.scope?.takeIf { it.sessions is SessionScope.Sessions }
             val label = (shown?.sessions as? SessionScope.Sessions)?.ids?.firstOrNull()?.let { id ->
-                sessionsList?.let { s -> (listOfNotNull(s.current) + s.days.flatMap { it.sessions }).firstOrNull { it.id == id }?.label() }
+                ui.sessionsData?.list?.let { s -> (listOfNotNull(s.current) + s.days.flatMap { it.sessions }).firstOrNull { it.id == id }?.label() }
             }
             SettingsPage(
                 ui.page == Page.Settings, SettingsUi(settings, vm.graph.uploads.status.collectAsState().value, st),

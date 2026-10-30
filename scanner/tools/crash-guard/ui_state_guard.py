@@ -9,7 +9,9 @@ argument (`mutableStateOf<Dp?>(null)`) or its literal initial value (`false`, `"
 constructed in v2 UI code count as state too (a flow written from effects is the same lost-update hazard as Compose
 state). Anything else is non-trivial state: put it in a state machine (an immutable value, a pure reducer, one dispatch), or,
 for a runner's single state holder or an execution-layer handle, add an entry with its reason to
-ui-state-allowlist.txt next to this script:
+ui-state-allowlist.txt next to this script. A runner holds one state: a file with more than one `MutableStateFlow`
+fails even when each is allowlisted, so data read beside the runner's state (a keyed "data feed") cannot come back;
+it enters that state as a result event through the reducer, tagged with the request it answers.
 
     <path relative to scanner/>:<line>  <reason>
 
@@ -38,6 +40,8 @@ SCANNED = [
 ]
 
 STATE = re.compile(r"\bmutableState(?:Of|ListOf|MapOf)\b")
+# a state holder flow (not a SharedFlow channel): a runner has exactly one
+HOLDER = re.compile(r"\bMutableStateFlow\s*(?:<.*?>)?\s*\(")
 # always state: numeric Compose state that isn't a gesture Float, and flows constructed as holders or channels
 ALWAYS = re.compile(r"\b(?:mutable(?:Int|Long|Double)StateOf|Mutable(?:State|Shared)Flow\s*(?:<.*?>)?\s*\()")
 EPHEMERAL_TYPES = {"Boolean", "String", "Float", "Dp", "Offset"}
@@ -67,6 +71,11 @@ def hits(src: str) -> list[tuple[int, str]]:
     return found
 
 
+def holders(src: str) -> list[int]:
+    """The lines of every `MutableStateFlow` constructed in Kotlin [src]."""
+    return [no for no, code in enumerate(code_only(src).split("\n"), 1) if not SKIPPED_LINE.match(code) and HOLDER.search(code)]
+
+
 def sources() -> list[pathlib.Path]:
     files = []
     for root in SCANNED:
@@ -91,9 +100,14 @@ def read_allowlist() -> dict[str, str]:
 def check() -> int:
     allowed = read_allowlist()
     seen, bad = set(), []
+    feeds = []
     for path in sources():
         rel = path.relative_to(SCANNER).as_posix()
-        for no, text in hits(path.read_text()):
+        src = path.read_text()
+        held = holders(src)
+        if len(held) > 1:
+            feeds.append(f"{rel}: lines {', '.join(map(str, held))}")
+        for no, text in hits(src):
             key = f"{rel}:{no}"
             if key in allowed:
                 seen.add(key)
@@ -104,7 +118,10 @@ def check() -> int:
         print(f"ui-state-guard: non-ephemeral mutable state: {b}", file=sys.stderr)
     for s in stale:
         print(f"ui-state-guard: allowlist entry has no hit (remove it, or move it with the code): {s}", file=sys.stderr)
-    if bad or stale:
+    for f in feeds:
+        print(f"ui-state-guard: more than one MutableStateFlow (a runner holds one state; read data enters it as "
+              f"result events through the reducer, never as a data feed beside it): {f}", file=sys.stderr)
+    if bad or stale or feeds:
         print("ui-state-guard: async results enter UI state only as events through a reducer (AGENTS.md); an "
               f"exception needs an entry with its reason in {ALLOWLIST.relative_to(SCANNER)}", file=sys.stderr)
         return 1
@@ -163,11 +180,20 @@ def self_test() -> int:
         "suspend fun open() {\n    content.value = content.value.withDetail(core.device(key))\n}"
     if [no for no, _ in hits(lost)] != [1]:
         failures.append(f"lost update via MutableStateFlow: expected a hit on line 1, got {hits(lost)}")
+    # a runner with a data feed beside its state: two holders, whatever the allowlist says
+    fed = "private val _ui = MutableStateFlow(MainUiState())\n" \
+        "private val _view = MutableStateFlow<ViewData?>(null)\n" \
+        "private val _requests = MutableSharedFlow<ActivityRequest>(extraBufferCapacity = 4)\n" \
+        "// private val _old = MutableStateFlow(0)"
+    if holders(fed) != [1, 2]:
+        failures.append(f"data feed beside the runner's state: expected holders on lines 1 and 2, got {holders(fed)}")
+    if holders("private val _ui = MutableStateFlow(MainUiState())\nval requests = MutableSharedFlow<Int>()") != [1]:
+        failures.append("a runner's one state and a SharedFlow channel: expected one holder")
     for f in failures:
         print(f"ui-state-guard self-test: {f}", file=sys.stderr)
     if failures:
         return 1
-    print(f"ui-state-guard self-test: ok ({len(flagged) + len(ephemeral) + 1} cases)")
+    print(f"ui-state-guard self-test: ok ({len(flagged) + len(ephemeral) + 3} cases)")
     return 0
 
 
