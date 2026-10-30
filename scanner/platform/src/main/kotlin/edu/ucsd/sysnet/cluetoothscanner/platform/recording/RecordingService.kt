@@ -26,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -56,7 +57,8 @@ internal object RecordingServiceLink {
  */
 class RecordingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + failureHandler(TAG))
-    private val throttle = RecordingNotificationPolicy.Throttle()
+    /** The coalescing rate limit's state; read and written only on the main thread (the service's scope). */
+    private var throttle = RecordingNotificationPolicy.Throttle()
     private var wakeLock: PowerManager.WakeLock? = null
     private var wakeLockWanted = false
     private var observing = false
@@ -121,8 +123,22 @@ class RecordingService : Service() {
             return@android
         }
         applyWakeLock(state)
-        if (inForeground && throttle.shouldUpdate(state, SystemClock.elapsedRealtime())) {
-            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(state))
+        if (inForeground) throttled(RecordingNotificationPolicy.offer(throttle, state, SystemClock.elapsedRealtime()))
+    }
+
+    /** Runs the throttle's effects: a held-back state is shown when its window opens. */
+    private fun throttled(step: RecordingNotificationPolicy.ThrottleStep) {
+        throttle = step.throttle
+        for (effect in step.effects) {
+            when (effect) {
+                is RecordingNotificationPolicy.ThrottleEffect.Show -> android("updating the notification") {
+                    if (inForeground) getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(effect.state))
+                }
+                is RecordingNotificationPolicy.ThrottleEffect.Arm -> scope.launch {
+                    delay((effect.atMs - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+                    throttled(RecordingNotificationPolicy.fired(throttle, SystemClock.elapsedRealtime()))
+                }
+            }
         }
     }
 
@@ -180,9 +196,13 @@ class RecordingService : Service() {
             .setContentText(RecordingNotificationPolicy.text(state, now))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        // R-3: Android ticks the elapsed time while recording; paused, the text holds it.
+        when (val base = RecordingNotificationPolicy.chronometerBaseMs(state)) {
+            null -> builder.setShowWhen(false)
+            else -> builder.setShowWhen(true).setUsesChronometer(true).setWhen(base)
+        }
         openAppIntent(this)?.let(builder::setContentIntent)
         when (RecordingNotificationPolicy.pauseAction(state)) {
             RecordingNotificationPolicy.Action.Pause -> builder.addAction(0, "Pause", action(ACTION_PAUSE, 1))

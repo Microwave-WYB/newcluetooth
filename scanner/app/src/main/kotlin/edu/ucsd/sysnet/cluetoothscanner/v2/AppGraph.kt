@@ -7,6 +7,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DisplayFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatusSource
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
@@ -43,6 +44,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 
 /**
@@ -106,7 +108,8 @@ class AppGraph(private val app: Application) {
         BleScanner(app, scanIngest, ingest, { settings.settings.value.scanCodedPhy }, appVersion, scope, io)
     }
     private val coreStates: Flow<CoreRecordingState> = flow {
-        emitAll(core.ready().queries.events.filterIsInstance<CoreEvent.RecordingChanged>().map { it.state })
+        val queries = core.ready().queries
+        emitAll(recordingStates(queries.events, queries.live))
     }
     val recorder: Recorder by lazy { platformRecorder }
     private val platformRecorder by lazy {
@@ -158,3 +161,11 @@ class AppGraph(private val app: Application) {
         android.util.Log.w("AppGraph", "start step failed ($task)", error)
     }
 }
+
+/**
+ * The recorder's view of the core between its own transitions (§4.4): every `RecordingChanged`, and the state each
+ * live delta carries (every 5 s while recording), so the device count in the notification keeps moving.
+ */
+internal fun recordingStates(events: Flow<CoreEvent>, live: Flow<LiveDelta>): Flow<CoreRecordingState> =
+    merge(events.filterIsInstance<CoreEvent.RecordingChanged>().map { it.state }, live.map { it.state })
+

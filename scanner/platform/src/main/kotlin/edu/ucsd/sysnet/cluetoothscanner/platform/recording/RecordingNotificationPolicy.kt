@@ -33,7 +33,18 @@ internal object RecordingNotificationPolicy {
         else -> "Recording"
     }
 
-    /** The line under [title]: "12:34 · 26 devices", so the notification reads "Recording · 12:34 · 26 devices" (§4.4). */
+    /**
+     * §4.4, R-3: while the recording runs, Android ticks the elapsed time itself (a chronometer counting up from this
+     * wall-clock instant: the run's start moved back by the time recorded before the last pause, so paused time is
+     * excluded). Null while paused, starting or stopping; the text then shows the frozen elapsed time.
+     */
+    fun chronometerBaseMs(state: RecorderState): Long? =
+        if (state.phase == Phase.Recording) state.runningSinceMs?.let { it - state.activeBeforeMs } else null
+
+    /**
+     * The line under [title]: "26 devices" next to the ticking chronometer while recording ("Recording · 12:34 · 26
+     * devices", §4.4), else "12:34 · 26 devices" with the elapsed time frozen.
+     */
     fun text(state: RecorderState, nowMs: Long): String {
         // R-10: what to do, and the free space the core reported.
         when (val pause = state.pause) {
@@ -48,7 +59,7 @@ internal object RecordingNotificationPolicy {
             "%d:%02d".format(seconds / 60, seconds % 60)
         }
         val devices = if (state.deviceCount == 1) "1 device" else "%,d devices".format(Locale.US, state.deviceCount)
-        return "$clock · $devices"
+        return if (chronometerBaseMs(state) != null) devices else "$clock · $devices"
     }
 
     private fun megabytes(bytes: Long) = "%,d MB".format(Locale.US, bytes.coerceAtLeast(0) / 1_000_000)
@@ -64,17 +75,47 @@ internal object RecordingNotificationPolicy {
 
     enum class Action { Pause, Resume }
 
-    /** Rate limits notification updates: always on a visible change of kind, otherwise every [UPDATE_INTERVAL_MS]. */
-    class Throttle {
-        private var lastAtMs = Long.MIN_VALUE
-        private var lastKey: Any? = null
+    /**
+     * The coalescing rate limit (§4.4) as a value: a change of kind (phase, Bluetooth, a storage pause) shows at once;
+     * otherwise at most one update per [UPDATE_INTERVAL_MS], and the latest state held back meanwhile is shown when
+     * the window opens, never dropped. [offer] and [fired] are its pure transitions; the service runs the effects.
+     */
+    data class Throttle(
+        val lastAtMs: Long? = null,
+        val lastKind: Any? = null,
+        /** The newest state not shown yet. */
+        val pending: RecorderState? = null,
+        /** A timer is armed to show [pending]. */
+        val armed: Boolean = false,
+    )
 
-        fun shouldUpdate(state: RecorderState, elapsedRealtimeMs: Long): Boolean {
-            val key = Triple(state.phase, state.scannerDeferred, state.pause?.takeIf { it != PauseReason.User }?.let { it::class })
-            if (key == lastKey && elapsedRealtimeMs - lastAtMs < UPDATE_INTERVAL_MS) return false
-            lastKey = key
-            lastAtMs = elapsedRealtimeMs
-            return true
-        }
+    sealed interface ThrottleEffect {
+        data class Show(val state: RecorderState) : ThrottleEffect
+
+        /** Call [fired] at [atMs] (the same monotonic clock as the offers). */
+        data class Arm(val atMs: Long) : ThrottleEffect
     }
+
+    data class ThrottleStep(val throttle: Throttle, val effects: List<ThrottleEffect>)
+
+    fun offer(throttle: Throttle, state: RecorderState, nowMs: Long): ThrottleStep {
+        val kind = kindOf(state)
+        val last = throttle.lastAtMs
+        if (last == null || kind != throttle.lastKind || nowMs - last >= UPDATE_INTERVAL_MS) {
+            return ThrottleStep(throttle.copy(lastAtMs = nowMs, lastKind = kind, pending = null), listOf(ThrottleEffect.Show(state)))
+        }
+        val arm = if (throttle.armed) emptyList() else listOf(ThrottleEffect.Arm(last + UPDATE_INTERVAL_MS))
+        return ThrottleStep(throttle.copy(pending = state, armed = true), arm)
+    }
+
+    fun fired(throttle: Throttle, nowMs: Long): ThrottleStep {
+        val pending = throttle.pending ?: return ThrottleStep(throttle.copy(armed = false), emptyList())
+        val opensAt = (throttle.lastAtMs ?: nowMs) + UPDATE_INTERVAL_MS
+        // An update shown since the timer was armed moved the window: wait for it to open.
+        if (nowMs < opensAt) return ThrottleStep(throttle, listOf(ThrottleEffect.Arm(opensAt)))
+        return ThrottleStep(Throttle(lastAtMs = nowMs, lastKind = kindOf(pending)), listOf(ThrottleEffect.Show(pending)))
+    }
+
+    private fun kindOf(state: RecorderState): Any =
+        Triple(state.phase, state.scannerDeferred, state.pause?.takeIf { it != PauseReason.User }?.let { it::class })
 }

@@ -136,8 +136,13 @@ The wake lock and the service last until step 2 returns, so sealing can finish w
 | `recording` | LOW, `setOnlyAlertOnce` | "Starting recording"; "Recording · 12:34 · 26 devices"; "Recording paused · 12:34 · 26 devices"; "Recording waiting for Bluetooth"; "Saving recording". Actions Pause/Resume and Stop; tapping opens the launcher activity. |
 | `recording-alerts` | DEFAULT, auto-cancel | "Recording interrupted" (one per launch, covering every unseen interrupted session) |
 
-- **Update rate.** At most every 5 s, or at once on a phase change (§4.4).
-- **Device count.** `RecordingState.device_count`, which the core already counts with the display filter (G-12).
+- **Update rate.** At most every 5 s, or at once on a change of kind (phase, Bluetooth, a storage pause) (§4.4). The
+  rate limit coalesces: the latest state held back is shown when the window opens, never dropped
+  (`RecordingNotificationPolicy.offer`/`fired`, a pure throttle the service runs).
+- **Elapsed time.** While recording, a chronometer that Android ticks itself, counting from `runningSinceMs −
+  activeBeforeMs` (paused time excluded); paused, starting or stopping, the text holds the elapsed time.
+- **Device count.** `RecordingState.device_count`, which the core already counts with the display filter (G-12). The
+  recorder follows it from `RecordingChanged` and from every live delta's state (every 5 s while recording).
 - **Opening the app.** The tap intent is the launcher intent of the host package
   (`packageManager.getLaunchIntentForPackage`). `:platform` therefore never names `MainActivity`, and `:gallery`
   works too.
