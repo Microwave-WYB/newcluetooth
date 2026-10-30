@@ -364,10 +364,11 @@ class SheetStackController(
 
     private fun handleOf(id: SheetId): SheetEntry? = handles[id.raw] ?: state.levelOf(id)?.let(::handle)
 
-    /** Handles of levels that are neither in the stack nor sliding out are no longer needed. */
+    /** Handles and offsets of levels that are neither in the stack nor sliding out are no longer needed. */
     private fun prune() {
-        val live = (state.levels + (state.transition as? StackTransition.SlidingOut)?.leaving.orEmpty()).map { it.id.raw }.toSet()
-        handles.keys.retainAll(live)
+        val kept = (state.levels + (state.transition as? StackTransition.SlidingOut)?.leaving.orEmpty()).map { it.id.raw }.toSet()
+        handles.keys.retainAll(kept)
+        live.keys.retainAll(kept)
     }
 
     private fun execute(effect: StackEffect) {
