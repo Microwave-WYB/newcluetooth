@@ -256,6 +256,20 @@ class FakeCoreTest {
         assertTrue(id in c.sessionView(Scope.All).sessionIds)
     }
 
+    /** V-3: an empty session resolves only on its own (no filter); All, several sessions and a filter leave it out. */
+    @Test
+    fun anEmptySessionShowsOnlyOnItsOwn() = runTest {
+        val c = core()
+        val alone = c.sessionView(Scope.session("r4"))
+        assertEquals(listOf("r4"), alone.sessionIds)
+        assertEquals(0, alone.deviceCount)
+        assertFalse(alone.routesFaint)
+        assertFalse("r4" in c.sessionView(Scope.All).sessionIds)
+        assertEquals(listOf("r1"), c.sessionView(Scope(SessionScope.Sessions(listOf("r4", "r1")))).sessionIds)
+        assertTrue(c.sessionView(Scope(SessionScope.Sessions(listOf("r4")), SessionFilter())).sessionIds.isEmpty())
+        assertFalse("r4" in c.sessions().map { it.id })
+    }
+
     /** Q-1/Q-2: blank is no search; results keep device_order; the area limits them. */
     @Test
     fun searchKeepsOrder() = runTest {

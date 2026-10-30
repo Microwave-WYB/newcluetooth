@@ -85,8 +85,9 @@ pub(crate) fn session_rows(conn: &Connection) -> Result<Vec<SessionRow>, CoreErr
     Ok(rows)
 }
 
-/// `sessions ∩ filter`; empty sessions never take part, except the live scope, which is the current session even
-/// before its first device. Unknown ids are ignored.
+/// `sessions ∩ filter`; empty sessions never take part, with two exceptions (§2.1): the live scope, which is the
+/// current session even before its first device, and exactly one session asked for by id without a filter
+/// (V-3: a session that stopped with 0 devices still shows its route and frame). Unknown ids are ignored.
 pub(crate) fn resolve(
     conn: &Connection,
     ctx: &Ctx<'_>,
@@ -106,8 +107,10 @@ pub(crate) fn resolve(
         });
     }
     let f = scope.filter.clone().unwrap_or_default();
+    let exactly_one = scope.filter.is_none()
+        && matches!(&scope.sessions, SessionScope::Sessions { ids } if ids.len() == 1);
     let keep = |s: &SessionRow| {
-        s.device_count > 0
+        (s.device_count > 0 || exactly_one)
             && f.started_from_ms.is_none_or(|t| s.started_ms >= t)
             && f.started_to_ms.is_none_or(|t| s.started_ms <= t)
     };
