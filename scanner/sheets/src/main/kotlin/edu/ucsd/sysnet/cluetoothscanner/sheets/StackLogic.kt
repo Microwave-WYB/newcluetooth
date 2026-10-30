@@ -297,7 +297,12 @@ private fun replaceDevice(state: StackState, old: Level<SheetKind.Device>, kind:
     )
     return StackStep(
         next,
-        listOf(StackEffect.Stop(old.id), StackEffect.Inherit(old.id, level.id), StackEffect.Removed(old), StackEffect.TopChanged(level.id, opening = true)),
+        listOf(
+            StackEffect.Stop(old.id), StackEffect.Inherit(old.id, level.id),
+            // S-16a: the new sheet starts where the old one is (it may be mid-animation) and eases to the height
+            StackEffect.Reveal(level.id, from = old.id),
+            StackEffect.Removed(old), StackEffect.TopChanged(level.id, opening = true),
+        ),
     )
 }
 
@@ -323,10 +328,13 @@ private fun pop(state: StackState, reason: PopReason): StackStep {
 }
 
 private fun reset(state: StackState): StackStep {
+    val top = state.pushed.lastOrNull()
     val effects = buildList {
         (state.pushed + state.leavingLevels()).forEach { add(StackEffect.Stop(it.id)) }
         state.pushed.forEach { add(StackEffect.Removed(it)) }
-        add(StackEffect.Rest(state.root.id))
+        // S-16a: the root shows where the top was and eases to its own height (a new session view, search)
+        if (top != null && !state.tablet) add(StackEffect.Reveal(state.root.id, from = top.id))
+        else add(StackEffect.Rest(state.root.id))
     }
     return StackStep(state.copy(base = null, frames = emptyList(), transition = StackTransition.Idle), effects)
 }
