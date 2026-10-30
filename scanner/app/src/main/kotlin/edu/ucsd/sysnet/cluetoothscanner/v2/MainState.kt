@@ -624,6 +624,21 @@ fun recorderForm(phase: RecorderState.Phase, panelOpen: Boolean): RecorderUi.For
 /** The shown session view: only data read for the current key, so a stale read never shows (V-7). */
 fun shownView(s: MainUiState, data: ViewData?): SessionView? = data?.takeIf { s.scope != null && it.key == s.viewKey }?.view
 
+/** A scope's live flag, as last read from its view. */
+data class ViewLive(val scope: Scope, val live: Boolean)
+
+/**
+ * R-7: the sheets' live flag for [scope]: the view's [live] once read; while the same scope's view is re-read (V-3
+ * re-selects it after Stop) the [last] one read, so Stop reaches the same sheets as live → frozen; null before the
+ * first read of a scope (the sheets start with liveness unknown).
+ */
+fun viewLive(scope: Scope?, live: Boolean?, last: ViewLive?): ViewLive? = when {
+    scope == null -> null
+    live != null -> ViewLive(scope, live)
+    last?.scope == scope -> last
+    else -> null
+}
+
 /** The shown view's route (R-5, the mini-map), empty without a view. */
 fun shownRoute(s: MainUiState, data: ViewData?): List<GeoPoint> = shownView(s, data)?.route.orEmpty()
 

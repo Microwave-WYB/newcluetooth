@@ -23,6 +23,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -107,15 +108,14 @@ fun MainScreen(vm: MainViewModel) {
                 { dispatch(MainEvent.SetRecorderPanel(false)) }, { dispatch(MainEvent.PauseRecording) }, { dispatch(MainEvent.ResumeRecording) },
                 { dispatch(MainEvent.StopRecording) }, { dispatch(MainEvent.FitRoute) })
         }
-        // lane D's sheets for the shown scope (V-7: a new scope starts them fresh). They are made once the scope's view
-        // is read, so they start live or frozen, and kept while the same scope's view is re-read: R-7's Stop
-        // (V-3 re-selects the scope) reaches them as live → frozen, never as new sheets.
+        // lane D's sheets for the shown scope (V-7: a new scope starts them fresh). They exist from the scope's start
+        // (a failed view read leaves Discover's own state and Retry); live is null until the view is read, and kept
+        // while the same scope's view is re-read, so R-7's Stop (V-3 re-selects the scope) is live → frozen for
+        // the same sheets, never new ones.
         val sheetsLive = rememberViewLive(ui.scope, view?.live)
         val sheets = ui.scope?.let { scope ->
-            sheetsLive?.let { sheetsAreLive ->
-                rememberSheetsState(scope, sheetsAreLive, view?.routesFaint ?: (scope.sessions == SessionScope.All), r.core.queries,
-                    vm.graph.gattRunner, r.map, reducedMotion = CluetoothTheme.motion.reduced)
-            }
+            rememberSheetsState(scope, sheetsLive, view?.routesFaint ?: (scope.sessions == SessionScope.All), r.core.queries,
+                vm.graph.gattRunner, r.map, reducedMotion = CluetoothTheme.motion.reduced)
         }
         DisposableEffect(sheets) {
             sheets?.let { dispatch(MainEvent.SheetsAttached(it)) }
@@ -303,10 +303,11 @@ private fun CoreErrorScreen(title: String, error: Throwable, onRetry: () -> Unit
     }
 }
 
-/** The shown scope's last known live flag: [live] once its view is read, kept while it is re-read; null before. */
+/** The shown scope's live flag for the sheets ([viewLive]), remembered across re-reads of its view. */
 @Composable
 private fun rememberViewLive(scope: Scope?, live: Boolean?): Boolean? {
-    val last = remember(scope) { mutableStateOf<Boolean?>(null) }
-    SideEffect { if (live != null) last.value = live }
-    return live ?: last.value
+    var last by remember { mutableStateOf<ViewLive?>(null) }
+    val now = viewLive(scope, live, last)
+    SideEffect { last = now }
+    return now?.live
 }

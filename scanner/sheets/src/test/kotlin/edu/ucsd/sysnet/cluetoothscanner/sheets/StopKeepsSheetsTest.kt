@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.fake.core.FakeCore
@@ -130,6 +131,43 @@ class StopKeepsSheetsTest {
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
 class StopKeepsSheetsUiTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun v7_aDifferentScopeBuildsFreshSheets_liveReadsAndStopKeepThem() {
+        var scope by mutableStateOf<Scope?>(null)
+        var live by mutableStateOf<Boolean?>(null) // not read yet
+        val made = mutableListOf<SheetsState>()
+        compose.setContent {
+            val coroutines = rememberCoroutineScope()
+            val core = androidx.compose.runtime.remember {
+                FakeCore(coroutines, clock = { FakeCore.DEMO_NOW_MS }, demo = FakeDemo.History, simulate = false)
+            }
+            val shown = scope ?: core.initialScope ?: return@setContent
+            CluetoothTheme(darkTheme = false, reducedMotion = true) {
+                val state = rememberSheetsState(
+                    shown, live, routesFaint = false, core = core, gatt = FakeGattRunner({ FakeGattDevice(null, true) }),
+                    map = null, nowMs = { FakeCore.DEMO_NOW_MS }, reducedMotion = true,
+                )
+                if (made.lastOrNull() !== state) made += state
+                SheetsLayer(state, tablet = false)
+            }
+        }
+        compose.waitForIdle()
+        val first = made.single()
+        assertEquals(Liveness.Pending, first.discover.liveness)
+        live = true // the view read: live
+        compose.waitForIdle()
+        live = false // Stop
+        compose.waitForIdle()
+        assertSame(first, made.single())
+        assertEquals(Liveness.Frozen, first.discover.liveness)
+        scope = Scope.All // V-7: another session view
+        live = null
+        compose.waitForIdle()
+        assertEquals(2, made.size)
+        assertTrue(made[1] !== first)
+        assertEquals(Liveness.Pending, made[1].discover.liveness)
+    }
 
     @Test
     fun r7_stopKeepsTheSameSheetsAndTheOpenTab() {
