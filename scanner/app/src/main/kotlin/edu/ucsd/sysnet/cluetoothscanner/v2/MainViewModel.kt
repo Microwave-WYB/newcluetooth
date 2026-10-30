@@ -315,10 +315,9 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         }
     }
 
-    /** R-10: the free space and what each cleanup frees, or null when the core cannot say. */
-    private suspend fun readReclaim(): Reclaim? = when (val r = graph.storageCleanup.reclaimable()) {
-        is CleanupResult.Ok -> r.value
-        is CleanupResult.Err -> null.also { Log.w(TAG, "reclaimable: ${r.error}") }
+    /** R-10: the free space and what each cleanup frees, or why the core couldn't say (shown, and logged). */
+    private suspend fun readReclaim(): CleanupResult<Reclaim> = graph.storageCleanup.reclaimable().also {
+        if (it is CleanupResult.Err) Log.w(TAG, "reclaimable: ${it.error}")
     }
 
     /** V-6's facts: a recording the recorder restored, the stored setting and how many sessions exist. */

@@ -251,6 +251,8 @@ object Strings {
     /** A cleanup that failed, with the core's reason. */
     fun deleteUploadedRawFailed(reason: String) = "Couldn't delete uploaded raw files: $reason"
     fun clearLocalDatabaseFailed(reason: String) = "Couldn't clear the local database: $reason"
+    /** The free space and the cleanups' sizes couldn't be read. */
+    fun reclaimableFailed(reason: String) = "Couldn't read the free space: $reason"
     /** The reason while the core does not offer the cleanups yet. */
     const val CleanupUnavailable = "not available in this version"
     const val DeleteUploadedRawConfirmTitle = "Delete uploaded raw files?"

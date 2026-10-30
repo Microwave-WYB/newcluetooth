@@ -76,6 +76,8 @@ data class StorageFullUi(
     val checking: Boolean = false,
     /** After "Free up space": each cleanup that failed (its switch stays on), shown next to what the others freed. */
     val failures: List<CleanupFailure> = emptyList(),
+    /** The free space and sizes couldn't be read, with the core's reason; [freeBytes] is then the last one read. */
+    val readFailure: String? = null,
 )
 
 class StorageFullActions(
@@ -126,6 +128,7 @@ fun StorageFullDialog(ui: StorageFullUi, actions: StorageFullActions, modifier: 
             else {
                 ui.freedBytes?.let { Text(Strings.freed(it), style = t.sub, modifier = Modifier.testTag("freed")) }
                 for (f in ui.failures) Text(cleanupFailedText(f), style = t.sub, color = c.rec, modifier = Modifier.testTag("failed:${f.cleanup}"))
+                ui.readFailure?.let { Text(Strings.reclaimableFailed(it), style = t.sub, color = c.rec, modifier = Modifier.testTag("readFailed")) }
             }
             Row(
                 Modifier.fillMaxWidth(),

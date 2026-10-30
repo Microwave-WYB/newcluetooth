@@ -132,6 +132,25 @@ class StorageFullScreenTest {
         compose.onNodeWithTag("cleanupFreed").assertDoesNotExist()
     }
 
+    /** A failed read shows why, in the dialog and in Settings, and no sizes. */
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
+    @Test fun aFailedReadShowsItsReason() {
+        show(ui.copy(reclaimable = null, readFailure = "the database is busy"))
+        compose.onNodeWithText("Couldn't read the free space: the database is busy").assertExists()
+        compose.onNodeWithText("Frees 300 MB").assertDoesNotExist()
+    }
+
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
+    @Test fun settingsShowsAFailedRead() {
+        val settings = Settings("wyb01", recordOnOpen = true, wifiOnlyUpload = false, scanCodedPhy = true, hideUnnamedApple = true, appVersion = "0.1.0")
+        val storage = StorageUi(12_000_000, 340_000_000, null, 0, Scope.All, null, false, null, reclaimFailure = "not available in this version")
+        val a = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+        compose.setContent {
+            CluetoothTheme(reducedMotion = true) { SettingsPage(true, SettingsUi(settings, UploadStatus(0, 0, 0, null), storage), a, sessionLabel = null, sessionScope = null) }
+        }
+        compose.onNodeWithText("Couldn't read the free space: not available in this version").performScrollTo()
+    }
+
     /** "Checking…" only while the core is asked; when it cannot say, no size shows. */
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
     @Test fun sizesAreCheckingThenKnownOrAbsent() {

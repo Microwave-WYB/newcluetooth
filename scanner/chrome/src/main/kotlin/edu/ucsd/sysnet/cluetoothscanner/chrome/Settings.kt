@@ -71,6 +71,8 @@ data class StorageUi(
     val cleanupFreed: Long? = null,
     /** Why the last cleanup failed. */
     val cleanupFailure: CleanupFailure? = null,
+    /** Why the cleanups' sizes couldn't be read (none show then). */
+    val reclaimFailure: String? = null,
 )
 
 /** Confirm: the scope's deletion, keeping un-uploaded data; LoseUnuploaded: the explicit second step. */
@@ -272,6 +274,7 @@ private fun CleanupBlock(st: StorageUi, a: SettingsActions) {
         st.cleanupFreed?.let { ListItem(Strings.freed(it), modifier = Modifier.testTag("cleanupFreed")) }
         st.cleanupFailure?.let { ListItem(cleanupFailedText(it), titleColor = CluetoothTheme.colors.rec, modifier = Modifier.testTag("cleanupFailed")) }
     }
+    st.reclaimFailure?.let { ListItem(Strings.reclaimableFailed(it), titleColor = CluetoothTheme.colors.rec, modifier = Modifier.testTag("reclaimFailed")) }
 }
 
 private fun cleanupAction(c: Cleanup): String = when (c) {
