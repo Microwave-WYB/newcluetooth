@@ -38,7 +38,7 @@ expanded (G-2).
   - weak: below −80, `--rssi-weak`.
 - **G-5 Shadows.** Only these:
   - `--shadow-float`: float buttons, the FAB and capsule, the "Search this area" chip, the search bar, map markers;
-  - `--shadow-raised`: the location popover, the tablet panel;
+  - `--shadow-raised`: the recorder panel, the location popover, the tablet panel;
   - `--shadow-sheet`: bottom sheets;
   - `--shadow-thumb`: the segmented control's selected thumb.
 
@@ -87,6 +87,8 @@ expanded (G-2).
   - tablet panel rows: 30 − 8 = 22;
   - the location popover: its radius is 28, concentric with its pill button (16 + 12).
 
+  The recorder panel radius is concentric with its Pause/Stop buttons: 22 on phone (18 + 4) and 28 on tablet
+  (20 + 8).
 
   The tokens are `--panel-pad` (8) and `--pop-pad` (12).
 - **G-13 Slop.** `--drag-slop` is 8 dp. A pointer that moves less than that is a tap; past it, a vertical move is a drag.
@@ -95,7 +97,8 @@ expanded (G-2).
   2. a page (the search page, Settings);
   3. the top pushed sheet;
   4. the sidebar;
-  5. search state.
+  5. the recorder panel;
+  6. search state.
 
   With none of these open, Back leaves the app.
 
@@ -208,7 +211,8 @@ Each component is built once. Its size, color and state rules come from these to
 
 ## R. Recorder
 
-- **R-1 One control.** The FAB and the capsule are one element that morphs. Recording can start only from the FAB.
+- **R-1 One control.** The FAB, the capsule and the panel are one element that morphs. Recording can start only from
+  the FAB.
 - **R-2 Start.**
   - Tapping the FAB starts recording. On phone the element moves (morphing, `--t-morph`) to the top center between
     ☰ and search and becomes the island capsule.
@@ -220,8 +224,18 @@ Each component is built once. Its size, color and state rules come from these to
   - The row: 14 dp left inset, the BlinkingDot, the elapsed time (weight 500, tabular), Pause/Resume (neutral
     IconButton, 36 dp) and Stop (rec IconButton, 36 dp). Both buttons have 44 dp touch targets.
   - It stays at the top center whatever the sheets do.
-- **R-4 (removed) Panel.** The capsule does not expand; tapping the dot or time does nothing. It shows no device
-  count and no coordinates. Location quality is covered by the location warning (P-5).
+- **R-4 Panel.** Tapping the dot or time expands the panel.
+  - The row keeps its height and vertical position, so the panel grows downward on phone and upward on tablet.
+  - Inside the row, the dot and time move to the panel's horizontal center, while Pause and Stop slide right
+    together until Stop is concentric with the panel's corner: top-right on phone (4 dp from top and right), and
+    bottom-right on tablet (8 dp). The Pause–Stop gap is 6 dp on phone and 8 dp on tablet. All of it animates with
+    the panel's width (`--t-morph`), and collapsing returns exactly to the capsule layout.
+  - On phone the panel widens symmetrically to the full width minus 2 × `--edge`, with a 22 dp radius and
+    `--shadow-raised`. Its extra content grows downward below the row:
+    - "N devices · lat, lon ±N m" (13/20 `--t2`, one line).
+  - Its height is measured from its content.
+  - While it is open, ☰ and search fade out because the panel covers them.
+  - A tap outside, or Back, collapses it to the capsule.
 - **R-5 (removed) Mini map.** The panel has no mini map. Only one map renderer exists at a time; a second one (a
   snapshotter) was the suspected cause of native MapLibre crashes on device.
 - **R-6 Pause/Resume.**
@@ -668,7 +682,9 @@ Each component is built once. Its size, color and state rules come from these to
 - **T-7 Recorder on tablet.**
   - It stays at the bottom-right of the map area. The FAB widens in place into a capsule of FAB height (56 dp) with
     40 dp buttons.
-- **T-8 Locate and warning on tablet.** They sit at the bottom-right, stacked 12 dp above the recorder.
+  - The panel grows up and to the left, right-aligned to the row, at most 420 dp wide. The row never moves (R-4).
+- **T-8 Locate and warning on tablet.** They sit at the bottom-right, stacked 12 dp above the recorder, and move up
+  with the recorder's panel.
 - **T-9 Resizing.** Going from phone to tablet opens the panel: a Collapsed or Half sheet becomes Open. Everything
   else is kept.
 
