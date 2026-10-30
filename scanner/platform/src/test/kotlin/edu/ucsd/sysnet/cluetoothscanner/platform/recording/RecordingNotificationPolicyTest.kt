@@ -82,8 +82,13 @@ class RecordingNotificationPolicyTest {
         assertTrue(RecordingNotificationPolicy.stopAction(full))
         assertTrue("the service stays", RecordingNotificationPolicy.serviceNeeded(full))
         assertFalse("nothing is collected", RecordingNotificationPolicy.wakeLockNeeded(full))
+        val failed = paused.copy(pause = RecorderState.PauseReason.StorageFailed("disk I/O error"))
+        assertEquals("Recording paused: it could not be stored", RecordingNotificationPolicy.title(failed))
+        assertEquals("Resume to try again · disk I/O error", RecordingNotificationPolicy.text(failed, 0))
+        assertEquals(Action.Resume, RecordingNotificationPolicy.pauseAction(failed))
         val throttle = RecordingNotificationPolicy.Throttle()
         assertTrue(throttle.shouldUpdate(paused, 0))
         assertTrue("storage full shows at once", throttle.shouldUpdate(full, 1))
+        assertTrue("a storage failure too", throttle.shouldUpdate(failed, 2))
     }
 }

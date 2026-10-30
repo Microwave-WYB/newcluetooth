@@ -25,6 +25,7 @@ internal object RecordingNotificationPolicy {
 
     fun title(state: RecorderState) = when {
         state.pause is PauseReason.StorageFull -> "Recording paused: storage is full"
+        state.pause is PauseReason.StorageFailed -> "Recording paused: it could not be stored"
         state.phase == Phase.Starting -> "Starting recording"
         state.phase == Phase.Stopping -> "Saving recording"
         state.phase == Phase.Paused -> "Recording paused"
@@ -35,7 +36,11 @@ internal object RecordingNotificationPolicy {
     /** The line under [title]: "12:34 · 26 devices", so the notification reads "Recording · 12:34 · 26 devices" (§4.4). */
     fun text(state: RecorderState, nowMs: Long): String {
         // R-10: what to do, and the free space the core reported.
-        (state.pause as? PauseReason.StorageFull)?.let { return "Free up space to continue · ${megabytes(it.freeBytes)} free" }
+        when (val pause = state.pause) {
+            is PauseReason.StorageFull -> return "Free up space to continue · ${megabytes(pause.freeBytes)} free"
+            is PauseReason.StorageFailed -> return "Resume to try again · ${pause.message}"
+            PauseReason.User, null -> Unit
+        }
         val seconds = elapsedMs(state, nowMs) / 1_000
         val clock = if (seconds >= 3_600) {
             "%d:%02d:%02d".format(seconds / 3_600, seconds % 3_600 / 60, seconds % 60)
@@ -65,7 +70,7 @@ internal object RecordingNotificationPolicy {
         private var lastKey: Any? = null
 
         fun shouldUpdate(state: RecorderState, elapsedRealtimeMs: Long): Boolean {
-            val key = Triple(state.phase, state.scannerDeferred, state.pause is PauseReason.StorageFull)
+            val key = Triple(state.phase, state.scannerDeferred, state.pause?.takeIf { it != PauseReason.User }?.let { it::class })
             if (key == lastKey && elapsedRealtimeMs - lastAtMs < UPDATE_INTERVAL_MS) return false
             lastKey = key
             lastAtMs = elapsedRealtimeMs
