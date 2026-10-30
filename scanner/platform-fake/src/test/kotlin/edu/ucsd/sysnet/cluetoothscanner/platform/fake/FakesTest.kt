@@ -136,6 +136,8 @@ class FakesTest {
         recorder.resume()
         assertEquals(Phase.Recording, recorder.state.value.phase)
         assertNull(recorder.state.value.pause)
+        recorder.storageFailed("commit failed")
+        assertEquals(RecorderState.PauseReason.StorageFailed("commit failed"), recorder.state.value.pause)
     }
 
     @Test

@@ -105,6 +105,8 @@ class PlatformRecorder(
     coreStates: Flow<CoreRecordingState>? = null,
     /** R-10, `CoreEvent.StorageFull { freeBytes }`: the core stopped writing and paused the recording. */
     storageFull: Flow<Long>? = null,
+    /** `CoreEvent.StorageFailed { message }`: storing kept failing for 60 s; the core stopped writing and paused. */
+    storageFailed: Flow<String>? = null,
 ) : Recorder {
     private val _state = MutableStateFlow(RecorderState.Idle)
     override val state: StateFlow<RecorderState> = _state.asStateFlow()
@@ -126,6 +128,7 @@ class PlatformRecorder(
         scope.launch(guard) { scanner.error.collect { error -> error?.let { signal(RecEvent.ScannerError(it)) } } }
         coreStates?.let { flow -> scope.launch(guard) { flow.collect { signal(RecEvent.CoreChanged(it)) } } }
         storageFull?.let { flow -> scope.launch(guard) { flow.collect { signal(RecEvent.StorageFull(it)) } } }
+        storageFailed?.let { flow -> scope.launch(guard) { flow.collect { signal(RecEvent.StorageFailed(it)) } } }
         scope.launch(guard) { actor() }.invokeOnCompletion {
             // The actor is gone (failed or its scope ended): cancelling the inbox closes it and answers every request
             // still in it.

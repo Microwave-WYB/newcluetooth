@@ -62,6 +62,12 @@ data class RecorderState(
 
         /** R-10: the core stopped writing below the storage floor; [freeBytes] is the free space it reported. */
         data class StorageFull(val freeBytes: Long) : PauseReason
+
+        /**
+         * The core stopped writing because staging or committing kept failing for 60 s (not for space); [message] is
+         * its reason. Resume makes the core try again.
+         */
+        data class StorageFailed(val message: String) : PauseReason
     }
 
     companion object {

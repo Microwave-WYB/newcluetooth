@@ -87,6 +87,11 @@ and paused the recording itself (the session stays open). The Recorder gets it a
    core refuses while free space is below the floor, and the recording then stays paused for storage. Stop works as
    from a pause.
 
+**Storage failed (#79).** `CoreEvent.StorageFailed { message }` (staging or committing kept failing for 60 s, not for
+space) is handled the same way: the phase is `StoragePaused(session, Failed(message))`, public `Paused` with
+`pause = StorageFailed(message)`, and the notification reads "Recording paused: it could not be stored" / "Resume to
+try again · message". Resume makes the core try again.
+
 ## 4. Stop (R-7)
 
 1. Set `Stopping`. Stop the scanner, wait for the fence and flush the batcher, as for pause.

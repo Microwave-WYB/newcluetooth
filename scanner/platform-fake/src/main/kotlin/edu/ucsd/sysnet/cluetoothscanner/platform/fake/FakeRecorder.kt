@@ -77,7 +77,12 @@ class FakeRecorder(
      * R-10: the core reports storage full and pauses the recording, as `PlatformRecorder` shows it. A [resume] ends
      * it (the fake's core always accepts), as does [stop].
      */
-    fun storageFull(freeBytes: Long) {
+    fun storageFull(freeBytes: Long) = pauseForStorage(RecorderState.PauseReason.StorageFull(freeBytes))
+
+    /** Storing kept failing (#79's `CoreEvent.StorageFailed`): paused like [storageFull]; [resume] tries again. */
+    fun storageFailed(message: String) = pauseForStorage(RecorderState.PauseReason.StorageFailed(message))
+
+    private fun pauseForStorage(reason: RecorderState.PauseReason) {
         val current = _state.value
         if (current.phase != Phase.Recording && current.phase != Phase.Paused) return
         val now = nowMs()
@@ -85,7 +90,7 @@ class FakeRecorder(
             phase = Phase.Paused,
             activeBeforeMs = current.activeBeforeMs + (now - (current.runningSinceMs ?: now)),
             runningSinceMs = null,
-            pause = RecorderState.PauseReason.StorageFull(freeBytes),
+            pause = reason,
         )
     }
 

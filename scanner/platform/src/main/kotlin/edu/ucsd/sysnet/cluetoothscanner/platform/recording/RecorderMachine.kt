@@ -17,9 +17,10 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
  *   location, the scanner; a missing grant or a refused service leaves no session;
  * - pause and stop drain the scanner before the core call; pause keeps the foreground service;
  * - a failed stop reconciles with what the core says;
- * - R-10: when the core reports storage full it has paused the recording itself; the machine stops the scanner and
- *   location and keeps the foreground service and the session ([RecPhase.StorageFull]). Only a Resume (through the
- *   core, which refuses while free space is below the floor) or a Stop leaves it.
+ * - R-10: when the core reports storage full, or that storing kept failing for another reason, it has stopped writing
+ *   and paused the recording itself; the machine stops the scanner and location and keeps the foreground service and
+ *   the session ([RecPhase.StoragePaused]). Only a Resume (through the core, which refuses while free space is below
+ *   the floor, and tries storing again after a failure) or a Stop leaves it.
  *
  * The invariant every path keeps: a session the core may hold open always has the foreground service. When the
  * core's state cannot be read, the machine assumes the session is still open ([RecPhase.Live] when it knows the
@@ -31,6 +32,7 @@ internal object RecorderMachine {
     const val MISSING_GRANTS = "Nearby devices and precise location are needed to record"
     const val SERVICE_REFUSED = "Android did not allow the recording service to start"
     const val STORAGE_FULL = "Storage is full: the recording is paused"
+    const val STORAGE_FAILED = "The recording could not be stored: it is paused"
 
     fun reduce(state: RecModel, event: RecEvent): RecTransition = Builder(state).apply { on(event) }.build()
 
@@ -57,7 +59,8 @@ internal object RecorderMachine {
                 is RecEvent.Dropped -> state = state.copy(dropped = event.dropped)
                 is RecEvent.ScannerError -> state = state.copy(error = event.message)
                 is RecEvent.CoreChanged -> coreChanged(event.core)
-                is RecEvent.StorageFull -> storageFull(event.freeBytes)
+                is RecEvent.StorageFull -> storagePaused(StorageStop.Full(event.freeBytes))
+                is RecEvent.StorageFailed -> storagePaused(StorageStop.Failed(event.message))
                 is RecEvent.EffectFailed -> effectFailed(event.effect, event.cause, event.remaining)
             }
         }
@@ -68,8 +71,8 @@ internal object RecorderMachine {
             when (val phase = state.phase) {
                 is RecPhase.Live -> return reply(RecOutcome.Session(phase.session))
                 // A recording paused for storage is still the recording: it stays paused until Resume.
-                is RecPhase.StorageFull ->
-                    return reply(phase.session?.let(RecOutcome::Session) ?: RecOutcome.Failed(PlatformError.Core(STORAGE_FULL)))
+                is RecPhase.StoragePaused ->
+                    return reply(phase.session?.let(RecOutcome::Session) ?: RecOutcome.Failed(PlatformError.Core(phase.cause.text())))
                 // The core records a session the machine could not identify: try to adopt it again.
                 RecPhase.Unidentified -> {
                     state = state.copy(phase = RecPhase.AdoptingCore(collecting = true))
@@ -79,7 +82,7 @@ internal object RecorderMachine {
                 is RecPhase.Idle -> Unit
                 RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted, is RecPhase.AdoptingCore,
                 RecPhase.Restoring, is RecPhase.RestoreForeground, is RecPhase.Pausing, is RecPhase.Resuming,
-                is RecPhase.ResumingFromFull, is RecPhase.Stopping, is RecPhase.Reconciling,
+                is RecPhase.ResumingFromStorage, is RecPhase.Stopping, is RecPhase.Reconciling,
                 -> return reply(busy())
             }
             if (missing.isNotEmpty()) {
@@ -98,9 +101,10 @@ internal object RecorderMachine {
         }
 
         private fun resume() {
-            (state.phase as? RecPhase.StorageFull)?.let { full ->
-                // The normal Resume path: the core resumes only when free space is back above the floor.
-                state = state.copy(phase = RecPhase.ResumingFromFull(full.session, full.freeBytes))
+            (state.phase as? RecPhase.StoragePaused)?.let { paused ->
+                // The normal Resume path: the core resumes only when free space is back above the floor (full), or
+                // tries storing again (failed).
+                state = state.copy(phase = RecPhase.ResumingFromStorage(paused.session, paused.cause))
                 effects += RecEffect.CoreResume
                 return
             }
@@ -121,10 +125,10 @@ internal object RecorderMachine {
                     effects += RecEffect.DrainScanner
                 }
                 // Nothing is collected: stop like a paused recording.
-                is RecPhase.StorageFull -> state = state.copy(phase = RecPhase.Stopping(phase.session, wasPaused = true))
+                is RecPhase.StoragePaused -> state = state.copy(phase = RecPhase.Stopping(phase.session, wasPaused = true))
                 is RecPhase.Idle, RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted,
                 is RecPhase.AdoptingCore, RecPhase.Restoring, is RecPhase.RestoreForeground, is RecPhase.Pausing,
-                is RecPhase.Resuming, is RecPhase.ResumingFromFull, is RecPhase.Stopping, is RecPhase.Reconciling,
+                is RecPhase.Resuming, is RecPhase.ResumingFromStorage, is RecPhase.Stopping, is RecPhase.Reconciling,
                 -> return reply(RecOutcome.Failed(PlatformError.NotRecording))
             }
             effects += RecEffect.CoreStop
@@ -139,7 +143,7 @@ internal object RecorderMachine {
                 }
                 RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted, is RecPhase.AdoptingCore,
                 RecPhase.Unidentified, RecPhase.Restoring, is RecPhase.RestoreForeground, is RecPhase.Live,
-                is RecPhase.StorageFull, is RecPhase.Pausing, is RecPhase.Resuming, is RecPhase.ResumingFromFull,
+                is RecPhase.StoragePaused, is RecPhase.Pausing, is RecPhase.Resuming, is RecPhase.ResumingFromStorage,
                 is RecPhase.Stopping, is RecPhase.Reconciling,
                 -> reply(RecOutcome.Done)
             }
@@ -161,8 +165,8 @@ internal object RecorderMachine {
                     effects += RecEffect.CoreStop
                 }
                 is RecPhase.Idle, RecPhase.StartingCore, is RecPhase.ReadingStarted, is RecPhase.AdoptingCore, RecPhase.Unidentified,
-                RecPhase.Restoring, is RecPhase.Live, is RecPhase.StorageFull, is RecPhase.Pausing, is RecPhase.Resuming,
-                is RecPhase.ResumingFromFull, is RecPhase.Stopping, is RecPhase.Reconciling,
+                RecPhase.Restoring, is RecPhase.Live, is RecPhase.StoragePaused, is RecPhase.Pausing, is RecPhase.Resuming,
+                is RecPhase.ResumingFromStorage, is RecPhase.Stopping, is RecPhase.Reconciling,
                 -> Unit
             }
         }
@@ -197,7 +201,7 @@ internal object RecorderMachine {
         }
 
         private fun resumed(core: CoreRecordingState) {
-            (state.phase as? RecPhase.ResumingFromFull)?.let { full ->
+            (state.phase as? RecPhase.ResumingFromStorage)?.let { full ->
                 val session = full.session ?: core.sessionId?.let(::SessionId)
                 state = state.copy(
                     phase = session?.let { RecPhase.Live(it, paused = false) } ?: RecPhase.Unidentified,
@@ -272,10 +276,10 @@ internal object RecorderMachine {
                     }
                 }
                 // The paused core's facts, so the elapsed time stops where the core stopped.
-                is RecPhase.StorageFull -> state = state.copy(facts = Facts.of(core))
+                is RecPhase.StoragePaused -> state = state.copy(facts = Facts.of(core))
                 is RecPhase.Idle, RecPhase.AwaitingForeground, RecPhase.StartingCore, RecPhase.Unidentified,
                 is RecPhase.RestoreForeground, is RecPhase.Live, is RecPhase.Pausing, is RecPhase.Resuming,
-                is RecPhase.ResumingFromFull, is RecPhase.Stopping,
+                is RecPhase.ResumingFromStorage, is RecPhase.Stopping,
                 -> Unit
             }
         }
@@ -307,9 +311,9 @@ internal object RecorderMachine {
                     state = state.copy(phase = RecPhase.Live(phase.session, paused = true), error = "The recording could not resume ($detail)")
                     reply(RecOutcome.Failed(coreError(cause)))
                 }
-                // The core refused (still below the floor, or another failure): the pause for storage goes on.
-                is RecPhase.ResumingFromFull -> {
-                    state = state.copy(phase = RecPhase.StorageFull(phase.session, phase.freeBytes), error = "$STORAGE_FULL ($detail)")
+                // The core refused (still below the floor, or storing still fails): the pause for storage goes on.
+                is RecPhase.ResumingFromStorage -> {
+                    state = state.copy(phase = RecPhase.StoragePaused(phase.session, phase.cause), error = "${phase.cause.title()} ($detail)")
                     reply(RecOutcome.Failed(coreError(cause)))
                 }
                 is RecPhase.Stopping -> {
@@ -334,7 +338,7 @@ internal object RecorderMachine {
                 }
                 // A facts read after storage full failed: the facts stay as they were.
                 is RecPhase.Idle, RecPhase.AwaitingForeground, RecPhase.Unidentified, is RecPhase.RestoreForeground,
-                is RecPhase.Live, is RecPhase.StorageFull,
+                is RecPhase.Live, is RecPhase.StoragePaused,
                 -> Unit
             }
         }
@@ -366,8 +370,8 @@ internal object RecorderMachine {
                 is RecPhase.Stopping -> phase.session
                 is RecPhase.Reconciling -> phase.session
                 is RecPhase.ReadingStarted -> phase.session
-                is RecPhase.StorageFull -> phase.session
-                is RecPhase.ResumingFromFull -> phase.session
+                is RecPhase.StoragePaused -> phase.session
+                is RecPhase.ResumingFromStorage -> phase.session
                 RecPhase.Unidentified -> {
                     // The core names the session it records: adopt it.
                     val named = core.sessionId?.let(::SessionId)
@@ -387,15 +391,15 @@ internal object RecorderMachine {
         }
 
         /**
-         * R-10: the core stopped writing and paused the recording itself. Nothing is collected until Resume: the
-         * scanner drains and location stops; the foreground service and the session stay. A signal, so it arrives
-         * between requests, in a settled phase.
+         * R-10: the core stopped writing (storage full, or storing kept failing) and paused the recording itself.
+         * Nothing is collected until Resume: the scanner drains and location stops; the foreground service and the
+         * session stay. A signal, so it arrives between requests, in a settled phase.
          */
-        private fun storageFull(freeBytes: Long) {
-            val error = "$STORAGE_FULL (${freeBytes / 1_000_000} MB free)"
+        private fun storagePaused(cause: StorageStop) {
+            val error = cause.text()
             when (val phase = state.phase) {
                 is RecPhase.Live -> {
-                    state = state.copy(phase = RecPhase.StorageFull(phase.session, freeBytes), error = error)
+                    state = state.copy(phase = RecPhase.StoragePaused(phase.session, cause), error = error)
                     if (!phase.paused) {
                         effects += RecEffect.DrainScanner
                         effects += RecEffect.StopLocation
@@ -403,17 +407,28 @@ internal object RecorderMachine {
                     effects += RecEffect.CoreRead
                 }
                 RecPhase.Unidentified -> {
-                    state = state.copy(phase = RecPhase.StorageFull(session = null, freeBytes), error = error)
+                    state = state.copy(phase = RecPhase.StoragePaused(session = null, cause), error = error)
                     effects += RecEffect.DrainScanner
                     effects += RecEffect.StopLocation
                 }
-                is RecPhase.StorageFull -> state = state.copy(phase = phase.copy(freeBytes = freeBytes), error = error)
+                // The latest report wins (a failure after a full disk, or the free space again).
+                is RecPhase.StoragePaused -> state = state.copy(phase = phase.copy(cause = cause), error = error)
                 // Not recording, or a transition the runner finishes before it reads the next signal.
                 is RecPhase.Idle, RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted,
                 is RecPhase.AdoptingCore, RecPhase.Restoring, is RecPhase.RestoreForeground, is RecPhase.Pausing,
-                is RecPhase.Resuming, is RecPhase.ResumingFromFull, is RecPhase.Stopping, is RecPhase.Reconciling,
+                is RecPhase.Resuming, is RecPhase.ResumingFromStorage, is RecPhase.Stopping, is RecPhase.Reconciling,
                 -> Unit
             }
+        }
+
+        private fun StorageStop.title() = when (this) {
+            is StorageStop.Full -> STORAGE_FULL
+            is StorageStop.Failed -> STORAGE_FAILED
+        }
+
+        private fun StorageStop.text() = when (this) {
+            is StorageStop.Full -> "$STORAGE_FULL (${freeBytes / 1_000_000} MB free)"
+            is StorageStop.Failed -> "$STORAGE_FAILED ($message)"
         }
 
         // ---- Helpers ----
@@ -497,13 +512,13 @@ internal sealed interface RecPhase {
     data class Live(val session: SessionId, val paused: Boolean) : RecPhase
 
     /**
-     * R-10: the core paused [session] (null when it was [Unidentified]) because storage is full; [freeBytes] is what
-     * it reported. Nothing is collected; the service and the session stay.
+     * R-10: the core stopped writing and paused [session] (null when it was [Unidentified]) for [cause]. Nothing is
+     * collected; the service and the session stay.
      */
-    data class StorageFull(val session: SessionId?, val freeBytes: Long) : RecPhase
+    data class StoragePaused(val session: SessionId?, val cause: StorageStop) : RecPhase
 
-    /** Resume after [StorageFull]; a refusal goes back to it. */
-    data class ResumingFromFull(val session: SessionId?, val freeBytes: Long) : RecPhase
+    /** Resume after [StoragePaused]; a refusal goes back to it. */
+    data class ResumingFromStorage(val session: SessionId?, val cause: StorageStop) : RecPhase
     data class Pausing(val session: SessionId) : RecPhase
     data class Resuming(val session: SessionId) : RecPhase
 
@@ -514,6 +529,19 @@ internal sealed interface RecPhase {
     data class Reconciling(val session: SessionId?, val wasPaused: Boolean, val cause: Throwable, val message: String) : RecPhase
 }
 
+/** Why the core stopped writing (R-10), as the public [PauseReason] shows it. */
+internal sealed interface StorageStop {
+    fun reason(): PauseReason
+
+    data class Full(val freeBytes: Long) : StorageStop {
+        override fun reason() = PauseReason.StorageFull(freeBytes)
+    }
+
+    data class Failed(val message: String) : StorageStop {
+        override fun reason() = PauseReason.StorageFailed(message)
+    }
+}
+
 internal data class RecModel(
     val phase: RecPhase = RecPhase.Idle(lastSession = null),
     val facts: Facts = Facts.NONE,
@@ -521,10 +549,10 @@ internal data class RecModel(
     val dropped: Long = 0,
     val error: String? = null,
 ) {
-    /** R-10: the free space the core reported while the recording is paused for storage, else null. */
-    fun storageFullBytes(): Long? = when (val phase = phase) {
-        is RecPhase.StorageFull -> phase.freeBytes
-        is RecPhase.ResumingFromFull -> phase.freeBytes
+    /** R-10: why the core stopped writing while the recording is paused for storage, else null. */
+    fun storageStop(): StorageStop? = when (val phase = phase) {
+        is RecPhase.StoragePaused -> phase.cause
+        is RecPhase.ResumingFromStorage -> phase.cause
         is RecPhase.Idle, RecPhase.AwaitingForeground, RecPhase.StartingCore, is RecPhase.ReadingStarted, is RecPhase.AdoptingCore,
         RecPhase.Unidentified, RecPhase.Restoring, is RecPhase.RestoreForeground, is RecPhase.Live, is RecPhase.Pausing,
         is RecPhase.Resuming, is RecPhase.Stopping, is RecPhase.Reconciling,
@@ -541,8 +569,8 @@ internal data class RecModel(
             RecPhase.Unidentified -> Phase.Recording to null
             RecPhase.Restoring -> Phase.Idle to null
             is RecPhase.Live -> (if (phase.paused) Phase.Paused else Phase.Recording) to phase.session
-            is RecPhase.StorageFull -> Phase.Paused to phase.session
-            is RecPhase.ResumingFromFull -> Phase.Paused to phase.session
+            is RecPhase.StoragePaused -> Phase.Paused to phase.session
+            is RecPhase.ResumingFromStorage -> Phase.Paused to phase.session
             is RecPhase.Pausing -> Phase.Recording to phase.session
             is RecPhase.Resuming -> Phase.Paused to phase.session
             is RecPhase.Stopping -> Phase.Stopping to phase.session
@@ -558,7 +586,7 @@ internal data class RecModel(
             scannerDeferred = deferred,
             dropped = dropped,
             error = error,
-            pause = if (publicPhase != Phase.Paused) null else storageFullBytes()?.let(PauseReason::StorageFull) ?: PauseReason.User,
+            pause = if (publicPhase != Phase.Paused) null else storageStop()?.let(StorageStop::reason) ?: PauseReason.User,
         )
     }
 }
@@ -590,6 +618,9 @@ internal sealed interface RecEvent {
 
     /** R-10, `CoreEvent.StorageFull { freeBytes }`: the core stopped writing and paused the recording. */
     data class StorageFull(val freeBytes: Long) : RecEvent
+
+    /** `CoreEvent.StorageFailed { message }`: storing kept failing for 60 s (not for space); the core paused. */
+    data class StorageFailed(val message: String) : RecEvent
 
     /**
      * The runner could not execute [effect] (any exception, or a typed failure such as a drain timeout, as a value);

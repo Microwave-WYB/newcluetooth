@@ -1327,13 +1327,17 @@ data class RecorderState(
     val pause: PauseReason? = null,   // non-null exactly while Paused
 ) {
     enum class Phase { Idle, Starting, Recording, Paused, Stopping }
-    sealed interface PauseReason { data object User; data class StorageFull(val freeBytes: Long) }   // R-10
+    sealed interface PauseReason { data object User; data class StorageFull(val freeBytes: Long)   // R-10
+                                   data class StorageFailed(val message: String) }   // storing failed for 60 s (#79)
 }
 ```
 
 - **Storage full (R-10).** While the core has paused the recording for storage, `phase` is `Paused` and `pause` is
   `StorageFull(freeBytes)`. A Resume the core accepts (from the app or the notification), or a Stop, ends it. So the
   storage-full dialog closes when `pause` is no longer `StorageFull`.
+- **Storage failed.** When staging or committing keeps failing for 60 s for another reason
+  (`CoreEvent.StorageFailed`), the recording pauses the same way, with `pause = StorageFailed(message)`. Resume makes
+  the core try again.
 
 `Recorder` is an in-process singleton, with no binding and no AIDL. `RecordingService` observes it:
 
