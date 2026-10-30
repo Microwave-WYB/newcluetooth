@@ -21,6 +21,10 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKeys
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceLive
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryBin
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRate
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRun
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryUpdate
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DisplayFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.api.core.FieldValue
@@ -270,8 +274,13 @@ internal fun GDeviceLive.api() = DeviceLive(key, rssi?.toInt(), inRange, spark, 
 
 internal fun GLiveDelta.api() = LiveDelta(
     sessionId, seq.toLong(), atMs, state.api(), changed.map { it.api() }, appended.map { it.api() },
-    products.map { it.api() }, routeAppended.map { it.api() }, fix?.api(), chart?.api(),
+    products.map { it.api() }, routeAppended.map { it.api() }, fix?.api(), chart?.api(), discovery?.api(),
 )
+
+internal fun GDiscoveryBin.api() = DiscoveryBin(startMs, newDevices.toInt())
+internal fun GDiscoveryRun.api() = DiscoveryRun(startMs, endMs)
+internal fun GDiscoveryRate.api() = DiscoveryRate(seq.toLong(), binMs.toLong(), bins.map { it.api() }, runs.map { it.api() })
+internal fun GDiscoveryUpdate.api() = DiscoveryUpdate(bins.map { it.api() }, runs.map { it.api() })
 
 internal fun GCoreEvent.api(): CoreEvent = when (this) {
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.RecordingChanged -> CoreEvent.RecordingChanged(state.api())

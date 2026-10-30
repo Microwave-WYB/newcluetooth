@@ -218,6 +218,19 @@ class CoreBridgeTest {
         assertTrue("$failed", failed is CoreResult.Err && failed.error is CoreException.Internal)
     }
 
+    /** R-4a through the bindings: a stored session's bins add up to its devices; an unknown one is empty. */
+    @Test
+    fun discoveryRateThroughTheBindings() = runBlocking {
+        val id = sessions.getValue("r1")
+        val r = core.discoveryRate(id)
+        assertTrue("$r", r is CoreResult.Ok)
+        val rate = (r as CoreResult.Ok).value
+        assertEquals(30_000L, rate.binMs)
+        assertEquals(core.sessions().first { it.id == id }.deviceCount, rate.bins.sumOf { it.newDevices })
+        assertEquals(1, rate.runs.size)
+        assertEquals(CoreResult.Ok(edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRate.Empty), core.discoveryRate("nope"))
+    }
+
     @Test
     fun bindingFailuresAreTyped() {
         assertTrue(bindingFailure(GInternalException("boom")) is CoreException.Internal)

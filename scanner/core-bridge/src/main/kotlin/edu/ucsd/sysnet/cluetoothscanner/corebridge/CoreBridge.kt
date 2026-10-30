@@ -19,6 +19,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKeys
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRate
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DisplayFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattTarget
@@ -144,6 +145,8 @@ class CoreBridge private constructor(private val core: Core) : CoreQueries, Core
     override suspend fun sessions(): List<SessionSummary> = call { core.sessions().map { it.api() } }
     override suspend fun currentSession(): SessionSummary? = call { core.currentSession()?.api() }
     override suspend fun allSessionsSummary(): AllSessionsSummary = call { core.allSessionsSummary().api() }
+    override suspend fun discoveryRate(sessionId: String): CoreResult<DiscoveryRate> =
+        result { core.discoveryRate(sessionId).api() }
     override suspend fun sessionView(scope: Scope): SessionView = call { core.sessionView(scope.g()).api(scope) }
     override suspend fun routes(scope: Scope, viewport: Bbox?, zoom: Double): String =
         call { core.routes(scope.g(), viewport?.g(), zoom) }

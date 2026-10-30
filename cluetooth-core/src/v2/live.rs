@@ -28,6 +28,9 @@ pub(crate) struct LiveState {
     pub seq: u64,
     sent: HashMap<i64, Sent>,
     cards: HashMap<String, ProductCard>,
+    /// R-4a: the bin totals and runs last sent.
+    sent_bins: HashMap<i64, u32>,
+    sent_runs: Vec<DiscoveryRun>,
     /// The latest RSSI heard per device ("live: current", §2.5), committed or not.
     pub current: Arc<HashMap<i64, i16>>,
     /// The latest fix: (lat, lon, accuracy, observed_at_ms).
@@ -197,7 +200,26 @@ pub(crate) fn delta(
             lat: p.lat,
         })
         .collect();
+    let discovery = match super::discovery::of_session(conn, session, hide_unnamed_apple)? {
+        Some((runs, bins)) => {
+            let fresh: Vec<DiscoveryBin> = bins
+                .into_iter()
+                .filter(|b| live.sent_bins.get(&b.start_ms) != Some(&b.new_devices))
+                .collect();
+            match fresh.is_empty() && runs == live.sent_runs {
+                true => None,
+                false => {
+                    live.sent_bins
+                        .extend(fresh.iter().map(|b| (b.start_ms, b.new_devices)));
+                    live.sent_runs = runs.clone();
+                    Some(DiscoveryUpdate { bins: fresh, runs })
+                }
+            }
+        }
+        None => None,
+    };
     if !force
+        && discovery.is_none()
         && changed.is_empty()
         && appended.is_empty()
         && products.is_empty()
@@ -222,5 +244,6 @@ pub(crate) fn delta(
             age_ms: now - at,
         }),
         chart: None,
+        discovery,
     }))
 }

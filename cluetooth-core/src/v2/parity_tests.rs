@@ -1885,3 +1885,242 @@ fn an_empty_session_shows_only_on_its_own() {
     assert_eq!(listed, vec![full.clone()]);
     assert_eq!(block(core.all_sessions_summary()).unwrap().session_count, 1);
 }
+
+fn dev(i: usize, rssi: i16, at: i64) -> ScanObservationInput {
+    obs(
+        &format!("AA:00:00:00:{:02X}:{:02X}", i / 256, i % 256),
+        rssi,
+        at,
+        at as u64,
+        "D",
+    )
+}
+
+fn rate(core: &Core, id: &str) -> DiscoveryRate {
+    block(core.discovery_rate(id.to_owned())).unwrap()
+}
+
+fn bins(r: &DiscoveryRate) -> Vec<(i64, u32)> {
+    r.bins.iter().map(|b| (b.start_ms, b.new_devices)).collect()
+}
+
+/// R-4a: standing still, everything nearby is found early and the later bins are 0 (missing); the deltas carry the
+/// changed bins and the runs.
+#[test]
+fn a_stationary_session_decays_to_zero_new() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    for i in 0..8 {
+        core.ingest_scans_at(
+            vec![dev(i, -60, t0 + 1_000 + i as i64 * 1_000)],
+            t0 + 1_000 + i as i64 * 1_000,
+        )
+        .unwrap();
+    }
+    // the same eight devices for five minutes
+    let mut t = t0 + 10_000;
+    while t < t0 + 300_000 {
+        let batch: Vec<_> = (0..8).map(|i| dev(i, -60, t)).collect();
+        core.ingest_scans_at(batch, t).unwrap();
+        core.tick_at(t + 1);
+        t += 5_000;
+    }
+    let r = rate(&core, &id);
+    assert_eq!(r.bin_ms, 30_000);
+    assert_eq!(
+        r.runs,
+        vec![DiscoveryRun {
+            start_ms: t0,
+            end_ms: None
+        }]
+    );
+    assert_eq!(bins(&r), vec![(t0, 8)], "every later bin is 0, so missing");
+    assert!(r.seq > 0, "live: the delta seq of the snapshot");
+    // the deltas: the first carries the bin, none after repeats it unchanged
+    let deltas = wait_for(&c, 2);
+    let with: Vec<_> = deltas.iter().filter_map(|d| d.discovery.as_ref()).collect();
+    assert!(!with.is_empty());
+    assert_eq!(
+        with.last()
+            .unwrap()
+            .bins
+            .last()
+            .map(|b| (b.start_ms, b.new_devices)),
+        Some((t0, 8))
+    );
+    assert!(with.iter().all(|u| u.runs == r.runs));
+    let total: u32 = with
+        .iter()
+        .flat_map(|u| u.bins.iter())
+        .filter(|b| b.start_ms == t0)
+        .map(|b| b.new_devices)
+        .max()
+        .unwrap();
+    assert_eq!(total, 8);
+}
+
+/// R-4a: a pause ends a run; the next run counts its bins from its own start; a restart rebuilds the same rate.
+#[test]
+fn a_pause_breaks_the_runs_and_a_restart_rebuilds_them() {
+    let t0 = 1_761_000_000_000i64;
+    let dir = tempfile::tempdir().unwrap();
+    let open = |now: i64| {
+        Core::open_at(
+            config(dir.path()),
+            CoreAssets {
+                wiki_bundle_json: resource("fake-bundle.json"),
+                sig_numbers_tsv: String::new(),
+            },
+            now,
+        )
+        .unwrap()
+    };
+    let core = open(t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(vec![dev(1, -60, t0 + 5_000)], t0 + 5_000)
+        .unwrap();
+    core.pause_recording_at(t0 + 60_000).unwrap();
+    core.resume_recording_at(t0 + 120_000).unwrap();
+    core.ingest_scans_at(vec![dev(2, -60, t0 + 125_000)], t0 + 125_000)
+        .unwrap();
+    core.ingest_scans_at(vec![dev(3, -60, t0 + 160_000)], t0 + 160_000)
+        .unwrap();
+    core.tick_at(t0 + 165_000);
+    let live = rate(&core, &id);
+    assert_eq!(
+        live.runs,
+        vec![
+            DiscoveryRun {
+                start_ms: t0,
+                end_ms: Some(t0 + 60_000)
+            },
+            DiscoveryRun {
+                start_ms: t0 + 120_000,
+                end_ms: None
+            },
+        ],
+        "the paused minute lies between the runs"
+    );
+    assert_eq!(
+        bins(&live),
+        vec![(t0, 1), (t0 + 120_000, 1), (t0 + 150_000, 1)]
+    );
+    // killed mid-recording: the restart rebuilds the bins from local.db; the session is interrupted, its run ends
+    drop(core);
+    let core = open(t0 + 200_000);
+    let after = rate(&core, &id);
+    assert_eq!(bins(&after), bins(&live));
+    assert_eq!(after.runs.first(), live.runs.first());
+    assert!(
+        after.runs.last().unwrap().end_ms.is_some(),
+        "an interrupted session has no open run"
+    );
+    assert_eq!(after.seq, 0, "not live");
+    // a stopped session reads the same after another restart
+    let other = core.start_recording_at(env(), t0 + 300_000).unwrap();
+    core.ingest_scans_at(vec![dev(4, -60, t0 + 301_000)], t0 + 301_000)
+        .unwrap();
+    core.stop_recording_at(t0 + 340_000).unwrap();
+    let stopped = rate(&core, &other);
+    drop(core);
+    let core = open(t0 + 400_000);
+    assert_eq!(rate(&core, &other), stopped);
+    assert_eq!(bins(&stopped), vec![(t0 + 300_000, 1)]);
+    assert_eq!(
+        stopped.runs,
+        vec![DiscoveryRun {
+            start_ms: t0 + 300_000,
+            end_ms: Some(t0 + 340_000)
+        }]
+    );
+    // an unknown session has nothing
+    let none = rate(&core, "nope");
+    assert!(none.bins.is_empty() && none.runs.is_empty());
+}
+
+/// R-4a randomized: whatever the interleaving of new and known devices, pauses and ticks, every session's bins add up
+/// to its distinct device count, and every bin starts on its run's 30 s grid.
+#[test]
+fn randomized_discovery_bins_sum_to_the_device_count() {
+    for seed in [3u64, 11, 2026] {
+        let mut state = seed;
+        let mut rnd = move |n: u64| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) % n
+        };
+        let t0 = 1_761_000_000_000i64;
+        let (core, _dir, _c) = fresh_core(t0);
+        let mut now = t0;
+        let mut sessions = Vec::new();
+        let mut paused = false;
+        let mut next_dev = 0usize;
+        for _ in 0..6 {
+            let id = core.start_recording_at(env(), now).unwrap();
+            for _ in 0..120 {
+                now += 1 + rnd(8_000) as i64;
+                match rnd(10) {
+                    0 => {
+                        if paused {
+                            core.resume_recording_at(now).unwrap();
+                        } else {
+                            core.pause_recording_at(now).unwrap();
+                        }
+                        paused = !paused;
+                    }
+                    1 => core.tick_at(now),
+                    _ => {
+                        let i = if rnd(3) == 0 && next_dev > 0 {
+                            rnd(next_dev as u64) as usize
+                        } else {
+                            next_dev += 1;
+                            next_dev - 1
+                        };
+                        core.ingest_scans_at(vec![dev(i, -60, now)], now).unwrap();
+                    }
+                }
+            }
+            core.stop_recording_at(now).unwrap();
+            paused = false;
+            sessions.push(id);
+        }
+        for id in &sessions {
+            let r = rate(&core, id);
+            let count: i64 = core.with_writer_conn({
+                let id = id.clone();
+                move |c| {
+                    c.query_row(
+                        "SELECT device_count_shown FROM sessions WHERE uuid = ?1",
+                        [id],
+                        |r| r.get(0),
+                    )
+                    .unwrap()
+                }
+            });
+            let sum: u32 = r.bins.iter().map(|b| b.new_devices).sum();
+            assert_eq!(
+                i64::from(sum),
+                count,
+                "seed {seed}: the bins add up to the session's devices"
+            );
+            for b in &r.bins {
+                assert!(b.new_devices > 0, "sparse: no empty bins");
+                assert!(
+                    r.runs.iter().any(|run| b.start_ms >= run.start_ms
+                        && (b.start_ms - run.start_ms) % 30_000 == 0
+                        && run.end_ms.is_none_or(|e| b.start_ms < e)),
+                    "seed {seed}: bin {} is on a run's grid",
+                    b.start_ms
+                );
+            }
+            for w in r.runs.windows(2) {
+                assert!(
+                    w[0].end_ms.unwrap() <= w[1].start_ms,
+                    "runs are ordered and disjoint"
+                );
+            }
+        }
+    }
+}

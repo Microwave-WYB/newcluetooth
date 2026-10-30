@@ -200,6 +200,22 @@ fn coalesce(mut a: LiveDelta, b: LiveDelta) -> LiveDelta {
         route_appended: a.route_appended,
         fix: b.fix.or(a.fix),
         chart: b.chart.or(a.chart),
+        discovery: match (a.discovery, b.discovery) {
+            (Some(mut a), Some(b)) => {
+                // later totals replace earlier ones of the same bin; the runs are the latest
+                for bin in b.bins {
+                    match a.bins.iter_mut().find(|x| x.start_ms == bin.start_ms) {
+                        Some(x) => *x = bin,
+                        None => a.bins.push(bin),
+                    }
+                }
+                Some(DiscoveryUpdate {
+                    bins: a.bins,
+                    runs: b.runs,
+                })
+            }
+            (a, b) => b.or(a),
+        },
     }
 }
 
@@ -1405,6 +1421,19 @@ impl Core {
         self.job(move |r| r.current_session(now))?
     }
 
+    /// [P] SPEC R-4a: the session's discovery rate at the live `seq` (0 when not live), from `local.db`.
+    pub async fn discovery_rate(&self, session_id: String) -> Result<DiscoveryRate, CoreError> {
+        self.read(move |c, ctx| {
+            let seq = ctx
+                .live
+                .as_ref()
+                .filter(|l| l.uuid == session_id)
+                .map_or(0, |l| l.seq);
+            super::discovery::rate(c, &session_id, seq, ctx.hide_unnamed_apple)
+        })
+        .await
+    }
+
     /// [P] Counters.
     pub async fn all_sessions_summary(&self) -> Result<AllSessionsSummary, CoreError> {
         self.read(query::all_sessions_summary).await
@@ -1697,6 +1726,7 @@ mod tests {
             }],
             fix: None,
             chart: None,
+            discovery: None,
         }
     }
 

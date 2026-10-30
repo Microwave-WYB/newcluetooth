@@ -428,6 +428,37 @@ pub struct MapData {
 
 // ---- §2.6 Live deltas ----
 
+/// SPEC R-4a: one 30 s bin of a run and the devices first scanned in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct DiscoveryBin {
+    pub start_ms: i64,
+    pub new_devices: u32,
+}
+
+/// A running interval of a recording (wall clock); the open one has no end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct DiscoveryRun {
+    pub start_ms: i64,
+    pub end_ms: Option<i64>,
+}
+
+/// SPEC R-4a: a session's discovery rate at `seq` (§2.6). Bins are counted per run from the run's own start, and
+/// are sparse: a missing bin is 0. Paused time lies between runs.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct DiscoveryRate {
+    pub seq: u64,
+    pub bin_ms: u32,
+    pub bins: Vec<DiscoveryBin>,
+    pub runs: Vec<DiscoveryRun>,
+}
+
+/// The discovery rate's part of a live delta.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct DiscoveryUpdate {
+    pub bins: Vec<DiscoveryBin>,
+    pub runs: Vec<DiscoveryRun>,
+}
+
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct LiveDelta {
     pub session_id: String,
@@ -444,6 +475,9 @@ pub struct LiveDelta {
     pub fix: Option<FixSummary>,
     /// The focused key.
     pub chart: Option<LiveChart>,
+    /// R-4a: the bins that changed or are new (each a total that replaces the bin with the same start) and the
+    /// runs now; `None` when neither changed.
+    pub discovery: Option<DiscoveryUpdate>,
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
