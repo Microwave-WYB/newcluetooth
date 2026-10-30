@@ -176,7 +176,10 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             launch(start = CoroutineStart.UNDISPATCHED) {
                 for (r in sessionReads) guard(MainTask.Sessions) { _sessions.value = readSessions(q) }
             }
-            launch { graph.recorder.state.map { it.phase }.distinctUntilChanged().collect { dispatch(MainEvent.RecorderChanged(it)) } }
+            launch {
+                graph.recorder.state.map { it.phase to it.pause }.distinctUntilChanged()
+                    .collect { (phase, pause) -> dispatch(MainEvent.RecorderChanged(phase, pause)) }
+            }
             launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
             // R-10: the core stopped writing for lack of space
             launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFull.collect { dispatch(MainEvent.StorageFull(it)) } } }
