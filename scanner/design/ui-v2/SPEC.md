@@ -102,6 +102,8 @@ expanded (G-2).
   6. search state.
 
   With none of these open, Back leaves the app.
+- **G-15 Screen stays on.** While the app is in the foreground the screen never turns off by itself, as in the
+  previous app. Leaving the app or locking the phone works as usual.
 
 ## C. Components
 
@@ -360,6 +362,10 @@ Each component is built once. Its size, color and state rules come from these to
   - A 400 ms lock applies between steps.
 - **S-16 Fixed height.** Switching tabs or views, GATT progress, or any content change never changes a sheet's
   height. The content scrolls inside.
+- **S-16a Height changes animate.** Every sheet height change that the finger is not driving animates
+  (`--t-page`, `--ease`): snapping after release, a tap on the handle, opening, popping, revealing the sheet below,
+  raising the root (S-12), the keyboard, search returning, rotation and layout-mode changes. Only a drag in progress
+  (S-10a) moves the sheet directly. Reduced motion (G-7) is the only other exception.
 - **S-17 Map follows the top sheet.**
   - Discover: the session's points (filtered as the sheet is).
   - Product: only that product's points, framed on open.
@@ -483,7 +489,14 @@ Each component is built once. Its size, color and state rules come from these to
      ("Timed out", "Disconnected unexpectedly"). Below it, a tonal "Try again" goes straight back to the step-3
      prompt.
   6. Success: the services, then their characteristics (name, UUID · properties, value), appear below the steps.
-  7. A device that was already read opens showing its last result.
+  7. A device that was already read opens showing its last result, with the note and one full-width tonal
+     "Discover again" above it.
+     - It leads to the same step-3 prompt; the prompt appears every time.
+     - While the new discovery runs, its steps replace the last result's steps; the last result's services stay below
+       until the new discovery succeeds.
+     - On success the new result replaces the last one. On failure the failed steps and "Try again" show, and the last
+       result stays below them.
+     - Every discovery, successful or not, ends by disconnecting (the "Disconnected" step).
   8. Leaving or popping the sheet cancels a running discovery.
 - **D-14 Map.** Opening a device selects it (M-6). From a list it also eases the camera to the device, at zoom ≥ 18.2,
   keeping it clear of the sheet. From a map tap, the camera stays put.
