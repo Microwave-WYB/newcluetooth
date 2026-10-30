@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -106,10 +107,15 @@ fun MainScreen(vm: MainViewModel) {
                 { dispatch(MainEvent.SetRecorderPanel(false)) }, { dispatch(MainEvent.PauseRecording) }, { dispatch(MainEvent.ResumeRecording) },
                 { dispatch(MainEvent.StopRecording) }, { dispatch(MainEvent.FitRoute) })
         }
-        // lane D's sheets for the shown scope (V-7: a new scope starts them fresh)
+        // lane D's sheets for the shown scope (V-7: a new scope starts them fresh). They are made once the scope's view
+        // is read, so they start live or frozen, and kept while the same scope's view is re-read: R-7's Stop
+        // (V-3 re-selects the scope) reaches them as live → frozen, never as new sheets.
+        val sheetsLive = rememberViewLive(ui.scope, view?.live)
         val sheets = ui.scope?.let { scope ->
-            rememberSheetsState(scope, live, view?.routesFaint ?: (scope.sessions == SessionScope.All), r.core.queries,
-                vm.graph.gattRunner, r.map, reducedMotion = CluetoothTheme.motion.reduced)
+            sheetsLive?.let { sheetsAreLive ->
+                rememberSheetsState(scope, sheetsAreLive, view?.routesFaint ?: (scope.sessions == SessionScope.All), r.core.queries,
+                    vm.graph.gattRunner, r.map, reducedMotion = CluetoothTheme.motion.reduced)
+            }
         }
         DisposableEffect(sheets) {
             sheets?.let { dispatch(MainEvent.SheetsAttached(it)) }
@@ -297,3 +303,10 @@ private fun CoreErrorScreen(title: String, error: Throwable, onRetry: () -> Unit
     }
 }
 
+/** The shown scope's last known live flag: [live] once its view is read, kept while it is re-read; null before. */
+@Composable
+private fun rememberViewLive(scope: Scope?, live: Boolean?): Boolean? {
+    val last = remember(scope) { mutableStateOf<Boolean?>(null) }
+    SideEffect { if (live != null) last.value = live }
+    return live ?: last.value
+}

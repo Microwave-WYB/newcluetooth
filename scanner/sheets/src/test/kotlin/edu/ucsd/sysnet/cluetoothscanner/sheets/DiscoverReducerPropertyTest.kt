@@ -83,6 +83,17 @@ class DiscoverReducerPropertyTest {
                     is DiscoverPhase.Ready -> assertTrue(ctx, after.phase is DiscoverPhase.Ready || event is DiscoverEvent.Faulted)
                     is DiscoverPhase.Failed -> assertTrue(ctx, after.phase is DiscoverPhase.Failed || event == DiscoverEvent.RetryRequested)
                 }
+                // R-7: Stop changes only the live-only parts (live; Nearby → All, with its rows re-read) and asks nothing
+                // of the stack; after it, live appends change nothing
+                if (event == DiscoverEvent.Stopped) {
+                    val expected = if (!before.live) before
+                    else before.copy(live = false, segment = if (before.segment == SegmentState.Nearby) SegmentState.All else before.segment)
+                    assertEquals(ctx, expected, after.copy(rowsVersion = expected.rowsVersion))
+                    assertTrue(ctx, step.effects.all { it == DiscoverEffect.Refresh })
+                    assertEquals(ctx, before.live && before.segment == SegmentState.Nearby, step.effects.isNotEmpty())
+                }
+                if (!before.live) assertTrue(ctx, !after.live)
+                if (event is DiscoverEvent.LiveAppended && !before.live) assertSame(ctx, before, after)
                 // G-9: the order only grows by appends
                 val was = sessionOrder(before)
                 val now = sessionOrder(after)
@@ -136,7 +147,7 @@ class DiscoverReducerPropertyTest {
             repeat(400) {
                 val event: DiscoverEvent = when (rnd.nextInt(14)) {
                     0 -> DiscoverEvent.OpenRequested
-                    1 -> if (!live) DiscoverEvent.ViewToggled else {
+                    1 -> if (!state.live) DiscoverEvent.ViewToggled else {
                         val k = nextKey++
                         world.devices += Dev(k, GeoPoint(rnd.nextDouble(0.0, 2.0), rnd.nextDouble(0.0, 2.0)), listOf("qt", "lamp").random(rnd) + k, true)
                         DiscoverEvent.LiveAppended(longArrayOf(k))
@@ -149,7 +160,11 @@ class DiscoverReducerPropertyTest {
                     7 -> DiscoverEvent.SearchAreaRequested(bbox(rnd), 15.0)
                     8 -> DiscoverEvent.SearchEverywhereRequested
                     9 -> DiscoverEvent.SearchExited
-                    10 -> if (rnd.nextInt(8) == 0) DiscoverEvent.Faulted("bug") else DiscoverEvent.RetryRequested
+                    10 -> when (rnd.nextInt(8)) {
+                        0 -> DiscoverEvent.Faulted("bug")
+                        1 -> DiscoverEvent.Stopped // R-7, at any point of a live run
+                        else -> DiscoverEvent.RetryRequested
+                    }
                     else -> if (pending.isEmpty()) DiscoverEvent.RefreshRequested else pending.removeAt(rnd.nextInt(pending.size))
                 }
                 apply(event)
@@ -211,5 +226,27 @@ class DiscoverReducerPropertyTest {
         assertEquals(frozen, reduceDiscover(frozen, DiscoverEvent.SegmentSelected(Segment.Nearby)).state)
         val live = DiscoverState(live = true)
         assertEquals(live, reduceDiscover(live, DiscoverEvent.SegmentSelected(Segment.ThisArea)).state)
+    }
+
+    @Test
+    fun `R-7 Stop keeps the order, rows, view, filters, area and search, ends Nearby, and asks nothing of the stack`() {
+        val searching = Searching("qt", null, CameraSnapshot(GeoPoint(1.0, 1.0), 15.0), false, KeyOrder.of(longArrayOf(3, 1)), DeviceFilter(), back)
+        val ready = DiscoverState(
+            live = true, phase = DiscoverPhase.Ready(KeyOrder.of(longArrayOf(3, 1, 2))), view = DiscoverView.List,
+            filter = DeviceFilter(readable = true), searching = searching, rows = longArrayOf(3, 1), rowsVersion = 4, liveAppends = 2,
+        )
+        // Nearby (the live default) becomes All, and the rows are re-read for it; everything else stays as it was
+        val nearby = reduceDiscover(ready, DiscoverEvent.Stopped)
+        assertEquals(ready.copy(live = false, segment = SegmentState.All), nearby.state)
+        assertSame(ready.rows, nearby.state.rows)
+        assertEquals(listOf(DiscoverEffect.Refresh), nearby.effects)
+        // on All nothing at all is asked
+        val all = ready.copy(segment = SegmentState.All)
+        assertEquals(DiscoverStep(all.copy(live = false)), reduceDiscover(all, DiscoverEvent.Stopped))
+        // idempotent; frozen: live appends and Nearby are gone
+        val frozen = nearby.state
+        assertSame(frozen, reduceDiscover(frozen, DiscoverEvent.Stopped).state)
+        assertSame(frozen, reduceDiscover(frozen, DiscoverEvent.LiveAppended(longArrayOf(9))).state)
+        assertEquals(frozen.copy(segment = SegmentState.All), reduceDiscover(frozen, DiscoverEvent.SegmentSelected(Segment.Nearby)).state)
     }
 }

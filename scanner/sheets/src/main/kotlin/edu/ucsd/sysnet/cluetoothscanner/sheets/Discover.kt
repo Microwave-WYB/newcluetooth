@@ -157,6 +157,8 @@ internal sealed interface DiscoverEvent {
     /** A failure escaped a runner (the scope's handler): the sheet fails, and can be retried. */
     data class Faulted(val message: String) : DiscoverEvent
     class LiveAppended(val keys: LongArray) : DiscoverEvent
+    /** R-7: the recording stopped; the same session is now frozen. Only the live-only parts change. */
+    data object Stopped : DiscoverEvent
     data object ViewToggled : DiscoverEvent
     data class SegmentSelected(val next: Segment) : DiscoverEvent
     data class FilterSet(val filter: DeviceFilter) : DiscoverEvent
@@ -243,7 +245,8 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
                 rowsVersion = state.rowsVersion + 1, searchVersion = state.searchVersion + 1,
             ),
         )
-        is DiscoverEvent.LiveAppended -> when (val p = state.phase) {
+        // R-7: a frozen session's list stops appending (and its order is never touched again)
+        is DiscoverEvent.LiveAppended -> if (!state.live) DiscoverStep(state) else when (val p = state.phase) {
             is DiscoverPhase.Loading -> DiscoverStep(state.copy(phase = p.copy(pending = p.pending + event.keys.asList())))
             is DiscoverPhase.Failed -> DiscoverStep(state)
             is DiscoverPhase.Ready -> {
@@ -256,6 +259,14 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
                     listOf(DiscoverEffect.LoadSearch(state.searchVersion, s.query, s.area, SearchPurpose.Append, next.liveAppends), DiscoverEffect.Refresh),
                 )
             }
+        }
+        // R-7: Stop leaves everything as it was (order, rows, view, filters, area, search, and nothing for the stack),
+        // except what only exists while recording: Nearby becomes All (D-1), and the rows are re-read for it
+        DiscoverEvent.Stopped -> when {
+            !state.live -> DiscoverStep(state)
+            state.segment == SegmentState.Nearby ->
+                DiscoverStep(state.copy(live = false, segment = SegmentState.All), listOf(DiscoverEffect.Refresh))
+            else -> DiscoverStep(state.copy(live = false))
         }
         DiscoverEvent.ViewToggled -> DiscoverStep(
             state.copy(view = if (state.view == DiscoverView.Categories) DiscoverView.List else DiscoverView.Categories),
@@ -373,8 +384,11 @@ private fun searchAnswered(state: DiscoverState, ready: DiscoverPhase.Ready, eve
  * acts on the current state. Every query goes through [attempt]: a failure comes back as a typed event, never a
  * throw. Live appends while the first sort loads are kept by [DiscoverPhase.Loading].
  */
-class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, private val stack: SheetStackController) {
+class DiscoverModel(private val queries: DiscoverQueries, live: Boolean, private val stack: SheetStackController) {
     private var state by mutableStateOf(DiscoverState(live))
+
+    /** The view is the live recording (V-2); false from the start for history, or after Stop (R-7). */
+    val live: Boolean get() = state.live
     /** The phase, for [awaitReady] (a state flow, so a retry is awaited too). */
     private val phases = MutableStateFlow<DiscoverPhase>(state.phase)
 
@@ -407,6 +421,9 @@ class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, pri
 
     /** The filter the core queries use: the sheet's filters plus Nearby and This area. */
     fun queryFilter(): DeviceFilter = state.queryFilter()
+
+    /** R-7: the recording stopped; the session stays shown, frozen. */
+    suspend fun stop() = send(DiscoverEvent.Stopped)
 
     /** G-9: new devices of the live view, in arrival order. */
     suspend fun appendLive(keys: LongArray) = send(DiscoverEvent.LiveAppended(keys))
