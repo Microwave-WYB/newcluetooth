@@ -76,6 +76,29 @@ class MainFeedsTest {
         assertEquals(listOf(MainEffect.LoadSessions(3)), reduce(asked, MainEvent.CoreDataInvalidated).effects)
     }
 
+    /**
+     * A sessions read is taken when it is newer than the list shown, not only when it answers the newest request: with
+     * requests 1 and 2 in flight and 2 failing, 1's list still shows (there is no newer one), at launch from nothing
+     * shown as well as over an older list.
+     */
+    @Test fun anOlderRequestsListShowsWhenTheNewerOneFails() {
+        val boom = IllegalStateException("core closed")
+        // launch: settings loaded asks for 1, the core's SessionsChanged for 2, nothing shown yet
+        val launch = MainUiState().on(MainEvent.SettingsLoaded(settings(done = true), perms), MainEvent.CoreSessionsChanged)
+        assertEquals(2, launch.sessionsAsked)
+        assertNull(launch.sessionsData)
+        val failed = launch.on(MainEvent.Failed(MainTask.Effect(MainEffect.LoadSessions(2)), boom))
+        assertEquals(launch, failed)
+        val landed = failed.on(MainEvent.SessionsRead(1, list(1)))
+        assertEquals(SessionsData(1, list(1)), landed.sessionsData)
+        assertEquals(list(1).all, shownSessions(landed)?.all)
+        // over an older list: 1 is shown, 2 and 3 are asked, 3 fails, 2 lands
+        val shown = landed.on(MainEvent.CoreSessionsChanged, MainEvent.CoreDataInvalidated)
+        assertEquals(4, shown.sessionsAsked)
+        val later = shown.on(MainEvent.Failed(MainTask.Effect(MainEffect.LoadSessions(4)), boom), MainEvent.SessionsRead(3, list(3)))
+        assertEquals(SessionsData(3, list(3)), later.sessionsData)
+    }
+
     @Test fun aPreviousReadOfTheRateNeverReplacesTheCurrentOne() {
         val recording = MainUiState().on(MainEvent.RecorderChanged(Phase.Recording, sessionId = "a"))
         val first = recording.discoveryKey ?: error("recording")
