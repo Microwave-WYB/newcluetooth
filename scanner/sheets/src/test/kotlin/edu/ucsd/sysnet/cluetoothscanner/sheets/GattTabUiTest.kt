@@ -60,9 +60,14 @@ class GattTabUiTest {
 
     @Test
     fun d13_1_noNoteWithoutButtons() {
-        val done = controller(failed.copy(ok = true, steps = listOf(GattStep(GattStepKind.Connecting, GattStepState.Done, 800, null, null, null, null))))
-        done.onDiscover(); done.onAuthorized()
-        compose.setContent { CluetoothTheme(darkTheme = false, reducedMotion = true) { GattTab(done) } }
-        compose.onNodeWithTag(DeviceTags.NOTE).assertDoesNotExist() // Done: no button, no note
+        // a running discovery has no button, so no note (D-13.7: a read device shows "Discover again", with the note)
+        val runningView = failed.copy(steps = listOf(GattStep(GattStepKind.Connecting, GattStepState.Running, null, null, null, null, null)))
+        val running = GattController(7, CoroutineScope(Dispatchers.Unconfined), object : GattRunner {
+            override fun discover(key: DeviceKey): Flow<GattView> = kotlinx.coroutines.flow.flow { emit(runningView); kotlinx.coroutines.awaitCancellation() }
+        })
+        running.onDiscover(); running.onAuthorized()
+        assertTrue(running.state is GattUi.Running)
+        compose.setContent { CluetoothTheme(darkTheme = false, reducedMotion = true) { GattTab(running) } }
+        compose.onNodeWithTag(DeviceTags.NOTE).assertDoesNotExist()
     }
 }

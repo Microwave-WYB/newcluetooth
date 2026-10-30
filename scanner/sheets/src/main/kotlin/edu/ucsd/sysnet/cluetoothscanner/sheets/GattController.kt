@@ -49,6 +49,9 @@ class GattController(
 
     val state: GattUi get() = gatt.ui
 
+    /** D-13.7: the last successful result, shown below a new run or a failure until a new one succeeds. */
+    val last: GattView? get() = gatt.last
+
     /** The running discovery: execution state, owned by this runner only. */
     private var run: Job? = null
 
@@ -100,7 +103,14 @@ class GattController(
 }
 
 /** The GATT tab's state: what it shows, and the number of the newest run (only its events count). */
-internal data class GattState(val ui: GattUi = GattUi.Idle, val run: Long = 0)
+/**
+ * The GATT tab's state: what it shows, the number of the newest run (only its events count), and D-13.7's [last]
+ * result: the last successful discovery, which stays below a new run until that one succeeds.
+ */
+internal data class GattState(val ui: GattUi = GattUi.Idle, val run: Long = 0, val last: GattView? = null) {
+    /** Where the tab rests when no run shows: the last result, or Idle (never read). */
+    val resting: GattUi get() = last?.let { GattUi.Done(it) } ?: GattUi.Idle
+}
 
 /** What happens to the GATT tab (D-13). */
 internal sealed interface GattEvent {
@@ -133,30 +143,33 @@ internal data class GattStepResult(val state: GattState, val effects: List<GattE
  */
 internal fun reduceGatt(state: GattState, event: GattEvent): GattStepResult {
     val ui = state.ui
-    fun show(next: GattUi) = GattStepResult(state.copy(ui = next))
+    // D-13.7: a success becomes the last result; anything else keeps it (below a run, below a failure)
+    fun show(next: GattUi) = GattStepResult(state.copy(ui = next, last = (next as? GattUi.Done)?.view ?: state.last))
     fun current(run: Long) = ui is GattUi.Running && run == state.run
     return when (event) {
         is GattEvent.LastLoaded -> {
             val last = event.last
             if (ui != GattUi.Idle || last == null) GattStepResult(state) else show(classify(last, final = true))
         }
-        GattEvent.Discover -> show(if (ui == GattUi.Idle) GattUi.Confirm else ui)
-        GattEvent.CancelPrompt -> show(if (ui == GattUi.Confirm) GattUi.Idle else ui)
+        // D-13.3, D-13.7: "Discover GATT" (never read) and "Discover again" (a last result) lead to the same prompt
+        GattEvent.Discover -> show(if (ui == GattUi.Idle || ui is GattUi.Done) GattUi.Confirm else ui)
+        GattEvent.CancelPrompt -> show(if (ui == GattUi.Confirm) state.resting else ui)
         GattEvent.TryAgain -> show(if (ui is GattUi.Failed) GattUi.Confirm else ui)
         is GattEvent.Authorized ->
             if (ui != GattUi.Confirm) GattStepResult(state)
             else {
                 val run = state.run + 1
-                GattStepResult(GattState(GattUi.Running(starting(event.key, event.startedMs)), run), listOf(GattEffect.StartRun(run)))
+                GattStepResult(state.copy(ui = GattUi.Running(starting(event.key, event.startedMs)), run = run), listOf(GattEffect.StartRun(run)))
             }
         is GattEvent.Progress -> if (current(event.run)) show(classify(event.view, final = false)) else GattStepResult(state)
         is GattEvent.Finished ->
-            if (current(event.run)) show(event.last?.let { classify(it, final = true) } ?: GattUi.Idle) else GattStepResult(state)
+            if (current(event.run)) show(event.last?.let { classify(it, final = true) }?.takeUnless { it == GattUi.Idle } ?: state.resting)
+            else GattStepResult(state)
         is GattEvent.RunFailed -> {
             val running = ui as? GattUi.Running
             if (running == null || !current(event.run)) GattStepResult(state) else show(GattUi.Failed(failRunning(running.view)))
         }
-        GattEvent.Cancel -> GattStepResult(state.copy(ui = if (ui is GattUi.Running) GattUi.Idle else ui), listOf(GattEffect.CancelRun))
+        GattEvent.Cancel -> GattStepResult(state.copy(ui = if (ui is GattUi.Running) state.resting else ui), listOf(GattEffect.CancelRun))
     }
 }
 
