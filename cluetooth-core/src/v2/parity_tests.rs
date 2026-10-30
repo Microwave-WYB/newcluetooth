@@ -1934,7 +1934,7 @@ fn a_stationary_session_decays_to_zero_new() {
         t += 5_000;
     }
     let r = rate(&core, &id);
-    assert_eq!(r.bin_ms, 30_000);
+    assert_eq!(r.bin_ms, 5_000);
     assert_eq!(
         r.runs,
         vec![DiscoveryRun {
@@ -1942,29 +1942,23 @@ fn a_stationary_session_decays_to_zero_new() {
             end_ms: None
         }]
     );
-    assert_eq!(bins(&r), vec![(t0, 8)], "every later bin is 0, so missing");
+    // the eight first sightings at +1..+8 s fill the first two 5 s bins; every later bin is 0, so missing
+    assert_eq!(
+        bins(&r),
+        vec![(t0, 4), (t0 + 5_000, 4)],
+        "every later bin is 0, so missing"
+    );
     assert!(r.seq > 0, "live: the delta seq of the snapshot");
     // the deltas: the first carries the bin, none after repeats it unchanged
     let deltas = wait_for(&c, 2);
     let with: Vec<_> = deltas.iter().filter_map(|d| d.discovery.as_ref()).collect();
     assert!(!with.is_empty());
     assert_eq!(
-        with.last()
-            .unwrap()
-            .bins
-            .last()
-            .map(|b| (b.start_ms, b.new_devices)),
-        Some((t0, 8))
+        applied(&deltas, &id).0,
+        bins(&r),
+        "the deltas carry the bins"
     );
     assert!(with.iter().all(|u| u.runs == r.runs));
-    let total: u32 = with
-        .iter()
-        .flat_map(|u| u.bins.iter())
-        .filter(|b| b.start_ms == t0)
-        .map(|b| b.new_devices)
-        .max()
-        .unwrap();
-    assert_eq!(total, 8);
 }
 
 /// R-4a: a pause ends a run; the next run counts its bins from its own start; a restart rebuilds the same rate.
@@ -2011,7 +2005,7 @@ fn a_pause_breaks_the_runs_and_a_restart_rebuilds_them() {
     );
     assert_eq!(
         bins(&live),
-        vec![(t0, 1), (t0 + 120_000, 1), (t0 + 150_000, 1)]
+        vec![(t0 + 5_000, 1), (t0 + 125_000, 1), (t0 + 160_000, 1)]
     );
     // killed mid-recording: the restart rebuilds the bins from local.db; the session is interrupted, its run ends
     drop(core);
@@ -2047,7 +2041,7 @@ fn a_pause_breaks_the_runs_and_a_restart_rebuilds_them() {
 }
 
 /// R-4a randomized: whatever the interleaving of new and known devices, pauses and ticks, every session's bins add up
-/// to its distinct device count, and every bin starts on its run's 30 s grid.
+/// to its distinct device count, and every bin starts on its run's 5 s grid.
 #[test]
 fn randomized_discovery_bins_sum_to_the_device_count() {
     for seed in [3u64, 11, 2026] {
@@ -2116,8 +2110,8 @@ fn randomized_discovery_bins_sum_to_the_device_count() {
                 assert!(b.new_devices > 0, "sparse: no empty bins");
                 assert!(
                     r.runs.iter().any(|run| b.start_ms >= run.start_ms
-                        && (b.start_ms - run.start_ms) % 30_000 == 0
-                        && run.end_ms.is_none_or(|e| b.start_ms < e)),
+                        && (b.start_ms - run.start_ms) % 5_000 == 0
+                        && run.end_ms.is_none_or(|e| b.start_ms <= e)),
                     "seed {seed}: bin {} is on a run's grid",
                     b.start_ms
                 );
@@ -2307,12 +2301,12 @@ fn hidden_devices_leave_the_rate_and_their_bin_goes_out_as_zero() {
     core.tick_at(t0 + 45_000);
     assert_eq!(
         bins(&rate(&core, &id)),
-        vec![(t0, 1), (t0 + 30_000, 1)],
+        vec![(t0, 1), (t0 + 40_000, 1)],
         "shown: counted"
     );
     hide_apple(&core, true);
     let fresh = rate(&core, &id);
-    assert_eq!(bins(&fresh), vec![(t0 + 30_000, 1)], "hidden: not counted");
+    assert_eq!(bins(&fresh), vec![(t0 + 40_000, 1)], "hidden: not counted");
     // the next delta tells the UI that bin t0 is now 0
     core.ingest_scans_at(vec![dev(2, -60, t0 + 50_000)], t0 + 50_000)
         .unwrap();
@@ -2341,18 +2335,18 @@ fn a_late_first_sighting_moves_the_device_and_empties_its_bin() {
     core.ingest_scans_at(vec![dev(5, -60, t0 + 40_000)], t0 + 40_000)
         .unwrap();
     core.tick_at(t0 + 45_000);
-    assert_eq!(bins(&rate(&core, &id)), vec![(t0 + 30_000, 1)]);
+    assert_eq!(bins(&rate(&core, &id)), vec![(t0 + 40_000, 1)]);
     // the same device, scanned earlier, arrives late
     core.ingest_scans_at(vec![dev(5, -60, t0 + 10_000)], t0 + 46_000)
         .unwrap();
     core.tick_at(t0 + 51_000);
     let fresh = rate(&core, &id);
-    assert_eq!(bins(&fresh), vec![(t0, 1)]);
+    assert_eq!(bins(&fresh), vec![(t0 + 10_000, 1)]);
     let deltas = deltas_through(&c, fresh.seq);
     let (applied_bins, _) = applied(&deltas, &id);
     assert_eq!(
         applied_bins,
-        vec![(t0, 1)],
+        vec![(t0 + 10_000, 1)],
         "counted once, in the earlier bin"
     );
 }
