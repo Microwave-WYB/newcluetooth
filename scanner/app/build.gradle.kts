@@ -10,15 +10,15 @@ plugins {
     id("com.google.gms.google-services") apply false
 }
 
-// Host checks compile/test real app code without creating Firebase resources or an APK.
+// Host checks compile/test real app code (and compile its instrumented tests) without creating Firebase resources or an APK.
 val hostCheckFlag = providers.gradleProperty("cluetoothHostChecks").orNull
 if (hostCheckFlag != null) {
-    val allowed = setOf(":app:testDebugUnitTest", ":app:lintDebug")
+    val allowed = setOf(":app:testDebugUnitTest", ":app:lintDebug", ":app:compileDebugAndroidTestKotlin")
     val requested = gradle.startParameter.taskNames
     if (hostCheckFlag != "true" || requested.isEmpty() || requested.any { it !in allowed }) {
         throw GradleException(
             "cluetoothHostChecks requires literal true and only explicit " +
-                ":app:testDebugUnitTest or :app:lintDebug selectors"
+                ":app:testDebugUnitTest, :app:lintDebug or :app:compileDebugAndroidTestKotlin selectors"
         )
     }
 } else {
