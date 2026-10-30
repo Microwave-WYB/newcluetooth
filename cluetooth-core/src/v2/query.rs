@@ -35,6 +35,9 @@ pub(crate) struct Live {
     pub seq: u64,
     /// The latest RSSI per device ("live: current", §2.5).
     pub current: std::sync::Arc<HashMap<i64, i16>>,
+    /// D-10: the live session's RSSI rings.
+    pub rings: std::sync::Arc<super::rssi::Rings>,
+    pub stale_after_ms: i64,
 }
 
 /// The query context: the catalog, the display filter and the current recording.
@@ -1101,4 +1104,26 @@ pub(crate) fn all_sessions_summary(
         device_count: shown_count(conn, ctx, &r)?,
         bbox,
     })
+}
+
+/// `device_chart` (D-10): the device's last minute while a session is live; `None` otherwise, and for a device that
+/// is not part of the live session.
+pub(crate) fn device_chart(
+    conn: &Connection,
+    ctx: &Ctx<'_>,
+    key: i64,
+    now_ms: i64,
+) -> Result<Option<LiveChart>, CoreError> {
+    let Some(live) = &ctx.live else {
+        return Ok(None);
+    };
+    let known = live.rings.contains(key)
+        || conn
+            .query_row(
+                "SELECT count(*) FROM session_devices WHERE session_id = ?1 AND addr = ?2",
+                rusqlite::params![live.session, key],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)?;
+    Ok(known.then(|| live.rings.chart(key, now_ms, live.stale_after_ms)))
 }
