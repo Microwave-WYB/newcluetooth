@@ -176,6 +176,8 @@ pub struct RecordingState {
     pub distance_m: f64,
     /// SPEC R-10: paused because storage is full; resume needs free space above the floor.
     pub paused_for_storage: bool,
+    /// Paused because staging or committing kept failing for 60 s (not for space); resume tries again.
+    pub storage_failure: Option<String>,
 }
 
 // ---- §2.4 Ingest ----
@@ -486,6 +488,12 @@ pub enum CoreEvent {
     /// SPEC R-10: writing stopped and the recording paused; `dropped_scans` buffered rows could not be stored.
     StorageFull {
         free_bytes: u64,
+        dropped_scans: u64,
+    },
+    /// Staging or committing kept failing for 60 s for another reason: writing stopped and the recording paused
+    /// (`RecordingState.storage_failure`); `dropped_scans` buffered rows could not be stored.
+    StorageFailed {
+        message: String,
         dropped_scans: u64,
     },
 }

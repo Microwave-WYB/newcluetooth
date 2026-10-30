@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use super::core::Core;
+use super::core::{Core, CoreListener};
+use super::error::CoreError;
 use super::types::*;
 use crate::{LocationFix, ScanEnvironment, ScanObservationInput};
 
@@ -399,4 +400,145 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     out
+}
+
+#[derive(Default)]
+struct Events(std::sync::Mutex<Vec<CoreEvent>>);
+
+impl CoreListener for Events {
+    fn on_live(&self, _: LiveDelta) {}
+    fn on_event(&self, event: CoreEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+impl Events {
+    fn wait(&self, f: impl Fn(&CoreEvent) -> bool) -> bool {
+        (0..200).any(|_| {
+            let hit = self.0.lock().unwrap().iter().any(&f);
+            if !hit {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            hit
+        })
+    }
+}
+
+/// #79 review: a batch the payload refuses for lack of space (ENOSPC through `payload_error`) is not acknowledged:
+/// ingest returns `StorageFull`, the recording pauses for storage (R-10), and none of its rows is stored.
+#[test]
+fn a_full_payload_refuses_the_batch_with_storage_full() {
+    let dir = tempfile::tempdir().unwrap();
+    let t0 = 1_761_000_000_000i64;
+    let core = open(dir.path(), t0);
+    let events = Arc::new(Events::default());
+    core.set_listener(Some(events.clone())).unwrap();
+    core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(vec![obs(1, t0 + 10)], t0 + 10)
+        .unwrap();
+    core.fail_staging(Some("write failed: No space left on device (os error 28)"));
+    assert!(matches!(
+        core.ingest_scans_at(vec![obs(2, t0 + 20)], t0 + 20),
+        Err(CoreError::StorageFull { .. })
+    ));
+    let state = core.recording_state().unwrap();
+    assert!(state.paused_for_storage);
+    assert!(events.wait(|e| matches!(
+        e,
+        CoreEvent::StorageFull {
+            dropped_scans: 1,
+            ..
+        }
+    )));
+    assert_eq!(
+        db_sightings(&core),
+        0,
+        "neither the refused batch nor the dropped one is stored"
+    );
+    assert!(matches!(
+        core.ingest_scans_at(vec![obs(3, t0 + 30)], t0 + 30),
+        Err(CoreError::StorageFull { .. })
+    ));
+}
+
+/// #79 review: a refusal that is not for space gets `Backpressure` (keep the batch, retry) and a warning, never an
+/// ack; one that lasts 60 s stops writing and pauses with `storage_failure` and `StorageFailed`, so the app does
+/// not show a silent "recording". Resume records again.
+#[test]
+fn a_failing_payload_backpressures_then_pauses() {
+    let dir = tempfile::tempdir().unwrap();
+    let t0 = 1_761_000_000_000i64;
+    let core = open(dir.path(), t0);
+    let events = Arc::new(Events::default());
+    core.set_listener(Some(events.clone())).unwrap();
+    core.start_recording_at(env(), t0).unwrap();
+    core.fail_staging(Some("Input/output error (os error 5)"));
+    assert!(matches!(
+        core.ingest_scans_at(vec![obs(1, t0 + 10)], t0 + 10),
+        Err(CoreError::Backpressure)
+    ));
+    let state = core.recording_state().unwrap();
+    assert_eq!(state.phase, RecordingPhase::Recording);
+    assert_eq!(state.storage_failure, None);
+    assert!(events.wait(|e| matches!(e, CoreEvent::StorageWarning { .. })));
+    assert_eq!(core.pending_len(), 0, "a refused batch is not buffered");
+    assert!(matches!(
+        core.ingest_scans_at(vec![obs(1, t0 + 60_010)], t0 + 60_010),
+        Err(CoreError::Backpressure)
+    ));
+    let state = core.recording_state().unwrap();
+    assert_eq!(state.phase, RecordingPhase::Paused);
+    assert!(state.storage_failure.is_some());
+    assert!(!state.paused_for_storage, "not a storage-full pause");
+    assert!(events.wait(|e| matches!(e, CoreEvent::StorageFailed { .. })));
+    core.fail_staging(None);
+    core.resume_recording_at(t0 + 70_000).unwrap();
+    core.ingest_scans_at(vec![obs(2, t0 + 70_010)], t0 + 70_010)
+        .unwrap();
+    core.stop_recording_at(t0 + 71_000).unwrap();
+    assert_eq!(
+        db_sightings(&core),
+        1,
+        "only the batch staged after the resume"
+    );
+}
+
+/// #79 review: a failed upload-state read never turns sessions Empty (Empty means local-only, before Parquet):
+/// the last states read stand, and before any read `sessions()` returns a typed error.
+#[test]
+fn an_upload_state_read_error_keeps_the_last_states() {
+    let dir = tempfile::tempdir().unwrap();
+    let t0 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let core = open(dir.path(), t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(vec![obs(1, t0 + 10)], t0 + 10)
+        .unwrap();
+    core.stop_recording_at(t0 + 1_000).unwrap();
+    let state = |core: &Core| {
+        futures_executor::block_on(core.sessions())
+            .map(|s| s.into_iter().find(|s| s.id == id).map(|s| s.upload))
+    };
+    // the failure markers become unreadable: a file where their directory goes
+    let failed = dir.path().join("upload-state/failed");
+    let break_markers = || {
+        let _ = std::fs::remove_dir_all(&failed);
+        std::fs::create_dir_all(failed.parent().unwrap()).unwrap();
+        std::fs::write(&failed, b"not a directory").unwrap();
+    };
+    break_markers();
+    assert!(
+        state(&core).is_err(),
+        "no states read yet: a typed error, not Empty"
+    );
+    std::fs::remove_file(&failed).unwrap();
+    assert_eq!(state(&core).unwrap(), Some(UploadState::Pending));
+    break_markers();
+    assert_eq!(
+        state(&core).unwrap(),
+        Some(UploadState::Pending),
+        "the last states stand"
+    );
 }
