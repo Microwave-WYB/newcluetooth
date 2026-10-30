@@ -23,16 +23,19 @@ interface Recorder {
 
     /**
      * Checks the grants (§1.2.3), starts the foreground service and waits for its confirmation, then calls
-     * `core.startRecording`. A missing grant or a refused service fails with no session created.
+     * `core.startRecording`; Ok carries the session id. A missing grant ([PlatformError.MissingGrants]) or a refused
+     * service ([PlatformError.ServiceRefused]) fails with no session created.
      */
-    suspend fun start(): Result<String>
+    suspend fun start(): PlatformResult<String>
 
-    /** The service stays in the foreground while paused. */
-    suspend fun pause()
-    suspend fun resume()
+    /** The service stays in the foreground while paused. Not recording is Ok (nothing to do). */
+    suspend fun pause(): PlatformResult<Unit>
 
-    /** Returns the finished session id (R-7, V-3). */
-    suspend fun stop(): Result<String>
+    /** Not paused is Ok; the core may refuse ([PlatformError.Core], e.g. storage still full, R-10). */
+    suspend fun resume(): PlatformResult<Unit>
+
+    /** Ok carries the finished session id (R-7, V-3). */
+    suspend fun stop(): PlatformResult<String>
 }
 
 /** §4.3, SPEC D-13. */
@@ -63,7 +66,12 @@ interface GattRunner {
  */
 interface SettingsStore {
     val settings: StateFlow<Settings>
-    suspend fun update(transform: (Settings) -> Settings)
+
+    /**
+     * Applies [transform] atomically. An invalid user id is [PlatformError.InvalidUserId] and a failed write
+     * [PlatformError.Io]; neither changes the stored settings.
+     */
+    suspend fun update(transform: (Settings) -> Settings): PlatformResult<Unit>
 }
 
 /** SPEC O-1 "Pending uploads". */
@@ -71,16 +79,16 @@ interface Uploads {
     val status: StateFlow<UploadStatus>
 
     /** Restarts the upload work at once, expedited where possible. */
-    fun uploadNow()
+    fun uploadNow(): PlatformResult<Unit>
 }
 
 /** SPEC O-1 item 10. */
 interface ExportShare {
     /** The system share sheet; the export is acknowledged at the next export or the next app start. */
-    fun share(export: PreparedExport)
+    fun share(export: PreparedExport): PlatformResult<Unit>
 
-    /** Copies the ZIP into Downloads, then acknowledges the export. */
-    suspend fun saveToDownloads(export: PreparedExport)
+    /** Copies the ZIP into Downloads, then acknowledges the export; a failed copy is [PlatformError.Io]. */
+    suspend fun saveToDownloads(export: PreparedExport): PlatformResult<Unit>
 }
 
 /** SPEC O-2 and the "only the missing piece" rule. */
@@ -92,8 +100,8 @@ interface Permissions {
      * O-2 "Allow"; an empty array requests every missing one. The result refreshes [state].
      */
     fun requestLauncherContract(): ActivityResultContract<Array<String>, Map<String, Boolean>>
-    fun openAppSettings()
-    fun requestEnableBluetooth(activity: ComponentActivity)
+    fun openAppSettings(): PlatformResult<Unit>
+    fun requestEnableBluetooth(activity: ComponentActivity): PlatformResult<Unit>
 
     /** The permission names behind each [PermissionState] field; empty where the API level needs none. */
     companion object {
@@ -122,7 +130,11 @@ interface LocationStatusSource {
      * P-5 "Turn on" ([LocationStatus.Action.TurnOn]): `:platform` shows the Play services location settings dialog,
      * falling back to the system location settings, which is also this default. "Allow" goes through [Permissions].
      */
-    fun turnOn(activity: ComponentActivity) {
+    fun turnOn(activity: ComponentActivity): PlatformResult<Unit> = try {
         activity.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        PlatformResult.Ok(Unit)
+    } catch (failure: RuntimeException) {
+        // No settings activity on this device, or Android refused the launch.
+        PlatformResult.Err(PlatformError.Unavailable(failure.message ?: failure::class.java.simpleName))
     }
 }

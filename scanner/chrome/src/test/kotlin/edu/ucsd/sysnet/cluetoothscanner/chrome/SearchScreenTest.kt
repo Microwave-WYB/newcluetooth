@@ -21,6 +21,8 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 import org.junit.Assert.assertEquals
 import org.junit.Rule
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.assertIsFocused
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -105,4 +107,22 @@ class SearchScreenTest {
 
     @Config(sdk = [35], qualifiers = "w1024dp-h768dp-xhdpi") @Test fun tabletLight() = tablet(false)
     @Config(sdk = [35], qualifiers = "w1024dp-h768dp-xhdpi") @Test fun tabletDark() = tablet(true)
+
+    /**
+     * C-9 / Q-3: opening the phone field focuses it, so it draws `--field` with the inset ring (the pixels are the
+     * `open-empty` references of [phoneLight] / [phoneDark] and the `search__open` cell).
+     */
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
+    @Test fun openingTheFieldFocusesIt() {
+        var open by androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CluetoothTheme(reducedMotion = true) {
+                SearchBox(open = open, query = "", onOpen = {}, onBack = {}, onQueryChange = {}, openWidth = 388.dp)
+            }
+        }
+        compose.waitForIdle()
+        open = true
+        compose.waitForIdle()
+        compose.onNodeWithTag("searchInput").assertIsFocused()
+    }
 }

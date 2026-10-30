@@ -47,6 +47,8 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsList
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsPage
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsUi
+import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageFullActions
+import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageFullDialog
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TabletTopChrome
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeState
@@ -86,7 +88,7 @@ fun MainScreen(vm: MainViewModel) {
     val status = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
 
     // read `ui` here, in this scope, so the handler's enabled state recomposes with it (G-14)
-    BackHandler(enabled = backTarget(vm.backLayers(ui)) != BackTarget.Leave) { vm.onBack() }
+    BackHandler(enabled = ui.storageFull != null || backTarget(vm.backLayers(ui)) != BackTarget.Leave) { vm.onBack() }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CluetoothTheme.colors.bg)) {
         val layout = LayoutMode.of(maxWidth.value)
@@ -115,7 +117,8 @@ fun MainScreen(vm: MainViewModel) {
         }
         // P-3: the FAB sits above the root's collapsed peek (and the navigation bar); a rising sheet covers it
         val rootPeekPx = sheets?.stack?.root?.peek?.takeUnless { it.isNaN() }
-        val sheetCover = if (sheets != null && !tablet) with(density) { (rootPeekPx ?: PlaceholderPeek.toPx()).toDp() } + nav else 0.dp
+        val sheetCover = fabLayerCover(tablet, sheets?.let { with(density) { (rootPeekPx ?: PlaceholderPeek.toPx()).toDp() } }, nav)
+        val recorderInset = Modifier.padding(top = recorderTopInset(tablet, status))
         // M-10 / D-14: the map's padding is what the top sheet (phone) or the panel (tablet) covers
         val heightPx = with(density) { maxHeight.toPx() }
         val topOffsetPx = sheets?.let { it.stack.offsetOf(it.stack.top) }
@@ -142,11 +145,13 @@ fun MainScreen(vm: MainViewModel) {
                 mapUi, if (tablet) LocatePlacement.Tablet(recH) else LocatePlacement.Phone(sheetCover),
                 onLocate = { dispatch(MainEvent.Locate) }, onWarning = { dispatch(MainEvent.SetLocationPopover(!ui.locationPopoverOpen)) },
             )
-            if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, miniMap = miniMap)
+            if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, recorderInset, bottomCover = sheetCover, miniMap = miniMap)
             // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
             if (sheets != null && !(tablet && ui.sidebarOpen)) SheetsLayer(sheets, tablet)
             if (tablet && ui.sidebarOpen) SessionsPanel { sessions(Modifier) }
-            if (form != RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
+            if (form != RecorderUi.Form.Fab) {
+                RecorderControl(recorderUi, recorderActions, tablet, recorderInset, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
+            }
             if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, { dispatch(MainEvent.LocationFix(it)) }) {
                 dispatch(MainEvent.SetLocationPopover(false))
             }
@@ -203,6 +208,8 @@ fun MainScreen(vm: MainViewModel) {
                     onDeleteRequest = { dispatch(MainEvent.EditStorage { it.copy(deleteConfirm = edu.ucsd.sysnet.cluetoothscanner.chrome.DeleteConfirm.Confirm) }) },
                     onDeleteConfirm = { dispatch(MainEvent.DeleteConfirmed) }, onDelete = { dispatch(MainEvent.Delete(it)) },
                     onDeleteCancel = { dispatch(MainEvent.EditStorage { it.copy(deleteConfirm = null) }) },
+                    onCleanupRequest = { c -> dispatch(MainEvent.CleanupRequested(c)) },
+                    onCleanupConfirm = { dispatch(MainEvent.CleanupConfirmed) }, onCleanupCancel = { dispatch(MainEvent.CleanupCancelled) },
                 ),
                 sessionLabel = label, sessionScope = if (label != null) shown else null, statusInset = status, bottomInset = nav,
             )
@@ -224,6 +231,25 @@ fun MainScreen(vm: MainViewModel) {
                     onDone = { dispatch(MainEvent.FinishOnboarding) },
                 ),
                 statusInset = status, bottomInset = nav,
+            )
+        }
+
+        // R-10: over everything; the recording is paused (B) until Resume
+        ui.storageFull?.let { d ->
+            StorageFullDialog(
+                storageFullUi(d),
+                StorageFullActions(
+                    onChoose = { c, on -> dispatch(MainEvent.ChooseCleanup(c, on)) }, onFreeUp = { dispatch(MainEvent.FreeUpSpace) },
+                    onNotNow = { dispatch(MainEvent.StorageFullNotNow) }, onResume = { dispatch(MainEvent.StorageFullResume) },
+                ),
+            )
+        }
+
+        // a failure the user must see (an export, the onboarding save, a launch): over everything, above the nav bar
+        ui.notice?.let { n ->
+            NoticeBanner(
+                n, onRetry = { dispatch(MainEvent.RetryNotice) }, onDismiss = { dispatch(MainEvent.DismissNotice) },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = nav),
             )
         }
     }

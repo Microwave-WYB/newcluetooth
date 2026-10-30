@@ -1286,7 +1286,9 @@ Before a run:
 
 During and after:
 
-- One discovery runs at a time process-wide; a new `discover` cancels the previous one.
+- One discovery runs at a time process-wide; a new `discover` that passed the preconditions cancels the previous
+  one and starts after it ended. One owner (`GattAdmission`) orders start against cancel: a discovery cancelled
+  while it is still starting never connects, and one waiting for its turn never runs.
 - GATT works with or without a recording.
 - After the final step, the runner calls `core.ingestGatt(json)` and emits the returned view. A failed save is kept
   in `filesDir/gatt-pending` and retried.
@@ -1294,19 +1296,31 @@ During and after:
 ### 4.4 Recording state exposed to the UI
 
 ```kotlin
-// :platform-api
+// :platform-api. Every fallible call returns a typed result and never throws (AGENTS.md, ab19387):
+sealed interface PlatformResult<out T> { data class Ok<out T>(val value: T); data class Err(val error: PlatformError) }
+sealed interface PlatformError { val message: String }   // MissingGrants(permissions), ServiceRefused, Busy, NotRecording,
+                                                         // Core(message), InvalidUserId(userId), Io(message), Unavailable(message)
 interface Recorder {
     val state: StateFlow<RecorderState>
-    suspend fun start(): Result<String>   // grants checked (§1.2.3) → startForegroundService → core.startRecording
-    suspend fun pause(); suspend fun resume()   // the service stays in the foreground while paused
-    suspend fun stop(): Result<String>    // returns the finished session id (R-7, V-3)
+    suspend fun start(): PlatformResult<String>   // grants checked (§1.2.3) → startForegroundService → core.startRecording
+    suspend fun pause(): PlatformResult<Unit>     // the service stays in the foreground while paused
+    suspend fun resume(): PlatformResult<Unit>    // Err(Core) when the core refuses, e.g. storage still full (R-10)
+    suspend fun stop(): PlatformResult<String>    // the finished session id (R-7, V-3)
 }
 data class RecorderState(
     val phase: Phase, val sessionId: String?,
     val activeBeforeMs: Long, val runningSinceMs: Long?,   // the UI ticks elapsed locally (R-3)
     val deviceCount: Int, val scannerDeferred: Boolean, val dropped: Long, val error: String?,
-) { enum class Phase { Idle, Starting, Recording, Paused, Stopping } }
+    val pause: PauseReason? = null,   // non-null exactly while Paused
+) {
+    enum class Phase { Idle, Starting, Recording, Paused, Stopping }
+    sealed interface PauseReason { data object User; data class StorageFull(val freeBytes: Long) }   // R-10
+}
 ```
+
+- **Storage full (R-10).** While the core has paused the recording for storage, `phase` is `Paused` and `pause` is
+  `StorageFull(freeBytes)`. A Resume the core accepts (from the app or the notification), or a Stop, ends it. So the
+  storage-full dialog closes when `pause` is no longer `StorageFull`.
 
 `Recorder` is an in-process singleton, with no binding and no AIDL. `RecordingService` observes it:
 
@@ -1333,17 +1347,18 @@ data class Settings(val userId: String?, val recordOnOpen: Boolean, val wifiOnly
                     val onboardingDone: Boolean = false)   // set by Done in O-2
 interface SettingsStore {       // DataStore "cluetooth_settings"; one-time SharedPreferencesMigration from cluetooth_prefs
     val settings: StateFlow<Settings>
-    suspend fun update(transform: (Settings) -> Settings)
+    suspend fun update(transform: (Settings) -> Settings): PlatformResult<Unit>   // Err(InvalidUserId) / Err(Io); nothing written
 }   // defaults: recordOnOpen = true, wifiOnlyUpload = false, scanCodedPhy = true, hideUnnamedApple = true
-interface Uploads { val status: StateFlow<UploadStatus>; fun uploadNow() }      // O-1 "Pending uploads"
-interface ExportShare { fun share(export: PreparedExport); suspend fun saveToDownloads(export: PreparedExport) }  // O-1 item 10; acknowledges after
+interface Uploads { val status: StateFlow<UploadStatus>; fun uploadNow(): PlatformResult<Unit> }      // O-1 "Pending uploads"
+interface ExportShare { fun share(export: PreparedExport): PlatformResult<Unit>
+                        suspend fun saveToDownloads(export: PreparedExport): PlatformResult<Unit> }  // O-1 item 10; acknowledges after
 interface Permissions {
     val state: StateFlow<PermissionState>
     fun requestLauncherContract(): ActivityResultContract<Array<String>, Map<String, Boolean>>
-    fun openAppSettings(); fun requestEnableBluetooth(activity: ComponentActivity)
-}
+    fun openAppSettings(): PlatformResult<Unit>; fun requestEnableBluetooth(activity: ComponentActivity): PlatformResult<Unit>
+}   // Err(Unavailable) when Android cannot launch the activity
 interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLocation: StateFlow<MyLocation?>
-                                 fun turnOn(activity: ComponentActivity) }   // P-5 "Turn on" (additive)
+                                 fun turnOn(activity: ComponentActivity): PlatformResult<Unit> }   // P-5 "Turn on" (additive)
 ```
 
 - `Permissions` names the permissions behind each `PermissionState` field: `Permissions.nearby(sdk)`,
@@ -1362,7 +1377,9 @@ interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLo
   - `share()` cannot know when the receiving app has finished reading. It acknowledges the previous shared export at
     the next export, or at the next app start.
   - `saveToDownloads()` acknowledges right after the copy. That copy goes through MediaStore Downloads on API 29+ and
-    the public Downloads directory on API 24–28.
+    the public Downloads directory on API 24–28. A failed copy is `Err(Io)` and the export stays pending.
+  - An acknowledgement the core fails stays pending and is retried at the next export or app start (`ExportLedger`,
+    a pure reducer; `AndroidExportShare` is its runner).
 - `hideUnnamedApple` changes call `core.setDisplayFilter`.
 - `wifiOnlyUpload` changes re-enqueue the work as `UNMETERED`/`CONNECTED`.
 - The upload transport is the v3 one.

@@ -3,12 +3,16 @@ package edu.ucsd.sysnet.cluetoothscanner.designsystem
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.SegmentedSize
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Segmented
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertHeightIsEqualTo
@@ -111,5 +115,26 @@ class InteractionTest {
         val (early, end) = afterTwoFrames(reduced = false)
         assert(early < Tokens.swapX.value) { "early $early" }
         assertEquals(Tokens.swapX.value, end)
+    }
+
+    /**
+     * C-4: a label is never cut by its option's padding. "This area" in the 184 dp header (90 dp per option, 58 dp
+     * after the 16 dp padding) keeps its full width, as the CSS's overflowing nowrap text does.
+     */
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE) // real text widths
+    @Test fun segmentedLabelsAreNotClipped() {
+        var full = 0
+        compose.setContent {
+            CluetoothTheme {
+                // the label's natural width, in the unselected option's style
+                val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+                full = measurer.measure(Strings.ThisArea, CluetoothTheme.type.control, maxLines = 1, softWrap = false).size.width
+                Segmented(listOf(Strings.ThisArea, Strings.All), 1, {}, Modifier.width(184.dp), size = SegmentedSize.Header)
+            }
+        }
+        compose.waitForIdle()
+        val shown = compose.onNodeWithTag("segLabel:0", useUnmergedTree = true).fetchSemanticsNode().size.width
+        assert(full > with(compose.density) { 58.dp.roundToPx() }) { "the label is wider than the padded option ($full px)" }
+        assertEquals(full, shown)
     }
 }

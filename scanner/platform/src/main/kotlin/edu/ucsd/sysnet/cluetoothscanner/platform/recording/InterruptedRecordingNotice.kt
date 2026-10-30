@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionSummary
 import edu.ucsd.sysnet.cluetoothscanner.platform.R
@@ -34,9 +35,22 @@ class InterruptedRecordingNotice(private val context: Context) {
     /** [sessions] is `CoreQueries.sessions()`. Returns the sessions it told the user about (empty when not posted). */
     suspend fun check(sessions: suspend () -> List<SessionSummary>): List<SessionSummary> {
         val acknowledged = prefs.getStringSet(KEY_SEEN, emptySet()).orEmpty()
-        val unseen = unseenInterrupted(sessions(), acknowledged)
+        // A failing read (the core, the prefs) is "nothing to tell now": the notice comes at a later start.
+        val all = try {
+            sessions()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return emptyList()
+        }
+        val unseen = unseenInterrupted(all, acknowledged)
         if (unseen.isEmpty()) return unseen
-        if (!post(unseen.last())) return emptyList()
+        val posted = try {
+            post(unseen.last())
+        } catch (_: Exception) {
+            false
+        }
+        if (!posted) return emptyList()
         prefs.edit().putStringSet(KEY_SEEN, acknowledged + unseen.map { it.id }).apply()
         return unseen
     }

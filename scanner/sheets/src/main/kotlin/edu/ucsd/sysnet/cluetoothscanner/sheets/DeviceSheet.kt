@@ -41,6 +41,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -56,6 +58,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveChart
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ButtonKind
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Segmented
@@ -76,58 +79,64 @@ internal object DeviceTags {
     const val CANCEL = "gatt-cancel"
     const val TRY_AGAIN = "gatt-try-again"
     const val NOTE = "gatt-note"
+    fun rawLen(header: Boolean) = if (header) "raw-len-head" else "raw-len"
     fun step(kind: GattStepKind) = "gatt-step-${kind.name}"
 }
 
-private enum class DeviceTab { Advertising, Gatt }
 
 /** The device sheet (D-9..D-13). */
 @Composable
 internal fun DeviceSheet(state: SheetsState, entry: SheetEntry, key: Long) {
-    var detail by remember { mutableStateOf<DeviceDetail?>(null) }
-    var chart by remember { mutableStateOf<LiveChart?>(null) }
-    var tab by remember { mutableStateOf(DeviceTab.Advertising) }
+    var content by remember { mutableStateOf(DeviceContent()) }
     val gatt = remember(entry.id) { state.gattFor(entry, key) }
     LaunchedEffect(key) {
-        val d = state.core.device(state.scope, key)
-        detail = d
-        if (gatt.state == GattUi.Idle) gatt.showLast(state.core.deviceGatt(key)) // D-13.7
+        content = content.withDetail(state.load(SheetQuery.Device(key)))
+        // D-13.7; a failed read shows the tab as never read
+        if (gatt.state == GattUi.Idle) (state.load(SheetQuery.LastGatt(key)) as? Outcome.Ok)?.let { gatt.showLast(it.value) }
     }
     if (state.live) {
         LaunchedEffect(key) { // D-10: the chart rides on the deltas of the focused key
-            state.core.setLiveFocus(key)
-            chart = state.core.deviceChart(key)
-            state.core.live.collect { delta -> delta.chart?.takeIf { it.key == key }?.let { chart = it } }
+            content = content.withChart(state.load(SheetQuery.Chart(key)))
+            state.chartUpdates(key).collect { content = content.withChart(it) }
         }
     }
-    val row = state.rows.rows[key]
+    val row = state.rows[key]
+    val detail = content.detail
     SheetFrame(state.stack, entry, state.metrics, header = {
-        PushedHeader(state) { detail?.let { DeviceHead(it, row?.rssi ?: it.rssi) } }
+        PushedHeader(state) { detail.valueOrNull()?.let { DeviceHead(it, row?.rssi ?: it.rssi) } }
     }) {
-        val d = detail ?: return@SheetFrame
-        val list = rememberSheetListState(entry)
-        LazyColumn(state = list) {
-            item {
-                val ch = chart
-                if (state.live && ch != null) {
-                    Box(Modifier.padding(start = Css.ChartWrap.padding.left, top = Css.ChartWrap.padding.top, end = Css.ChartWrap.padding.right)) {
-                        RssiChart(ch, row?.rssi ?: d.rssi)
-                    }
+        when (detail) {
+            Loaded.Pending, Loaded.Missing -> Unit
+            is Loaded.Failed -> EmptyText(detail.message)
+            is Loaded.Found -> DeviceBody(state, entry, content, detail.value, row?.rssi ?: detail.value.rssi, gatt) { content = content.withTab(it) }
+        }
+    }
+}
+
+@Composable
+private fun DeviceBody(state: SheetsState, entry: SheetEntry, content: DeviceContent, d: DeviceDetail, rssi: Int?, gatt: GattController, onTab: (DeviceTab) -> Unit) {
+    val list = rememberSheetListState(entry)
+    LazyColumn(state = list) {
+        item {
+            val chart = content.chart
+            if (state.live && chart is ChartState.Live) {
+                Box(Modifier.padding(start = Css.ChartWrap.padding.left, top = Css.ChartWrap.padding.top, end = Css.ChartWrap.padding.right)) {
+                    RssiChart(chart.chart, rssi)
                 }
-                Segmented(
-                    listOf(Strings.Advertising, Strings.Gatt),
-                    tab.ordinal,
-                    onSelect = { tab = DeviceTab.entries[it] }, // D-11: the height stays (S-16)
-                    modifier = Modifier.fillMaxWidth().padding(
-                        start = Css.DevTabs.padding.left, top = Css.DevTabs.padding.top,
-                        end = Css.DevTabs.padding.right, bottom = Css.DevTabs.padding.bottom,
-                    ).testTag(DeviceTags.TABS),
-                )
-                SwapContent(tab, { it.ordinal }) { t ->
-                    when (t) {
-                        DeviceTab.Advertising -> Advertising(d)
-                        DeviceTab.Gatt -> GattTab(gatt)
-                    }
+            }
+            Segmented(
+                listOf(Strings.Advertising, Strings.Gatt),
+                content.tab.ordinal,
+                onSelect = { onTab(DeviceTab.entries[it]) }, // D-11: the height stays (S-16)
+                modifier = Modifier.fillMaxWidth().padding(
+                    start = Css.DevTabs.padding.left, top = Css.DevTabs.padding.top,
+                    end = Css.DevTabs.padding.right, bottom = Css.DevTabs.padding.bottom,
+                ).testTag(DeviceTags.TABS),
+            )
+            SwapContent(content.tab, { it.ordinal }) { t ->
+                when (t) {
+                    DeviceTab.Advertising -> Advertising(d)
+                    DeviceTab.Gatt -> GattTab(gatt)
                 }
             }
         }
@@ -139,12 +148,12 @@ internal fun DeviceSheet(state: SheetsState, entry: SheetEntry, key: Long) {
 private fun DeviceHead(d: DeviceDetail, rssi: Int?) {
     val c = CluetoothTheme.colors
     val t = CluetoothTheme.type
-    Column(Modifier.padding(start = Css.DevHead.padding.left, bottom = Css.DevHead.padding.bottom).defaultMinSize(minHeight = Tokens.sheetHeaderH)) {
-        Box(Modifier.defaultMinSize(minHeight = Tokens.sheetHeaderH), contentAlignment = Alignment.CenterStart) {
-            Text(d.name ?: Strings.NoName, style = t.title, color = if (d.name == null) c.t3 else c.t1)
-        }
+    // `.dev-head`: the name on its 24 dp line from the header's top, the wiki link, the MAC line, 12 dp under them
+    Column(Modifier.padding(start = Css.DevHead.padding.left, bottom = Css.DevHead.padding.bottom)) {
+        Text(d.name ?: Strings.NoName, style = t.title, color = if (d.name == null) c.t3 else c.t1)
         val page = d.page
-        if (page != null && d.wikiUrl != null) WikiLink(page.title, d.wikiUrl!!)
+        val url = d.wikiUrl
+        if (page != null && url != null) WikiLink(page.title, url)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(d.addr, style = t.sub.tabular(), color = c.t2)
             if (rssi != null) {
@@ -239,10 +248,18 @@ private fun SheetSect(text: String) {
 }
 
 @Composable
-private fun RawTable(d: DeviceDetail) {
+internal fun RawTable(d: DeviceDetail) {
     val c = CluetoothTheme.colors
     val shape = RoundedCornerShape(Css.Raw.borderRadius)
     val style = CluetoothTheme.type.sub.copy(fontSize = Css.Raw.fontSize.sp, lineHeight = Css.Raw.lineHeight.sp)
+    val head = style.copy(fontWeight = FontWeight(Css.Raw_Th.fontWeight.toInt()))
+    // D-12: Len and Type are 44 and 56 dp, or wider when the header (in this font and size) needs it, as a table
+    // column grows to fit an unbreakable word; every row uses the same widths, so the columns line up
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val pad = Css.Raw_Td.padding.left * 2
+    val lenW = with(density) { maxOf(Css.Raw_ColLen.width, measurer.measure(Strings.Len, head, softWrap = false).size.width.toDp() + pad) }
+    val typeW = with(density) { maxOf(Css.Raw_ColType.width, measurer.measure(Strings.Type, head, softWrap = false).size.width.toDp() + pad) }
     Column(
         Modifier
             .padding(horizontal = Css.Raw.margin.left)
@@ -250,23 +267,23 @@ private fun RawTable(d: DeviceDetail) {
             .clip(shape)
             .border(Css.Raw.borderLengths[0], c.div, shape),
     ) {
-        RawRow(Strings.Len, Strings.Type, Strings.Data, style.copy(fontWeight = FontWeight(Css.Raw_Th.fontWeight.toInt())), header = true)
+        RawRow(Strings.Len, Strings.Type, Strings.Data, head, header = true, lenW, typeW)
         for (s in d.structures) {
-            RawRow(s.len.toString(), Format.adType(s.adType), Format.hex(s.data), style, header = false)
+            RawRow(s.len.toString(), Format.adType(s.adType), Format.hex(s.data), style, header = false, lenW, typeW)
         }
-        d.tail?.let { RawRow("", "", Format.hex(it), style, header = false) }
+        d.tail?.let { RawRow("", "", Format.hex(it), style, header = false, lenW, typeW) }
     }
 }
 
 @Composable
-private fun RawRow(len: String, type: String, data: String, style: androidx.compose.ui.text.TextStyle, header: Boolean) {
+private fun RawRow(len: String, type: String, data: String, style: androidx.compose.ui.text.TextStyle, header: Boolean, lenW: Dp, typeW: Dp) {
     val c = CluetoothTheme.colors
     val pad = Css.Raw_Td.padding
     Column {
         if (!header) Box(Modifier.fillMaxWidth().height(Css.Raw_Td.borderTopLengths[0]).background(c.div))
         Row(Modifier.fillMaxWidth().background(if (header) c.fill2 else c.panel)) {
-            Text(len, Modifier.width(Css.Raw_ColLen.width).padding(horizontal = pad.left, vertical = pad.top), style = style.tabular())
-            Text(type, Modifier.width(Css.Raw_ColType.width).padding(horizontal = pad.left, vertical = pad.top), style = style.tabular())
+            Text(len, Modifier.width(lenW).padding(horizontal = pad.left, vertical = pad.top).testTag(DeviceTags.rawLen(header)), style = style.tabular(), maxLines = 1, softWrap = false)
+            Text(type, Modifier.width(typeW).padding(horizontal = pad.left, vertical = pad.top), style = style.tabular(), maxLines = 1, softWrap = false)
             // G-3: the raw data column is the one place with the code font; it breaks anywhere
             val dataStyle = if (header) style else CluetoothTheme.type.code.copy(fontSize = style.fontSize, lineHeight = style.lineHeight)
             Text(data.breakAnywhere(), Modifier.weight(1f).padding(horizontal = pad.left, vertical = pad.top), style = dataStyle, color = if (header) c.t1 else c.t2)

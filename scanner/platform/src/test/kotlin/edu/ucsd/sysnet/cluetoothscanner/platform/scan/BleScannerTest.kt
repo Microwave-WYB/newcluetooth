@@ -12,6 +12,7 @@ import android.content.Intent
 import android.os.Looper
 import java.time.Duration
 import java.util.concurrent.Executor
+import kotlin.concurrent.thread
 import androidx.test.core.app.ApplicationProvider
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
@@ -19,6 +20,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.IngestAck
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.platform.TestCoreIngest
+import edu.ucsd.sysnet.cluetoothscanner.platform.recording.DrainOutcome
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -310,4 +312,49 @@ class BleScannerTest {
         assertEquals("the scan agrees with the footer from the first start", BluetoothDevice.PHY_LE_1M, activePhy())
         assertEquals("no configureScan was needed", 0, configures)
     }
+
+    @Test
+    fun `a drain after the scanner's scope ended fails at once instead of hanging (#70 review)`() {
+        scope.cancel()
+        idle()
+        var outcome: DrainOutcome? = null
+        CoroutineScope(Dispatchers.Main.immediate).launch { outcome = scanner.drain() }
+        idle()
+        assertTrue(outcome is DrainOutcome.Failed)
+    }
+
+    @Test
+    fun `drains waiting on the actor are released when it ends, not left to their timeout (#70 re-review)`() {
+        // From another thread, so the actor (main looper, paused) has not run them yet when it ends.
+        val outcomes = java.util.concurrent.ConcurrentLinkedQueue<DrainOutcome>()
+        val drains = List(2) { thread { kotlinx.coroutines.runBlocking { outcomes += scanner.drain() } } }
+        Thread.sleep(200) // both Stop messages are in the inbox
+        scope.cancel()
+        idle()
+        drains.forEach { it.join(2_000) }
+        assertEquals("both released well before the 5 s bound", 2, outcomes.size)
+        assertTrue(outcomes.all { it is DrainOutcome.Failed })
+    }
+
+    @Test
+    fun `a drain whose flush never completes ends Failed after its bound (#70 review)`() {
+        val stuck = object : TestCoreIngest() {
+            override fun ingestScans(batch: List<ScanObservationInput>): IngestAck = throw CoreException.Backpressure()
+        }
+        val stuckCore = CompletableDeferred<CoreIngest>(stuck)
+        val stuckIngest = ScanIngest(stuckCore, scope, Dispatchers.Main.immediate, nowMs = { 0 })
+        val stuckScanner = BleScanner(context, stuckIngest, stuckCore, codedPhy = { coded }, appVersion = "0.1.0-test", scope = scope, io = Dispatchers.Main.immediate)
+        shadowOf(adapter).setEnabled(true)
+        stuckScanner.start()
+        idle()
+        callbacks().single().onScanResult(ScanSettingsCallbackType, result("AA:BB:CC:00:11:22", -60, byteArrayOf(2, 1, 6)))
+        var outcome: DrainOutcome? = null
+        scope.launch { outcome = stuckScanner.drain() }
+        idle()
+        assertNull("still waiting for the core", outcome)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(BleScanner.DRAIN_TIMEOUT_MS + 1))
+        assertEquals(DrainOutcome.Failed("the observations did not flush"), outcome)
+        assertTrue("the scan stopped anyway", callbacks().isEmpty())
+    }
 }
+

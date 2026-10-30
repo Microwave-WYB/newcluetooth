@@ -65,6 +65,8 @@ class AppGraph(private val app: Application) {
     val uploads get() = placeholders.uploads
     val exportShare get() = placeholders.exportShare
     val gattRunner get() = placeholders.gattRunner
+    /** R-10: lane A's storage-full event and cleanups (placeholder until they land). */
+    val storageCleanup: StorageCleanup get() = placeholders.storageCleanup
 
     private val locationClient by lazy { LocationClient(app, ingest, scope, LocationClient.processStarted(scope)) }
     val location: LocationStatusSource get() = locationClient
@@ -80,6 +82,8 @@ class AppGraph(private val app: Application) {
         PlatformRecorder(
             ingest, scanner, locationClient, AndroidForegroundHost(app), AndroidRecordingGrants(app),
             { scanner.environment() }, io, scope, coreStates,
+            // R-10: pause on storage full. Once lane A lands it: core events filterIsInstance<CoreEvent.StorageFull>().
+            storageFull = storageCleanup.storageFull.map { it.n },
         )
     }
     val mapCache: MapCacheInfo by lazy { MapLibreCacheInfo(app) }

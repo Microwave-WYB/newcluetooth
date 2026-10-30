@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -39,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -119,7 +121,9 @@ enum class SegmentedSize(val track: Dp, val option: Dp) {
 /**
  * C-4 Segmented: a `--fill2` pill track with 2 dp padding; the selected `--seg` thumb (`--shadow-thumb`) slides to
  * the new option over `--t-std`. Labels are 14 sp, `--t2`, the selected one `--t1` at 500. Options share the width
- * equally. Width comes from [modifier] (184 dp in a sheet header, the full width for the device tabs).
+ * equally. Width comes from [modifier] (184 dp in a sheet header, the full width for the device tabs). As in the
+ * CSS (`white-space: nowrap`, overflow visible), a label is centered on its option and may run into the option's
+ * 16 dp padding rather than being cut: "This area" needs about 62 dp of a header option's 90.
  */
 @Composable
 fun Segmented(
@@ -163,12 +167,12 @@ fun Segmented(
                         .height(size.option)
                         .clip(shape)
                         .selectable(on, interactionSource = source, indication = null, role = Role.RadioButton) { onSelect(i) }
-                        .focusRing(source, shape)
-                        .padding(horizontal = Css.Seg_Button.padding.left),
+                        .focusRing(source, shape),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         label,
+                        Modifier.wrapContentWidth(unbounded = true).testTag("segLabel:$i"),
                         style = CluetoothTheme.type.control.copy(fontWeight = if (on) Weights.Medium else Weights.Regular),
                         color = fg,
                         maxLines = 1,

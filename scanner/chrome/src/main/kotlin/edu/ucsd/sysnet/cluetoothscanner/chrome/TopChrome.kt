@@ -21,6 +21,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.focusRing
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -249,13 +252,25 @@ fun SearchBox(
         if (open) { runCatching { focus.requestFocus() }; keyboard?.show() } else keyboard?.hide()
     }
     val inputAlpha by animateFloatAsState(if (open) 1f else 0f, m.fade(), label = "sbxInput")
+    // C-9 / Q-3 (`.search-box.open:focus-within`): the open field turns `--field` with the inset ring while focused
+    val input = remember { MutableInteractionSource() }
+    val focused by input.collectIsFocusedAsState()
+    val bg by animateColorAsState(
+        when {
+            !open -> c.fill1
+            focused -> c.field
+            else -> c.fill2
+        },
+        m.fade(), label = "sbxBg",
+    )
     Box(
         modifier
             .width(width)
             .height(Tokens.rb)
             .tokenShadow(CluetoothTheme.shadows.shadowFloat, shape)
             .clip(shape)
-            .background(if (open) c.fill2 else c.fill1)
+            .background(bg)
+            .focusRing(input, shape)
             .testTag("searchBox"),
     ) {
         if (open || inputAlpha > 0f) {
@@ -265,6 +280,7 @@ fun SearchBox(
                 singleLine = true,
                 textStyle = CluetoothTheme.type.control.copy(fontSize = Tokens.searchSize.sp, color = c.t1),
                 cursorBrush = SolidColor(c.blue),
+                interactionSource = input,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = Tokens.rb, end = Tokens.gutter)

@@ -22,7 +22,8 @@ class AndroidGattLinkFactory(
     private val context: Context,
     private val device: BluetoothDevice,
 ) : GattLinkFactory {
-    override fun connect(sink: GattEventSink): GattLink = AndroidGattLink(context, device, sink)
+    /** Null when the stack refused the connection (`connectGatt` returned null): the engine records CALL_REJECTED. */
+    override fun connect(sink: GattEventSink): GattLink? = AndroidGattLink(context, device, sink).takeIf { it.opened }
 }
 
 @SuppressLint("MissingPermission")
@@ -103,20 +104,21 @@ internal class AndroidGattLink(
         }
     }
 
-    private val gatt: BluetoothGatt = checkNotNull(
-        device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE),
-    ) { "connectGatt returned null" }
+    private val gatt: BluetoothGatt? = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
 
-    override fun requestMtu(mtu: Int): Boolean = gatt.requestMtu(mtu)
+    /** False when `connectGatt` returned null; the factory then hands out no link. */
+    val opened: Boolean get() = gatt != null
+
+    override fun requestMtu(mtu: Int): Boolean = gatt?.requestMtu(mtu) ?: false
 
     override fun readPhy() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) gatt.readPhy()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) gatt?.readPhy()
     }
 
-    override fun discoverServices(): Boolean = gatt.discoverServices()
+    override fun discoverServices(): Boolean = gatt?.discoverServices() ?: false
 
     override fun services(): List<GattServiceSnapshot> {
-        val services = gatt.services.orEmpty()
+        val services = gatt?.services.orEmpty()
         return services.mapIndexed { s, service ->
             GattServiceSnapshot(
                 uuid = service.uuid,
@@ -145,13 +147,17 @@ internal class AndroidGattLink(
     override fun read(ref: AttributeRef): Boolean {
         val descriptor = ref.descriptor
         return if (descriptor == null) {
-            characteristicsByRef[ref]?.let(gatt::readCharacteristic) ?: false
+            characteristicsByRef[ref]?.let { gatt?.readCharacteristic(it) } ?: false
         } else {
-            descriptorsByRef[ref]?.let(gatt::readDescriptor) ?: false
+            descriptorsByRef[ref]?.let { gatt?.readDescriptor(it) } ?: false
         }
     }
 
-    override fun disconnect() = gatt.disconnect()
+    override fun disconnect() {
+        gatt?.disconnect()
+    }
 
-    override fun close() = gatt.close()
+    override fun close() {
+        gatt?.close()
+    }
 }

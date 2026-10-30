@@ -7,7 +7,8 @@ internal class CallbackFence(
     private val post: (Runnable) -> Boolean,
 ) {
     fun enqueue(afterFence: () -> Unit) {
-        check(post(Runnable(afterFence))) { "Failed to post BLE callback fence" }
+        // A looper that refuses the post is quitting: nothing queued will run any more, so the fence is passed.
+        if (!post(Runnable(afterFence))) afterFence()
     }
 
     suspend fun await() {

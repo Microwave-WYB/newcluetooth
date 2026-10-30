@@ -14,7 +14,8 @@ internal class ActiveRequestState<T> {
         get() = activeRequest != null
 
     fun begin(callbackFactory: (Long) -> T): ActiveRequest<T> {
-        check(activeRequest == null) { "request is already active" }
+        // A new request replaces an active one (its generation stops being accepted), never a crash.
+        stop()
         val generation = generations.activate()
         return ActiveRequest(generation, callbackFactory(generation)).also {
             activeRequest = it

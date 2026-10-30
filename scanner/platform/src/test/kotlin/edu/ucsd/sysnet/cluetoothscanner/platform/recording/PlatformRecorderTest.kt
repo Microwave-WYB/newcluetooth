@@ -15,6 +15,8 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.api.core.UploadStatus
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -158,7 +160,7 @@ class PlatformRecorderTest {
         missing = listOf("android.permission.BLUETOOTH_SCAN")
         val recorder = recorder()
         val result = recorder.start()
-        assertTrue(result.isFailure)
+        assertEquals(PlatformResult.Err(PlatformError.MissingGrants(listOf("android.permission.BLUETOOTH_SCAN"))), result)
         assertTrue(log.isEmpty())
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertNotNull(recorder.state.value.error)
@@ -169,7 +171,7 @@ class PlatformRecorderTest {
     fun `a refused foreground service creates no session`() = runTest {
         foregroundAllowed = false
         val recorder = recorder()
-        assertTrue(recorder.start().isFailure)
+        assertTrue((recorder.start() is PlatformResult.Err))
         assertEquals(listOf("host.enter"), log)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertEquals(PlatformRecorder.SERVICE_REFUSED, recorder.state.value.error)
@@ -179,7 +181,7 @@ class PlatformRecorderTest {
     @Test
     fun `R-2 start enters the foreground, then opens the session, then collects`() = runTest {
         val recorder = recorder()
-        assertEquals("s1", recorder.start().getOrThrow())
+        assertEquals(PlatformResult.Ok("s1"), recorder.start())
         assertEquals(listOf("host.enter", "core.start", "location.start", "scanner.start"), log)
         val state = recorder.state.value
         assertEquals(Phase.Recording, state.phase)
@@ -188,7 +190,7 @@ class PlatformRecorderTest {
         assertEquals(26, state.deviceCount)
         assertNull(state.error)
         // A second start is the same recording.
-        assertEquals("s1", recorder.start().getOrThrow())
+        assertEquals(PlatformResult.Ok("s1"), recorder.start())
         assertEquals(1, core.sessions)
     }
 
@@ -196,7 +198,7 @@ class PlatformRecorderTest {
     fun `a core failure at start leaves the foreground and stays idle`() = runTest {
         core.failStart = CoreException.Io("disk full")
         val recorder = recorder()
-        assertTrue(recorder.start().isFailure)
+        assertTrue((recorder.start() is PlatformResult.Err))
         assertEquals(listOf("host.enter", "core.start", "host.leave"), log)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertFalse(inForeground)
@@ -235,7 +237,7 @@ class PlatformRecorderTest {
         val recorder = recorder()
         recorder.start()
         log.clear()
-        assertEquals("s1", recorder.stop().getOrThrow())
+        assertEquals(PlatformResult.Ok("s1"), recorder.stop())
         assertEquals(listOf("scanner.drain", "core.stop", "location.stop", "host.leave"), log)
         assertEquals(Phase.Idle, recorder.state.value.phase)
         assertEquals("V-3 stays on the ended session", "s1", recorder.state.value.sessionId)
@@ -257,7 +259,7 @@ class PlatformRecorderTest {
         core.failStop = CoreException.Io("seal failed")
         val recorder = recorder()
         recorder.start()
-        assertTrue(recorder.stop().isFailure)
+        assertTrue((recorder.stop() is PlatformResult.Err))
         assertEquals(Phase.Recording, recorder.state.value.phase)
         assertNotNull(recorder.state.value.error)
         assertTrue(inForeground)

@@ -1,5 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.platform.fake
 
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Recorder
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
@@ -25,54 +27,72 @@ class FakeRecorder(
     private val _state = MutableStateFlow(RecorderState.Idle)
     override val state: StateFlow<RecorderState> = _state.asStateFlow()
 
-    override suspend fun start(): Result<String> {
-        if (_state.value.phase != Phase.Idle) return Result.failure(IllegalStateException("already recording"))
+    override suspend fun start(): PlatformResult<String> {
+        if (_state.value.phase != Phase.Idle) return PlatformResult.Err(PlatformError.Busy)
         if (!grantsOk()) {
-            _state.update { it.copy(error = MISSING_GRANT) }
-            return Result.failure(SecurityException(MISSING_GRANT))
+            val error = PlatformError.MissingGrants(listOf(MISSING_PERMISSION))
+            _state.update { it.copy(error = error.message) }
+            return PlatformResult.Err(error)
         }
         val id = onStart()
         _state.value = RecorderState.Idle.copy(phase = Phase.Recording, sessionId = id, runningSinceMs = nowMs())
-        return Result.success(id)
+        return PlatformResult.Ok(id)
     }
 
-    override suspend fun pause() {
+    override suspend fun pause(): PlatformResult<Unit> {
         val current = _state.value
-        if (current.phase != Phase.Recording) return
+        if (current.phase != Phase.Recording) return PlatformResult.Ok(Unit)
         onPause()
         val now = nowMs()
         _state.value = current.copy(
             phase = Phase.Paused,
+            pause = RecorderState.PauseReason.User,
             activeBeforeMs = current.activeBeforeMs + (now - (current.runningSinceMs ?: now)),
             runningSinceMs = null,
         )
+        return PlatformResult.Ok(Unit)
     }
 
-    override suspend fun resume() {
+    override suspend fun resume(): PlatformResult<Unit> {
         val current = _state.value
-        if (current.phase != Phase.Paused) return
+        if (current.phase != Phase.Paused) return PlatformResult.Ok(Unit)
         onResume()
-        _state.value = current.copy(phase = Phase.Recording, runningSinceMs = nowMs())
+        _state.value = current.copy(phase = Phase.Recording, runningSinceMs = nowMs(), pause = null)
+        return PlatformResult.Ok(Unit)
     }
 
-    override suspend fun stop(): Result<String> {
+    override suspend fun stop(): PlatformResult<String> {
         val current = _state.value
-        if (current.phase != Phase.Recording && current.phase != Phase.Paused) {
-            return Result.failure(IllegalStateException("not recording"))
-        }
+        if (current.phase != Phase.Recording && current.phase != Phase.Paused) return PlatformResult.Err(PlatformError.NotRecording)
         val id = onStop()
         // V-3: the UI stays on the session that just ended; the state keeps its id.
         _state.value = RecorderState.Idle.copy(sessionId = id)
-        return Result.success(id)
+        return PlatformResult.Ok(id)
     }
 
     /** The live simulator's shown device count. */
     fun setDeviceCount(count: Int) = _state.update { it.copy(deviceCount = count) }
 
+    /**
+     * R-10: the core reports storage full and pauses the recording, as `PlatformRecorder` shows it. A [resume] ends
+     * it (the fake's core always accepts), as does [stop].
+     */
+    fun storageFull(freeBytes: Long) {
+        val current = _state.value
+        if (current.phase != Phase.Recording && current.phase != Phase.Paused) return
+        val now = nowMs()
+        _state.value = current.copy(
+            phase = Phase.Paused,
+            activeBeforeMs = current.activeBeforeMs + (now - (current.runningSinceMs ?: now)),
+            runningSinceMs = null,
+            pause = RecorderState.PauseReason.StorageFull(freeBytes),
+        )
+    }
+
     /** Bluetooth off while recording (§4.1). */
     fun setScannerDeferred(deferred: Boolean) = _state.update { it.copy(scannerDeferred = deferred) }
 
     private companion object {
-        const val MISSING_GRANT = "Nearby devices and precise location are needed to record"
+        const val MISSING_PERMISSION = "android.permission.BLUETOOTH_SCAN"
     }
 }
