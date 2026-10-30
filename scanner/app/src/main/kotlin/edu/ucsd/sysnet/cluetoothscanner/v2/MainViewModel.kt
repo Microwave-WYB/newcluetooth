@@ -11,6 +11,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.AllSessionsSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
@@ -22,7 +23,6 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
-import edu.ucsd.sysnet.cluetoothscanner.chrome.DiscoveryBins
 import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
@@ -45,7 +45,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
@@ -84,25 +83,8 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     private val _ui = MutableStateFlow(MainUiState())
     val ui: StateFlow<MainUiState> = _ui.asStateFlow()
 
-    private val _view = MutableStateFlow<ViewData?>(null)
-    /** The session view as last read for its key (the view job is its only writer); see [shownView]. */
-    val view: StateFlow<ViewData?> = _view.asStateFlow()
-
-    private val _search = MutableStateFlow<SearchResults?>(null)
-    /** The search page's results (the search job is their only writer); see [shownSearch]. */
-    val search: StateFlow<SearchResults?> = _search.asStateFlow()
-
-    private val _sessions = MutableStateFlow<SessionsListState?>(null)
-    /** The sessions list (the sessions queue is its only writer); see [shownSessions]. */
-    val sessions: StateFlow<SessionsListState?> = _sessions.asStateFlow()
-
     val recorder: StateFlow<RecorderState> get() = graph.recorder.state
 
-    private val _discovery = MutableStateFlow(DiscoveryBins.Empty)
-    /** R-4a: the current recording's discovery rate (empty while not recording). */
-    val discovery: StateFlow<DiscoveryBins> = _discovery.asStateFlow()
-    /** R-4a: bumped by [MainEffect.ReloadDiscoveryRate] to read the rate again. */
-    private val discoveryReads = MutableStateFlow(0)
     val settings: StateFlow<Settings> get() = graph.settings.settings
     val location: StateFlow<LocationStatus> get() = graph.location.status
 
@@ -121,8 +103,6 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     val requests: SharedFlow<ActivityRequest> = _requests
 
     private val events = Channel<MainEvent>(Channel.UNLIMITED)
-    /** Re-read requests for the sessions list, conflated: one read answers every request made while it runs. */
-    private val sessionReads = Channel<Unit>(Channel.CONFLATED)
 
     /** Every intent and result goes through here; on the main thread the consumer reduces it before this returns. */
     fun dispatch(e: MainEvent) {
@@ -177,15 +157,18 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             // §2.6: subscribe before querying
             launch(start = CoroutineStart.UNDISPATCHED) {
                 guard(MainTask.CoreEvents) {
-                    q.events.collect { if (it is CoreEvent.SessionsChanged || it is CoreEvent.DataInvalidated) sessionReads.trySend(Unit) }
+                    q.events.collect {
+                        when (it) {
+                            is CoreEvent.SessionsChanged -> dispatch(MainEvent.CoreSessionsChanged)
+                            is CoreEvent.DataInvalidated -> dispatch(MainEvent.CoreDataInvalidated)
+                            else -> Unit
+                        }
+                    }
                 }
             }
-            launch(start = CoroutineStart.UNDISPATCHED) {
-                for (r in sessionReads) guard(MainTask.Sessions) { _sessions.value = readSessions(q) }
-            }
             launch {
-                graph.recorder.state.map { it.phase to it.pause }.distinctUntilChanged()
-                    .collect { (phase, pause) -> dispatch(MainEvent.RecorderChanged(phase, pause)) }
+                graph.recorder.state.map { MainEvent.RecorderChanged(it.phase, it.pause, it.sessionId) }.distinctUntilChanged()
+                    .collect(::dispatch)
             }
             launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
             // R-10: the core stopped writing for lack of space
@@ -193,26 +176,33 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             // #79: storing kept failing; the recording paused
             launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFailed.collect { dispatch(MainEvent.StorageFailed(it)) } } }
             launch { viewWork(q) }
-            launch { discoveryWork(q) }
+            launch { discoveryWork() }
         }
     }
 
-    /** R-4a: the recording's discovery rate, read per session, per Retry and per `DataInvalidated` ([follow]). */
-    private suspend fun discoveryWork(q: CoreQueries) = graph.discoveryRates.follow(
-        session = graph.recorder.state.map { r -> r.sessionId.takeIf { r.phase != RecorderState.Phase.Idle } },
-        reads = discoveryReads,
-        invalidated = q.events.filterIsInstance<CoreEvent.DataInvalidated>().map { },
-        show = { _discovery.value = it },
-        failed = ::fail,
-    )
+    /**
+     * R-4a: the read of the recording's rate the state asks for ([MainUiState.discoveryKey]): its snapshot, then once
+     * per delta, each as [MainEvent.DiscoveryRead] with its key; an Err is [MainTask.DiscoveryRate]'s with its key.
+     */
+    private suspend fun discoveryWork() = ui.map { it.discoveryKey }.distinctUntilChanged().collectLatest { key ->
+        if (key == null) return@collectLatest
+        guard(MainTask.DiscoveryRate(key)) {
+            graph.discoveryRates.feed(key.sessionId).collect { r ->
+                when (r) {
+                    is CoreResult.Ok -> dispatch(MainEvent.DiscoveryRead(key, r.value))
+                    is CoreResult.Err -> fail(MainTask.DiscoveryRate(key), r.error)
+                }
+            }
+        }
+    }
 
     /** V-2 / V-7: the shown scope's view, read once per key; the search page's work lives inside it. */
     private suspend fun viewWork(q: CoreQueries) = ui.map { it.viewKey }.distinctUntilChanged().collectLatest { key ->
         val scope = key.scope
-        if (scope == null) { _view.value = null; return@collectLatest }
+        if (scope == null) return@collectLatest
         coroutineScope {
             launch { searchWork(q, key) }
-            guard(MainTask.View(key)) { _view.value = ViewData(key, q.sessionView(scope)) }
+            guard(MainTask.View(key)) { dispatch(MainEvent.ViewRead(ViewData(key, q.sessionView(scope)))) }
         }
     }
 
@@ -223,13 +213,14 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     private suspend fun searchWork(q: CoreQueries, view: ViewKey) =
         ui.map { it.searchKey }.distinctUntilChanged().collectLatest { key ->
             val scope = view.scope
-            if (key == null || key.view != view || scope == null) { _search.value = null; return@collectLatest }
+            if (key == null || key.view != view || scope == null) return@collectLatest
             guard(MainTask.Search(key)) {
                 val hits = q.search(scope, key.query, key.area)
-                _search.value = if (hits == null) SearchResults(key, null, emptyList()) else {
+                val results = if (hits == null) SearchResults(key, null, emptyList()) else {
                     val keys = hits.keys.copyOf(minOf(hits.keys.size, MAX_ROWS))
                     SearchResults(key, OrderedKeys(keys), q.deviceRows(scope, keys))
                 }
+                dispatch(MainEvent.SearchRead(results))
             }
         }
 
@@ -254,7 +245,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
                 val loaded = graph.settings.loaded() // V-6 decides on the stored settings, not the defaults
                 dispatch(MainEvent.SettingsLoaded(loaded, graph.permissions.state.value))
             }
-            MainEffect.LoadSessions -> sessionReads.trySend(Unit)
+            is MainEffect.LoadSessions -> dispatch(MainEvent.SessionsRead(effect.request, readSessions(ready().core.queries)))
             // D-1b: a failed read is Failed(effect), and the reducer keeps Categories with no notice
             MainEffect.LoadUiState -> graph.uiState.discoverView().orFail(effect)?.let { dispatch(MainEvent.UiStateRead(it)) }
             is MainEffect.SaveDiscoverView -> when (val saved = graph.uiState.saveDiscoverView(effect.view)) {
@@ -262,7 +253,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
                 // deliberate exception to the no-log-only rule (owner's OK): the remembered view is pure UI state
                 is UiStateResult.Err -> Log.w(TAG, "D-1b: the Discover view was not remembered: ${saved.message}")
             }
-            MainEffect.ReloadDiscoveryRate -> discoveryReads.value += 1
+            MainEffect.ReloadDiscoveryRate -> dispatch(MainEvent.RereadDiscovery)
             MainEffect.ReadLaunchFacts -> dispatch(MainEvent.LaunchFactsRead(launchFacts()))
             // a refused start, pause, resume or stop is the notice's (Failed), never only a log line
             MainEffect.StartRecording -> graph.recorder.start().orFail(effect)?.let { dispatch(MainEvent.RecordingStarted(it)) }

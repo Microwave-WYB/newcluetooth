@@ -96,7 +96,7 @@ class MainStorageFullTest {
     }
 
     @Test fun clearingTheDatabaseReopensTheLaunchView() {
-        assertEquals(listOf(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts),
+        assertEquals(listOf(MainEffect.LoadSessions(1), MainEffect.ReadLaunchFacts),
             reduce(freeing(Cleanup.LocalDatabase), freed(Cleanup.LocalDatabase to Bytes(1))).effects)
     }
 

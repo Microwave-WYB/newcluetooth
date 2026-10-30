@@ -8,6 +8,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import edu.ucsd.sysnet.cluetoothscanner.chrome.Cleanup
 import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission
+import edu.ucsd.sysnet.cluetoothscanner.chrome.DiscoveryBins
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 import org.junit.Assert.assertEquals
@@ -24,7 +25,7 @@ class MainReducerRandomTest {
     private val scopes = listOf(null, Scope.All, sessionA, sessionB)
     private val boxes = listOf(null, box, Bbox(0.0, 0.0, 1.0, 1.0))
 
-    private val effects = listOf(MainEffect.LoadSettings, MainEffect.LoadSessions, MainEffect.ReadLaunchFacts, MainEffect.LoadStorage,
+    private val effects = listOf(MainEffect.LoadSettings, MainEffect.LoadSessions(1), MainEffect.ReadLaunchFacts, MainEffect.LoadStorage,
         MainEffect.Export(Scope.All, ExportFormat.Csv, false), MainEffect.SaveOnboarding("ab1", true), MainEffect.Delete(Scope.All, true),
         MainEffect.StartRecording, MainEffect.PauseRecording, MainEffect.ResumeRecording, MainEffect.StopRecording,
         MainEffect.SheetsBack, MainEffect.UploadNow)
@@ -44,7 +45,7 @@ class MainReducerRandomTest {
             else listOf(edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.User,
                 edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFull(nextLong(0, 300_000_000)),
                 edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFailed("disk I/O error")).random(this)
-            MainEvent.RecorderChanged(phase, pause)
+            MainEvent.RecorderChanged(phase, pause, if (phase == Phase.Idle) null else listOf(null, "a", "b").random(this))
         }
         6 -> MainEvent.RecordingStarted(listOf("a", "b").random(this))
         7 -> MainEvent.StorageLoaded(StorageFacts(nextLong(100), nextLong(100), null, nextInt(3)))
@@ -72,7 +73,7 @@ class MainReducerRandomTest {
         37 -> listOf(MainEvent.Export(nextBoolean()), MainEvent.DeleteConfirmed, MainEvent.Delete(nextBoolean())).random(this)
         38 -> MainEvent.EditOnboarding { it.copy(step = it.step + 1) }
         39 -> MainEvent.Failed(
-            listOf(MainTask.Effect(effects.random(this)), MainTask.Link, MainTask.Unhandled, MainTask.Sessions, MainTask.Platform, MainTask.Launch,
+            listOf(MainTask.Effect(effects.random(this)), MainTask.Link, MainTask.Unhandled, MainTask.DiscoveryRate(DiscoveryKey("a", nextInt(1, 4))), MainTask.Platform, MainTask.Launch,
                 MainTask.View(ViewKey(sessionA, ViewEpoch(1)))).random(this),
             IllegalStateException("random failure"),
         )
@@ -98,6 +99,25 @@ class MainReducerRandomTest {
         else -> listOf(MainEvent.RequestPermission(OnboardingPermission.entries.random(this)), MainEvent.EnableBluetooth, MainEvent.FinishOnboarding).random(this)
     }
 
+    /** A read's result for the current request or a stale one, so every arrival order comes up. */
+    private fun Random.read(s: MainUiState, seen: List<ViewKey>, list: SessionsListState): MainEvent = when (nextInt(7)) {
+        0 -> MainEvent.ViewRead(ViewData(seen.random(this), view(sessionA)))
+        1 -> MainEvent.SearchRead(
+            SearchResults(
+                s.searchKey?.takeIf { nextBoolean() } ?: SearchKey(seen.random(this), listOf("t", "tile").random(this), null),
+                OrderedKeys(longArrayOf(nextLong(9))), emptyList(),
+            ),
+        )
+        2 -> MainEvent.SessionsRead(nextInt(0, s.sessionsAsked + 2), list.copy(all = AllSessionsSummary(nextInt(5), 0, null)))
+        3 -> MainEvent.DiscoveryRead(
+            s.discoveryKey?.takeIf { nextBoolean() } ?: DiscoveryKey(listOf("a", "b").random(this), nextInt(0, s.discoveryAsked + 2)),
+            DiscoveryBins(DiscoveryBins.BIN_MS, listOf(DiscoveryBins.Bin(0, nextInt(1, 9))), emptyList()),
+        )
+        4 -> MainEvent.CoreSessionsChanged
+        5 -> MainEvent.CoreDataInvalidated
+        else -> MainEvent.RereadDiscovery
+    }
+
     @Test fun invariantsHoldAfterEveryStep() {
         val random = Random(20261029)
         val list = SessionsListState(null, AllSessionsSummary(0, 0, null), emptyList(), selected = null)
@@ -105,7 +125,7 @@ class MainReducerRandomTest {
             var s = MainUiState()
             val seenKeys = mutableListOf(s.viewKey)
             repeat(STEPS) { stepNo ->
-                val e = random.event()
+                val e = if (random.nextInt(4) == 0) random.read(s, seenKeys, list) else random.event()
                 val step = reduce(s, e)
                 val n = step.state
                 fun check(what: String, ok: Boolean) { if (!ok) fail("run $run step $stepNo $e: $what\n  before $s\n  after $n\n  effects ${step.effects}") }
@@ -119,11 +139,24 @@ class MainReducerRandomTest {
                 if (n.viewKey != s.viewKey) seenKeys += n.viewKey
                 // only the current key's data shows; an earlier read never does
                 seenKeys.takeLast(RECENT_KEYS).forEach { k ->
-                    val shown = shownView(n, ViewData(k, view(k.scope ?: Scope.All))) != null
+                    val shown = shownView(n.copy(viewData = ViewData(k, view(k.scope ?: Scope.All)))) != null
                     check("view of $k shown=$shown", shown == (k == n.viewKey && n.scope != null))
                 }
+                // the reads: a result is taken only for the request it answers, whatever order they arrive in
+                if (n.viewData != s.viewData) check("view data not from its key's read", e is MainEvent.ViewRead && e.data == n.viewData && e.data.key == s.viewKey)
+                if (n.searchResults != s.searchResults) check("results not from the query's read", e is MainEvent.SearchRead && e.results == n.searchResults && e.results.key == s.searchKey)
+                check("an older sessions read replaced a newer one", (n.sessionsData?.request ?: 0) >= (s.sessionsData?.request ?: 0))
+                check("sessions requests went back", n.sessionsAsked >= s.sessionsAsked)
+                step.effects.filterIsInstance<MainEffect.LoadSessions>().forEach {
+                    check("a sessions read reuses a request", it.request > s.sessionsAsked && it.request <= n.sessionsAsked)
+                }
+                if (n.discoveryKey != s.discoveryKey) n.discoveryKey?.let { check("a discovery read reuses a key", it.request > s.discoveryAsked) }
+                if (n.discovery != s.discovery) {
+                    check("rate not from its key's read", (e is MainEvent.DiscoveryRead && e.key == s.discoveryKey && e.bins == n.discovery) || n.discovery == DiscoveryBins.Empty)
+                }
+                check("a rate without a recording", n.discoveryKey != null || n.discovery == DiscoveryBins.Empty)
                 // the selection is always the shown scope
-                check("sessions selection", shownSessions(n, list)?.selected == n.scope)
+                check("sessions selection", shownSessions(n.copy(sessionsData = SessionsData(1, list)))?.selected == n.scope)
                 // the recorder: the mirror follows the phase; the panel exists only while recording
                 if (e is MainEvent.RecorderChanged) check("mirror", (n.recorder is RecorderMirror.Idle) == (e.phase == Phase.Idle))
                 if (n.recorderPanelOpen) check("panel while idle", n.recorder is RecorderMirror.Active)
@@ -136,10 +169,10 @@ class MainReducerRandomTest {
                 }
                 // search: work only on an open page in a view; the page draws exactly while open
                 n.searchKey?.let { check("search key", n.scope != null && n.searchPage != null && it.view == n.viewKey) }
-                check("search page drawn", (shownSearch(n, null) != null) == (n.searchPage != null))
+                check("search page drawn", (shownSearch(n.copy(searchResults = null)) != null) == (n.searchPage != null))
                 n.searchKey?.let { k ->
                     val r = SearchResults(k, OrderedKeys(longArrayOf()), emptyList())
-                    check("own results hidden", shownSearch(n, r)?.first?.results === r.order)
+                    check("own results hidden", shownSearch(n.copy(searchResults = r))?.first?.results === r.order)
                 }
                 step.effects.filterIsInstance<MainEffect.SheetsEnterSearch>().forEach { fx ->
                     check("pick without a page", s.searchPage?.query == fx.query && n.searchQuery == fx.query && n.page == null)
