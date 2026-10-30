@@ -34,9 +34,9 @@ internal sealed interface GattProblem {
     /** -6: the engine itself failed (a link call threw mid-discovery). */
     data object EngineFailed : GattProblem { override val code = GattRunner.GATT_INTERNAL_ERROR }
     /** -2: the app's process died while the discovery ran (recorded on the next start). */
-    data object ProcessDied : GattProblem { override val code = PROCESS_DEATH }
+    data object ProcessDied : GattProblem { override val code = GattRunner.GATT_PROCESS_DEATH }
     /** -3: a read never answered, and Android allows only one outstanding request. */
-    data object ReadStalled : GattProblem { override val code = READ_QUEUE_STALLED }
+    data object ReadStalled : GattProblem { override val code = GattRunner.GATT_READ_QUEUE_STALLED }
 
     // Android's GATT statuses
     data object GattError : GattProblem { override val code = 133 }
@@ -46,6 +46,8 @@ internal sealed interface GattProblem {
     data object FailedToEstablish : GattProblem { override val code = 62 }
     data object InsufficientAuthentication : GattProblem { override val code = 5 }
     data object InsufficientEncryption : GattProblem { override val code = 15 }
+    /** 257 GATT_FAILURE: the stack refused the call itself. */
+    data object StackRefused : GattProblem { override val code = 257 }
     /** Any other status. */
     data class Unknown(override val code: Int) : GattProblem
 
@@ -68,8 +70,8 @@ internal fun gattProblem(failure: GattFailure?, device: GattDeviceFacts): GattPr
     is GattFailure.Other -> when (failure.status) {
         GattRunner.GATT_UNAVAILABLE -> GattProblem.Unavailable
         GattRunner.GATT_INTERNAL_ERROR -> GattProblem.EngineFailed
-        PROCESS_DEATH -> GattProblem.ProcessDied
-        READ_QUEUE_STALLED -> GattProblem.ReadStalled
+        GattRunner.GATT_PROCESS_DEATH -> GattProblem.ProcessDied
+        GattRunner.GATT_READ_QUEUE_STALLED -> GattProblem.ReadStalled
         GattRunner.GATT_NO_TARGET -> when {
             device.connectable == false -> GattProblem.NotConnectable
             !device.seenRecently -> GattProblem.NotSeenRecently
@@ -82,6 +84,7 @@ internal fun gattProblem(failure: GattFailure?, device: GattDeviceFacts): GattPr
         62 -> GattProblem.FailedToEstablish
         5 -> GattProblem.InsufficientAuthentication
         15 -> GattProblem.InsufficientEncryption
+        257 -> GattProblem.StackRefused
         else -> GattProblem.Unknown(failure.status)
     }
 }
@@ -102,6 +105,7 @@ internal fun GattProblem.reason(): String = when (this) {
     GattProblem.FailedToEstablish -> "Couldn't establish a connection. The device may be out of range"
     GattProblem.InsufficientAuthentication -> "The device requires pairing"
     GattProblem.InsufficientEncryption -> "The device requires an encrypted (paired) connection"
+    GattProblem.StackRefused -> "Android's Bluetooth stack refused the request"
     is GattProblem.Unknown -> "Unexpected Bluetooth error"
     GattProblem.TimedOut -> "The device didn't respond in time"
     GattProblem.DisconnectedUnexpectedly -> "The device disconnected unexpectedly"
@@ -109,11 +113,6 @@ internal fun GattProblem.reason(): String = when (this) {
     GattProblem.Cancelled -> "Cancelled"
     GattProblem.Unreported -> "Failed"
 }
-
-// The engine's other stored codes (:platform's GattStatus; GattRunner names only the runner's own): -1 (timed out)
-// always arrives as GattFailure.TimedOut, these two as Other.
-private const val PROCESS_DEATH = -2
-private const val READ_QUEUE_STALLED = -3
 
 /** The secondary text after the reason: "(code -5)", or null. */
 internal fun GattProblem.codeText(): String? = code?.let { "(code $it)" }
