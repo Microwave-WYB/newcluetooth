@@ -38,7 +38,7 @@
   --map-route-opacity: 0.35;
   --map-routes-opacity: 0.18;  /* All sessions: every route, fainter */
   --map-density-opacity: 0.6;   /* the M-5 heatmap's opacity (fades out from zoom 16 to 18) */
-  --map-density-radius: 24;   /* the M-5 heatmap's radius, px, unitless for the map style */
+  --map-density-radius: 56;   /* the M-5 heatmap's radius, px, unitless for the map style (well beyond a cluster bubble) */
 
   /* ---- Selection ----
    * Scan filter chips: solid dark selected chip (light in dark mode, since --t1 flips). Set

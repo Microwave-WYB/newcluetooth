@@ -39,12 +39,11 @@
     0, "rgba(0,100,212,0)", 0.02, "rgba(0,100,212,0.6)", 0.25, "rgba(34,211,238,0.8)",
     0.55, "rgba(250,204,21,0.9)", 1, "rgba(220,38,38,1)"];
   /**
-   * M-5: the intensity, tuned on a stationary session (40 devices on one spot, 10 spread nearby, zoom 16.5): at 1.2
-   * the spot is yellow to red around its cluster bubble and fades through cyan and blue, a lone device is blue, a
-   * close pair turns cyan to yellow. At 2.5 a lone device is already red. Zoomed out, more devices share a pixel, so
-   * the intensity drops.
+   * M-5: the intensity, tuned on a stationary session (40 devices on one spot, 10 spread nearby, zoom 16.5) with the
+   * 56 dp radius: at 0.35 the spot reads red -> yellow -> cyan -> blue outward, well beyond its cluster bubble, and a
+   * lone device stays blue; at 0.7 the spot is a red disk. Zoomed out, more devices share a pixel, so it drops.
    */
-  const heatIntensity = ["interpolate", ["linear"], ["zoom"], 12, 0.5, 16, 1.2];
+  const heatIntensity = ["interpolate", ["linear"], ["zoom"], 12, 0.15, 16, 0.35];
   /** The layers() values, given tok(name) -> the token's value as a string (app.js: getComputedStyle). */
   const valuesFrom = (tok) => {
     const c = {};

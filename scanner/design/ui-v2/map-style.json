@@ -57,7 +57,7 @@
       "route": "#0064d4",
       "routeOpacity": 0.35,
       "densityOpacity": 0.6,
-      "densityRadius": 24,
+      "densityRadius": 56,
       "point": "#0064d4",
       "stroke": "#ffffff",
       "clusterText": "#ffffff",
@@ -76,7 +76,7 @@
       "route": "#3b9bff",
       "routeOpacity": 0.35,
       "densityOpacity": 0.6,
-      "densityRadius": 24,
+      "densityRadius": 56,
       "point": "#3b9bff",
       "stroke": "#ffffff",
       "clusterText": "#ffffff",
@@ -121,7 +121,7 @@
             ],
             1
           ],
-          "heatmap-radius": 24,
+          "heatmap-radius": 56,
           "heatmap-intensity": [
             "interpolate",
             [
@@ -131,9 +131,9 @@
               "zoom"
             ],
             12,
-            0.5,
+            0.15,
             16,
-            1.2
+            0.35
           ],
           "heatmap-color": [
             "interpolate",
@@ -408,7 +408,7 @@
             ],
             1
           ],
-          "heatmap-radius": 24,
+          "heatmap-radius": 56,
           "heatmap-intensity": [
             "interpolate",
             [
@@ -418,9 +418,9 @@
               "zoom"
             ],
             12,
-            0.5,
+            0.15,
             16,
-            1.2
+            0.35
           ],
           "heatmap-color": [
             "interpolate",

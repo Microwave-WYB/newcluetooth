@@ -169,10 +169,11 @@ class MapStyleSpecTest {
             assertEquals(JsonPrimitive(hex("--blue")), paint("points", "circle-color"))
             assertEquals(JsonPrimitive(5), paint("points", "circle-radius"))
             assertEquals(JsonPrimitive(hex("--blue")), paint("clusters", "circle-color"))
-            // M-5: the native heatmap, the same in both themes: weight 1 per device (a cell's count), radius 24,
+            // M-5: the native heatmap, the same in both themes: weight 1 per device (a cell's count), radius 56, intensity 0.15 at z12 to 0.35 at z16,
             // opacity 0.6 fading out from zoom 16 to 18
             assertEquals(JsonPrimitive("heatmap"), layers.getValue("density").getValue("type"))
-            assertEquals(JsonPrimitive(24), paint("density", "heatmap-radius"))
+            assertEquals(JsonPrimitive(56), paint("density", "heatmap-radius"))
+            assertEquals(Json.parseToJsonElement("""["interpolate",["linear"],["zoom"],12,0.15,16,0.35]"""), paint("density", "heatmap-intensity"))
             assertEquals(Json.parseToJsonElement("""["coalesce",["get","point_count"],1]"""), paint("density", "heatmap-weight"))
             assertEquals(Json.parseToJsonElement("""["interpolate",["linear"],["zoom"],16,0.6,18,0]"""), paint("density", "heatmap-opacity"))
             assertEquals(JsonPrimitive(hex("--map-route")), paint("route", "line-color"))
