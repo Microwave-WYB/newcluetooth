@@ -113,10 +113,6 @@ class MapStyleSpecTest {
         assertEquals(expected, spec.selection(null))
     }
 
-    @Test fun `R-5 mini map draws only route, end-dots and end-labels`() {
-        assertEquals(listOf("route", "end-dots", "end-labels"), ids(spec.miniMapLayers(MapTheme.Dark)))
-    }
-
     @Test fun `M-3 M-4 M-5 M-8 paint values come from the tokens, light and dark`() {
         for (theme in MapTheme.entries) {
             val t = Design.tokens

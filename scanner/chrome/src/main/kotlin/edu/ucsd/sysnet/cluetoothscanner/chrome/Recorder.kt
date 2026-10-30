@@ -69,7 +69,7 @@ fun rememberElapsedMs(activeBeforeMs: Long, runningSinceMs: Long?, now: () -> Lo
     return activeBeforeMs + (if (runningSinceMs != null) (t - runningSinceMs).coerceAtLeast(0) else 0)
 }
 
-/** The callbacks of the recorder control; :app forwards them to `Recorder` (B) and the R-5 fit action. */
+/** The callbacks of the recorder control; :app forwards them to `Recorder` (B). */
 class RecorderActions(
     val onStart: () -> Unit,
     val onExpand: () -> Unit,
@@ -77,17 +77,14 @@ class RecorderActions(
     val onPause: () -> Unit,
     val onResume: () -> Unit,
     val onStop: () -> Unit,
-    /** R-5: collapse the panel, close any page and fit the main map to the route. */
-    val onMiniMapClick: () -> Unit,
 )
 
 /**
  * R-1 … R-9, T-7: the record FAB, the island capsule and its panel as one element that morphs (`--t-morph`).
  * It fills the screen box it is given and positions itself ([RecorderGeometry]). While it is a [RecorderUi.Form.Fab]
  * :app places it in the layer above the map and below the sheets (P-3); recording, above the sheets (R-3).
- * While the panel is open a full-screen catch layer collapses it on a tap outside (R-4).
- *
- * @param miniMap the R-5 route mini map (E's `RouteMiniMap`), drawn non-interactive inside the panel
+ * While the panel is open a full-screen catch layer collapses it on a tap outside (R-4). The panel has no mini map
+ * (R-5 removed: one map renderer at a time).
  */
 @Composable
 fun RecorderControl(
@@ -97,12 +94,11 @@ fun RecorderControl(
     modifier: Modifier = Modifier,
     bottomCover: Dp = 0.dp,
     searching: Boolean = false,
-    miniMap: @Composable (Modifier) -> Unit = {},
 ) {
     val groupW = rememberRecorderGroupWidth(ui.elapsedMs)
     BoxWithConstraints(modifier.fillMaxSize()) {
         val g = RecorderGeometry.compute(ui.form, tablet, maxWidth, maxHeight, groupW, bottomCover, searching)
-        RecorderLayer(ui, g, actions, tablet, miniMap, catchOutside = true)
+        RecorderLayer(ui, g, actions, catchOutside = true)
     }
 }
 
@@ -125,8 +121,6 @@ fun RecorderLayer(
     ui: RecorderUi,
     g: RecorderGeometry,
     actions: RecorderActions,
-    tablet: Boolean,
-    miniMap: @Composable (Modifier) -> Unit = {},
     catchOutside: Boolean = true,
 ) {
     val c = CluetoothTheme.colors
@@ -190,18 +184,6 @@ fun RecorderLayer(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        val mapShape = RoundedCornerShape(edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric.recorderMap(tablet))
-                        Box(
-                            Modifier
-                                .padding(top = metaTop + Css.RecMeta.lineHeight + Css.RecMap.margin.top)
-                                .padding(horizontal = Css.RecMap.margin.left)
-                                .fillMaxWidth()
-                                .height(Css.RecMap.height)
-                                .clip(mapShape)
-                                .background(c.fill2)
-                                .testTag("recorderMiniMap")
-                                .clickable(remember { MutableInteractionSource() }, null, enabled = panel, onClick = actions.onMiniMapClick),
-                        ) { miniMap(Modifier.fillMaxSize()) }
                     }
                 }
                 // the row: dot + time (tap: expand or collapse), Pause/Resume and Stop at the concentric inset

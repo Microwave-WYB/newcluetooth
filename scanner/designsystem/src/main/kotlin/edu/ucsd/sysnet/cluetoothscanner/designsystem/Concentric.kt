@@ -42,9 +42,6 @@ object Concentric {
     fun recorderButtonInset(tablet: Boolean): Dp =
         recorderPanel(tablet) - (if (tablet) Tokens.iconBtn else Tokens.islandIb) / 2
 
-    /** R-5: the mini map is inset `--edge`: phone 22 − 12 = 10, tablet 28 − 12 = 16. */
-    fun recorderMap(tablet: Boolean): Dp = inner(recorderPanel(tablet), Tokens.edge)
-
     /** P-5 `--pop-r`: the location popover is concentric with its small pill button (32 / 2 + 12 = 28). */
     val popover: Dp get() = Tokens.popR
 

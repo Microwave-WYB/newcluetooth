@@ -52,8 +52,7 @@ class MainReducerRandomTest {
         11 -> boxes.random(this)?.let { MainEvent.CameraIdle(MapCamera(it, nextDouble(1.0, 18.0))) } ?: MainEvent.CloseSidebar
         12, 13, 14 -> MainEvent.SelectScope(scopes.random(this))
         15 -> listOf(MainEvent.StartRecording, MainEvent.PauseRecording, MainEvent.ResumeRecording, MainEvent.StopRecording).random(this)
-        16, 17 -> MainEvent.SetRecorderPanel(nextBoolean())
-        18 -> MainEvent.FitRoute
+        16, 17, 18 -> MainEvent.SetRecorderPanel(nextBoolean())
         19 -> MainEvent.SetLayout(LayoutMode.entries.random(this))
         20 -> MainEvent.ToggleSidebar
         21 -> MainEvent.SetLocationPopover(nextBoolean())

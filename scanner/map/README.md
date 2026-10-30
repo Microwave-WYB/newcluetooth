@@ -1,7 +1,13 @@
 # :map (lane E)
 
 MapLibre Android with the shared overlay style (`design/ui-v2/map-style.json`, copied into the assets at build time),
-the camera rules, selection, taps and the R-5 mini map. See `docs/v2-api.md` §6.6 and SPEC M, P-4, P-5, T-8.
+the camera rules, selection, taps and the locate control. See `docs/v2-api.md` §6.6 and SPEC M, P-4, P-5, T-8.
+
+**One MapLibre renderer at a time.** The app has exactly one `MapView` (`CluetoothMap`) and no `MapSnapshotter`:
+a second native renderer next to the main map crashed MapLibre 12.3.1 natively (SIGSEGV in
+`MapSnapshotter::Impl::onDidFinishLoadingStyle` once a snapshotter was collected while its style loaded), so SPEC
+R-5's mini map was removed (design a201027). `scanner/tools/single-renderer-check` fails the build on a
+`MapSnapshotter` or a second `MapView` in any `src/main`.
 
 ## Contract notes
 

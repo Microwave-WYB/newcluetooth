@@ -12,8 +12,7 @@ import kotlin.math.sqrt
 /**
  * M-8 (owner decision, design 8a4ae89): Start and End are not drawn when the session barely moved, that is when
  * every route point lies within [STATIONARY_RADIUS_M] of the first one. The test is the distance from the first
- * point, not the path length, so GPS jitter while standing still never counts as movement. The main map and the
- * R-5 mini map follow the same rule. Pure.
+ * point, not the path length, so GPS jitter while standing still never counts as movement. Pure.
  */
 object RouteEnds {
     const val STATIONARY_RADIUS_M = 50.0

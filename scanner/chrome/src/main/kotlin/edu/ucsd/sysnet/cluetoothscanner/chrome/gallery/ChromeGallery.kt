@@ -50,17 +50,17 @@ import java.util.TimeZone
 
 private val utc: TimeZone = TimeZone.getTimeZone("UTC")
 private fun at(h: Int, m: Int) = Calendar.getInstance(utc).apply { clear(); set(2026, 9, 28, h, m) }.timeInMillis
-private val noRecorder = RecorderActions({}, {}, {}, {}, {}, {}, {})
+private val noRecorder = RecorderActions({}, {}, {}, {}, {}, {})
 
 /** A recorder form as the prototype's static gallery cell draws it: `.recorder.static`, the non-island variant. */
 @Composable
 private fun StaticRecorder(form: RecorderUi.Form, paused: Boolean, boxWidth: Dp) {
-    val ui = RecorderUi(form, paused, (12 * 60 + 34) * 1000L, 26, FixSummary(32.88012, -117.23421, 8.0, 0), emptyList())
+    val ui = RecorderUi(form, paused, (12 * 60 + 34) * 1000L, 26, FixSummary(32.88012, -117.23421, 8.0, 0))
     val groupW = rememberRecorderGroupWidth(ui.elapsedMs)
     val g0 = RecorderGeometry.compute(form, true, boxWidth, Tokens.fab, groupW)
     val w = if (form == RecorderUi.Form.Panel) boxWidth - Tokens.edge * 2 else g0.width
     val g = g0.copy(x = 0.dp, y = 0.dp, width = w, groupX = if (form == RecorderUi.Form.Panel) (w - groupW) / 2 else g0.groupX)
-    Box(Modifier.width(g.width).height(g.height)) { RecorderLayer(ui, g, noRecorder, tablet = true, catchOutside = false) }
+    Box(Modifier.width(g.width).height(g.height)) { RecorderLayer(ui, g, noRecorder, catchOutside = false) }
 }
 
 private val recorderSection = "Recorder (main map only: idle FAB bottom-right, recording = top-center island)"

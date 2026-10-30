@@ -59,6 +59,10 @@ run = "node design/ui-v2/export.mjs --check"
 description = "Fail on the constructs AGENTS.md bans from v2 production Kotlin (!!, lateinit, unchecked as, error/check/require, TODO(), runBlocking, GlobalScope); exceptions in tools/crash-guard/allowlist.txt"
 run = ["python3 tools/crash-guard/crash_guard.py --self-test", "python3 tools/crash-guard/crash_guard.py"]
 
+[tasks.single-renderer]
+description = "Fail on a MapSnapshotter or a second MapLibre MapView in any src/main (one map renderer at a time, SPEC R-5 removed)"
+run = ["python3 tools/single-renderer/single_renderer.py --self-test", "python3 tools/single-renderer/single_renderer.py"]
+
 [tasks.core-test]
 description = "Lane A's v2 Kotlin modules: JVM tests of :core-api, :core-fake and :core-bridge (real bindings)"
 run = "./gradlew --no-daemon --max-workers=2 :core-api:test :core-fake:test :core-bridge:testDebugUnitTest"
@@ -96,6 +100,7 @@ run = [
   "mise run //scanner:host-guard-check",
   "mise run //scanner:design-export-check",
   "mise run //scanner:crash-guard",
+  "mise run //scanner:single-renderer",
   "mise run //scanner:wiki-bundle-test",
   "mise run //scanner:test",
   "mise run //scanner:core-test",

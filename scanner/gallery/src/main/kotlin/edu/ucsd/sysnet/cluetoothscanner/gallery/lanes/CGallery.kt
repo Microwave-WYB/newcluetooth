@@ -64,7 +64,7 @@ object CGallery : LaneGallery {
 
 @Composable
 private fun RecorderDemo() {
-    var ui by remember { mutableStateOf(RecorderUi(RecorderUi.Form.Fab, false, 754_000, 26, null, emptyList())) }
+    var ui by remember { mutableStateOf(RecorderUi(RecorderUi.Form.Fab, false, 754_000, 26, null)) }
     Box(Modifier.fillMaxSize().height(600.dp).background(CluetoothTheme.colors.fill2)) {
         RecorderControl(
             ui,
@@ -73,7 +73,7 @@ private fun RecorderDemo() {
                 onExpand = { ui = ui.copy(form = RecorderUi.Form.Panel) },
                 onCollapse = { ui = ui.copy(form = RecorderUi.Form.Capsule) },
                 onPause = { ui = ui.copy(paused = true) }, onResume = { ui = ui.copy(paused = false) },
-                onStop = { ui = ui.copy(form = RecorderUi.Form.Fab, paused = false) }, onMiniMapClick = {},
+                onStop = { ui = ui.copy(form = RecorderUi.Form.Fab, paused = false) },
             ),
             tablet = false,
         )

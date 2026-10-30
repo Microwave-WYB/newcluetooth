@@ -2,7 +2,6 @@ package edu.ucsd.sysnet.cluetoothscanner.chrome
 
 import androidx.compose.ui.unit.Dp
 import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
-import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.SpecValues
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
@@ -15,7 +14,6 @@ data class RecorderUi(
     val elapsedMs: Long,
     val deviceCount: Int,
     val fix: FixSummary?,
-    val route: List<GeoPoint>,
 ) {
     enum class Form { Fab, Capsule, Panel }
 }
@@ -37,7 +35,7 @@ data class RecorderGeometry(
     val buttonsInset: Dp,
     val buttonSize: Dp,
     val buttonGap: Dp,
-    /** The panel's extra content (the meta line and the mini map) sits below the row (phone) or above it (tablet). */
+    /** The panel's extra content (the meta line) sits below the row (phone) or above it (tablet). */
     val extrasBelowRow: Boolean,
 ) {
     val right: Dp get() = x + width
@@ -51,12 +49,14 @@ data class RecorderGeometry(
         fun buttonsWidth(tablet: Boolean): Dp =
             if (tablet) Tokens.iconBtn * 2 + Tokens.recGapTablet else Tokens.islandIb * 2 + Tokens.recGapPhone
 
-        /** The panel's height, from its content: the row, the one-line meta, the mini map and their margins. */
+        /**
+         * The panel's height, from its content: the row and the one-line meta (R-4; R-5's mini map is removed). On
+         * phone the panel ends `--edge` below the meta, the margin the mini map used to close it with.
+         */
         fun panelHeight(tablet: Boolean): Dp = if (tablet) {
-            Css.RecMeta.padding.top + Css.RecMeta.lineHeight + Css.RecMap.margin.top + Css.RecMap.height + Tokens.fab + PanelSlack
+            Css.RecMeta.padding.top + Css.RecMeta.lineHeight + Tokens.fab + PanelSlack
         } else {
-            Tokens.islandH + Css.RecorderTop_RecMeta.paddingTop + Css.RecMeta.lineHeight + Css.RecMap.margin.top +
-                Css.RecMap.height + Css.RecorderTop_RecMap.marginBottom + PanelSlack
+            Tokens.islandH + Css.RecorderTop_RecMeta.paddingTop + Css.RecMeta.lineHeight + Tokens.edge + PanelSlack
         }
 
         /**

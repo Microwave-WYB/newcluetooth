@@ -26,7 +26,7 @@ object BundledGlyphs {
     private val seeded = AtomicBoolean(false)
 
     /**
-     * Seeds the cache once per process. Call after MapLibre.getInstance and before a map or snapshotter loads. A
+     * Seeds the cache once per process. Call after MapLibre.getInstance and before the map loads. A
      * failure (no asset, no cache) comes back as a value; the labels then wait for the network as before.
      */
     fun install(context: Context, spec: MapStyleSpec): Seed {

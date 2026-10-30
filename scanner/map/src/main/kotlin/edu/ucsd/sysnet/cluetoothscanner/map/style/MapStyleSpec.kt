@@ -56,9 +56,6 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
         return out
     }
 
-    /** The subset the R-5 mini map draws (the prototype's `miniMap`: route, end-dots, end-labels). */
-    fun miniMapLayers(theme: MapTheme): List<JsonObject> = styleLayers(theme).filter { it.id in MINI_MAP_LAYERS }
-
     private val runtime = root.obj("runtime")
 
     /** The one font map-style.js names for its labels (text-font), the same in both themes. */
@@ -123,7 +120,6 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
         const val CELLS_LAYER = "cells"
         const val CELL_COUNT_LAYER = "cell-count"
         private val CLONES = mapOf("clusters" to CELLS_LAYER, "cluster-count" to CELL_COUNT_LAYER)
-        private val MINI_MAP_LAYERS = setOf("route", "end-dots", "end-labels")
 
         /** Parses a map-style.json this module ships (its tests read the committed export); throws if it is broken. */
         internal fun parse(json: String): MapStyleSpec = MapStyleSpec(Json.parseToJsonElement(json).jsonObject)
@@ -138,7 +134,6 @@ class MapStyleSpec private constructor(private val root: JsonObject) {
                 for (theme in MapTheme.entries) {
                     spec.baseStyleUrl(theme)
                     spec.layers(theme)
-                    spec.miniMapLayers(theme)
                 }
                 spec.selection(null)
                 spec.selection("00:00:00:00:00:00")

@@ -1,7 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.v2
 
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
-import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
@@ -70,11 +69,6 @@ fun launchTarget(liveSessionId: String?, recordOnOpen: Boolean, sessionCount: In
     sessionCount > 0 -> LaunchTarget.AllSessions
     else -> LaunchTarget.FirstRun
 }
-
-/** The bounding box of points (R-5: fit the main map to the route), or null without any. */
-fun bboxOf(points: List<GeoPoint>): Bbox? = if (points.isEmpty()) null else Bbox(
-    west = points.minOf { it.lon }, south = points.minOf { it.lat }, east = points.maxOf { it.lon }, north = points.maxOf { it.lat },
-)
 
 /**
  * P-3 / P-5: what the FAB layer (the FAB, locate and the warning) sits above on phone: the root sheet's peek plus the

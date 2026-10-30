@@ -30,7 +30,7 @@ class RecorderScreenTest {
 
     private val fix = FixSummary(32.88012, -117.23421, 8.0, 1000)
     private fun ui(form: RecorderUi.Form, paused: Boolean = false) =
-        RecorderUi(form, paused, (12 * 60 + 34) * 1000L, 26, fix, emptyList())
+        RecorderUi(form, paused, (12 * 60 + 34) * 1000L, 26, fix)
 
     private fun shots(tablet: Boolean, size: String, dark: Boolean) {
         run {
@@ -43,7 +43,6 @@ class RecorderScreenTest {
                 onPause = { log += "pause"; state = state.copy(paused = true) },
                 onResume = { log += "resume"; state = state.copy(paused = false) },
                 onStop = { log += "stop"; state = state.copy(form = RecorderUi.Form.Fab) },
-                onMiniMapClick = { log += "map" },
             )
             compose.setContent {
                 CluetoothTheme(darkTheme = dark, reducedMotion = true) {
@@ -58,11 +57,10 @@ class RecorderScreenTest {
             compose.onNodeWithContentDescription("Record").performClick(); compose.waitForIdle(); shot("capsule")
             compose.onNodeWithContentDescription("Pause").performClick(); compose.waitForIdle(); shot("capsule-paused")
             compose.onNodeWithTag("recorderOpen").performClick(); compose.waitForIdle(); shot("panel")
-            compose.onNodeWithTag("recorderMiniMap").performClick()
             compose.onNodeWithTag("recorderCatch").performClick(); compose.waitForIdle()
             compose.onNodeWithContentDescription("Resume").performClick()
             compose.onNodeWithContentDescription("Stop").performClick(); compose.waitForIdle()
-            assertEquals(listOf("start", "pause", "expand", "map", "collapse", "resume", "stop"), log)
+            assertEquals(listOf("start", "pause", "expand", "collapse", "resume", "stop"), log)
         }
     }
 

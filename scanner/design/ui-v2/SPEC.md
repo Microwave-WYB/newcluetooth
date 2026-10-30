@@ -225,13 +225,12 @@ Each component is built once. Its size, color and state rules come from these to
     the panel's width (`--t-morph`), and collapsing returns exactly to the capsule layout.
   - On phone the panel widens symmetrically to the full width minus 2 × `--edge`, with a 22 dp radius and
     `--shadow-raised`. Its extra content grows downward below the row:
-    - "N devices · lat, lon ±N m" (13/20 `--t2`, one line);
-    - a 132 dp rounded route mini map.
+    - "N devices · lat, lon ±N m" (13/20 `--t2`, one line).
   - Its height is measured from its content.
   - While it is open, ☰ and search fade out because the panel covers them.
   - A tap outside, or Back, collapses it to the capsule.
-- **R-5 Mini map.** Non-interactive, showing the session route with Start/End (M-8) and no caption. Tapping it
-  collapses the panel, closes any page, and fits the main map to the route.
+- **R-5 (removed) Mini map.** The panel has no mini map. Only one map renderer exists at a time; a second one (a
+  snapshotter) was the suspected cause of native MapLibre crashes on device.
 - **R-6 Pause/Resume.**
   - Pause swaps the icon to play ("Resume"), makes the dot static grey and pauses recording.
   - Resume reverses it.
@@ -500,7 +499,6 @@ Each component is built once. Its size, color and state rules come from these to
   - Start and End are not drawn when the session barely moved: every route point lies within 50 m of the first one.
     The test uses distance from the first point, not path length, so GPS jitter while standing still doesn't count
     as movement. This keeps a stationary recording's Start/End from covering the device cluster at the same spot.
-    The mini map (R-5) follows the same rule.
 - **M-9 Location.** With no session, the user's location is a radius-8 `--blue` dot with a 3 dp white stroke, at zoom
   16.
 - **M-10 Framing.** Showing a session fits its route and points:
