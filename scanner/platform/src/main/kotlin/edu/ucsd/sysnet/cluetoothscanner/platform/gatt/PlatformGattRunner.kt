@@ -51,6 +51,10 @@ class PlatformGattRunner(
             stored.updateAndGet { it + (view.discoveryId to view) }
         }
     })
+
+    /** App start, once the core is open: store what process death or a failed save left in the queue (§4.3). */
+    suspend fun recover() = discoveries.recoverStale()
+
     override fun discover(key: DeviceKey): Flow<GattView> = channelFlow {
         val startedMs = nowMs()
         fun fail(failure: GattFailure) = failedBeforeConnect("", key, startedMs, failure)
