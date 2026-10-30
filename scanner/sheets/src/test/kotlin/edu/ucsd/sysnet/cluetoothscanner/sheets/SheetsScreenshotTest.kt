@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
@@ -64,6 +65,8 @@ class SheetsScreenshotTest {
         }
         if (!tablet) compose.runOnIdle { s.stack.setHeight(s.stack.root, SheetHeight.Half) }
         shot("discover")
+        // D-1c: the header row on its own: view switch, segments, re-sort, filter
+        compose.onNodeWithTag(DiscoverTags.HEADER).captureRoboImage("src/test/screenshots/sheets/$size-$scheme-header.png")
         compose.runOnIdle { s.discover.toggleView() }
         shot("discover-list")
         compose.runOnIdle { s.discover.toggleView() }

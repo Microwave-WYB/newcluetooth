@@ -162,6 +162,10 @@ internal data class DiscoverState(
     val rowsVersion: Long = 0,
     val areaVersion: Long = 0,
     val searchVersion: Long = 0,
+    /** D-1c: the number of the newest re-sort asked for. */
+    val resortVersion: Long = 0,
+    /** D-1c: re-sorts applied so far (the list crossfades on each). */
+    val resorts: Int = 0,
     val liveAppends: Int = 0,
     val viewport: Bbox? = null,
 ) {
@@ -189,6 +193,10 @@ internal sealed interface DiscoverEvent {
     data class LiveRead(val live: Boolean) : DiscoverEvent
     /** D-1a: the user's view switch (D-1b: remembered). */
     data object ViewToggled : DiscoverEvent
+    /** D-1c: the re-sort button. */
+    data object ResortRequested : DiscoverEvent
+    /** D-1c: the core's order now (live RSSI while recording, the strongest seen otherwise), for re-sort [version]. */
+    class Resorted(val version: Long, val keys: LongArray) : DiscoverEvent
     /** D-1b: the remembered view, from :app (a new session view, or the store read after a restart). */
     data class ViewRestored(val view: DiscoverView) : DiscoverEvent
     data class SegmentSelected(val next: Segment) : DiscoverEvent
@@ -226,6 +234,10 @@ internal sealed interface DiscoverEffect {
     data class LoadRows(val version: Long, val query: RowsQuery) : Async
     /** Q-7: the root sheet's height, panel and scroll from before the search. */
     data class RestoreRoot(val back: SearchReturn) : Async
+    /** D-1c: read the order the core would sort now, for re-sort [version]. */
+    data class LoadResort(val version: Long) : Async
+    /** D-1c: the Discover lists start at the top. */
+    data object ScrollToTop : Async
     /** S-12. */
     data object RaiseRoot : Immediate
     /** Q-5, Q-7: the stack goes back to the root. */
@@ -303,6 +315,13 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
                 val next = if (state.view == DiscoverView.Categories) DiscoverView.List else DiscoverView.Categories
                 DiscoverStep(state.copy(view = next), listOf(DiscoverEffect.RaiseRoot, DiscoverEffect.ViewChosen(next)))
             }
+        // D-1c: the explicit user action G-9 allows: a new order from the current values. Not in search (hidden there)
+        DiscoverEvent.ResortRequested ->
+            if (ready == null || state.searching != null) DiscoverStep(state)
+            else (state.resortVersion + 1).let { v -> DiscoverStep(state.copy(resortVersion = v), listOf(DiscoverEffect.LoadResort(v))) }
+        is DiscoverEvent.Resorted ->
+            if (ready == null || state.searching != null || event.version != state.resortVersion) DiscoverStep(state)
+            else resorted(state, ready, event.keys)
         // D-1b: during search it is the view search returns to (Q-7), never the forced list; nothing is remembered
         is DiscoverEvent.ViewRestored -> {
             val s = state.searching
@@ -409,6 +428,23 @@ private fun liveRead(state: DiscoverState, live: Boolean): DiscoverStep = when (
     Liveness.Frozen -> DiscoverStep(state)
 }
 
+/**
+ * D-1c: the new order is the core's answer, then any session key it lacks (in the old order); nothing is lost. This
+ * area keeps its area and its keys, now in the new order; filters and the rows' own state stay. The lists go to the
+ * top, and the rows are re-read in the new order.
+ */
+private fun resorted(state: DiscoverState, ready: DiscoverPhase.Ready, keys: LongArray): DiscoverStep {
+    val order = KeyOrder.of(keys).append(ready.order.toLongArray())
+    val seg = state.segment
+    val segment = if (seg is SegmentState.ThisArea && seg.area != null) {
+        seg.copy(area = seg.area.copy(order = KeyOrder.of(order.visible(DeviceKeys(seg.area.order.toLongArray(), 0)))))
+    } else seg
+    return DiscoverStep(
+        state.copy(phase = DiscoverPhase.Ready(order), segment = segment, resorts = state.resorts + 1),
+        listOf(DiscoverEffect.ScrollToTop, DiscoverEffect.Refresh),
+    )
+}
+
 /** Q-4..Q-6: the newest search answer. Appends that came in while it was asked are searched again. */
 private fun searchAnswered(state: DiscoverState, ready: DiscoverPhase.Ready, event: DiscoverEvent.SearchLoaded): DiscoverStep {
     val s = state.searching
@@ -500,6 +536,12 @@ class DiscoverModel(
 
     /** D-1a: a view switch keeps the height; S-12: from Collapsed it also raises the root to Half. */
     fun toggleView() = sendNow(DiscoverEvent.ViewToggled)
+
+    /** D-1c: re-sort by the current values (not in search). */
+    suspend fun resort() = send(DiscoverEvent.ResortRequested)
+
+    /** D-1c: re-sorts applied so far (the list crossfades on each). */
+    val resorts: Int get() = state.resorts
 
     /** D-1b: :app's remembered view (a store read that lands after the sheets exist); never re-remembered. */
     fun restoreView(view: DiscoverView) = sendNow(DiscoverEvent.ViewRestored(view))
@@ -606,6 +648,12 @@ class DiscoverModel(
                 },
                 DiscoverEvent::QueryFailed,
             ) { DiscoverEvent.RowsLoaded(effect.version, it) }
+            is DiscoverEffect.LoadResort ->
+                ask({ queries.deviceOrder() }, DiscoverEvent::QueryFailed) { DiscoverEvent.Resorted(effect.version, it.keys) }
+            DiscoverEffect.ScrollToTop -> {
+                stack.root.restoreScroll(SheetEntry.MAIN_LIST, ScrollSnapshot())
+                stack.root.restoreScroll(CATEGORIES_LIST, ScrollSnapshot())
+            }
             is DiscoverEffect.RestoreRoot -> {
                 val root = stack.root
                 // both saved states come back; the one of the current layout shows (T-2 panel, S-5 height)

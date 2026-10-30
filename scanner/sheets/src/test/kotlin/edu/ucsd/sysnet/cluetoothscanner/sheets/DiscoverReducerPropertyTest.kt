@@ -104,8 +104,20 @@ class DiscoverReducerPropertyTest {
                 // G-9: the order only grows by appends
                 val was = sessionOrder(before)
                 val now = sessionOrder(after)
-                if (before.phase is DiscoverPhase.Ready && after.phase is DiscoverPhase.Ready) {
+                // D-1c / G-9: the order changes other than by appends only on an explicit action: the first sort (open)
+                // or the re-sort button, which keeps every key (search and product sheets keep their own orders)
+                if (before.phase is DiscoverPhase.Ready && after.phase is DiscoverPhase.Ready && event !is DiscoverEvent.Resorted) {
                     assertTrue(ctx, now.size >= was.size && now.copyOf(was.size).contentEquals(was))
+                }
+                if (event is DiscoverEvent.Resorted && before.phase is DiscoverPhase.Ready) {
+                    assertEquals(ctx, was.toSet(), now.toSet().intersect(was.toSet()))
+                    assertTrue(ctx, was.all { it in now.toHashSet() })
+                }
+                // the search order only changes by its own answers (and appends, which keep it a prefix)
+                val sb = before.searching?.order?.toLongArray()
+                val sa = after.searching?.order?.toLongArray()
+                if (sb != null && sa != null && !(sa.size >= sb.size && sa.copyOf(sb.size).contentEquals(sb))) {
+                    assertTrue(ctx, event is DiscoverEvent.SearchLoaded)
                 }
                 // keys appended while loading are all in the first order
                 val loading = before.phase as? DiscoverPhase.Loading
@@ -136,6 +148,8 @@ class DiscoverReducerPropertyTest {
                     is DiscoverEffect.LoadSearch -> pending +=
                         DiscoverEvent.SearchLoaded(effect.version, effect.query, effect.area, effect.purpose, world.search(effect.query, effect.area), effect.appendsAsked)
                     DiscoverEffect.Refresh -> apply(DiscoverEvent.RefreshRequested)
+                    is DiscoverEffect.LoadResort -> pending += DiscoverEvent.Resorted(effect.version, world.order())
+                    DiscoverEffect.ScrollToTop -> Unit // the stack's
                     is DiscoverEffect.LoadRows -> pending += DiscoverEvent.RowsLoaded(
                         effect.version,
                         when (val q = effect.query) {
@@ -159,7 +173,7 @@ class DiscoverReducerPropertyTest {
                         world.devices += Dev(k, GeoPoint(rnd.nextDouble(0.0, 2.0), rnd.nextDouble(0.0, 2.0)), listOf("qt", "lamp").random(rnd) + k, true)
                         DiscoverEvent.LiveAppended(longArrayOf(k))
                     }
-                    2 -> DiscoverEvent.ViewToggled
+                    2 -> if (rnd.nextBoolean()) DiscoverEvent.ViewToggled else DiscoverEvent.ResortRequested // D-1c
                     3 -> DiscoverEvent.SegmentSelected(Segment.entries.random(rnd))
                     4 -> DiscoverEvent.FilterSet(DeviceFilter(readable = rnd.nextBoolean()))
                     5 -> DiscoverEvent.CameraIdle(rnd.nextBoolean(), bbox(rnd), rnd.nextDouble(10.0, 18.0))

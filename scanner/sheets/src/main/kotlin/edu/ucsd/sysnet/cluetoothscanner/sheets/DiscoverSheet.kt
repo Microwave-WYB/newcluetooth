@@ -1,15 +1,18 @@
 package edu.ucsd.sysnet.cluetoothscanner.sheets
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,19 +22,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CategoryGroup
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
-import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ButtonKind
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.CategorySection
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.DeviceRow
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText
-import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button
-import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ButtonKind
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Icon
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.IconButton
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.IconButtonKind
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ProductCard
@@ -39,9 +44,12 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Segmented
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.SegmentedSize
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.SwapContent
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.focusRing
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.plainClickable
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.sp
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Glyphs
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -52,6 +60,8 @@ internal object DiscoverTags {
     const val LIST = "discover-list"
     const val CATEGORIES = "discover-categories"
     const val RETRY = "discover-retry"
+    const val RESORT = "discover-resort"
+    const val HEADER = "discover-header"
 }
 
 /** The Discover sheet, the root (D-1..D-5; Q-5 in search state). */
@@ -76,7 +86,8 @@ internal fun DiscoverSheet(state: SheetsState, entry: SheetEntry) {
             d.search != null -> DeviceList(state, entry, d.rows, listKey = SEARCH_LIST, empty = {
                 EmptyText(if (d.search?.area != null) Strings.NoResultsInArea else Strings.NoDevicesMatch)
             })
-            else -> SwapContent(d.view, { it.ordinal }, crossfade = true) { view -> // D-1a: crossfade, height kept
+            // D-1a: a view switch crossfades with the height kept; D-1c: so does a re-sort
+            else -> SwapContent(d.view to d.resorts, { it.first.ordinal }, crossfade = true) { (view, _) ->
                 when (view) {
                     DiscoverView.List -> DeviceList(state, entry, d.rows, listKey = SheetEntry.MAIN_LIST, empty = {
                         EmptyText(Strings.NoMatchingDevices)
@@ -85,6 +96,23 @@ internal fun DiscoverSheet(state: SheetsState, entry: SheetEntry) {
                 }
             }
         }
+    }
+}
+
+/** D-1c: icon-only, a sort glyph in `--t2` with no background, a 40 dp touch target. */
+@Composable
+private fun ResortButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val source = remember { MutableInteractionSource() }
+    Box(
+        modifier
+            .size(Tokens.iconBtn)
+            .clip(CircleShape)
+            .plainClickable(source, label = Strings.Resort, onClick = onClick)
+            .focusRing(source, CircleShape)
+            .testTag(DiscoverTags.RESORT),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Glyphs.sort, null, size = Tokens.iconBtnGlyph, tint = CluetoothTheme.colors.t2)
     }
 }
 
@@ -102,7 +130,7 @@ private fun FailedNote(message: String, onRetry: () -> Unit) {
 private fun DiscoverHeader(state: SheetsState, tablet: Boolean) {
     val d = state.discover
     val inset = Concentric.cornerButton(tablet)
-    Box(Modifier.fillMaxWidth().height(Css.DiscTitle.height).padding(horizontal = inset)) {
+    Box(Modifier.fillMaxWidth().height(Css.DiscTitle.height).padding(horizontal = inset).testTag(DiscoverTags.HEADER)) {
         val toList = d.view == DiscoverView.Categories
         IconButton(
             if (toList) Glyphs.list else Glyphs.grid,
@@ -118,6 +146,8 @@ private fun DiscoverHeader(state: SheetsState, tablet: Boolean) {
             modifier = Modifier.align(Alignment.Center).width(Css.DiscHead_Seg.width).testTag(DiscoverTags.SEGMENT),
             size = SegmentedSize.Header,
         )
+        // D-1c: re-sort, directly left of the filter button (hidden in search, where this header isn't shown)
+        ResortButton(state::resort, Modifier.align(Alignment.CenterEnd).padding(end = Tokens.iconBtn))
         val active = d.filter.activeFilterCount
         IconButton(
             Glyphs.filter,
@@ -237,6 +267,6 @@ private fun Categories(state: SheetsState, entry: SheetEntry) {
 
 internal const val UNIDENTIFIED = "unidentified"
 internal const val SEARCH_LIST = "search"
-private const val CATEGORIES_LIST = "categories"
+internal const val CATEGORIES_LIST = "categories"
 private const val LOOK_BEHIND = 20
 private const val LIVE_REFRESH_MS = 2_000L
