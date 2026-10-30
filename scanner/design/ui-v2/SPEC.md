@@ -652,7 +652,9 @@ Each component is built once. Its size, color and state rules come from these to
     2. switch "Record when the app opens", with "Starts a recording each time Cluetooth opens";
     3. switch "Upload over Wi-Fi only";
     4. switch "Scan LE Coded PHY", with "Also scan long-range devices; applies within a minute";
-    5. "Pending uploads", with the count and size, plus a small tonal "Upload now";
+    5. "Pending uploads", with the count and size, plus a small tonal "Upload now". With failures it adds "N uploads
+       failed; retrying" and the latest failure's reason in a few words with its code ("Network error", "Timed
+       out"), kept across restarts. A denial reads "N uploads failed · Denied (403)": retrying does not fix it;
     6. a "Filters" section label;
     7. switch "Hide unnamed Apple devices" (default on), with "Only what you see; scanning and recording keep
        everything";
