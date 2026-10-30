@@ -1,6 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.designsystem
 
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * The few values that neither tokens.css nor components.css carries as a resolvable declaration: SPEC values whose
@@ -15,8 +16,20 @@ object SpecValues {
     /** P-5: the location popover is at most 260 dp wide (`.loc-pop { width: min(260px, …) }`). */
     val popoverMaxWidth = 260.dp
 
-    /** R-4: app.js `setRecorder` adds 2 px to the panel's measured content height. */
-    val recorderPanelSlack = 2.dp
+    /** R-4a: the discovery-rate chart is about 72 dp tall. */
+    val recorderChartHeight = 72.dp
+
+    /** R-4a: the chart's line width. */
+    val recorderChartStroke = 2.dp
+
+    /** R-4a: the line breaks across a pause; the break is this wide (paused time itself is left out of x). */
+    val recorderChartPauseGap = 6.dp
+
+    /** R-4a: the "N new/min" label is 12 (`--t2`, tabular). */
+    val recorderChartLabelSize = 12.sp
+
+    /** R-4a: the label sits this far above (or below) the line's end. */
+    val recorderChartLabelGap = 4.dp
 
     /** R-3: app.js `setRecorder` adds 4 px between the dot-and-time group and the buttons in the capsule width. */
     val recorderCapsuleSlack = 4.dp

@@ -1316,8 +1316,8 @@ fn writer_messages_apply_in_order_and_the_tick_commits_without_scans() {
     assert_eq!(c.deltas.lock().unwrap().len(), n);
 }
 
-/// §2 cancellation: dropping a running query interrupts SQLite; a dropped query that has not started never runs;
-/// a query hit by an interrupt meant for another one runs again.
+/// §2 cancellation: dropping a query's future skips it when queued and stops it in flight (its own cancel flag,
+/// checked by the progress handler), never touching another query.
 #[test]
 fn dropping_a_query_cancels_it() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1356,19 +1356,26 @@ fn dropping_a_query_cancels_it() {
         0,
         "a dropped query that had not started never ran"
     );
-    // an interrupt that reaches a live query (meant for one that just ended) makes it run again
-    let calls = Arc::new(AtomicUsize::new(0));
-    let k = calls.clone();
-    let v = block(core.read(move |_, _| {
-        if k.fetch_add(1, Ordering::SeqCst) == 0 {
-            Err(super::CoreError::Cancelled)
-        } else {
-            Ok(42)
+    // the race that hung CI: an endless query dropped at any moment, also between the reader's look at its reply
+    // and its first step, always stops, and its cancel flag never reaches the next query
+    for n in 0..200u64 {
+        let endless_again =
+            core.read(move |c, _| Ok(c.query_row(endless, [], |r| r.get::<_, i64>(0))?));
+        if n % 3 == 1 {
+            std::thread::sleep(std::time::Duration::from_micros(n * 7));
         }
-    }))
-    .unwrap();
-    assert_eq!(v, 42);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+        drop(endless_again);
+        let v =
+            block(core.read(move |c, _| {
+                Ok(c.query_row("SELECT ?1", [n as i64], |r| r.get::<_, i64>(0))?)
+            }))
+            .unwrap();
+        assert_eq!(v, n as i64);
+    }
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(20),
+        "every dropped query stopped"
+    );
 }
 
 /// A failed tick commit, pause or stop keeps everything and the recording goes on; the next attempt stores it.
@@ -2123,4 +2130,109 @@ fn randomized_discovery_bins_sum_to_the_device_count() {
             }
         }
     }
+}
+
+/// D-10: while live, `device_chart` is the device's last minute at 1 s resolution (no samples while paused); the
+/// focused key's chart rides on the deltas; rows and deltas carry no sparklines (C-5/C-6); after Stop it is `None`.
+#[test]
+fn the_live_chart_follows_the_last_minute() {
+    let t0 = 1_761_000_000_000i64; // a whole second
+    let (core, _dir, c) = fresh_core(t0);
+    let key = 0xAA00_0000_0001i64;
+    let chart = |now: i64| block(core.device_chart_at(key, now)).unwrap();
+    assert_eq!(chart(t0), None, "not live");
+    let id = core.start_recording_at(env(), t0).unwrap();
+    assert_eq!(chart(t0), None, "not part of the session yet");
+    for (s, rssi) in [(1, -50), (2, -60), (2, -45), (5, -70)] {
+        core.ingest_scans_at(
+            vec![obs(
+                "AA:00:00:00:00:01",
+                rssi,
+                t0 + s * 1_000 + 100,
+                s as u64,
+                "A",
+            )],
+            t0 + s * 1_000 + 100,
+        )
+        .unwrap();
+    }
+    let at = t0 + 5_500;
+    let ch = chart(at).expect("live");
+    assert_eq!((ch.key, ch.end_ms, ch.samples.len()), (key, at, 60));
+    // buckets 55..59 are seconds 1..5: max per second, gaps between
+    assert_eq!(&ch.samples[55..], &[50, 45, 0, 0, 70]);
+    assert_eq!(ch.rssi, Some(-70));
+    // paused: ingest is ignored, so the paused seconds are gaps
+    core.pause_recording_at(t0 + 6_000).unwrap();
+    core.ingest_scans_at(
+        vec![obs("AA:00:00:00:00:01", -40, t0 + 7_000, 7, "A")],
+        t0 + 7_000,
+    )
+    .unwrap();
+    core.resume_recording_at(t0 + 20_000).unwrap();
+    core.ingest_scans_at(
+        vec![obs("AA:00:00:00:00:01", -55, t0 + 20_100, 20, "A")],
+        t0 + 20_100,
+    )
+    .unwrap();
+    let ch = chart(t0 + 20_500).unwrap();
+    assert_eq!(ch.samples.iter().filter(|b| **b != 0).count(), 4);
+    assert_eq!(ch.samples[59], 55);
+    // seconds 1, 2, 5 and 20 are buckets 40, 41, 44 and 59; the paused seconds 6..19 (45..58) are gaps
+    assert_eq!(
+        (ch.samples[40], ch.samples[41], ch.samples[44]),
+        (50, 45, 70)
+    );
+    assert!(
+        ch.samples[45..59].iter().all(|b| *b == 0),
+        "nothing while paused"
+    );
+    // at 61.5 s the window is seconds 2..=61: second 1 just left it
+    let ch = chart(t0 + 61_500).unwrap();
+    assert_eq!(ch.samples.iter().filter(|b| **b != 0).count(), 3);
+    assert_eq!(ch.samples[0], 45, "second 2 is the oldest bucket");
+    assert_eq!(ch.rssi, None, "stale");
+    // the focused chart rides on the deltas; no sparklines anywhere
+    core.set_live_focus(Some(key)).unwrap();
+    core.ingest_scans_at(
+        vec![
+            obs("AA:00:00:00:00:01", -52, t0 + 62_000, 62, "A"),
+            obs("AA:00:00:00:00:02", -66, t0 + 62_000, 62, "B"),
+        ],
+        t0 + 62_000,
+    )
+    .unwrap();
+    core.tick_at(t0 + 66_000);
+    let deltas = wait_for(&c, 1);
+    let last = deltas.last().unwrap();
+    let ch = last.chart.as_ref().expect("the focused chart");
+    assert_eq!((ch.key, ch.end_ms), (key, last.at_ms));
+    let bucket = |sec: i64, end_ms: i64| (sec - (end_ms / 1000 - (t0 / 1000) - 59)) as usize;
+    assert_eq!(ch.samples[bucket(62, ch.end_ms)], 52);
+    assert!(last.appended.iter().all(|r| r.spark.is_none()));
+    assert!(
+        deltas
+            .iter()
+            .all(|d| d.changed.iter().all(|l| l.spark.is_empty()))
+    );
+    let scope = Scope {
+        sessions: SessionScope::Sessions {
+            ids: vec![id.clone()],
+        },
+        filter: None,
+    };
+    let order = keys(&block(core.device_order(scope.clone())).unwrap());
+    assert!(
+        block(core.device_rows(scope, order))
+            .unwrap()
+            .iter()
+            .all(|r| r.spark.is_none())
+    );
+    // another device keeps its own ring
+    let other = block(core.device_chart_at(0xAA00_0000_0002, t0 + 66_000))
+        .unwrap()
+        .unwrap();
+    assert_eq!(other.samples[55], 66);
+    core.stop_recording_at(t0 + 67_000).unwrap();
+    assert_eq!(chart(t0 + 67_000), None, "stopped: not live");
 }

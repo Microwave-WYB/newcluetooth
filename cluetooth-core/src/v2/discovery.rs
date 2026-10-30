@@ -2,12 +2,12 @@
 //! with its running intervals, computed from the first-sighting times and pauses in `local.db`, so it survives a
 //! restart.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::{Connection, OptionalExtension};
 
 use super::error::CoreError;
-use super::types::{DiscoveryBin, DiscoveryRate, DiscoveryRun};
+use super::types::{DiscoveryBin, DiscoveryRate, DiscoveryRun, DiscoveryUpdate};
 
 /// The bin width.
 pub(crate) const BIN_MS: i64 = 30_000;
@@ -118,6 +118,41 @@ pub(crate) fn of_session(
     Ok(Some((runs, bins)))
 }
 
+/// The delta part from what was sent (`sent`: bin start → total, `sent_runs`) to the current read: every bin whose
+/// total changed, and `(start, 0)` for every sent bin that is now missing (bins are sparse, so a bin that fell to 0
+/// — the display filter turned on, a late first sighting moving a device to an earlier bin — would otherwise never be
+/// sent). `None` when nothing changed. Updates `sent` and `sent_runs` to the read.
+pub(crate) fn update(
+    sent: &mut HashMap<i64, u32>,
+    sent_runs: &mut Vec<DiscoveryRun>,
+    runs: Vec<DiscoveryRun>,
+    bins: Vec<DiscoveryBin>,
+) -> Option<DiscoveryUpdate> {
+    let now: HashMap<i64, u32> = bins.iter().map(|b| (b.start_ms, b.new_devices)).collect();
+    let mut changed: Vec<DiscoveryBin> = bins
+        .into_iter()
+        .filter(|b| sent.get(&b.start_ms) != Some(&b.new_devices))
+        .collect();
+    changed.extend(
+        sent.iter()
+            .filter(|(start, n)| **n > 0 && !now.contains_key(start))
+            .map(|(start, _)| DiscoveryBin {
+                start_ms: *start,
+                new_devices: 0,
+            }),
+    );
+    changed.sort_by_key(|b| b.start_ms);
+    if changed.is_empty() && runs == *sent_runs {
+        return None;
+    }
+    *sent = now;
+    sent_runs.clone_from(&runs);
+    Some(DiscoveryUpdate {
+        bins: changed,
+        runs,
+    })
+}
+
 /// `discovery_rate(session_id)`: the rate of the session with that UUID at `seq`; an unknown session has no runs and
 /// no bins.
 pub(crate) fn rate(
@@ -206,5 +241,44 @@ mod tests {
             vec![(1_000, 2), (31_000, 1), (130_000, 1)],
             "sparse: empty bins are missing"
         );
+    }
+
+    #[test]
+    fn a_bin_that_falls_to_zero_is_sent() {
+        let mut sent = HashMap::new();
+        let mut sent_runs = Vec::new();
+        let rs = vec![run(0, None)];
+        let b = |start_ms, new_devices| DiscoveryBin {
+            start_ms,
+            new_devices,
+        };
+        let first = update(
+            &mut sent,
+            &mut sent_runs,
+            rs.clone(),
+            vec![b(0, 1), b(30_000, 1)],
+        )
+        .unwrap();
+        assert_eq!(first.bins, vec![b(0, 1), b(30_000, 1)]);
+        assert_eq!(
+            update(
+                &mut sent,
+                &mut sent_runs,
+                rs.clone(),
+                vec![b(0, 1), b(30_000, 1)]
+            ),
+            None
+        );
+        // the device moved to the earlier bin: 0 now has 2, 30 000 is missing and goes out as 0
+        let moved = update(&mut sent, &mut sent_runs, rs.clone(), vec![b(0, 2)]).unwrap();
+        assert_eq!(moved.bins, vec![b(0, 2), b(30_000, 0)]);
+        // a zero sent once is not sent again
+        assert_eq!(
+            update(&mut sent, &mut sent_runs, rs.clone(), vec![b(0, 2)]),
+            None
+        );
+        // everything hidden
+        let gone = update(&mut sent, &mut sent_runs, rs, vec![]).unwrap();
+        assert_eq!(gone.bins, vec![b(0, 0)]);
     }
 }

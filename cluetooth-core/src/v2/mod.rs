@@ -26,6 +26,7 @@ mod keys;
 mod live;
 mod machine;
 mod query;
+mod rssi;
 mod search;
 mod space;
 mod store;

@@ -36,12 +36,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.SpecValues
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Weights
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.BlinkingDot
@@ -82,11 +82,11 @@ class RecorderActions(
 )
 
 /**
- * R-1 … R-9, T-7: the record FAB, the island capsule and its panel as one element that morphs (`--t-morph`).
+ * R-1 … R-9, R-4a, T-7: the record FAB, the island capsule and its panel as one element that morphs (`--t-morph`).
  * It fills the screen box it is given and positions itself ([RecorderGeometry]). While it is a [RecorderUi.Form.Fab]
  * :app places it in the layer above the map and below the sheets (P-3); recording, above the sheets (R-3).
- * While the panel is open a full-screen catch layer collapses it on a tap outside (R-4). The panel has no mini map
- * (R-5 removed: one map renderer at a time).
+ * While the panel is open a full-screen catch layer collapses it on a tap outside (R-4). The panel shows the
+ * discovery-rate chart (R-4a) and no mini map (R-5 removed: one map renderer at a time).
  */
 @Composable
 fun RecorderControl(
@@ -167,7 +167,7 @@ fun RecorderLayer(
                     else Modifier.semantics { contentDescription = Strings.Recording },
                 )
                 // R-4: the catch layer is behind the panel (as `.recorder-catch` is in the prototype), so only taps
-                // outside collapse it; the panel's own surface takes the taps its buttons don't, e.g. on the meta line
+                // outside collapse it; the panel's own surface takes the taps its buttons don't, e.g. on the chart
                 .then(if (panel) Modifier.pointerInput(Unit) { detectTapGestures { } } else Modifier),
         ) {
             // the FAB's white dot
@@ -179,15 +179,13 @@ fun RecorderLayer(
                 // the panel's extras: below the row on phone, above it on tablet
                 val extrasTop = if (g.extrasBelowRow) rowTop + rowH else Dp(0f)
                 if (panel || extraAlpha > 0f) {
+                    // R-4a: recomputed when the data changes or the elapsed time ticks (once a second)
+                    val series = remember(ui.discovery, ui.elapsedMs) { DiscoveryChart.series(ui.discovery, ui.elapsedMs) }
                     Box(Modifier.offset(y = extrasTop).fillMaxWidth().alpha(extraAlpha)) {
-                        val metaTop = if (g.extrasBelowRow) Css.RecorderTop_RecMeta.paddingTop else Css.RecMeta.padding.top
-                        Text(
-                            Strings.recorderMeta(ui.deviceCount, ui.fix?.let { Format.location(it.lat, it.lon, it.accuracyM) }),
-                            Modifier.padding(start = Css.RecMeta.padding.left, end = Css.RecMeta.padding.right, top = metaTop),
-                            style = CluetoothTheme.type.sub,
-                            color = c.t2,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        DiscoveryRateChart(
+                            series,
+                            Modifier.padding(start = Css.RecMeta.padding.left, end = Css.RecMeta.padding.right, top = RecorderGeometry.chartTop(!g.extrasBelowRow))
+                                .fillMaxWidth().height(SpecValues.recorderChartHeight),
                         )
                     }
                 }

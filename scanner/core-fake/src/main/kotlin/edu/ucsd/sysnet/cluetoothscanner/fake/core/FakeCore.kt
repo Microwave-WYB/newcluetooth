@@ -159,7 +159,6 @@ class FakeCore(
         val seconds = HashMap<Long, Int>()
         var sentRssi: Int? = null
         var sentInRange = false
-        var sentSpark: ByteArray? = null
         var sentName: String? = null
         var sentBest: GeoPoint? = null
         var sent = false
@@ -365,7 +364,8 @@ class FakeCore(
         val l = rec
         if (l != null && isLive(scope)) {
             val rows = l.devices.values.filter { it.rssi != null && shown(it.dev) }.map {
-                Row(it.dev, it.rssi, now - it.lastHeardMs < staleAfterMs, spark(it, now), it.best, it.lastHeardMs)
+                // C-5/C-6 (ab39eb5): rows carry no sparkline; the device sheet's chart (D-10) has the last minute
+                Row(it.dev, it.rssi, now - it.lastHeardMs < staleAfterMs, null, it.best, it.lastHeardMs)
             }
             return Relation(rows, true, l.seq, listOf(l.id))
         }
@@ -637,16 +637,6 @@ class FakeCore(
 
     private fun encode(rssi: Int?): Byte = if (rssi == null) 0 else (-rssi).coerceIn(30, 100).toByte()
 
-    /** C-6: 30 × 2 s buckets ending now, each the max of its two 1 s buckets. */
-    private fun spark(d: LiveDev, now: Long): ByteArray {
-        val sec = Math.floorDiv(now, 1000L)
-        return ByteArray(30) { j ->
-            val a = d.seconds[sec - 59 + 2 * j]
-            val b = d.seconds[sec - 58 + 2 * j]
-            encode(listOfNotNull(a, b).maxOrNull())
-        }
-    }
-
     private fun chart(key: Long, now: Long): LiveChart? {
         val l = rec ?: return null
         val d = l.devices[key] ?: return null
@@ -689,7 +679,6 @@ class FakeCore(
             d.sent = d.rssi != null
             d.sentRssi = d.rssi
             d.sentInRange = now - d.lastHeardMs < staleAfterMs
-            d.sentSpark = spark(d, now)
             d.sentName = d.dev.name
             d.sentBest = d.best
         }
@@ -741,12 +730,11 @@ class FakeCore(
         for (d in l.devices.values) {
             if (d.rssi == null || !shown(d.dev)) continue
             val inRange = now - d.lastHeardMs < staleAfterMs
-            val spark = spark(d, now)
             if (!d.sent) {
-                appended += Row(d.dev, d.rssi, inRange, spark, d.best, d.lastHeardMs).toDeviceRow()
-            } else if (d.sentRssi != d.rssi || d.sentInRange != inRange || !spark.contentEquals(d.sentSpark) ||
+                appended += Row(d.dev, d.rssi, inRange, null, d.best, d.lastHeardMs).toDeviceRow()
+            } else if (d.sentRssi != d.rssi || d.sentInRange != inRange ||
                 d.sentName != d.dev.name || d.sentBest != d.best) {
-                changed += DeviceLive(d.dev.key, d.rssi, inRange, spark,
+                changed += DeviceLive(d.dev.key, d.rssi, inRange, ByteArray(0),
                     d.dev.name.takeIf { it != d.sentName }, null, d.best.takeIf { it != d.sentBest })
             }
         }
@@ -756,8 +744,9 @@ class FakeCore(
         val bins = discoveryBins(l.runs, liveFirstSeen(l))
         val freshBins = bins.filter { l.sentBins[it.startMs] != it.newDevices }
         val discovery = if (freshBins.isEmpty() && l.runs == l.sentRuns) null else DiscoveryUpdate(freshBins, l.runs.toList())
-        if (!force && discovery == null && changed.isEmpty() && appended.isEmpty() && products.isEmpty() &&
-            routeAppended.isEmpty()) return null
+        // the focused device's chart (D-10) rides on every delta, as in the core
+        if (!force && focus == null && discovery == null && changed.isEmpty() && appended.isEmpty() &&
+            products.isEmpty() && routeAppended.isEmpty()) return null
         for (b in freshBins) l.sentBins[b.startMs] = b.newDevices
         l.sentRuns = l.runs.toList()
         markSent(l, now)

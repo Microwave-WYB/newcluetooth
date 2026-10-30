@@ -14,9 +14,10 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import com.github.takahirom.roborazzi.captureRoboImage
-import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
+import edu.ucsd.sysnet.cluetoothscanner.chrome.gallery.DiscoverySamples
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -31,9 +32,8 @@ import org.robolectric.annotation.GraphicsMode
 class RecorderScreenTest {
     @get:Rule val compose = createComposeRule()
 
-    private val fix = FixSummary(32.88012, -117.23421, 8.0, 1000)
-    private fun ui(form: RecorderUi.Form, paused: Boolean = false) =
-        RecorderUi(form, paused, (12 * 60 + 34) * 1000L, 26, fix)
+    private fun ui(form: RecorderUi.Form, paused: Boolean = false, discovery: DiscoveryBins = DiscoverySamples.rising) =
+        RecorderUi(form, paused, DiscoverySamples.ELAPSED_MS, discovery)
 
     private fun shots(tablet: Boolean, size: String, dark: Boolean) {
         run {
@@ -68,7 +68,7 @@ class RecorderScreenTest {
     }
 
     /**
-     * R-4: the catch is behind the panel (`.recorder-catch` in the prototype): a tap on the panel itself, its meta line
+     * R-4: the catch is behind the panel (`.recorder-catch` in the prototype): a tap on the panel itself, its chart
      * or its empty space, keeps it open, and its buttons still work; only a tap outside collapses it.
      */
     private fun insideTapsKeepThePanel(tablet: Boolean) {
@@ -80,7 +80,7 @@ class RecorderScreenTest {
                 Box(Modifier.fillMaxSize()) { RecorderControl(ui(RecorderUi.Form.Panel), actions, tablet, bottomCover = if (tablet) Tokens0 else Peek) }
             }
         }
-        compose.onNodeWithText("26 devices · 32.88012, -117.23421 ±8 m").performClick()
+        compose.onNodeWithTag("discoveryChart").performClick()
         // the panel's empty start of the row, left of the centered dot and time
         compose.onNodeWithTag("recorder").performTouchInput { click(androidx.compose.ui.geometry.Offset(width * 0.05f, height / 2f)) }
         compose.runOnIdle { assertEquals(emptyList<String>(), log) }
@@ -91,6 +91,40 @@ class RecorderScreenTest {
 
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneInsideTapsKeepThePanel() = insideTapsKeepThePanel(false)
     @Config(sdk = [35], qualifiers = "w1024dp-h768dp-xhdpi") @Test fun tabletInsideTapsKeepThePanel() = insideTapsKeepThePanel(true)
+
+    /** R-4a: the panel's chart for each case: just started (empty), walking (rising), standing still, after a pause,
+     *  and a rate that drops at its end (under the label). */
+    private fun chartShots(tablet: Boolean, size: String, dark: Boolean) {
+        val cases = listOf(
+            Triple("empty", DiscoverySamples.empty, DiscoverySamples.EMPTY_ELAPSED_MS),
+            Triple("rising", DiscoverySamples.rising, DiscoverySamples.ELAPSED_MS),
+            Triple("stationary", DiscoverySamples.stationary, DiscoverySamples.ELAPSED_MS),
+            Triple("pause-gap", DiscoverySamples.pauseGap, DiscoverySamples.ELAPSED_MS),
+            Triple("drop", DiscoverySamples.dropAtEnd, DiscoverySamples.DROP_ELAPSED_MS),
+        )
+        var case by mutableStateOf(cases[0])
+        val none = RecorderActions({}, {}, {}, {}, {}, {})
+        compose.setContent {
+            CluetoothTheme(darkTheme = dark, reducedMotion = true) {
+                Box(Modifier.fillMaxSize().background(CluetoothTheme.colors.fill2)) {
+                    RecorderControl(RecorderUi(RecorderUi.Form.Panel, false, case.third, case.second), none, tablet, bottomCover = if (tablet) Tokens0 else Peek)
+                }
+            }
+        }
+        val labels = mutableListOf<String?>()
+        for (c in cases) {
+            case = c
+            compose.waitForIdle()
+            labels += compose.onNodeWithTag("discoveryChart").fetchSemanticsNode().config.getOrNull(SemanticsProperties.ContentDescription)?.single()
+            compose.onRoot().captureRoboImage("src/test/screenshots/recorder/$size-${if (dark) "dark" else "light"}-chart-${c.first}.png")
+        }
+        // the one label is the current value; none before the first bin completes
+        assertEquals(listOf(null, "29 new/min", "0 new/min", "15 new/min", "0 new/min"), labels)
+    }
+
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneChartLight() = chartShots(false, "412x915", false)
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneChartDark() = chartShots(false, "412x915", true)
+    @Config(sdk = [35], qualifiers = "w1024dp-h768dp-xhdpi") @Test fun tabletChartLight() = chartShots(true, "1024x768", false)
 
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneLight() = shots(false, "412x915", false)
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneDark() = shots(false, "412x915", true)
