@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.selection.DisableSelection
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -110,7 +113,7 @@ internal fun DeviceSheet(state: SheetsState, entry: SheetEntry, key: Long) {
     val row = state.rows[key]
     val detail = content.detail
     SheetFrame(state.stack, entry, state.metrics, header = {
-        PushedHeader(state) { detail.valueOrNull()?.let { DeviceHead(it, row?.rssi ?: it.rssi) } }
+        PushedHeader(state) { detail.valueOrNull()?.let { DeviceHead(it, row?.rssi ?: it.rssi, Modifier.sheetSelectable(state.stack, entry)) } }
     }) {
         when (detail) {
             Loaded.Pending -> LoadPending()
@@ -143,21 +146,28 @@ private fun DeviceBody(state: SheetsState, entry: SheetEntry, content: DeviceCon
             )
             SwapContent(content.tab, { it.ordinal }) { t ->
                 when (t) {
-                    DeviceTab.Advertising -> Advertising(d)
-                    DeviceTab.Gatt -> GattTab(gatt, GattDeviceFacts(d.connectable, state.rows[d.key]?.lastSeenMs ?: d.lastSeenMs, state.nowMs()))
+                    DeviceTab.Advertising -> Advertising(d, Modifier.sheetSelectable(state.stack, entry))
+                    DeviceTab.Gatt -> GattTab(
+                        gatt, GattDeviceFacts(d.connectable, state.rows[d.key]?.lastSeenMs ?: d.lastSeenMs, state.nowMs()),
+                        Modifier.sheetSelectable(state.stack, entry),
+                    )
                 }
             }
         }
     }
 }
 
-/** D-9: the name (or "No name"), the product link, the MAC and "−56 dBm" in the band color. */
+/**
+ * D-9: the name (or "No name"), the product link, the MAC and "−56 dBm" in the band color. D-15: all of it selectable;
+ * [selection] goes on the selection area (in the sheet, [sheetSelectable]).
+ */
 @Composable
-internal fun DeviceHead(d: DeviceDetail, rssi: Int?) {
+internal fun DeviceHead(d: DeviceDetail, rssi: Int?, selection: Modifier = Modifier) {
     val c = CluetoothTheme.colors
     val t = CluetoothTheme.type
-    // `.dev-head`: the name on its 24 dp line from the header's top, the wiki link, the MAC line, 12 dp under them
-    Column(Modifier.padding(start = Css.DevHead.padding.left, bottom = Css.DevHead.padding.bottom)) {
+    // `.dev-head`: the name on its 24 dp line from the header's top, the wiki link, the MAC line, 12 dp under them;
+    // D-15: all of it selectable
+    SelectionContainer(selection) { Column(Modifier.padding(start = Css.DevHead.padding.left, bottom = Css.DevHead.padding.bottom)) {
         Text(d.name ?: Strings.NoName, style = t.title, color = if (d.name == null) c.t3 else c.t1)
         val page = d.page
         val url = d.wikiUrl
@@ -176,7 +186,7 @@ internal fun DeviceHead(d: DeviceDetail, rssi: Int?) {
                 )
             }
         }
-    }
+    } }
 }
 
 /** D-10: the last minute, y −100..−30, ticks at −65 and −80, the end marker at the current reading. */
@@ -217,8 +227,8 @@ private fun RssiChart(chart: LiveChart, rssi: Int?) {
 
 /** D-12: the Details list and the raw Len / Type / Data table. */
 @Composable
-private fun Advertising(d: DeviceDetail) {
-    Column {
+internal fun Advertising(d: DeviceDetail, selection: Modifier = Modifier) {
+    SelectionContainer(selection) { Column { // D-15: the Details and every Raw data cell selectable; the section labels not
         SheetSect(Strings.Details)
         val kv = buildList {
             d.connectable?.let { add(Strings.Connectable to if (it) Strings.Yes else Strings.No) }
@@ -242,11 +252,11 @@ private fun Advertising(d: DeviceDetail) {
         }
         SheetSect(Strings.RawData)
         RawTable(d)
-    }
+    } }
 }
 
 @Composable
-private fun SheetSect(text: String) {
+private fun SheetSect(text: String) = DisableSelection {
     Text(
         text,
         Modifier.fillMaxWidth().padding(
@@ -299,15 +309,14 @@ private fun RawRow(len: String, type: String, data: String, style: androidx.comp
         Row(Modifier.fillMaxWidth().background(if (header) c.fill2 else c.panel)) {
             Text(len, Modifier.width(lenW).padding(horizontal = pad.left, vertical = pad.top).testTag(DeviceTags.rawLen(header)), style = style.tabular(), maxLines = 1, softWrap = false)
             Text(type, Modifier.width(typeW).padding(horizontal = pad.left, vertical = pad.top), style = style.tabular(), maxLines = 1, softWrap = false)
-            // G-3: the raw data column is the one place with the code font; it breaks anywhere
-            val dataStyle = if (header) style else CluetoothTheme.type.code.copy(fontSize = style.fontSize, lineHeight = style.lineHeight)
-            Text(data.breakAnywhere(), Modifier.weight(1f).padding(horizontal = pad.left, vertical = pad.top), style = dataStyle, color = if (header) c.t1 else c.t2)
+            // G-3: the raw data column is the one place with the code font; it breaks anywhere: the hex is one word,
+            // which breaks greedily at the edge (D-15: no inserted break characters, so a copy is the exact hex)
+            val dataStyle = (if (header) style else CluetoothTheme.type.code.copy(fontSize = style.fontSize, lineHeight = style.lineHeight))
+                .copy(lineBreak = LineBreak.Simple)
+            Text(data, Modifier.weight(1f).padding(horizontal = pad.left, vertical = pad.top), style = dataStyle, color = if (header) c.t1 else c.t2)
         }
     }
 }
-
-/** Zero-width spaces between characters let hex wrap anywhere (`word-break: break-all`). */
-private fun String.breakAnywhere(): String = toCharArray().joinToString("​")
 
 /** D-13.1: "Only connect to devices you own…", above the button area whenever a button is present. */
 @Composable
@@ -322,10 +331,11 @@ private fun GattNote(modifier: Modifier = Modifier) {
 
 /** D-13: the note and buttons, the steps, Try again, the services. */
 @Composable
-internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceFacts.Unknown) {
+internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceFacts.Unknown, selection: Modifier = Modifier) {
     val c = CluetoothTheme.colors
     val pad = Css.GattFlow.padding
-    Column(Modifier.fillMaxWidth().padding(horizontal = pad.left, vertical = pad.top)) {
+    // D-15: the step details and reasons and every service and characteristic text selectable; the buttons not
+    SelectionContainer(selection) { Column(Modifier.fillMaxWidth().padding(horizontal = pad.left, vertical = pad.top)) {
         val last = gatt.last
         when (val s = gatt.state) {
             // D-13.2/3 and D-13.7: the button row ("Discover GATT", or a tonal "Discover again" above a last result)
@@ -338,7 +348,7 @@ internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceF
                 val m = CluetoothTheme.motion
                 val grow by animateFloatAsState(if (confirm) 1f else 0f, m.std(), label = "cancelGrow")
                 val gap by animateDpAsState(if (confirm) Css.GattFlowConfirm_GattCtl.gap else Css.GattCtl.gap, m.std(), label = "gap")
-                Row(Modifier.fillMaxWidth()) {
+                DisableSelection { Row(Modifier.fillMaxWidth()) {
                     if (grow > 0f) {
                         Button(
                             Strings.Cancel, onClick = gatt::onCancelPrompt, kind = ButtonKind.Tonal, enabled = confirm,
@@ -357,7 +367,7 @@ internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceF
                         kind = if (again) ButtonKind.Tonal else ButtonKind.Primary,
                         modifier = Modifier.weight(1f).testTag(DeviceTags.DISCOVER),
                     )
-                }
+                } }
                 last?.let { LastResult(it, device) }
             }
             // D-13.7: the new run's steps replace the last result's; its services stay below until a success
@@ -368,11 +378,11 @@ internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceF
             is GattUi.Failed -> {
                 Steps(s.view, device)
                 GattNote(Modifier.padding(top = Css.GattNote.margin.bottom)) // D-13.1: with any button
-                Button(Strings.TryAgain, onClick = gatt::onTryAgain, kind = ButtonKind.Tonal, modifier = Modifier.testTag(DeviceTags.TRY_AGAIN))
+                DisableSelection { Button(Strings.TryAgain, onClick = gatt::onTryAgain, kind = ButtonKind.Tonal, modifier = Modifier.testTag(DeviceTags.TRY_AGAIN)) }
                 last?.let { LastResult(it, device) } // D-13.7: the last result stays below a failure
             }
         }
-    }
+    } }
 }
 
 @Composable

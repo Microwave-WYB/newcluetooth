@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
@@ -23,9 +25,10 @@ import androidx.compose.ui.unit.dp
 
 /**
  * A sheet layer with a 40 dp header holding one control at the right, over 200 rows of [ROW], as a LazyColumn
- * ([lazy], the Discover list) or a scrolling Column (the device sheet).
+ * ([lazy], the Discover list) or a scrolling Column (the device sheet). With [selectable] the header and every row
+ * hold selectable text, as the device sheet does (D-15).
  */
-internal class SheetHarness(private val lazy: Boolean = true) {
+internal class SheetHarness(private val lazy: Boolean = true, private val selectable: Boolean = false) {
     lateinit var controller: SheetStackController
     private val lists = mutableMapOf<Long, LazyListState>()
     private val columns = mutableMapOf<Long, ScrollState>()
@@ -49,6 +52,8 @@ internal class SheetHarness(private val lazy: Boolean = true) {
         fun header(id: Long) = "header-$id"
         fun control(id: Long) = "control-$id"
         fun list(id: Long) = "list-$id"
+        fun headerText(id: Long) = "header text $id"
+        fun rowText(i: Int) = "row text $i"
     }
 
     @Composable
@@ -66,6 +71,7 @@ internal class SheetHarness(private val lazy: Boolean = true) {
             controller, entry,
             header = {
                 Box(Modifier.fillMaxWidth().height(40.dp).testTag(header(entry.id))) {
+                    if (selectable) SelectionContainer(Modifier.align(Alignment.CenterStart).padding(start = 14.dp).sheetSelectable(controller, entry)) { BasicText(headerText(entry.id)) }
                     Box(
                         Modifier
                             .align(Alignment.CenterEnd)
@@ -81,7 +87,10 @@ internal class SheetHarness(private val lazy: Boolean = true) {
                 val state = rememberSheetListState(entry)
                 DisposableEffect(state) { lists[entry.id] = state; onDispose { lists.remove(entry.id) } }
                 LazyColumn(state = state, modifier = Modifier.fillMaxSize().testTag(list(entry.id))) {
-                    items(200) { Box(Modifier.fillMaxWidth().height(ROW)) }
+                    items(200) { i ->
+                        if (selectable) SelectionContainer(Modifier.sheetSelectable(controller, entry)) { BasicText(rowText(i), Modifier.fillMaxWidth().height(ROW)) }
+                        else Box(Modifier.fillMaxWidth().height(ROW))
+                    }
                 }
             } else {
                 val state = rememberSheetScrollState(entry)
