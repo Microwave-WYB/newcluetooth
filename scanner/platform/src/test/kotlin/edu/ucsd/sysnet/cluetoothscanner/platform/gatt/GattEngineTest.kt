@@ -728,6 +728,32 @@ class GattEngineTest {
     }
 
     @Test
+    fun `D-13 a disconnect call that throws closes at once, once, without waiting for its timeout`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onDisconnect(link: FakeLink) = throw IllegalStateException("dead stack")
+        }))
+        val result = engine(factory).run(request)
+
+        assertEquals(0L, testScheduler.currentTime) // not the 2 s disconnect timeout
+        assertEquals(1, factory.links.single().disconnects)
+        assertEquals(1, factory.links.single().closes)
+        assertEquals(listOf("180A", "180F"), result.services.map { it.uuid }) // what was read is kept
+    }
+
+    @Test
+    fun `D-13 a refused disconnect closes at once, once, with no disconnect status`() = runTest {
+        val factory = FakeFactory(attempts = arrayOf(object : FakeLink.Behavior {
+            override fun onDisconnect(link: FakeLink) = throw SecurityException("no BLUETOOTH_CONNECT")
+        }))
+        val result = engine(factory).run(request)
+
+        assertEquals(0L, testScheduler.currentTime)
+        assertEquals(1, factory.links.single().closes)
+        assertEquals(GattOutcome.COMPLETE, result.outcome)
+        assertEquals(GattDisconnect(DisconnectInitiator.LOCAL, null), result.disconnect)
+    }
+
+    @Test
     fun `durations come from the monotonic clock even when the wall clock jumps`() = runTest {
         var wall = 1_742_860_800_000L
         val engine = GattEngine(

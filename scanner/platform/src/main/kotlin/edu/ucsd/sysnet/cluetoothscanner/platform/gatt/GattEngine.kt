@@ -79,8 +79,9 @@ class GattEngine(
                             services?.let(EngineInput::Listed) ?: EngineInput.LinkFailed
                         }, pending)
                         is EngineEffect.Read -> step = feed(step, answer(call(false) { link?.read(effect.ref) ?: false }, EngineInput::ReadRequested), pending)
-                        // A failing disconnect or close changes nothing: the link is gone either way.
-                        EngineEffect.Disconnect -> call(Unit) { link?.disconnect() }
+                        // A disconnect that was not sent has no callback to wait for: the machine closes at once.
+                        EngineEffect.Disconnect -> step = feed(step, answer(call(false) { link?.let { it.disconnect(); true } ?: false }, EngineInput::DisconnectRequested), pending)
+                        // A failing close changes nothing: the link is gone either way.
                         EngineEffect.Close -> {
                             call(Unit) { link?.close() }
                             link = null
