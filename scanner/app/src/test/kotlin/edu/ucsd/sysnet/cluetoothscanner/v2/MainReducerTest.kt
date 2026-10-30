@@ -307,10 +307,16 @@ class MainFailureTest {
         val exporting = MainUiState().on(MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)),
             MainEvent.EditStorage { it.copy(exportFormat = ExportFormat.Csv) }, MainEvent.Export(toDownloads = true))
         assertEquals(true, exporting.storage?.exporting)
-        val failed = reduce(exporting, MainEvent.Failed(MainTask.Effect(MainEffect.Export(Scope.All, ExportFormat.Csv, true)), PlatformFailure(PlatformError.Io("disk full"))))
+        val export = MainEffect.Export(Scope.All, ExportFormat.Csv, true)
+        val failed = reduce(exporting, MainEvent.Failed(MainTask.Effect(export), PlatformFailure(PlatformError.Io("disk full"))))
         assertEquals(false, failed.state.storage?.exporting)
-        assertEquals("not ExportFinished: it says it failed", Notice("Export failed: disk full"), failed.state.notice)
+        assertEquals("not ExportFinished: it says it failed", Notice("Export failed: disk full", retry = export), failed.state.notice)
         assertTrue(failed.effects.isEmpty())
+        // Retry runs the same export again, with its spinner
+        val retried = reduce(failed.state, MainEvent.RetryNotice)
+        assertEquals(listOf<MainEffect>(export), retried.effects)
+        assertEquals(true, retried.state.storage?.exporting)
+        assertNull(retried.state.notice)
     }
 
     @Test fun aFailedOnboardingSaveKeepsTheOnboardingAndOffersRetry() {

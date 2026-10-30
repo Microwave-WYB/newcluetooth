@@ -47,8 +47,8 @@ fun interface DownloadsWriter {
  */
 class AndroidExportShare(
     private val context: Context,
-    /** `CoreStorage.acknowledgeExport`. */
-    private val acknowledge: suspend (String) -> Unit,
+    /** `CoreStorage.acknowledgeExport` as a typed result; an Err stays pending and is tried again later. */
+    private val acknowledge: suspend (String) -> PlatformResult<Unit>,
     scope: CoroutineScope,
     private val io: CoroutineDispatcher,
     private val downloads: DownloadsWriter = defaultDownloads(context),
@@ -126,14 +126,22 @@ class AndroidExportShare(
         }
     }
 
-    private suspend fun acknowledged(exportId: String): LedgerEvent = try {
-        acknowledge(exportId)
-        LedgerEvent.Acknowledged(exportId)
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: Exception) {
-        log("acknowledging $exportId failed; it is tried again later", failure)
-        LedgerEvent.AckFailed(exportId)
+    private suspend fun acknowledged(exportId: String): LedgerEvent {
+        val result = try {
+            acknowledge(exportId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            // A port that throws breaks its contract; it is still only a failed acknowledgement.
+            PlatformResult.Err(PlatformError.Core(failure.describe()))
+        }
+        return when (result) {
+            is PlatformResult.Ok -> LedgerEvent.Acknowledged(exportId)
+            is PlatformResult.Err -> {
+                logLine("acknowledging $exportId failed (${result.error.message}); it is tried again later")
+                LedgerEvent.AckFailed(exportId)
+            }
+        }
     }
 
     /** A prefs call: a failure is logged and gives null (nothing pending read, or not remembered this time). */
@@ -146,6 +154,10 @@ class AndroidExportShare(
 
     private fun log(message: String, failure: Throwable) {
         runCatching { Log.w(TAG, message, failure) }
+    }
+
+    private fun logLine(message: String) {
+        runCatching { Log.w(TAG, message) }
     }
 
     private fun Throwable.describe() = message ?: this::class.java.simpleName

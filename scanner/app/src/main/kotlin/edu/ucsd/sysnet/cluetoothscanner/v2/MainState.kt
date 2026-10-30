@@ -486,7 +486,15 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.FinishOnboarding -> s.onboarding?.let { s.with(MainEffect.SaveOnboarding(it.ui.userId, it.ui.autoRecord)) } ?: s.only()
     MainEvent.OnboardingSaved -> s.copy(onboarding = null).with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
     MainEvent.DismissNotice -> s.copy(notice = null).only()
-    MainEvent.RetryNotice -> s.notice?.retry?.let { s.copy(notice = null).with(it) } ?: s.copy(notice = null).only()
+    MainEvent.RetryNotice -> when (val retry = s.notice?.retry) {
+        null -> s.copy(notice = null).only()
+        // the same export again, with its spinner, showing the scope and format it exports
+        is MainEffect.Export -> s.copy(
+            notice = null,
+            storage = s.storage?.copy(exporting = true, exportScope = retry.scope, exportFormat = retry.format),
+        ).with(retry)
+        else -> s.copy(notice = null).with(retry)
+    }
 }
 
 /**
@@ -511,7 +519,8 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
             CleanupOutcome(emptyMap(), task.effect.cleanups.associateWith { CleanupError.Failed(error.message ?: error::class.simpleName.orEmpty()) }), null,
         ))
         // the export says it failed: it stops, and nothing looks done
-        is MainEffect.Export -> s.copy(storage = s.storage?.copy(exporting = false), notice = Notice("$EXPORT_FAILED: ${error.userMessage()}")).only()
+        is MainEffect.Export ->
+            s.copy(storage = s.storage?.copy(exporting = false), notice = Notice("$EXPORT_FAILED: ${error.userMessage()}", retry = task.effect)).only()
         // the onboarding stays open; the notice retries the save
         is MainEffect.SaveOnboarding -> s.copy(notice = Notice("$SAVE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
         MainEffect.OpenAppSettings, MainEffect.UploadNow -> s.copy(notice = Notice(error.userMessage())).only()

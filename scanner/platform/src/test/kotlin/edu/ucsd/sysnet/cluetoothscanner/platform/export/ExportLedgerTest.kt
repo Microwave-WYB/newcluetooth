@@ -63,6 +63,20 @@ class ExportLedgerTest {
     }
 
     @Test
+    fun `an id whose acknowledgement is running is not acknowledged again`() {
+        // The runner acknowledges one at a time, so it cannot produce this; the reducer must still refuse it.
+        val running = Ledger(pending = setOf("e1"), acking = setOf("e1"))
+        for (event in listOf(LedgerEvent.Handed("e2"), LedgerEvent.AppStarted, LedgerEvent.Saved("e1"))) {
+            val step = ExportLedger.reduce(running, event)
+            assertFalse("$event", LedgerEffect.Acknowledge("e1") in step.effects)
+            assertTrue("$event: still in flight", "e1" in step.state.acking)
+        }
+        // Once it failed, the next release tries it again.
+        val failed = ExportLedger.reduce(running, LedgerEvent.AckFailed("e1")).state
+        assertTrue(LedgerEffect.Acknowledge("e1") in ExportLedger.reduce(failed, LedgerEvent.AppStarted).effects)
+    }
+
+    @Test
     fun `a failed acknowledgement stays pending, and a save of an unknown id acknowledges nothing`() {
         val failed = ExportLedger.reduce(Ledger(setOf("e1"), setOf("e1")), LedgerEvent.AckFailed("e1")).state
         assertEquals(Ledger(setOf("e1"), emptySet()), failed)
