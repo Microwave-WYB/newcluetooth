@@ -69,6 +69,8 @@ object Strings {
     const val ThisArea = "This area"
     const val Filter = "Filter"
     fun filterActive(n: Int) = if (n > 0) "Filter, $n active" else Filter
+    /** D-1c: the re-sort button's label. */
+    const val Resort = "Re-sort by signal"
     const val NoProductsMatch = "No products match"
     const val NoMatchingDevices = "No matching devices"
     const val Unidentified = "Unidentified"

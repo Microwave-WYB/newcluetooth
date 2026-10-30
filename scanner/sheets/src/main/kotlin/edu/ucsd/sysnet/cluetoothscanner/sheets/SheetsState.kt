@@ -211,6 +211,11 @@ class SheetsState internal constructor(
         launch { discover.setFilter(filter) }
     }
 
+    /** D-1c: the re-sort button: a new order from the current values. */
+    internal fun resort() {
+        launch { discover.resort() }
+    }
+
     /** D-13.1: Try again after the first sort failed. */
     internal fun retry() {
         launch {
