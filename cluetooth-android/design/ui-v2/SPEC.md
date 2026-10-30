@@ -503,6 +503,11 @@ Each component is built once. Its size, color and state rules come from these to
   8. Leaving or popping the sheet cancels a running discovery.
 - **D-14 Map.** Opening a device selects it (M-6). From a list it also eases the camera to the device, at zoom ≥ 18.2,
   keeping it clear of the sheet. From a map tap, the camera stays put.
+- **D-15 Selectable text.** Every piece of text in the device sheet can be selected and copied: the name, the
+  product name, the MAC, the dBm value, the Details values, every Raw data cell, the GATT step details and reasons,
+  and each service's and characteristic's name, UUID, properties and value. A long press starts a selection with the
+  system copy toolbar. Buttons, tabs and section labels are not selectable. Selecting never moves the sheet; a drag
+  that starts outside a selection handle still scrolls or drags as before (S-13).
 
 ## M. Map
 
