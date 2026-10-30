@@ -6,9 +6,11 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Identification
 
 // D-1, D-3a: the Filter sheet's part of a DeviceFilter is the three switches, Identification and the categories.
-// The segment (Nearby, This area), a product page and a search query are set elsewhere and survive Clear.
+// The scope (Nearby, This area) is the sheet's item 1 too but lives in DiscoverState.segment (Clear resets it there,
+// and DiscoverState.activeFilters counts it); a product page and a search query are set elsewhere and survive Clear.
 
-/** D-1: the filter button's badge, one per active switch, a non-Any Identification and each checked category. */
+/** D-1: the DeviceFilter's part of the filter button's badge: one per active switch, a non-Any Identification and
+ * each checked category (DiscoverState.activeFilters adds the scope). */
 val DeviceFilter.activeFilterCount: Int
     get() = listOf(readable, trackers, vulnerable).count { it } +
         (if (identification != Identification.Any) 1 else 0) + categories.size

@@ -168,12 +168,16 @@ class DiscoverReducerPropertyTest {
             repeat(400) {
                 val event: DiscoverEvent = when (rnd.nextInt(14)) {
                     0 -> DiscoverEvent.OpenRequested
-                    1 -> if (!state.live) DiscoverEvent.ViewToggled else {
+                    1 -> if (!state.live) DiscoverEvent.ViewSelected(DiscoverView.entries.random(rnd)) else {
                         val k = nextKey++
                         world.devices += Dev(k, GeoPoint(rnd.nextDouble(0.0, 2.0), rnd.nextDouble(0.0, 2.0)), listOf("qt", "lamp").random(rnd) + k, true)
                         DiscoverEvent.LiveAppended(longArrayOf(k))
                     }
-                    2 -> if (rnd.nextBoolean()) DiscoverEvent.ViewToggled else DiscoverEvent.ResortRequested // D-1c
+                    2 -> when (rnd.nextInt(3)) { // D-1, D-1c, D-3a Clear
+                        0 -> DiscoverEvent.ViewSelected(DiscoverView.entries.random(rnd))
+                        1 -> DiscoverEvent.ResortRequested
+                        else -> DiscoverEvent.FiltersCleared
+                    }
                     3 -> DiscoverEvent.SegmentSelected(Segment.entries.random(rnd))
                     4 -> DiscoverEvent.FilterSet(DeviceFilter(readable = rnd.nextBoolean()))
                     5 -> DiscoverEvent.CameraIdle(rnd.nextBoolean(), bbox(rnd), rnd.nextDouble(10.0, 18.0))

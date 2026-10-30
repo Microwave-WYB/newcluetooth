@@ -293,7 +293,7 @@ Each component is built once. Its size, color and state rules come from these to
     peek height excludes that inset.
 - **S-2 Corner buttons (phone).**
   - `--sheet-radius` = `--edge` + `--rb`/2 = 34 dp.
-  - The corner buttons (the view switch at top-left, the X at top-right) are 40 dp. Their center x is 34 dp from the
+  - The corner buttons (the re-sort button at top-left of the Discover sheet, the X at top-right) are 40 dp. Their center x is 34 dp from the
     sheet's side, equal to the center x of ☰ and of search above them.
   - Vertically they sit below the handle zone: center depth = `--handle-zone` + 34 = 48 dp. So they are horizontally
     aligned with the corner arc but deliberately not vertically concentric with it (owner decision: room for the
@@ -348,7 +348,7 @@ Each component is built once. Its size, color and state rules come from these to
 - **S-11 Tap on the handle or header background.** From Collapsed it goes up one state; from any other state it goes to
   Collapsed.
 - **S-12 Header controls raise the root.** Tapping any control in the Discover sheet's header while it is Collapsed
-  (the view switch, the segmented control) does its action AND raises the sheet to Half.
+  (the re-sort button, the view tabs) does its action AND raises the sheet to Half.
 - **S-13 Content gestures (Google Maps style).** The first move past the slop decides:
   - Not at Full: the gesture moves the sheet.
   - At Full with the content at scroll 0 and the finger moving down: it lowers the sheet.
@@ -380,17 +380,15 @@ Each component is built once. Its size, color and state rules come from these to
 ### Discover (root)
 
 - **D-1 Header.** A three-column grid (1fr auto 1fr):
-  - The view switch on the left: an IconButton showing the icon of the view it switches TO. The list icon reads
-    "Show the device list"; the grid icon reads "Show categories".
-  - The centered segmented control:
-    - [Nearby | All] while recording (default Nearby);
-    - [This area | All] for history and All sessions (default All, reset to All on every session change).
-  - The filter button in the right column (D-3a). It is the same round IconButton as the view switch, with a
-    funnel icon, mirroring it at the corner, with its center under the search button's center. While any filter
-    is active it takes the selected style and shows a count badge. It is shown in both views.
-  - The re-sort button, directly left of the filter button (D-1c).
-- **D-1c Re-sort.** An icon-only button (a sort glyph in `--t2`, no background, 40 dp touch target) directly left of
-  the filter button, in both views and in every session view. Tapping it builds a new order from the current values
+  - The re-sort button in the left column (D-1c), its center on the left corner button's center (S-2).
+  - The centered view tabs: a segmented control [List | Categories] showing the current view (D-1b). Switching
+    crossfades the content (D-1a).
+  - The filter button in the right column (D-3a): a round IconButton with a funnel icon at the corner, with its
+    center under the search button's center. While any filter is active, including a scope other than the default
+    (D-3a item 1), it takes the selected style and shows a count badge. It is shown in both views.
+  - The scope (Nearby / This area / All) is not in the header; it is the first item of the Filter sheet.
+- **D-1c Re-sort.** An icon-only button (a sort glyph in `--t2`, no background, 40 dp touch target) in the header's
+  left column, in both views and in every session view. Tapping it builds a new order from the current values
   (live RSSI while recording, the strongest seen otherwise), scrolls the list to the top and crossfades
   (`--t-fast`). It is the explicit user action G-9 allows; nothing re-sorts by itself. Hidden in search state.
 - **D-1a View switch transition.** Toggling categories ⇄ list crossfades the content and the chip row (`--t-fast`,
@@ -408,15 +406,19 @@ Each component is built once. Its size, color and state rules come from these to
   - Nearby hides stale rows. The filters come from the Filter sheet (D-3a).
 - **D-3a Filter sheet.** A pushed sheet titled "Filter", with the X and the usual exit logic.
   - From top to bottom:
-    1. switches, AND-combined:
+    1. "Show" — the scope, a segmented control:
+       - [Nearby | All] while recording (default Nearby);
+       - [This area | All] for history and All sessions (default All, reset to All on every session change).
+       A scope other than the default counts as one active filter for the button's badge (D-1).
+    2. switches, AND-combined:
        - Readable: the matched wiki page has a `decoder.js`, so the advertisement is decodable without connecting.
          Decoding itself is deferred to issue #39.
        - Trackers: the `asset-tracker` category.
        - Vulnerable: the matched page links a vulnerability page.
-    2. "Identification" [Any | Identified | Unidentified], default Any;
-    3. "Categories": a checkbox list of every category present in the scope (data-driven from the wiki; a device
+    3. "Identification" [Any | Identified | Unidentified], default Any;
+    4. "Categories": a checkbox list of every category present in the scope (data-driven from the wiki; a device
        matches any checked category);
-    4. a "Clear" text button.
+    5. a "Clear" text button; it also returns the scope to its default.
   - Changes apply live.
   - Category counts are faceted: each count is the devices that would show after checking that category. They
     apply every other active constraint (the switches, Identification, This area, Nearby, the Apple filter) but not the
@@ -586,8 +588,8 @@ Each component is built once. Its size, color and state rules come from these to
   - The page fades out, the field shrinks back, and the map enters search state.
   - The search bar is a full-width `--fill1` pill (44 dp, `--shadow-float`) with a search icon, the query text
     (ellipsized) and an X IconButton. It replaces ☰ and search.
-  - The Discover sheet shows only the matches: list view only, with no view switch, no chips and no segmented
-    control. Its header reads "N result(s) in this area", or "N result(s)" without an area.
+  - The Discover sheet shows only the matches: list view only, with no view tabs, no re-sort, no chips and no
+    scope. Its header reads "N result(s) in this area", or "N result(s)" without an area.
   - The map shows only the matched points.
   - The picked device's sheet opens at Half, with the camera easing to it.
 - **Q-6 "Search this area".**

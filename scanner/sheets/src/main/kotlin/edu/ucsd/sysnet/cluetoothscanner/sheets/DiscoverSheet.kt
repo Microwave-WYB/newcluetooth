@@ -51,8 +51,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
 internal object DiscoverTags {
-    const val VIEW_SWITCH = "discover-view"
-    const val SEGMENT = "discover-segment"
+    const val VIEW_TABS = "discover-view-tabs"
     const val FILTER = "discover-filter"
     const val LIST = "discover-list"
     const val CATEGORIES = "discover-categories"
@@ -122,30 +121,29 @@ private fun FailedNote(message: String, onRetry: () -> Unit) {
     }
 }
 
-/** D-1: the view switch, the segmented control and the filter button on one 40 dp row (S-2, S-3). */
+/**
+ * D-1: the re-sort button (left column), the view tabs (center) and the filter button (right column) on one 40 dp
+ * row, the corner buttons centered on the corner arcs (S-2, S-3). Search shows its own header instead (Q-5), so none
+ * of these, nor the scope, are shown there.
+ */
 @Composable
 private fun DiscoverHeader(state: SheetsState, tablet: Boolean) {
     val d = state.discover
     val inset = Concentric.cornerButton(tablet)
     Box(Modifier.fillMaxWidth().height(Css.DiscTitle.height).padding(horizontal = inset).testTag(DiscoverTags.HEADER)) {
-        val toList = d.view == DiscoverView.Categories
-        IconButton(
-            if (toList) Glyphs.list else Glyphs.grid,
-            if (toList) Strings.ShowDeviceList else Strings.ShowCategories,
-            onClick = d::toggleView,
-            modifier = Modifier.align(Alignment.CenterStart).testTag(DiscoverTags.VIEW_SWITCH),
-        )
-        val segments = segmentsFor(d.live)
+        // D-1c: icon only, no background, its center on the left corner button's center (S-2)
+        ResortButton(state::resort, Modifier.align(Alignment.CenterStart))
+        // the tabs show the current view (D-1b); a tap switches with the D-1a crossfade, S-12 raises a Collapsed root
+        val views = listOf(DiscoverView.List, DiscoverView.Categories)
         Segmented(
-            segments.map { it.label() },
-            segments.indexOf(d.segment),
-            onSelect = { i -> state.selectSegment(segments[i]) },
-            modifier = Modifier.align(Alignment.Center).width(Css.DiscHead_Seg.width).testTag(DiscoverTags.SEGMENT),
+            listOf(Strings.ListView, Strings.Categories),
+            views.indexOf(d.view),
+            onSelect = { i -> d.selectView(views[i]) },
+            modifier = Modifier.align(Alignment.Center).width(Css.DiscHead_Seg.width).testTag(DiscoverTags.VIEW_TABS),
             size = SegmentedSize.Header,
         )
-        // D-1c: re-sort, directly left of the filter button (hidden in search, where this header isn't shown)
-        ResortButton(state::resort, Modifier.align(Alignment.CenterEnd).padding(end = Tokens.iconBtn))
-        val active = d.filter.activeFilterCount
+        // a scope other than the default (D-3a item 1) counts as one active filter
+        val active = d.activeFilters
         IconButton(
             Glyphs.filter,
             Strings.filterActive(active),
@@ -168,7 +166,7 @@ private fun SearchHeader(d: DiscoverModel) {
     }
 }
 
-private fun Segment.label() = when (this) {
+internal fun Segment.label() = when (this) {
     Segment.Nearby -> Strings.Nearby
     Segment.All -> Strings.All
     Segment.ThisArea -> Strings.ThisArea

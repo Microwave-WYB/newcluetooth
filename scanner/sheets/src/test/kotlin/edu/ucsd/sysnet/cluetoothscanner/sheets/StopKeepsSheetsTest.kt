@@ -58,7 +58,7 @@ class StopKeepsSheetsTest {
         val (s, _) = recording()
         assertTrue(s.live)
         assertEquals(Segment.Nearby, s.discover.segment)
-        s.discover.toggleView() // the list
+        s.discover.selectView(DiscoverView.List)
         s.discover.setFilter(DeviceFilter(readable = true))
         advanceUntilIdle()
         s.stack.root.scroll = ScrollSnapshot(37, 12)

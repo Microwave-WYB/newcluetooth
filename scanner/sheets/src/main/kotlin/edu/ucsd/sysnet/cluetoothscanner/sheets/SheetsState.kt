@@ -210,6 +210,14 @@ class SheetsState internal constructor(
         launch { discover.setFilter(filter) }
     }
 
+    /** D-3a Clear: the sheet's filters and the scope back to their defaults; S-17 as for a scope change. */
+    internal fun clearFilters() {
+        launch {
+            discover.clearFilters()
+            followDiscover()
+        }
+    }
+
     /** D-1c: the re-sort button: a new order from the current values. */
     internal fun resort() {
         launch { discover.resort() }
@@ -262,7 +270,7 @@ class SheetsState internal constructor(
         open()
     }
 
-    /** D-1: a segment switch; S-17: the map shows the new point set. */
+    /** D-3a item 1: a scope switch; S-17: the map shows the new point set. */
     internal fun selectSegment(segment: Segment) {
         launch {
             discover.selectSegment(segment)

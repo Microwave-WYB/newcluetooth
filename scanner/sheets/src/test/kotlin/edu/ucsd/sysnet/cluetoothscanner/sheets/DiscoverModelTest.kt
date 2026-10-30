@@ -151,8 +151,8 @@ class DiscoverModelTest {
         val m = DiscoverModel(session(), false, st).also { it.open() }
         st.setHeight(st.root, SheetHeight.Half)
         st.root.scroll = ScrollSnapshot(3, 8)
-        m.toggleView() // list view
-        m.toggleView() // back to categories
+        m.selectView(DiscoverView.List)
+        m.selectView(DiscoverView.Categories)
         val filtered = DeviceFilter(readable = true)
         m.setFilter(filtered)
         st.push(SheetKind.Product("p"))
@@ -207,14 +207,26 @@ class DiscoverModelTest {
     }
 
     @Test
-    fun `S-12 the view switch and the segments raise a Collapsed root to Half`() = runTest {
+    fun `S-12 the view tabs and the re-sort act and raise a Collapsed root to Half, the scope does not`() = runTest {
         val st = stack()
         val m = DiscoverModel(session(), false, st).also { it.open() }
-        m.toggleView()
+        m.selectView(DiscoverView.List)
+        assertEquals(SheetHeight.Half, st.root.height)
+        assertEquals(DiscoverView.List, m.view)
+        st.setHeight(st.root, SheetHeight.Collapsed)
+        m.selectView(DiscoverView.List) // the current tab raises too
         assertEquals(SheetHeight.Half, st.root.height)
         st.setHeight(st.root, SheetHeight.Collapsed)
-        m.selectSegment(Segment.ThisArea)
+        val sorts = m.resorts
+        m.resort()
+        advanceUntilIdle()
         assertEquals(SheetHeight.Half, st.root.height)
+        assertEquals(sorts + 1, m.resorts)
+        // D-3a item 1: the scope is in the Filter sheet now, no header control: it raises nothing
+        st.setHeight(st.root, SheetHeight.Collapsed)
+        m.selectSegment(Segment.ThisArea)
+        assertEquals(SheetHeight.Collapsed, st.root.height)
+        assertEquals(Segment.ThisArea, m.segment)
     }
 
     // ---- #52 review fixes ----

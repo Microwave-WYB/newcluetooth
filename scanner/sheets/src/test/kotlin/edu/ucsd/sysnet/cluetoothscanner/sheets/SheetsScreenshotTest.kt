@@ -65,11 +65,11 @@ class SheetsScreenshotTest {
         }
         if (!tablet) compose.runOnIdle { s.stack.setHeight(s.stack.root, SheetHeight.Half) }
         shot("discover")
-        // D-1c: the header row on its own: view switch, segments, re-sort, filter
+        // D-1: the header row on its own: re-sort, the view tabs, filter
         compose.onNodeWithTag(DiscoverTags.HEADER).captureRoboImage("src/test/screenshots/sheets/$size-$scheme-header.png")
-        compose.runOnIdle { s.discover.toggleView() }
+        compose.runOnIdle { s.discover.selectView(DiscoverView.List) }
         shot("discover-list")
-        compose.runOnIdle { s.discover.toggleView() }
+        compose.runOnIdle { s.discover.selectView(DiscoverView.Categories) }
         val products = runBlocking { fake.products(s.scope, DeviceFilter()) }
         val page = products.flatMap { it.products }.first { it.id != UNIDENTIFIED }.id
         compose.runOnIdle { s.openProduct(page) }

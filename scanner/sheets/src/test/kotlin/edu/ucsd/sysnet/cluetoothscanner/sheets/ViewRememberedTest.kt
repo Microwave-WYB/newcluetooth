@@ -22,12 +22,16 @@ class ViewRememberedTest {
     private val back = SearchReturn(DiscoverView.Categories, SheetHeight.Half, PanelHeight.Open, ScrollSnapshot())
 
     @Test
-    fun `D-1b a user switch toggles the view and tells app to remember it`() {
-        val toList = reduceDiscover(ready, DiscoverEvent.ViewToggled)
+    fun `D-1 a tap on a view tab switches the view and tells app to remember it, S-12 raises`() {
+        val toList = reduceDiscover(ready, DiscoverEvent.ViewSelected(DiscoverView.List))
         assertEquals(DiscoverView.List, toList.state.view)
         assertEquals(listOf(DiscoverEffect.RaiseRoot, DiscoverEffect.ViewChosen(DiscoverView.List)), toList.effects)
-        val back = reduceDiscover(toList.state, DiscoverEvent.ViewToggled)
+        val back = reduceDiscover(toList.state, DiscoverEvent.ViewSelected(DiscoverView.Categories))
         assertEquals(DiscoverEffect.ViewChosen(DiscoverView.Categories), back.effects.last())
+        // the current tab: nothing changes or is remembered, but S-12 still raises a Collapsed root
+        val same = reduceDiscover(toList.state, DiscoverEvent.ViewSelected(DiscoverView.List))
+        assertSame(toList.state, same.state)
+        assertEquals(listOf(DiscoverEffect.RaiseRoot), same.effects)
     }
 
     @Test
@@ -47,8 +51,12 @@ class ViewRememberedTest {
         )
         assertEquals(DiscoverView.List, searching.state.view)
         assertTrue(searching.effects.none { it is DiscoverEffect.ViewChosen })
-        // no switch in search: a toggle changes nothing and remembers nothing
-        assertSame(searching.state, reduceDiscover(searching.state, DiscoverEvent.ViewToggled).state)
+        // no tabs in search: a tap changes nothing, remembers nothing and raises nothing
+        for (v in DiscoverView.entries) {
+            val tap = reduceDiscover(searching.state, DiscoverEvent.ViewSelected(v))
+            assertSame(searching.state, tap.state)
+            assertTrue(tap.effects.isEmpty())
+        }
         // a restore during search is the view search returns to; the forced list stays
         val restored = reduceDiscover(searching.state, DiscoverEvent.ViewRestored(DiscoverView.List)).state
         assertEquals(DiscoverView.List, restored.searching?.back?.view)
@@ -60,7 +68,7 @@ class ViewRememberedTest {
     }
 
     @Test
-    fun `D-1b a search session through SheetsState emits no view choice, only the user switch does`() = runTest {
+    fun `D-1b a search session through SheetsState emits no view choice, only the user's tab does`() = runTest {
         val core = FakeCore(backgroundScope, clock = { FakeCore.DEMO_NOW_MS }, demo = FakeDemo.History, simulate = false)
         val chosen = mutableListOf<SheetsEvent>()
         val s = SheetsState(
@@ -78,7 +86,7 @@ class ViewRememberedTest {
         advanceUntilIdle()
         assertEquals(DiscoverView.Categories, s.discover.view)
         assertTrue(chosen.isEmpty()) // the saved choice was never touched
-        s.discover.toggleView()
+        s.discover.selectView(DiscoverView.List)
         assertEquals(listOf<SheetsEvent>(SheetsEvent.ViewChosen(DiscoverView.List)), chosen)
     }
 }

@@ -64,6 +64,10 @@ object Strings {
     const val Discover = "Discover"
     const val ShowDeviceList = "Show the device list"
     const val ShowCategories = "Show categories"
+    /** D-1: the view tabs [List | Categories] (with [Categories]). */
+    const val ListView = "List"
+    /** D-3a item 1: the scope. */
+    const val Show = "Show"
     const val Nearby = "Nearby"
     const val All = "All"
     const val ThisArea = "This area"
