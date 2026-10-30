@@ -253,7 +253,7 @@ Each component is built once. Its size, color and state rules come from these to
   - The UI stays on the session that just ended, now frozen (V-3).
   - Stop does nothing to the sheets: the stack, each sheet's height (or the tablet panel's state), the open tab,
     scroll positions, filters and the current order all stay as they were. Only live-only parts change (the chart
-    stop, Nearby becomes unavailable as in D-1, the list stops appending).
+    stops, Nearby becomes unavailable as in D-1, the list stops appending).
 - **R-8 Deliberate asymmetry.** Starting sits at the thumb (bottom-right) and stopping needs a reach to the top (phone).
   This is intended; do not add a stop control near the bottom.
 - **R-9 Search state (phone).** The island sits centered directly below the search bar (top = `--edge` + 44 + 8 dp)
