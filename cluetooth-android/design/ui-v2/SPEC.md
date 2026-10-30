@@ -236,8 +236,11 @@ Each component is built once. Its size, color and state rules come from these to
     device count and no coordinates.
 - **R-4a Discovery rate.** A line chart of how fast new devices are found during this recording.
   - x: the recording's elapsed time from its start to now (paused time left out; the line breaks across a pause).
-  - y: new devices per minute, i.e. devices first scanned in each 30 s bin × 2, lightly smoothed. Baseline 0, no
-    grid, no axis labels except the current value at the line's end: "N new/min" (12 `--t2`, tabular).
+  - y: new devices per minute over a trailing 30 s window: the devices first scanned in the last 30 s of recording
+    × 2 (in the first 30 s, scaled by the time recorded, at least 10 s). The core keeps first-scanned counts in 5 s
+    bins; the line has a point per bin and its end follows the live deltas, so it reacts within seconds. No centered
+    smoothing: a burst must never be smeared into the time after it. Baseline 0, no grid, no axis labels except the
+    current value at the line's end: "N new/min" (12 `--t2`, tabular).
   - About 72 dp tall, inset by the panel padding, line in `--blue`, a soft fill under it in `--blue` at low opacity.
   - Standing in one place, the line falls towards 0 as everything nearby has been found; walking somewhere new
     raises it.
