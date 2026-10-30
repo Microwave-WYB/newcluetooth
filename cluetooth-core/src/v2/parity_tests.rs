@@ -2236,3 +2236,234 @@ fn the_live_chart_follows_the_last_minute() {
     core.stop_recording_at(t0 + 67_000).unwrap();
     assert_eq!(chart(t0 + 67_000), None, "stopped: not live");
 }
+
+/// An unnamed Apple device (company field 76, no name): the display filter hides it.
+fn apple(i: usize, at: i64) -> ScanObservationInput {
+    let mut o = dev(i, -60, at);
+    o.raw = vec![2, 1, 6, 4, 0xFF, 0x4C, 0x00, 0x10];
+    o.local_name = None;
+    o
+}
+
+/// The deltas' discovery parts applied in order to an empty snapshot (a total of 0 removes the bin).
+fn applied(deltas: &[LiveDelta], session: &str) -> (Vec<(i64, u32)>, Vec<DiscoveryRun>) {
+    let mut bins = BTreeMap::new();
+    let mut runs = Vec::new();
+    for d in deltas.iter().filter(|d| d.session_id == session) {
+        if let Some(u) = &d.discovery {
+            for b in &u.bins {
+                match b.new_devices {
+                    0 => bins.remove(&b.start_ms),
+                    n => bins.insert(b.start_ms, n),
+                };
+            }
+            runs = u.runs.clone();
+        }
+    }
+    (bins.into_iter().collect(), runs)
+}
+
+/// The deltas once the one with `seq` has arrived.
+fn deltas_through(c: &Collect, seq: u64) -> Vec<LiveDelta> {
+    for _ in 0..400 {
+        if c.deltas.lock().unwrap().iter().any(|d| d.seq >= seq) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    c.deltas.lock().unwrap().clone()
+}
+
+fn hide_apple(core: &Core, hide: bool) {
+    core.set_display_filter(DisplayFilter {
+        hide_unnamed_apple: hide,
+    })
+    .unwrap();
+}
+
+/// #112 review: an unnamed Apple device counts only while the display filter shows it; turning the filter on
+/// mid-recording empties its bin, and the deltas send that bin as 0.
+#[test]
+fn hidden_devices_leave_the_rate_and_their_bin_goes_out_as_zero() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    hide_apple(&core, false);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(vec![apple(1, t0 + 1_000)], t0 + 1_000)
+        .unwrap();
+    core.ingest_scans_at(vec![dev(2, -60, t0 + 40_000)], t0 + 40_000)
+        .unwrap();
+    core.tick_at(t0 + 45_000);
+    assert_eq!(
+        bins(&rate(&core, &id)),
+        vec![(t0, 1), (t0 + 30_000, 1)],
+        "shown: counted"
+    );
+    hide_apple(&core, true);
+    let fresh = rate(&core, &id);
+    assert_eq!(bins(&fresh), vec![(t0 + 30_000, 1)], "hidden: not counted");
+    // the next delta tells the UI that bin t0 is now 0
+    core.ingest_scans_at(vec![dev(2, -60, t0 + 50_000)], t0 + 50_000)
+        .unwrap();
+    core.tick_at(t0 + 55_000);
+    let deltas = deltas_through(&c, rate(&core, &id).seq);
+    assert!(
+        deltas
+            .iter()
+            .filter_map(|d| d.discovery.as_ref())
+            .any(|u| u.bins.contains(&DiscoveryBin {
+                start_ms: t0,
+                new_devices: 0
+            })),
+        "the emptied bin is sent as 0"
+    );
+    assert_eq!(applied(&deltas, &id), (bins(&fresh), fresh.runs.clone()));
+}
+
+/// #112 review: a late first sighting moves a device to an earlier bin; the later one, now empty, goes out as 0, so
+/// the device is not counted twice.
+#[test]
+fn a_late_first_sighting_moves_the_device_and_empties_its_bin() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(vec![dev(5, -60, t0 + 40_000)], t0 + 40_000)
+        .unwrap();
+    core.tick_at(t0 + 45_000);
+    assert_eq!(bins(&rate(&core, &id)), vec![(t0 + 30_000, 1)]);
+    // the same device, scanned earlier, arrives late
+    core.ingest_scans_at(vec![dev(5, -60, t0 + 10_000)], t0 + 46_000)
+        .unwrap();
+    core.tick_at(t0 + 51_000);
+    let fresh = rate(&core, &id);
+    assert_eq!(bins(&fresh), vec![(t0, 1)]);
+    let deltas = deltas_through(&c, fresh.seq);
+    let (applied_bins, _) = applied(&deltas, &id);
+    assert_eq!(
+        applied_bins,
+        vec![(t0, 1)],
+        "counted once, in the earlier bin"
+    );
+}
+
+/// #112 review, randomized: whatever happens (new, known and late devices, hidden ones, filter flips, pauses), the
+/// empty snapshot plus every delta's discovery part equals a fresh read.
+#[test]
+fn randomized_snapshot_plus_deltas_equals_a_fresh_read() {
+    for seed in [5u64, 17, 2027] {
+        let mut state = seed;
+        let mut rnd = move |n: u64| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) % n
+        };
+        let t0 = 1_761_000_000_000i64;
+        let (core, _dir, c) = fresh_core(t0);
+        let id = core.start_recording_at(env(), t0).unwrap();
+        let mut now = t0;
+        let mut paused = false;
+        let mut hidden = true;
+        let mut next = 0usize;
+        for _ in 0..300 {
+            now += 1 + rnd(6_000) as i64;
+            match rnd(20) {
+                0 => {
+                    if paused {
+                        core.resume_recording_at(now).unwrap();
+                    } else {
+                        core.pause_recording_at(now).unwrap();
+                    }
+                    paused = !paused;
+                }
+                1 => {
+                    hidden = !hidden;
+                    hide_apple(&core, hidden);
+                }
+                2..=4 => core.tick_at(now),
+                5..=6 => {
+                    next += 1;
+                    core.ingest_scans_at(vec![apple(next, now)], now).unwrap();
+                }
+                7..=9 if next > 0 => {
+                    // a late sighting of a known device
+                    let at = now - rnd(90_000) as i64;
+                    let i = rnd(next as u64) as usize;
+                    core.ingest_scans_at(vec![dev(i, -60, at)], now).unwrap();
+                }
+                _ => {
+                    next += 1;
+                    core.ingest_scans_at(vec![dev(next, -60, now)], now)
+                        .unwrap();
+                }
+            }
+        }
+        if paused {
+            now += 1_000;
+            core.resume_recording_at(now).unwrap();
+        }
+        // one more commit carries whatever changed since the last delta
+        now += 6_000;
+        core.ingest_scans_at(vec![dev(next + 1, -60, now)], now)
+            .unwrap();
+        core.tick_at(now + 6_000);
+        let fresh = rate(&core, &id);
+        let deltas = deltas_through(&c, fresh.seq);
+        assert_eq!(
+            applied(&deltas, &id),
+            (bins(&fresh), fresh.runs.clone()),
+            "seed {seed}: snapshot + deltas = a fresh read"
+        );
+    }
+}
+
+/// #111 follow-up: a dropped query's cancel flag never reaches the next one, even a long one the progress handler
+/// checks many times.
+#[test]
+fn a_cancel_never_reaches_a_long_next_query() {
+    let (core, _dir, _c) = fresh_core(1_761_000_000_000);
+    let endless =
+        "WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r) SELECT count(*) FROM r";
+    let long = "WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r WHERE i < 200000) SELECT count(*) FROM r";
+    for n in 0..20u64 {
+        let dropped = core.read(move |c, _| Ok(c.query_row(endless, [], |r| r.get::<_, i64>(0))?));
+        if n % 2 == 1 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        drop(dropped);
+        let v = block(core.read(move |c, _| Ok(c.query_row(long, [], |r| r.get::<_, i64>(0))?)))
+            .expect("the next query is not cancelled");
+        assert_eq!(v, 200_000);
+    }
+}
+
+/// #111 follow-up: the reader gets its new snapshot before Stop replies, so a query sent right after sees the session
+/// no longer live (no chart, a frozen view).
+#[test]
+fn queries_after_stop_see_it() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, _c) = fresh_core(t0);
+    let key = 0xAA00_0000_0001i64;
+    for k in 0..20i64 {
+        let at = t0 + k * 100_000;
+        let id = core.start_recording_at(env(), at).unwrap();
+        core.ingest_scans_at(vec![dev(1, -60, at + 1_000)], at + 1_000)
+            .unwrap();
+        assert!(
+            block(core.device_chart_at(key, at + 1_500))
+                .unwrap()
+                .is_some()
+        );
+        core.stop_recording_at(at + 2_000).unwrap();
+        assert_eq!(
+            block(core.device_chart_at(key, at + 2_000)).unwrap(),
+            None,
+            "round {k}"
+        );
+        let scope = Scope {
+            sessions: SessionScope::Sessions { ids: vec![id] },
+            filter: None,
+        };
+        assert!(!block(core.session_view(scope)).unwrap().live, "round {k}");
+    }
+}

@@ -1755,6 +1755,45 @@ mod tests {
 
     /// §2.6 coalescing: latest values per key (a change never drops an earlier name), appends concatenated with
     /// later changes folded in, routes concatenated, one seq (the newer).
+    /// #112 review: coalescing keeps the discovery bins of both deltas (the later total wins for the same start) and
+    /// the later runs; dropping either side's bins fails here.
+    #[test]
+    fn coalescing_merges_the_discovery_bins() {
+        let bin = |start_ms, new_devices| DiscoveryBin {
+            start_ms,
+            new_devices,
+        };
+        let run = |start_ms, end_ms| DiscoveryRun { start_ms, end_ms };
+        let with = |seq, bins, runs| LiveDelta {
+            discovery: Some(DiscoveryUpdate { bins, runs }),
+            ..delta(seq, vec![], vec![])
+        };
+        let a = with(1, vec![bin(0, 1), bin(30_000, 1)], vec![run(0, None)]);
+        let b = with(
+            2,
+            vec![bin(30_000, 0), bin(60_000, 2)],
+            vec![run(0, Some(70_000))],
+        );
+        let merged = coalesce(a.clone(), b.clone()).discovery.unwrap();
+        let mut bins = merged.bins.clone();
+        bins.sort_by_key(|b| b.start_ms);
+        assert_eq!(
+            bins,
+            vec![bin(0, 1), bin(30_000, 0), bin(60_000, 2)],
+            "the earlier bin 0, the later totals for 30 000 and 60 000"
+        );
+        assert_eq!(merged.runs, vec![run(0, Some(70_000))], "the later runs");
+        // one side without a discovery part keeps the other's
+        assert_eq!(
+            coalesce(a.clone(), delta(2, vec![], vec![])).discovery,
+            a.discovery
+        );
+        assert_eq!(
+            coalesce(delta(1, vec![], vec![]), b.clone()).discovery,
+            b.discovery
+        );
+    }
+
     #[test]
     fn coalescing_keeps_latest_values_and_concatenates_appends() {
         let row = DeviceRow {

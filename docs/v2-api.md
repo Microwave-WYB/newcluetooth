@@ -684,7 +684,9 @@ pub struct DiscoveryRate { pub seq: u64, pub bin_ms: u32 /* 30 000 */, pub bins:
   run ends where it was interrupted. `seq` is the live `seq` while the session is live (§2.6 snapshot protocol),
   else 0. An unknown session has no runs and no bins.
 - **Deltas.** While live, `LiveDelta.discovery` carries the bins that changed or are new, each a total that replaces
-  the bin with the same start, plus the runs now. It is `None` when neither changed.
+  the bin with the same start, plus the runs now. A bin that was sent and is now missing goes out as a total of 0:
+  the display filter turned on, or a late first sighting moved its device to an earlier bin. It is `None` when
+  nothing changed. The empty snapshot plus every delta always equals a fresh read.
 
 ### 2.6 Live deltas
 

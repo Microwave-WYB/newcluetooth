@@ -742,12 +742,17 @@ class FakeCore(
         val products = cards.values.filter { l.sentCards[it.id] != it }
         val routeAppended = l.route.subList(l.sentRoute, l.route.size).toList()
         val bins = discoveryBins(l.runs, liveFirstSeen(l))
-        val freshBins = bins.filter { l.sentBins[it.startMs] != it.newDevices }
+        // as in the core: changed totals, and 0 for a bin sent before and missing now (bins are sparse)
+        val nowBins = bins.associate { it.startMs to it.newDevices }
+        val freshBins = (bins.filter { l.sentBins[it.startMs] != it.newDevices } +
+            l.sentBins.filter { (start, n) -> n > 0 && start !in nowBins }.map { (start, _) -> DiscoveryBin(start, 0) })
+            .sortedBy { it.startMs }
         val discovery = if (freshBins.isEmpty() && l.runs == l.sentRuns) null else DiscoveryUpdate(freshBins, l.runs.toList())
         // the focused device's chart (D-10) rides on every delta, as in the core
         if (!force && focus == null && discovery == null && changed.isEmpty() && appended.isEmpty() &&
             products.isEmpty() && routeAppended.isEmpty()) return null
-        for (b in freshBins) l.sentBins[b.startMs] = b.newDevices
+        l.sentBins.clear()
+        l.sentBins.putAll(nowBins)
         l.sentRuns = l.runs.toList()
         markSent(l, now)
         l.seq++

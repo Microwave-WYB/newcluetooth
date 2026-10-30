@@ -2,6 +2,7 @@
 //! seconds ("just use one minute"). Owned by the writer; the reader sees immutable snapshots of it.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::types::LiveChart;
 
@@ -80,7 +81,9 @@ pub(crate) fn encode(rssi: Option<i16>) -> u8 {
 /// The live session's rings.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Rings {
-    by_key: HashMap<i64, Ring>,
+    /// Each ring behind its own `Arc`: a new reader snapshot copies pointers, and a sighting copies only its own
+    /// device's ring when the reader still holds it.
+    by_key: HashMap<i64, Arc<Ring>>,
 }
 
 impl Rings {
@@ -88,7 +91,7 @@ impl Rings {
     pub fn hear(&mut self, key: i64, at_ms: i64, rssi: i16) {
         let sec = at_ms.div_euclid(1000);
         if let Some(ring) = self.by_key.get_mut(&key) {
-            ring.hear(sec, at_ms, rssi);
+            Arc::make_mut(ring).hear(sec, at_ms, rssi);
             return;
         }
         if self.by_key.len() >= MAX_DEVICES {
@@ -104,7 +107,8 @@ impl Rings {
                 self.by_key.remove(&k);
             }
         }
-        self.by_key.insert(key, Ring::new(sec, at_ms, rssi));
+        self.by_key
+            .insert(key, Arc::new(Ring::new(sec, at_ms, rssi)));
     }
 
     /// Forgets the devices not heard in the 60 s before `now_ms`.
@@ -126,7 +130,7 @@ impl Rings {
     /// `stale_after_ms`. A device without a ring gets an empty chart.
     pub fn chart(&self, key: i64, now_ms: i64, stale_after_ms: i64) -> LiveChart {
         let now_sec = now_ms.div_euclid(1000);
-        let ring = self.by_key.get(&key);
+        let ring = self.by_key.get(&key).map(|r| r.as_ref());
         let samples = (0..WINDOW_S as i64)
             .map(|j| encode(ring.and_then(|r| r.at(now_sec - (WINDOW_S as i64 - 1) + j))))
             .collect();
