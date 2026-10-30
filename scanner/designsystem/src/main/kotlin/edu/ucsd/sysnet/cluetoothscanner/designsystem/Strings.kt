@@ -122,6 +122,8 @@ object Strings {
     const val Data = "Data"
     const val GattNote = "Only connect to devices you own or have permission to test."
     const val DiscoverGatt = "Discover GATT"
+    /** D-13.7: a device already read. */
+    const val DiscoverAgain = "Discover again"
     const val Cancel = "Cancel"
     const val IAmAuthorized = "I am authorized"
     const val TryAgain = "Try again"

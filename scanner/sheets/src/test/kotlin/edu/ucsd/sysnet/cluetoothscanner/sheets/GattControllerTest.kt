@@ -93,7 +93,9 @@ class GattControllerTest {
         g.onAuthorized()
         advanceUntilIdle()
         val failed = g.state as GattUi.Failed
-        assertEquals(GattFailure.TimedOut, failed.view.steps.last().failure)
+        // D-13.5: the failed row, then "Disconnected" once the link is closed
+        assertEquals(GattFailure.TimedOut, failed.view.steps.single { it.state == Failed }.failure)
+        assertEquals(Disconnected to Done, failed.view.steps.last().let { it.kind to it.state })
         g.onTryAgain()
         assertEquals(GattUi.Confirm, g.state)
     }

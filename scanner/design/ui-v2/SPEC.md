@@ -485,9 +485,9 @@ Each component is built once. Its size, color and state rules come from these to
 
      The running step shows a spinner (2 dp `--div` ring with a `--blue` top, 0.8 s). Done steps get a
      `--rssi-strong` dot.
-  5. Failure: the list stops at the failed row, which gets a `--rssi-weak` dot and its reason in `--rssi-weak`
-     ("Timed out", "Disconnected unexpectedly"). Below it, a tonal "Try again" goes straight back to the step-3
-     prompt.
+  5. Failure: the remaining steps are skipped at the failed row, which gets a `--rssi-weak` dot and its reason in
+     `--rssi-weak` ("Timed out", "Disconnected unexpectedly"). The list still ends with the "Disconnected" step once
+     the link is closed. Below it, a tonal "Try again" goes straight back to the step-3 prompt.
   6. Success: the services, then their characteristics (name, UUID · properties, value), appear below the steps.
   7. A device that was already read opens showing its last result, with the note and one full-width tonal
      "Discover again" above it.

@@ -46,10 +46,13 @@ class GattAndRowsPropertyTest {
                 val step = reduceGatt(s, event)
                 val next = step.state
                 val ctx = "seed $seed: $s + $event -> $next"
-                // D-13.3: the prompt comes only from Idle (Discover) or Failed (Try again), every time
+                // D-13.3, D-13.7: the prompt comes only from Idle or a last result (Discover) or Failed (Try again),
+                // every time
                 if (next.ui == GattUi.Confirm && s.ui != GattUi.Confirm) {
-                    assertTrue(ctx, event == GattEvent.Discover && s.ui == GattUi.Idle || event == GattEvent.TryAgain && s.ui is GattUi.Failed)
+                    assertTrue(ctx, event == GattEvent.Discover && (s.ui == GattUi.Idle || s.ui is GattUi.Done) || event == GattEvent.TryAgain && s.ui is GattUi.Failed)
                 }
+                // D-13.7: the last result changes only to a success
+                if (next.last != s.last) assertTrue(ctx, next.ui is GattUi.Done && (next.ui as GattUi.Done).view == next.last)
                 // a run starts only with "I am authorized" on the prompt, and gets a new number
                 step.effects.filterIsInstance<GattEffect.StartRun>().forEach { start ->
                     assertTrue(ctx, s.ui == GattUi.Confirm && event is GattEvent.Authorized)
@@ -65,7 +68,13 @@ class GattAndRowsPropertyTest {
                 }
                 // a run's events count only while that run shows
                 if (event is GattEvent.Progress && (event.run != s.run || s.ui !is GattUi.Running)) assertSame(ctx, s, next)
-                if (event is GattEvent.Finished && (event.run != s.run || s.ui !is GattUi.Running)) assertSame(ctx, s, next)
+                if (event is GattEvent.Finished && event.run == s.run && s.ui is GattUi.Failed) {
+                    // D-13.5: the run's link is closed; a failed list only gains its closing "Disconnected" step
+                    val before = (s.ui as GattUi.Failed).view.steps
+                    val after = (next.ui as? GattUi.Failed)?.view?.steps
+                    assertTrue(ctx, after == before || after == before + GattStep(GattStepKind.Disconnected, GattStepState.Done, null, null, null, null, null))
+                    assertEquals(ctx, s.copy(ui = next.ui), next)
+                } else if (event is GattEvent.Finished && (event.run != s.run || s.ui !is GattUi.Running)) assertSame(ctx, s, next)
                 if (event is GattEvent.RunFailed) {
                     if (event.run != s.run || s.ui !is GattUi.Running) assertSame(ctx, s, next) else assertTrue(ctx, next.ui is GattUi.Failed)
                 }

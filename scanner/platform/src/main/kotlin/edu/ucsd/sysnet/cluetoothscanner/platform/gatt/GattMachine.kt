@@ -103,9 +103,15 @@ internal object GattMachine {
 
         /**
          * A link call threw something other than a refusal (a stack bug): the discovery is stored as failed at the
-         * stage it reached, with nothing else kept, and the link is closed.
+         * stage it reached, with nothing else kept. Like every other path it then disconnects (SPEC D-13.5, D-13.7):
+         * the disconnect is sent, its callback (or the disconnect timeout) closes the link. If the disconnect call
+         * itself threw, the link is closed at once.
          */
         private fun linkFailed() {
+            if (model.wait is EngineWait.Disconnecting) {
+                effects += EngineEffect.Close
+                return finish()
+            }
             run {
                 RunFacts.FRESH.copy(
                     stage = stage,
@@ -114,8 +120,7 @@ internal object GattMachine {
                 )
             }
             model = model.copy(phy = null)
-            effects += EngineEffect.Close
-            finish()
+            disconnect(DisconnectInitiator.LOCAL, retryIf133 = false)
         }
 
         /** An input for a stage that waits: cancel, another attempt's callback, the PHY, a disconnect or its pick. */

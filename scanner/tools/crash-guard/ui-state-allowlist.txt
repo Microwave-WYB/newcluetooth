@@ -3,7 +3,7 @@
 # Allowed here: a runner's single state holder, written only as reduce(current, event); an execution-layer handle.
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetContent.kt:25  SheetMachine: the reducer holder itself, written only by dispatch (reduce of the current state)
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/Discover.kt:491  DiscoverModel runner: the single DiscoverState, written only as reduceDiscover(current, event)
-sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/GattController.kt:48  GattController runner: the single GattState, written only as reduceGatt(current, event)
+sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/GattController.kt:49  GattController runner: the single GattState, written only as reduceGatt(current, event)
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:133  SheetStackController runner: the single StackState, written only as reduceStack(current, event)
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetsState.kt:468  RowStore runner: the RowState version, written only as reduceRows(current, event)
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:70  execution layer: the composed content's scroll handle (gestures), set by the composition

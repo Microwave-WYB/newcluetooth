@@ -76,6 +76,7 @@ internal object DeviceTags {
     const val DISCOVER = "gatt-discover"
     const val CANCEL = "gatt-cancel"
     const val TRY_AGAIN = "gatt-try-again"
+    const val LAST = "gatt-last"
     const val NOTE = "gatt-note"
     const val HEAD_RSSI = "device-head-rssi"
     const val REASON = "gatt-reason"
@@ -325,8 +326,11 @@ internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceF
     val c = CluetoothTheme.colors
     val pad = Css.GattFlow.padding
     Column(Modifier.fillMaxWidth().padding(horizontal = pad.left, vertical = pad.top)) {
+        val last = gatt.last
         when (val s = gatt.state) {
-            GattUi.Idle, GattUi.Confirm -> {
+            // D-13.2/3 and D-13.7: the button row ("Discover GATT", or a tonal "Discover again" above a last result)
+            // and the prompt it turns into; a last result stays below both
+            GattUi.Idle, GattUi.Confirm, is GattUi.Done -> {
                 GattNote()
                 val confirm = s == GattUi.Confirm
                 // D-13.3: the row turns into Cancel | I am authorized in place: Cancel grows from zero width to
@@ -342,22 +346,30 @@ internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceF
                         )
                         Spacer(Modifier.width(gap))
                     }
+                    val again = !confirm && last != null
                     Button(
-                        if (confirm) Strings.IAmAuthorized else Strings.DiscoverGatt,
+                        when {
+                            confirm -> Strings.IAmAuthorized
+                            again -> Strings.DiscoverAgain
+                            else -> Strings.DiscoverGatt
+                        },
                         onClick = if (confirm) gatt::onAuthorized else gatt::onDiscover,
+                        kind = if (again) ButtonKind.Tonal else ButtonKind.Primary,
                         modifier = Modifier.weight(1f).testTag(DeviceTags.DISCOVER),
                     )
                 }
+                last?.let { LastResult(it, device) }
             }
-            is GattUi.Running -> Steps(s.view, device)
+            // D-13.7: the new run's steps replace the last result's; its services stay below until a success
+            is GattUi.Running -> {
+                Steps(s.view, device)
+                last?.let { Services(it) }
+            }
             is GattUi.Failed -> {
                 Steps(s.view, device)
                 GattNote(Modifier.padding(top = Css.GattNote.margin.bottom)) // D-13.1: with any button
                 Button(Strings.TryAgain, onClick = gatt::onTryAgain, kind = ButtonKind.Tonal, modifier = Modifier.testTag(DeviceTags.TRY_AGAIN))
-            }
-            is GattUi.Done -> {
-                Steps(s.view, device)
-                Services(s.view)
+                last?.let { LastResult(it, device) } // D-13.7: the last result stays below a failure
             }
         }
     }
@@ -438,6 +450,15 @@ private fun GattStep.detail(): String {
 }
 
 /** D-13.6: the services, then their characteristics (name, UUID · properties, value). */
+/** D-13.6/7: a result: its steps, then its services. */
+@Composable
+private fun LastResult(view: GattView, device: GattDeviceFacts) {
+    Column(Modifier.testTag(DeviceTags.LAST)) {
+        Steps(view, device)
+        Services(view)
+    }
+}
+
 @Composable
 private fun Services(view: GattView) {
     val c = CluetoothTheme.colors
