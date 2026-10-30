@@ -1415,7 +1415,18 @@ interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLo
     a pure reducer; `AndroidExportShare` is its runner).
 - `hideUnnamedApple` changes call `core.setDisplayFilter`.
 - `wifiOnlyUpload` changes re-enqueue the work as `UNMETERED`/`CONNECTED`.
-- The upload transport is the v3 one.
+- The upload transport is the v3 one. `PlatformUploads` (`:platform`, `upload/`) implements `Uploads`:
+  - one upload pass per kind (scans, `gatt/`) is `UploadMachine`, a pure reducer with v3's coordinator rules: list
+    the pending files until nothing new appears, resume a saved session or prepare and send fresh, send fresh once
+    after an expired session, count an object a failed send stored anyway as stored, and mark each file succeeded
+    or failed (authorization denials apart). `UploadPassRunner` runs it with every core, store and file call as a
+    typed result;
+  - each kind has its own unique work and backoff (scans 30 s, GATT 5 min), plus an hourly periodic run; "Upload
+    now" restarts the scan work expedited, `CoreEvent.UploadNeeded` and app start keep queued work;
+  - v3's unique work names, session prefs and cache directories are reused, so an in-place upgrade replaces v3's
+    queued work and resumes its sessions;
+  - `status` is `core.uploadStatus()`, read again after every pass.
+- The pre-0.0.5 JSONL uploader and the first-launch `legacy_pending` step (§1.5) follow in their own change.
 - `sig-numbers.tsv` is loaded from assets into `CoreAssets`.
 
 ---

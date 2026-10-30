@@ -32,6 +32,10 @@ dependencies {
     implementation(libs.play.services.location)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.datastore.preferences)
+    // §4.5 uploads: WorkManager and the v3 Firebase transport (the same BOM as :app).
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
+    implementation("com.google.firebase:firebase-storage")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

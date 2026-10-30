@@ -40,8 +40,9 @@ class RulesTest {
     }
 
     /**
-     * The temporary seams: only CoreBinding.kt names :core-fake (so the swap to :core-bridge is one line), and only
-     * PlatformPlaceholders.kt names :platform-fake. Nothing in v2 :app uses the v3 classes.
+     * The temporary seams: only CoreBinding.kt names :core-fake (so the swap to :core-bridge is one line), and no file
+     * names :platform-fake any more (every platform piece is lane B's real class). Nothing in v2 :app uses the v3
+     * classes.
      */
     @Test fun seams() {
         val root = listOf(File("src/main/kotlin"), File("app/src/main/kotlin")).first { it.isDirectory }
@@ -50,7 +51,7 @@ class RulesTest {
         val fakeCore = files.filter { "cluetoothscanner.fake.core" in it.readText() || "cluetoothscanner.corebridge" in it.readText() }.map { it.name }
         val fakePlatform = files.filter { "cluetoothscanner.platform.fake" in it.readText() }.map { it.name }
         assertEquals(listOf("CoreBinding.kt"), fakeCore)
-        assertEquals(listOf("PlatformPlaceholders.kt"), fakePlatform)
+        assertEquals(emptyList<String>(), fakePlatform)
         val v3 = Regex("""import edu\.ucsd\.sysnet\.cluetoothscanner\.(core|local|repository|service|ble|gatt|ui(?!\.contract)|data|utils)\.""")
         assertEquals(emptyList<String>(), files.filter { v3.containsMatchIn(it.readText()) }.map { it.name })
     }

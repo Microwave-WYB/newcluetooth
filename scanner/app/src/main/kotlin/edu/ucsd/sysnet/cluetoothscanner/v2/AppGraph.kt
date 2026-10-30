@@ -30,6 +30,7 @@ import edu.ucsd.sysnet.cluetoothscanner.platform.recording.AndroidRecordingGrant
 import edu.ucsd.sysnet.cluetoothscanner.platform.recording.PlatformRecorder
 import edu.ucsd.sysnet.cluetoothscanner.platform.scan.BleScanner
 import edu.ucsd.sysnet.cluetoothscanner.platform.scan.ScanIngest
+import edu.ucsd.sysnet.cluetoothscanner.platform.upload.PlatformUploads
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapCacheInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -71,12 +72,12 @@ class AppGraph(private val app: Application) {
 
     private val ingest: Deferred<CoreIngest> get() = core.ingest
 
-    internal val placeholders by lazy { PlatformPlaceholders() }
     /** O-1 / V-6 (#53): DataStore `cluetooth_settings`, migrated once from v3's prefs; V-6 awaits [DataStoreSettings.loaded]. */
     val settings: DataStoreSettings by lazy { DataStoreSettings(app, scope, appVersion) }
     /** O-2 (#53): the grants; the Activity refreshes it on resume and after a request. */
     val permissions: AndroidPermissions by lazy { AndroidPermissions(app) }
-    val uploads get() = placeholders.uploads
+    /** O-1 "Pending uploads" (§1.6, §4.5): WorkManager and the v3 Firebase transport over the core's pending list. */
+    val uploads: PlatformUploads by lazy { PlatformUploads(app, ingest, scope, io, settings.settings.map { it.wifiOnlyUpload }) }
     /** O-1 item 10 (#68): the share sheet and Downloads; it acknowledges exports through the core. */
     val exportShare: AndroidExportShare by lazy { AndroidExportShare(app, ::acknowledgeExport, scope, io) }
     /**
@@ -128,6 +129,8 @@ class AppGraph(private val app: Application) {
     fun start() {
         core.start()
         platformRecorder // RecordingService finds it through RecordingServiceLink (§4.4)
+        // §4.5: the upload workers find it at once; its calls await the core
+        guarded(MainTask.Platform, ::startFailed) { uploads.start() }
         // each step is guarded on its own: one that fails is logged and skipped, the others still run
         scope.launch {
             val handle = core.ready()
@@ -136,6 +139,12 @@ class AppGraph(private val app: Application) {
             guarded(MainTask.Platform, ::startFailed) { exportShare.acknowledgeStale() }
             // §4.3: GATT results an earlier process could not store
             guarded(MainTask.Platform, ::startFailed) { gattRunner.recover() }
+            // §4.5: a sealed payload or GATT file goes up as soon as the network allows
+            launch {
+                handle.queries.events.filterIsInstance<CoreEvent.UploadNeeded>().collect {
+                    guarded(MainTask.Platform, ::startFailed) { uploads.uploadNeeded() }
+                }
+            }
             // §1.2.6 (#53): one "Recording interrupted" notice for sessions Core::open marked interrupted
             guarded(MainTask.Platform, ::startFailed) { InterruptedRecordingNotice(app).check { handle.queries.sessions() } }
             // G-12: the display filter follows the setting; it never affects ingest or upload
