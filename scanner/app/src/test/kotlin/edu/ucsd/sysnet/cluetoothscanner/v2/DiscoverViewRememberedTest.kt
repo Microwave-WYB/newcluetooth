@@ -5,7 +5,7 @@ import edu.ucsd.sysnet.cluetoothscanner.sheets.DiscoverView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -56,27 +56,46 @@ class DiscoverViewRememberedTest {
         }
     }
 
-    private fun store(file: File, scope: CoroutineScope) =
-        DataStoreUiState(PreferenceDataStoreFactory.create(scope = scope) { file })
+    /**
+     * One owner per file at a time: [block] gets a store on its own scope, which is then cancelled and joined.
+     * DataStore releases its file only when the scope's job completes (the write actor closes the connection in a
+     * completion handler); a plain `cancel()` returns before that if one of its coroutines is still winding down, and
+     * the next owner of the same file then fails with "multiple DataStores active for the same file".
+     */
+    private suspend fun <T> withStore(file: File, block: suspend (DataStoreUiState) -> T): T {
+        val job = SupervisorJob()
+        try {
+            return block(DataStoreUiState(PreferenceDataStoreFactory.create(scope = CoroutineScope(Dispatchers.IO + job)) { file }))
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
 
     @Test
     fun persistenceRoundTrip_acrossARestart() = runBlocking {
         val file = File(tmp.root, "${DataStoreUiState.FILE}.preferences_pb")
-        val first = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val a = store(file, first)
-        assertEquals(UiStateResult.Ok(DiscoverView.Categories), a.discoverView()) // nothing saved yet: first launch
-        assertEquals(UiStateResult.Ok(Unit), a.saveDiscoverView(DiscoverView.List))
-        first.cancel() // the process ends
-        val second = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        assertEquals(UiStateResult.Ok(DiscoverView.List), store(file, second).discoverView()) // after the restart
-        second.cancel()
+        withStore(file) { a ->
+            assertEquals(UiStateResult.Ok(DiscoverView.Categories), a.discoverView()) // nothing saved yet: first launch
+            assertEquals(UiStateResult.Ok(Unit), a.saveDiscoverView(DiscoverView.List))
+        } // the process ends: its store has let go of the file
+        assertEquals(UiStateResult.Ok(DiscoverView.List), withStore(file) { it.discoverView() }) // after the restart
+    }
+
+    /** The restart, many times over: each owner lets go of the file before the next one opens it. */
+    @Test
+    fun restartsNeverOverlapTheirOwners() = runBlocking {
+        val file = File(tmp.root, "restarts.preferences_pb")
+        val views = DiscoverView.entries
+        repeat(50) { i ->
+            val view = views[i % views.size]
+            withStore(file) { assertEquals(UiStateResult.Ok(Unit), it.saveDiscoverView(view)) }
+            assertEquals(UiStateResult.Ok(view), withStore(file) { it.discoverView() })
+        }
     }
 
     @Test
     fun aBrokenFileIsATypedError_notAThrow() = runBlocking {
         val file = File(tmp.root, "broken.preferences_pb").apply { writeBytes(byteArrayOf(1, 2, 3, 4, 5, 6, 7)) }
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        assertTrue(store(file, scope).discoverView() is UiStateResult.Err)
-        scope.cancel()
+        assertTrue(withStore(file) { it.discoverView() } is UiStateResult.Err)
     }
 }
