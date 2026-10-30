@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -163,7 +165,10 @@ fun RecorderLayer(
                     if (fab) Modifier.semantics { contentDescription = Strings.Record }
                         .clickable(remember { MutableInteractionSource() }, null, onClick = actions.onStart)
                     else Modifier.semantics { contentDescription = Strings.Recording },
-                ),
+                )
+                // R-4: the catch layer is behind the panel (as `.recorder-catch` is in the prototype), so only taps
+                // outside collapse it; the panel's own surface takes the taps its buttons don't, e.g. on the meta line
+                .then(if (panel) Modifier.pointerInput(Unit) { detectTapGestures { } } else Modifier),
         ) {
             // the FAB's white dot
             Box(
