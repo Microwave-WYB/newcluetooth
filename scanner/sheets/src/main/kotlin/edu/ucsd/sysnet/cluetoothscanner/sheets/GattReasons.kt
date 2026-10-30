@@ -31,6 +31,12 @@ internal sealed interface GattProblem {
     data object NotConnectable : GattProblem { override val code = GattRunner.GATT_NO_TARGET }
     /** -5, and the device has not been scanned in the last 20 s. */
     data object NotSeenRecently : GattProblem { override val code = GattRunner.GATT_NO_TARGET }
+    /** -6: the engine itself failed (a link call threw mid-discovery). */
+    data object EngineFailed : GattProblem { override val code = GattRunner.GATT_INTERNAL_ERROR }
+    /** -2: the app's process died while the discovery ran (recorded on the next start). */
+    data object ProcessDied : GattProblem { override val code = PROCESS_DEATH }
+    /** -3: a read never answered, and Android allows only one outstanding request. */
+    data object ReadStalled : GattProblem { override val code = READ_QUEUE_STALLED }
 
     // Android's GATT statuses
     data object GattError : GattProblem { override val code = 133 }
@@ -61,6 +67,9 @@ internal fun gattProblem(failure: GattFailure?, device: GattDeviceFacts): GattPr
     GattFailure.Cancelled -> GattProblem.Cancelled
     is GattFailure.Other -> when (failure.status) {
         GattRunner.GATT_UNAVAILABLE -> GattProblem.Unavailable
+        GattRunner.GATT_INTERNAL_ERROR -> GattProblem.EngineFailed
+        PROCESS_DEATH -> GattProblem.ProcessDied
+        READ_QUEUE_STALLED -> GattProblem.ReadStalled
         GattRunner.GATT_NO_TARGET -> when {
             device.connectable == false -> GattProblem.NotConnectable
             !device.seenRecently -> GattProblem.NotSeenRecently
@@ -83,6 +92,9 @@ internal fun GattProblem.reason(): String = when (this) {
     GattProblem.NoTarget -> "This device hasn't been seen with a connectable address yet. Stay near it and try again"
     GattProblem.NotConnectable -> "This device doesn't accept connections"
     GattProblem.NotSeenRecently -> "This device hasn't been seen in the last 20 s. Move closer and try again"
+    GattProblem.EngineFailed -> "The Bluetooth stack failed during discovery"
+    GattProblem.ProcessDied -> "The app was closed while the discovery ran"
+    GattProblem.ReadStalled -> "The device stopped answering reads"
     GattProblem.GattError -> "The connection failed with a generic Bluetooth error. Try again"
     GattProblem.ConnectionTimeout -> "The device stopped responding"
     GattProblem.TerminatedByPeer -> "The device closed the connection"
@@ -97,6 +109,11 @@ internal fun GattProblem.reason(): String = when (this) {
     GattProblem.Cancelled -> "Cancelled"
     GattProblem.Unreported -> "Failed"
 }
+
+// The engine's other stored codes (:platform's GattStatus; GattRunner names only the runner's own): -1 (timed out)
+// always arrives as GattFailure.TimedOut, these two as Other.
+private const val PROCESS_DEATH = -2
+private const val READ_QUEUE_STALLED = -3
 
 /** The secondary text after the reason: "(code -5)", or null. */
 internal fun GattProblem.codeText(): String? = code?.let { "(code $it)" }

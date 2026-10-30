@@ -38,6 +38,9 @@ class GattReasonsTest {
         val expected = mapOf(
             GattRunner.GATT_UNAVAILABLE to "Bluetooth is off or permission is missing",
             GattRunner.GATT_NO_TARGET to "This device hasn't been seen with a connectable address yet. Stay near it and try again",
+            GattRunner.GATT_INTERNAL_ERROR to "The Bluetooth stack failed during discovery",
+            -2 to "The app was closed while the discovery ran",
+            -3 to "The device stopped answering reads",
             133 to "The connection failed with a generic Bluetooth error. Try again",
             8 to "The device stopped responding",
             19 to "The device closed the connection",
@@ -55,8 +58,16 @@ class GattReasonsTest {
     }
 
     @Test
+    fun `an engine crash is not Bluetooth being off - -6 and -4 read differently`() {
+        assertEquals(GattProblem.EngineFailed, reasonOf(GattRunner.GATT_INTERNAL_ERROR))
+        assertEquals("(code -6)", reasonOf(GattRunner.GATT_INTERNAL_ERROR).codeText())
+        assertEquals(GattProblem.Unavailable, reasonOf(GattRunner.GATT_UNAVAILABLE))
+        assertTrue(reasonOf(GattRunner.GATT_INTERNAL_ERROR).reason() != reasonOf(GattRunner.GATT_UNAVAILABLE).reason())
+    }
+
+    @Test
     fun `any other status is an unexpected Bluetooth error with its code`() {
-        for (status in listOf(0, 1, 7, 128, 257, -1, -99)) {
+        for (status in listOf(0, 1, 7, 128, 257, -1, -7, -99)) {
             val problem = reasonOf(status)
             assertEquals(GattProblem.Unknown(status), problem)
             assertEquals("Unexpected Bluetooth error", problem.reason())
@@ -97,7 +108,7 @@ class GattReasonsTest {
 
     @Test
     fun `no reason is a bare number`() {
-        val all = listOf(-5, -4, 0, 5, 8, 15, 19, 22, 62, 133, 999).map { reasonOf(it) } +
+        val all = listOf(-6, -5, -4, -3, -2, 0, 5, 8, 15, 19, 22, 62, 133, 999).map { reasonOf(it) } +
             listOf(GattProblem.NotConnectable, GattProblem.NotSeenRecently)
         // words, and the code only in the secondary text
         for (p in all) assertTrue(p.reason(), p.reason().any { it.isLetter() } && !p.reason().contains("${p.code}") && !p.reason().contains("status"))
