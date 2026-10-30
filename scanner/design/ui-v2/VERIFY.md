@@ -8,6 +8,9 @@ Rule-by-rule check of the Android app against SPEC.md and the prototype.
   - Phone: 412 × 915 dp (`wm size 1082x2402`, 420 dpi).
   - Tablet: 1024 × 768 dp (`wm size 2048x1536`, 320 dpi).
   - Both in light and dark (`cmd uimode night`).
+  - Map checks need the emulator started with `-gpu swangle_indirect` (ANGLE). With the AVD's default
+    `swiftshader_indirect`, MapLibre places symbols but never paints them: no labels, no POI icons, no cluster
+    counts and no Start/End labels, even in a bare `MapView`.
 - **Prototype:** the hosted copy (`https://cachyos.fin-werner.ts.net:8452/ui-v2/`) answered 502 throughout, so the
   same files were served from this directory (`python3 -m http.server`). They were rendered in headless Chromium
   at the same sizes and schemes, with `?state=`, `?layout=`, `?loc=` and `?side=`.
@@ -174,6 +177,7 @@ Rule-by-rule check of the Android app against SPEC.md and the prototype.
 - M-1 Base map: **fail** (`:map`, lane E). The liberty and dark styles load (roads, buildings, water), but no
   labels and no POI icons are drawn: no street names, no place names, and no "Start" label (M-8). The prototype
   shows all of them. Compact attribution at the bottom-left: pass.
+  - Later (lane E): an AVD artifact, not the app. With `-gpu swangle_indirect` the labels and POI icons render.
 - M-2 Layers: not inspectable on the device; the overlays seen (route, ends, location) come from the style.
 - M-3 Points: needs device.
 - M-4 Clusters: needs device.
@@ -266,11 +270,14 @@ Rule-by-rule check of the Android app against SPEC.md and the prototype.
   - M-1: no labels or POI icons;
   - R-5: an empty mini map;
   - M-8 and V-2: no live route (or the core's deltas);
-  - M-10: no refit after Stop;
+  - M-10: no refit after Stop (fixed: `:map` reloads the live view when the core reports the session ended);
   - M-9: the zoom is slightly high (minor);
   - once, a native crash: a SIGSEGV in `libmaplibre.so` on the main looper while the recorder panel opened, i.e.
     while the mini map was created. The emulator died shortly after, and the panel opened several times without it
     earlier, so it may be the AVD's software GPU.
+    - Later: not the GPU. It was reproduced on the AVD and symbolicated: the mini map's `MapSnapshotter` was
+      collected while its style loaded (`MapSnapshotter::Impl::onDidFinishLoadingStyle`), the same crash as on the
+      Note10. The mini map was removed (SPEC R-5, #97).
 - **Lane D** (`:sheets`):
   - S-5: Full ignores the status inset;
   - T-2: the chevron is drawn at the wrong size.
