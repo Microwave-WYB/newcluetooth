@@ -15,3 +15,4 @@ downloads/
 
 # Compose preview screenshots (rendered by mise run //scanner:ui-shots)
 scanner/app/src/screenshotTestDebug/
+__pycache__/
