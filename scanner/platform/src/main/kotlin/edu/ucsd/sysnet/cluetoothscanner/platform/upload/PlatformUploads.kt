@@ -65,6 +65,8 @@ class PlatformUploads internal constructor(
     private val marks: UploadMarks,
     private val scope: CoroutineScope,
     private val wifiOnly: Flow<Boolean>,
+    /** §1.5: the pre-0.0.5 JSONL files, uploaded right after every scan pass (null: none, as in tests). */
+    private val legacy: UploadPassRunner? = null,
 ) : Uploads {
     constructor(
         context: Context,
@@ -72,6 +74,8 @@ class PlatformUploads internal constructor(
         scope: CoroutineScope,
         io: CoroutineDispatcher,
         wifiOnly: Flow<Boolean>,
+        /** The 32-byte upload recipient key, for the legacy files' sealed box (the core seals the rest). */
+        recipientKey: () -> ByteArray,
     ) : this(
         coreUploads(core, io),
         UploadPassRunner(coreUploads(core, io), FirebaseObjectStore(), { UploadPlace.of(context.applicationContext, it) }, io),
@@ -79,6 +83,7 @@ class PlatformUploads internal constructor(
         PrefsUploadMarks(context.applicationContext),
         scope,
         wifiOnly,
+        legacyRunner(context.applicationContext, recipientKey, io),
     )
 
     /** What the status shows: the core's, and the platform's own problems (one writer at a time, lock-free update). */
@@ -211,6 +216,8 @@ class PlatformUploads internal constructor(
         do {
             sealed.set(false)
             tally += runner.run(kind)
+            // The legacy JSONL files go with the scans, on the same actor, so they never overlap either.
+            if (kind == UploadKind.SCANS) legacy?.let { tally += it.run(kind) }
         } while (sealed.get() && extra++ < MAX_EXTRA_PASSES)
         shown.update { it.copy(passProblem = tally.problem) }
         refreshNow()
@@ -361,6 +368,22 @@ internal class WorkManagerUploadScheduler(private val context: Context) : Upload
             UploadKind.GATT -> GATT_BACKOFF_SECONDS
         }
     }
+}
+
+/**
+ * §1.5: the runner for the pre-0.0.5 JSONL files in `filesDir`, with its own session store and cache, so a scan
+ * pass's orphan cleanup never touches a legacy session (and the other way round).
+ */
+internal fun legacyRunner(context: Context, recipientKey: () -> ByteArray, io: CoroutineDispatcher): UploadPassRunner {
+    val legacy = LegacyJsonlCore(
+        directory = context.filesDir,
+        quarantine = java.io.File(context.filesDir, "quarantine/legacy"),
+        sealed = java.io.File(context.cacheDir, "legacy-sealed"),
+        seal = SodiumSeal(recipientKey),
+        io = io,
+    )
+    val place = UploadPlace(PrefsUploadSessionStore(context, "cluetooth_upload_sessions_legacy"), java.io.File(context.filesDir, "upload-cache-legacy"))
+    return UploadPassRunner(legacy, FirebaseObjectStore(), { place }, io)
 }
 
 /** The process link the workers find [PlatformUploads] through (set at app start). Lock-free. */
