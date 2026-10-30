@@ -29,7 +29,7 @@ enum class Segment { Nearby, All, ThisArea }
 /** D-4: the area and its own order (kept rows first, then new ones in session order). */
 data class AreaState(val bbox: Bbox, val order: KeyOrder)
 
-/** D-1: [Nearby | All] while recording, [This area | All] for history and All sessions. */
+/** D-3a item 1, the scope: [Nearby | All] while recording, [This area | All] for history and All sessions. */
 fun segmentsFor(live: Boolean): List<Segment> =
     if (live) listOf(Segment.Nearby, Segment.All) else listOf(Segment.ThisArea, Segment.All)
 
@@ -177,6 +177,9 @@ internal data class DiscoverState(
 
     /** The filter the core queries use: the sheet's filters plus Nearby and This area. */
     fun queryFilter(): DeviceFilter = filter.copy(inRangeOnly = segment == SegmentState.Nearby, area = area?.bbox)
+
+    /** D-1: the filter button's badge: the Filter sheet's filters, and a scope other than the default as one more. */
+    val activeFilters: Int get() = filter.activeFilterCount + if (segment.segment != defaultSegment(live)) 1 else 0
 }
 
 /** What happens to the Discover sheet; query results come back as events. */
@@ -191,16 +194,19 @@ internal sealed interface DiscoverEvent {
     class LiveAppended(val keys: LongArray) : DiscoverEvent
     /** :app read the view: live or not. Live → frozen is R-7's Stop; only the live-only parts change. */
     data class LiveRead(val live: Boolean) : DiscoverEvent
-    /** D-1a: the user's view switch (D-1b: remembered). */
-    data object ViewToggled : DiscoverEvent
+    /** D-1: a tap on the view tabs [List | Categories] (D-1a crossfade, D-1b remembered). */
+    data class ViewSelected(val view: DiscoverView) : DiscoverEvent
     /** D-1c: the re-sort button. */
     data object ResortRequested : DiscoverEvent
     /** D-1c: the core's order now (live RSSI while recording, the strongest seen otherwise), for re-sort [version]. */
     class Resorted(val version: Long, val keys: LongArray) : DiscoverEvent
     /** D-1b: the remembered view, from :app (a new session view, or the store read after a restart). */
     data class ViewRestored(val view: DiscoverView) : DiscoverEvent
+    /** D-3a item 1: the scope, chosen in the Filter sheet. */
     data class SegmentSelected(val next: Segment) : DiscoverEvent
     data class FilterSet(val filter: DeviceFilter) : DiscoverEvent
+    /** D-3a Clear: the sheet's filters and the scope back to their defaults. */
+    data object FiltersCleared : DiscoverEvent
     data class CameraIdle(val byUser: Boolean, val viewport: Bbox, val zoom: Double) : DiscoverEvent
     class AreaLoaded(val version: Long, val bbox: Bbox, val inView: DeviceKeys) : DiscoverEvent
     data class AreaFailed(val version: Long) : DiscoverEvent
@@ -307,18 +313,22 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
             }
         }
         is DiscoverEvent.LiveRead -> liveRead(state, event.live)
-        // D-1a keeps the height; S-12 raises a Collapsed root; D-1b: the user's choice is remembered. Search shows
-        // only its list (Q-5), with no switch, so a toggle there changes nothing
-        DiscoverEvent.ViewToggled ->
-            if (state.searching != null) DiscoverStep(state)
-            else {
-                val next = if (state.view == DiscoverView.Categories) DiscoverView.List else DiscoverView.Categories
-                DiscoverStep(state.copy(view = next), listOf(DiscoverEffect.RaiseRoot, DiscoverEffect.ViewChosen(next)))
+        // D-1a keeps the height; S-12: a tap on the tabs also raises a Collapsed root, the current tab included;
+        // D-1b: the user's choice is remembered. Search shows only its list (Q-5), with no tabs: nothing changes
+        is DiscoverEvent.ViewSelected -> when {
+            state.searching != null -> DiscoverStep(state)
+            event.view == state.view -> DiscoverStep(state, listOf(DiscoverEffect.RaiseRoot))
+            else -> DiscoverStep(state.copy(view = event.view), listOf(DiscoverEffect.RaiseRoot, DiscoverEffect.ViewChosen(event.view)))
+        }
+        // D-1c: the explicit user action G-9 allows: a new order from the current values; S-12: it also raises a
+        // Collapsed root. Not in search (hidden there)
+        DiscoverEvent.ResortRequested -> when {
+            state.searching != null -> DiscoverStep(state)
+            ready == null -> DiscoverStep(state, listOf(DiscoverEffect.RaiseRoot)) // nothing to re-sort yet
+            else -> (state.resortVersion + 1).let { v ->
+                DiscoverStep(state.copy(resortVersion = v), listOf(DiscoverEffect.RaiseRoot, DiscoverEffect.LoadResort(v)))
             }
-        // D-1c: the explicit user action G-9 allows: a new order from the current values. Not in search (hidden there)
-        DiscoverEvent.ResortRequested ->
-            if (ready == null || state.searching != null) DiscoverStep(state)
-            else (state.resortVersion + 1).let { v -> DiscoverStep(state.copy(resortVersion = v), listOf(DiscoverEffect.LoadResort(v))) }
+        }
         is DiscoverEvent.Resorted ->
             if (ready == null || state.searching != null || event.version != state.resortVersion) DiscoverStep(state)
             else resorted(state, ready, event.keys)
@@ -331,12 +341,23 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
                 else -> DiscoverStep(state.copy(view = event.view))
             }
         }
+        // D-3a item 1, in the Filter sheet (no longer a header control: no S-12 raise); search has no scope (Q-5)
         is DiscoverEvent.SegmentSelected -> when {
-            event.next !in segmentsFor(state.live) -> DiscoverStep(state) // D-1: not offered in this view
-            event.next == state.segment.segment -> DiscoverStep(state, listOf(DiscoverEffect.RaiseRoot))
-            else -> state.copy(segment = SegmentState.of(event.next)).askArea(state.viewport, DiscoverEffect.RaiseRoot)
+            state.searching != null -> DiscoverStep(state)
+            event.next !in segmentsFor(state.live) -> DiscoverStep(state) // not offered in this view
+            event.next == state.segment.segment -> DiscoverStep(state)
+            else -> state.copy(segment = SegmentState.of(event.next)).askArea(state.viewport)
         }
         is DiscoverEvent.FilterSet -> DiscoverStep(state.copy(filter = event.filter), listOf(DiscoverEffect.Refresh))
+        DiscoverEvent.FiltersCleared -> {
+            val cleared = state.copy(filter = state.filter.clearSheetFilters())
+            val scope = defaultSegment(state.live)
+            when {
+                state.searching != null -> DiscoverStep(state)
+                state.segment.segment == scope -> DiscoverStep(cleared, listOf(DiscoverEffect.Refresh))
+                else -> cleared.copy(segment = SegmentState.of(scope)).askArea(state.viewport)
+            }
+        }
         is DiscoverEvent.CameraIdle -> {
             val next = state.copy(viewport = event.viewport)
             val s = state.searching
@@ -534,8 +555,8 @@ class DiscoverModel(
     /** G-9: new devices of the live view, in arrival order. */
     suspend fun appendLive(keys: LongArray) = send(DiscoverEvent.LiveAppended(keys))
 
-    /** D-1a: a view switch keeps the height; S-12: from Collapsed it also raises the root to Half. */
-    fun toggleView() = sendNow(DiscoverEvent.ViewToggled)
+    /** D-1: the view tabs; D-1a keeps the height; S-12: from Collapsed it also raises the root to Half. */
+    fun selectView(view: DiscoverView) = sendNow(DiscoverEvent.ViewSelected(view))
 
     /** D-1c: re-sort by the current values (not in search). */
     suspend fun resort() = send(DiscoverEvent.ResortRequested)
@@ -546,11 +567,17 @@ class DiscoverModel(
     /** D-1b: :app's remembered view (a store read that lands after the sheets exist); never re-remembered. */
     fun restoreView(view: DiscoverView) = sendNow(DiscoverEvent.ViewRestored(view))
 
-    /** D-1; a segment not offered in this view is ignored. */
+    /** D-3a item 1; a segment not offered in this view is ignored. */
     suspend fun selectSegment(next: Segment) = send(DiscoverEvent.SegmentSelected(next))
 
     /** D-3a: the Filter sheet applies changes live. */
     suspend fun setFilter(next: DeviceFilter) = send(DiscoverEvent.FilterSet(next))
+
+    /** D-3a Clear: the sheet's filters and the scope. */
+    suspend fun clearFilters() = send(DiscoverEvent.FiltersCleared)
+
+    /** D-1: the filter button's badge (a non-default scope counts as one). */
+    val activeFilters: Int get() = state.activeFilters
 
     /** MapEvents.onCameraIdle. */
     suspend fun onCameraIdle(byUser: Boolean, viewport: Bbox, zoom: Double) = send(DiscoverEvent.CameraIdle(byUser, viewport, zoom))

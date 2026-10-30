@@ -51,6 +51,7 @@ internal object PushedTags {
     fun category(id: String) = "filter-category-$id"
     fun preset(name: String) = "filter-preset-$name"
     const val CLEAR = "filter-clear"
+    const val SCOPE = "filter-scope"
 }
 
 /** S-3, S-2: a pushed sheet's header: [content] (a title) and the X on the corner arc. */
@@ -193,6 +194,18 @@ internal fun FilterSheet(state: SheetsState, entry: SheetEntry) {
         val list = rememberSheetListState(entry)
         LazyColumn(state = list) {
             item {
+                // 1. "Show": the scope, [Nearby | All] while recording, [This area | All] otherwise (D-1 moved it here)
+                SectionLabel(Strings.Show)
+                val scopes = segmentsFor(d.live)
+                Segmented(
+                    scopes.map { it.label() },
+                    scopes.indexOf(d.segment),
+                    onSelect = { state.selectSegment(scopes[it]) },
+                    modifier = Modifier.fillMaxWidth().padding(
+                        start = Css.FilterSeg.padding.left, top = Css.FilterSeg.padding.top,
+                        end = Css.FilterSeg.padding.right, bottom = Css.FilterSeg.padding.bottom,
+                    ).testTag(PushedTags.SCOPE),
+                )
                 PresetRow(Strings.Readable, f.readable) { set(f.copy(readable = it)) }
                 PresetRow(Strings.Trackers, f.trackers) { set(f.copy(trackers = it)) }
                 PresetRow(Strings.Vulnerable, f.vulnerable) { set(f.copy(vulnerable = it)) }
@@ -222,7 +235,7 @@ internal fun FilterSheet(state: SheetsState, entry: SheetEntry) {
             }
             item {
                 Box(Modifier.padding(start = Css.FilterFoot.padding.left, top = Css.FilterFoot.padding.top, bottom = Css.FilterFoot.padding.bottom)) {
-                    TextButton(Strings.Clear, onClick = { set(f.clearSheetFilters()) }, modifier = Modifier.testTag(PushedTags.CLEAR))
+                    TextButton(Strings.Clear, onClick = state::clearFilters, modifier = Modifier.testTag(PushedTags.CLEAR)) // the scope too
                 }
             }
         }

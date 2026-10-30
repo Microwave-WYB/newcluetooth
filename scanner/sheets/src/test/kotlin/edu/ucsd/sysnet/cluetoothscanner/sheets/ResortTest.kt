@@ -26,7 +26,7 @@ class ResortTest {
     @Test
     fun `D-1c the tap asks the core for the current order, and its answer replaces the order`() {
         val asked = reduceDiscover(ready, DiscoverEvent.ResortRequested)
-        assertEquals(listOf(DiscoverEffect.LoadResort(1)), asked.effects)
+        assertEquals(listOf(DiscoverEffect.RaiseRoot, DiscoverEffect.LoadResort(1)), asked.effects) // S-12 raises too
         assertArrayEquals(order(ready), order(asked.state)) // nothing moves until the answer
         // the core's order now: 2, 3 (and 1 not in it, e.g. read before it was stored)
         val done = reduceDiscover(asked.state, DiscoverEvent.Resorted(1, longArrayOf(2, 3)))
@@ -52,8 +52,8 @@ class ResortTest {
         assertEquals(DiscoverStep(searching), reduceDiscover(searching, DiscoverEvent.ResortRequested))
         val searchingAsked = searching.copy(resortVersion = 1) // asked before search was entered
         assertSame(searchingAsked, reduceDiscover(searchingAsked, DiscoverEvent.Resorted(1, longArrayOf(2, 3))).state)
-        // before the first sort there is nothing to re-sort
+        // before the first sort there is nothing to re-sort; S-12 still raises a Collapsed root
         val loading = DiscoverState(Liveness.Frozen)
-        assertEquals(DiscoverStep(loading), reduceDiscover(loading, DiscoverEvent.ResortRequested))
+        assertEquals(DiscoverStep(loading, listOf(DiscoverEffect.RaiseRoot)), reduceDiscover(loading, DiscoverEvent.ResortRequested))
     }
 }
