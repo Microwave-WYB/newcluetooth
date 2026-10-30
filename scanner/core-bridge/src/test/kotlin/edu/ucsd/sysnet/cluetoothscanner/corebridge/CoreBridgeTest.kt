@@ -225,7 +225,7 @@ class CoreBridgeTest {
         val r = core.discoveryRate(id)
         assertTrue("$r", r is CoreResult.Ok)
         val rate = (r as CoreResult.Ok).value
-        assertEquals(30_000L, rate.binMs)
+        assertEquals(5_000L, rate.binMs)
         assertEquals(core.sessions().first { it.id == id }.deviceCount, rate.bins.sumOf { it.newDevices })
         assertEquals(1, rate.runs.size)
         assertEquals(CoreResult.Ok(edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRate.Empty), core.discoveryRate("nope"))

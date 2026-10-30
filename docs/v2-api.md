@@ -668,15 +668,16 @@ The core returns numbers, ids, raw names, page titles and vocabulary labels. UI 
 #[derive(uniffi::Record)] pub struct DiscoveryBin { pub start_ms: i64, pub new_devices: u32 }
 #[derive(uniffi::Record)] pub struct DiscoveryRun { pub start_ms: i64, pub end_ms: Option<i64> }   // None: open
 #[derive(uniffi::Record)]
-pub struct DiscoveryRate { pub seq: u64, pub bin_ms: u32 /* 30 000 */, pub bins: Vec<DiscoveryBin>, pub runs: Vec<DiscoveryRun> }
+pub struct DiscoveryRate { pub seq: u64, pub bin_ms: u32 /* 5 000 */, pub bins: Vec<DiscoveryBin>, pub runs: Vec<DiscoveryRun> }
 #[derive(uniffi::Record)] pub struct DiscoveryUpdate { pub bins: Vec<DiscoveryBin>, pub runs: Vec<DiscoveryRun> }
 ```
 
 - **Runs.** `runs` are the recording's running intervals in wall-clock ms: from the start to the first pause, from
   each resume to the next pause, and so on. The open run (recording now) has `end_ms = None`. Paused time lies
   between runs, so the chart leaves it out and breaks the line at each pause. A stop while paused adds no run.
-- **Bins.** A device counts once, in the 30 s bin of its first sighting in the session (`session_devices.first_seen_ms`).
-  - Bins are per run, starting at that run's own start (`start_ms = run.start_ms + k × 30 000`).
+- **Bins.** A device counts once, in the 5 s bin of its first sighting in the session (`session_devices.first_seen_ms`).
+  The chart (R-4a, 51b8ce79) sums a trailing 30 s window over these bins, the filling one included.
+  - Bins are per run, starting at that run's own start (`start_ms = run.start_ms + k × 5 000`).
   - A first sighting outside every run counts in the run before it.
   - Bins are sparse: a missing bin is 0.
   - Devices the display filter hides are not counted, as in the session's device count.

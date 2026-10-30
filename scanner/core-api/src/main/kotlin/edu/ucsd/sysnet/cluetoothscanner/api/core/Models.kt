@@ -202,7 +202,7 @@ data class LiveDelta(
     val discovery: DiscoveryUpdate? = null,
 )
 
-/** SPEC R-4a: one 30 s bin of a run and the devices first scanned in it. */
+/** SPEC R-4a: one 5 s bin of a run and the devices first scanned in it. */
 data class DiscoveryBin(val startMs: Long, val newDevices: Int)
 
 /** A running interval of the recording (wall clock); the open one has [endMs] null. */
@@ -214,7 +214,8 @@ data class DiscoveryRun(val startMs: Long, val endMs: Long?)
  */
 data class DiscoveryRate(val seq: Long, val binMs: Long, val bins: List<DiscoveryBin>, val runs: List<DiscoveryRun>) {
     companion object {
-        const val BIN_MS = 30_000L
+        /** 5 s bins; the chart shows a trailing 30 s window over them (R-4a, 51b8ce79). */
+        const val BIN_MS = 5_000L
         val Empty = DiscoveryRate(0, BIN_MS, emptyList(), emptyList())
     }
 }

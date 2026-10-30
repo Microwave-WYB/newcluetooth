@@ -315,7 +315,7 @@ class FakeCoreTest {
         advanceTimeBy(1_500)
         runCurrent()
         val bins = { deltas.mapNotNull { it.discovery }.flatMap { it.bins } }
-        assertTrue("${bins()}", DiscoveryBin(t0, 1) in bins() && DiscoveryBin(t0 + 30_000, 1) in bins())
+        assertTrue("${bins()}", DiscoveryBin(t0, 1) in bins() && DiscoveryBin(t0 + 40_000, 1) in bins())
         c.setDisplayFilter(DisplayFilter(hideUnnamedApple = true))
         advanceTimeBy(1_500)
         runCurrent()
