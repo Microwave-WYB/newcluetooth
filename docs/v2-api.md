@@ -189,22 +189,26 @@ The data directory is `filesDir/cluetooth-core/`, the same as v3, so the in-plac
 | `sessions/*.json` | pre-v2 session metadata | kept; these sessions are not imported into the DB |
 | `local.db` (+ `-wal`, `-shm`) | the v2 DB (§3) | kept; user deletion only |
 
-First v2 launch:
+First v2 launch. The rule: v2 deletes only what it has verifiably taken over or already uploaded, and keeps
+everything else.
 
-1. `:platform` records the ids from `pending_uploads()` as `legacy_pending`.
-2. The normal upload worker drains them.
-3. Then `:platform` deletes `databases/local-data.db` and its `-wal`, `-shm` and `-journal` files. This is the v3
-   Kotlin store, which is not migrated.
-
-The order is the owner's decision. It is harmless but not strictly needed, since uploads don't read
-`local-data.db`.
+- v3's pending payloads are in the same `pending_uploads()` list, so the normal upload worker drains them; the core
+  archives each one after its upload, as for v2's own.
+- v3's upload sessions, cache directories and WorkManager work are taken over under the same names (the first start
+  replaces v3's queued work once); orphaned sessions and cached ciphertext are discarded at every pass.
+- The pre-0.0.5 JSONL files are uploaded and renamed `.uploaded` (kept, as v3 did); unsupported names move to
+  `quarantine/legacy/` (kept).
+- `databases/local-data.db` (the v3 Kotlin store) is **kept**: it holds recordings, routes and sighting history that
+  exist nowhere else on the phone, nothing in it is uploaded, and v2 does not import it. The earlier plan to delete
+  it after the v3 payloads drained is open for the owner's decision.
 
 A v3 recording that is still open is recovered by `Core::open`:
 
 - its staging WAL is sealed as a v3 payload;
 - its `sessions/<id>.json` is marked interrupted, as v3 does.
 
-The pre-0.0.5 JSONL uploader is ported unchanged.
+The pre-0.0.5 JSONL uploader is ported unchanged (`LegacyJsonlCore`, through the same pass reducer and runner as the
+payloads, on the scans actor; sealed with the same recipient key).
 
 ### 1.6 Plaintext locally, ciphertext only at upload
 
@@ -1432,7 +1436,7 @@ interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLo
     still waits for that pass; the file stays pending. A pass that throws is a failed pass, and the actor goes on;
   - `status` is `core.uploadStatus()`, read again after every pass; its `lastError` also shows what the core cannot
     ("Uploads not scheduled: …", a failure the core could not record).
-- The pre-0.0.5 JSONL uploader and the first-launch `legacy_pending` step (§1.5) follow in their own change.
+- The pre-0.0.5 JSONL files go with every scan pass (§1.5).
 - `sig-numbers.tsv` is loaded from assets into `CoreAssets`.
 
 ---

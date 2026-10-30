@@ -36,6 +36,9 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
     implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
     implementation("com.google.firebase:firebase-storage")
+    // §1.5: the pre-0.0.5 JSONL files are sealed here, as v3 did (the same artifacts as :app).
+    implementation("com.goterl:lazysodium-android:5.1.0@aar")
+    implementation("net.java.dev.jna:jna:5.17.0@aar")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
