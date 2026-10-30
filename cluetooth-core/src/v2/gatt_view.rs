@@ -91,6 +91,47 @@ fn i(v: &Value, key: &str) -> Option<i64> {
     v.get(key)?.as_i64()
 }
 
+/// gatt/v1 status codes the failure table uses (Android's, plus the GATT engine's own negative ones).
+const STATUS_SUCCESS: i64 = 0;
+const STATUS_TIMED_OUT: i64 = -1;
+/// Android's generic `GATT_ERROR`, for a failure that carries no status.
+const STATUS_GATT_ERROR: i32 = 133;
+/// `GATT_INTERNAL_ERROR`: the engine itself failed mid-discovery (`:platform-api`, #99). It is a known status, so
+/// it is `Other(-6)` like any other.
+#[cfg(test)]
+const STATUS_INTERNAL_ERROR: i32 = -6;
+
+/// The §2.7 failure table, the same as `:platform`'s (#99). A known status (Android's 133, 62, 19, …, or an
+/// engine code such as `GATT_INTERNAL_ERROR` −6) is `Other(status)`, so the UI can name it; `ConnectionFailed` and
+/// `DisconnectedUnexpectedly` remain only when no status is known. `None` for a complete run.
+fn failure(o: &Value, outcome: &str) -> Option<GattFailure> {
+    let null = Value::Null;
+    let error = o.get("error").unwrap_or(&null);
+    let disconnect = o.get("disconnect").unwrap_or(&null);
+    let initiator = s(disconnect, "initiator");
+    // the error's status, else the disconnect's; success is no status
+    let status = i(error, "status")
+        .or_else(|| i(disconnect, "status"))
+        .filter(|s| *s != STATUS_SUCCESS);
+    Some(match outcome {
+        "complete" => return None,
+        "cancelled" => GattFailure::Cancelled,
+        _ if initiator == Some("timeout") || status == Some(STATUS_TIMED_OUT) => {
+            GattFailure::TimedOut
+        }
+        _ => match status {
+            Some(status) => GattFailure::Other {
+                status: i32::try_from(status).unwrap_or(STATUS_GATT_ERROR),
+            },
+            None if s(error, "stage") == Some("connect") => GattFailure::ConnectionFailed,
+            None if initiator == Some("remote") => GattFailure::DisconnectedUnexpectedly,
+            None => GattFailure::Other {
+                status: STATUS_GATT_ERROR,
+            },
+        },
+    })
+}
+
 /// The §2.7 view of one gatt/v1 object, plus its outcome.
 pub(crate) fn view(catalog: &Catalog, json: &str) -> Result<(GattView, String), CoreError> {
     let o: Value = serde_json::from_str(json).map_err(|e| invalid(e.to_string()))?;
@@ -167,22 +208,7 @@ pub(crate) fn view(catalog: &Catalog, json: &str) -> Result<(GattView, String), 
         })
         .collect();
     let error = o.get("error").unwrap_or(&null);
-    let disconnect = o.get("disconnect").unwrap_or(&null);
-    let connected = i(timings, "connect").is_some();
-    let status = i(error, "status");
-    let failure = (outcome != "complete").then(|| {
-        if s(disconnect, "initiator") == Some("timeout") || status == Some(-1) {
-            GattFailure::TimedOut
-        } else if s(disconnect, "initiator") == Some("remote") && connected {
-            GattFailure::DisconnectedUnexpectedly
-        } else if !connected {
-            GattFailure::ConnectionFailed
-        } else {
-            GattFailure::Other {
-                status: status.unwrap_or(0) as i32,
-            }
-        }
-    });
+    let failure = failure(&o, &outcome);
     let failed_at = match s(error, "stage").or_else(|| s(&o, "stage_reached")) {
         Some("connect" | "mtu") => 0,
         Some("discover") => 1,
@@ -408,6 +434,114 @@ pub(crate) fn latest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run(outcome: &str, error: Value, disconnect: Value) -> Option<GattFailure> {
+        failure(
+            &serde_json::json!({"outcome": outcome, "error": error, "disconnect": disconnect}),
+            outcome,
+        )
+    }
+
+    /// #99 in the core: a stored run keeps its status; the named failures only when none is known.
+    #[test]
+    fn a_known_status_is_carried() {
+        use serde_json::json;
+        let other = |status| Some(GattFailure::Other { status });
+        // a failed connect with Android's code, and a remote disconnect with its code
+        assert_eq!(
+            run(
+                "failed",
+                json!({"stage": "connect", "status": 62, "name": "x"}),
+                Value::Null
+            ),
+            other(62)
+        );
+        assert_eq!(
+            run(
+                "failed",
+                json!({"stage": "connect", "status": 133, "name": "GATT_ERROR"}),
+                Value::Null
+            ),
+            other(133)
+        );
+        assert_eq!(
+            run(
+                "partial",
+                Value::Null,
+                json!({"initiator": "remote", "status": 19})
+            ),
+            other(19)
+        );
+        // the error's status wins over the disconnect's
+        assert_eq!(
+            run(
+                "partial",
+                json!({"stage": "read", "status": 8, "name": "x"}),
+                json!({"initiator": "remote", "status": 19})
+            ),
+            other(8)
+        );
+        // an engine crash keeps its own code
+        assert_eq!(
+            run(
+                "failed",
+                json!({"stage": "read", "status": STATUS_INTERNAL_ERROR, "name": "INTERNAL_ERROR"}),
+                Value::Null
+            ),
+            other(-6)
+        );
+        // no known status (absent or success): the named failures
+        assert_eq!(
+            run(
+                "partial",
+                Value::Null,
+                json!({"initiator": "remote", "status": null})
+            ),
+            Some(GattFailure::DisconnectedUnexpectedly)
+        );
+        assert_eq!(
+            run(
+                "partial",
+                Value::Null,
+                json!({"initiator": "remote", "status": 0})
+            ),
+            Some(GattFailure::DisconnectedUnexpectedly)
+        );
+        assert_eq!(
+            run(
+                "failed",
+                json!({"stage": "connect", "status": 0, "name": "x"}),
+                Value::Null
+            ),
+            Some(GattFailure::ConnectionFailed)
+        );
+        assert_eq!(
+            run("failed", Value::Null, Value::Null),
+            other(STATUS_GATT_ERROR)
+        );
+        // unchanged: timeouts, cancelled, complete
+        assert_eq!(
+            run(
+                "failed",
+                json!({"stage": "connect", "status": -1, "name": "TIMEOUT"}),
+                json!({"initiator": "timeout", "status": null})
+            ),
+            Some(GattFailure::TimedOut)
+        );
+        assert_eq!(
+            run(
+                "partial",
+                Value::Null,
+                json!({"initiator": "timeout", "status": 19})
+            ),
+            Some(GattFailure::TimedOut)
+        );
+        assert_eq!(
+            run("cancelled", Value::Null, Value::Null),
+            Some(GattFailure::Cancelled)
+        );
+        assert_eq!(run("complete", Value::Null, Value::Null), None);
+    }
 
     #[test]
     fn parses_gatt_timestamps() {

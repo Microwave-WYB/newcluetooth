@@ -1052,7 +1052,7 @@ fn ingest_gatt_stores_the_run_and_the_device_opens_on_it() {
     ));
 }
 
-/// §2.7 failure mapping: a remote disconnect after connecting stops at the failed step.
+/// §2.7 failure mapping: a remote disconnect after connecting stops at the failed step, with its status (#99).
 #[test]
 fn gatt_partial_stops_at_the_failed_step() {
     let w = world();
@@ -1067,7 +1067,8 @@ fn gatt_partial_stops_at_the_failed_step() {
     assert_eq!(v.steps[2].state, GattStepState::Failed);
     assert_eq!(
         v.steps[2].failure,
-        Some(GattFailure::DisconnectedUnexpectedly)
+        Some(GattFailure::Other { status: 19 }),
+        "the stored status reaches the UI"
     );
     assert!(
         v.services.is_empty(),
