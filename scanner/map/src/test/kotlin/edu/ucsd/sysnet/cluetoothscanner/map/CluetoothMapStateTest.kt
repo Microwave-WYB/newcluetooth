@@ -6,6 +6,7 @@ import edu.ucsd.sysnet.cluetoothscanner.map.data.GeoJson
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.Hit
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
@@ -43,8 +44,9 @@ private val CENTER = GeoPoint(-117.2340, 32.8801)
 /** One device per key, along a line east of CENTER; the "name" drives the Q-1 stand-in below. */
 private class FakeDevice(val key: DeviceKey, val name: String?, val at: GeoPoint)
 
-private class FakeQueries(val devices: List<FakeDevice>, val isLive: Boolean = false, val cellsAbove: Int = 10_000) : UnusedCoreQueries() {
+private class FakeQueries(val devices: List<FakeDevice>, var isLive: Boolean = false, val cellsAbove: Int = 10_000) : UnusedCoreQueries() {
     override val live = MutableSharedFlow<LiveDelta>(extraBufferCapacity = 16)
+    override val events = MutableSharedFlow<CoreEvent>(extraBufferCapacity = 16)
     val mapPointCalls = ArrayList<Pair<DeviceFilter, Bbox>>()
     val route = listOf(CENTER, GeoPoint(CENTER.lon + 0.01, CENTER.lat), GeoPoint(CENTER.lon + 0.01, CENTER.lat + 0.01))
 
@@ -347,6 +349,32 @@ class CluetoothMapStateTest {
         advanceTimeBy(CluetoothMapState.LIVE_POINTS_INTERVAL_MS * 3)
         runCurrent()
         assertEquals(calls + 1, q.mapPointCalls.size)
+    }
+
+    @Test fun `M-10 V-3 after Stop the frozen session refits without animation`() = runTest {
+        val q = FakeQueries(devices, isLive = true)
+        val r = rig(q)
+        r.state.show(Scope.session(SESSION), DeviceFilter(), routesFaint = false)
+        runCurrent()
+        // while recording the user pans far off
+        r.surface.userMove(CameraSnapshot(GeoPoint(CENTER.lon + 0.2, CENTER.lat), 17.0))
+        runCurrent()
+        val moves = r.surface.moves.size
+        // Stop: :app shows the same scope, then the core reports the finished session
+        q.isLive = false
+        r.state.show(Scope.session(SESSION), DeviceFilter(), routesFaint = false)
+        q.events.emit(CoreEvent.RecordingChanged(CoreRecordingState(RecordingPhase.Idle, null, null, 0, null, 0, 0.0)))
+        q.events.emit(CoreEvent.SessionsChanged)
+        runCurrent()
+        assertEquals(moves + 1, r.surface.moves.size)
+        val (cam, duration) = r.surface.moves.last()
+        assertEquals(0, duration)
+        val view = q.sessionView(Scope.session(SESSION))
+        assertEquals(MapGeometry.fit(view.frame!!, r.surface.viewport, MapGeometry.framePadding(CoverInsets(0, 0, 0, 0))), cam)
+        // frozen now: a later SessionsChanged (say, a delete in history) leaves the camera alone
+        q.events.emit(CoreEvent.SessionsChanged)
+        runCurrent()
+        assertEquals(moves + 1, r.surface.moves.size)
     }
 
     @Test fun `idle inside the loaded area does not re-query points, outside it does`() = runTest {

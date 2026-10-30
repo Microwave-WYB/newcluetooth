@@ -14,6 +14,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry
 import edu.ucsd.sysnet.cluetoothscanner.map.interaction.DeviceAddr
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
@@ -52,10 +53,13 @@ const val BLANK_STYLE = """{"version":8,"glyphs":"https://tiles.openfreemap.org/
  */
 class GridQueries(private val devices: List<Pair<DeviceKey, GeoPoint>>, private val route: List<GeoPoint> = emptyList()) : UnusedCoreQueries() {
     override val live = MutableSharedFlow<LiveDelta>()
+    override val events = MutableSharedFlow<CoreEvent>(extraBufferCapacity = 4)
     val lastMode = MutableStateFlow<MapMode?>(null)
+    /** Whether the shown session is recording; Stop sets it false and emits SessionsChanged. */
+    @Volatile var isLive = false
 
     override suspend fun sessionView(scope: Scope) = SessionView(
-        scope, live = false, sessionIds = listOf(SESSION), deviceCount = devices.size,
+        scope, live = isLive, sessionIds = listOf(SESSION), deviceCount = devices.size,
         frame = MapGeometry.bboxOf(devices.map { it.second } + route), route = route, routesFaint = false, seq = 0,
     )
     override suspend fun routes(scope: Scope, viewport: Bbox?, zoom: Double) = """{"type":"FeatureCollection","features":[]}"""

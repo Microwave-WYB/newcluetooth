@@ -43,6 +43,38 @@ class MapInstrumentedTest {
         map.queryRenderedFeatures(RectF(0f, 0f, v.width.toFloat(), v.height.toFloat()), *layers)
     }
 
+    /** M-10, V-3: Stop keeps the scope shown, now frozen; the core's SessionsChanged refits it without animation. */
+    @Test fun m10_afterStopTheFrozenSessionRefits() {
+        val devices = GridQueries.grid(9, 0.01)
+        val route = listOf(CENTER, GeoPoint(CENTER.lon + 0.004, CENTER.lat + 0.006))
+        val q = GridQueries(devices, route).also { it.isLive = true }
+        val h = MapHarness(rule, q).also { harness = it }
+        h.onMain { h.state.show(Scope.session(SESSION), DeviceFilter(), routesFaint = false) }
+        h.settle()
+        // while recording the camera goes far off (the user pans away)
+        h.onMain { h.state.restore(CameraSnapshot(GeoPoint(CENTER.lon + 0.2, CENTER.lat + 0.1), 17.0)) }
+        h.settle()
+        // Stop: the same scope again, then the core's event
+        q.isLive = false
+        h.onMain { h.state.show(Scope.session(SESSION), DeviceFilter(), routesFaint = false) }
+        assertTrue(q.events.tryEmit(edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent.SessionsChanged))
+        val frame = edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry.bboxOf(devices.map { it.second } + route)
+            ?: throw AssertionError("no frame")
+        val expected = h.onMain {
+            edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry.fit(
+                frame, h.surface.viewport, edu.ucsd.sysnet.cluetoothscanner.map.camera.MapGeometry.framePadding(
+                    edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets(0, 0, 0, 0)))
+        }
+        h.waitUntil("refit after Stop") {
+            h.onMain {
+                val p = h.map.cameraPosition
+                val t = p.target ?: return@onMain false
+                kotlin.math.abs(t.latitude - expected.center.lat) < 1e-5 && kotlin.math.abs(t.longitude - expected.center.lon) < 1e-5 &&
+                    kotlin.math.abs(p.zoom - expected.zoom) < 0.01
+            }
+        }
+    }
+
     @Test fun m2_styleLayersInstalledInMapStyleJsonOrder_lightAndDark() {
         val h = harness(emptyList())
         for ((i, theme) in listOf(MapTheme.Light, MapTheme.Dark, MapTheme.Light).withIndex()) {

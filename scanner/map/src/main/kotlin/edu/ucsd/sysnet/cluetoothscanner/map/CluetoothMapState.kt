@@ -1,6 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.map
 
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
@@ -58,6 +59,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * - [show] with a new scope frames that session itself, without animation (M-10, V-7), from its SessionView.frame.
  *   :app never calls [frame] on a session switch (coordinator decision); [frame] is only the animated framing D-8
  *   asks for (a product sheet opening).
+ * - Stop keeps the same scope shown, now frozen (V-3): on the core's SessionsChanged a live view is loaded again,
+ *   and refits the same way (M-10).
  * - With no scope shown yet (first run, V-6) the map shows only the user's location at zoom 16 (M-9).
  */
 class CluetoothMapState(
@@ -109,6 +112,9 @@ class CluetoothMapState(
                     ),
                 )
             }
+        }
+        scope.launch(failures) {
+            queries.events.collect { event -> if (event == CoreEvent.SessionsChanged) dispatch(MapEvent.SessionsChanged) }
         }
         // §2.6 budget: the map applies live `best` changes and appends at most every 5 s
         scope.launch(failures) {

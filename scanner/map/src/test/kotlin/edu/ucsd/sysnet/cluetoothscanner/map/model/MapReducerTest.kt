@@ -219,4 +219,41 @@ class MapReducerTest {
         r.send(MapEvent.Live("s1", listOf(sd), pointsChanged = false))
         assertEquals(SourceData.Ends(sd, sd), r.state.sources[Source.Ends])
     }
+
+    @Test fun `M-10 Stop reloads the live view, which refits without animation, a frozen view is left alone`() {
+        val r = Run()
+        r.send(attached())
+        val load = r.send(MapEvent.Show(session, DeviceFilter(), false)).only<MapEffect.LoadView>().single()
+        r.send(MapEvent.ViewLoaded(load.request, viewInfo(frame = null, live = true)))
+        // the user pans away while recording; the route grows off screen
+        val far = GeoPoint(sd.lon + 0.03, sd.lat + 0.02)
+        r.send(MapEvent.Live("s1", listOf(far), pointsChanged = true))
+        r.send(idle(CameraSnapshot(sd, 17.0)))
+        // Stop: :app shows the same scope again (no change), then the core reports the finished session
+        assertTrue(r.send(MapEvent.Show(session, DeviceFilter(), false)).only<MapEffect.LoadView>().isEmpty())
+        val reload = r.send(MapEvent.SessionsChanged).only<MapEffect.LoadView>().single()
+        assertEquals(session, reload.scope)
+        // a live delta still in flight is ignored while the view reloads
+        assertTrue(r.send(MapEvent.Live("s1", listOf(sd), pointsChanged = true)).isEmpty())
+        val frozenRoute = route.appended(listOf(far))
+        val frame = Bbox(sd.lon, sd.lat, far.lon, far.lat)
+        val loaded = r.send(MapEvent.ViewLoaded(reload.request, ViewInfo(false, listOf("s1"), frame, frozenRoute)))
+        val move = loaded.only<MapEffect.Move>().single()
+        assertEquals(MapReducer.JUMP, move.duration)
+        assertEquals(MapGeometry.fit(frame, view, MapGeometry.framePadding(CoverInsets(0, 0, 0, 0))), move.camera)
+        assertEquals(MapGeometry.visibleBbox(move.camera, view), loaded.only<MapEffect.LoadPoints>().single().viewport)
+        // frozen now: another SessionsChanged (a delete elsewhere) neither reloads nor moves
+        assertTrue(r.send(MapEvent.SessionsChanged).isEmpty())
+    }
+
+    @Test fun `SessionsChanged while a view loads asks again, so a view loaded live before Stop is not kept`() {
+        val r = Run()
+        r.send(attached())
+        val first = r.send(MapEvent.Show(session, DeviceFilter(), false)).only<MapEffect.LoadView>().single()
+        val second = r.send(MapEvent.SessionsChanged).only<MapEffect.LoadView>().single()
+        assertTrue(r.send(MapEvent.ViewLoaded(first.request, viewInfo(live = true))).isEmpty())
+        assertEquals(1, r.send(MapEvent.ViewLoaded(second.request, viewInfo())).only<MapEffect.Move>().size)
+        // nothing shown: nothing to reload
+        assertTrue(MapReducer.reduce(MapState.Initial, MapEvent.SessionsChanged).effects.isEmpty())
+    }
 }

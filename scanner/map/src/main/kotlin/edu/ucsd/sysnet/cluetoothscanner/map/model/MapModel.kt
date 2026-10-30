@@ -243,6 +243,8 @@ sealed interface MapEvent {
     data class LocationChanged(val status: LocationStatus, val me: MyLocation?) : MapEvent
     data class Live(val sessionId: String, val routeAppended: List<GeoPoint>, val pointsChanged: Boolean) : MapEvent
     data object LiveTick : MapEvent
+    /** The core's `SessionsChanged`: a session finished (Stop), was deleted or interrupted. */
+    data object SessionsChanged : MapEvent
 
     // ---- query results ----
     data class ViewLoaded(val request: RequestId, val info: ViewInfo) : MapEvent

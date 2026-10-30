@@ -118,7 +118,7 @@ class MapReducerFuzzTest {
                     if (rnd.nextInt(4) == 0) null else MyLocation(point(), 5.0, 0),
                 )
                 21 -> MapEvent.Live(pick(listOf("a", "b")), List(rnd.nextInt(0, 3)) { point() }, rnd.nextBoolean())
-                22 -> MapEvent.LiveTick
+                22 -> if (rnd.nextInt(3) == 0) MapEvent.SessionsChanged else MapEvent.LiveTick
                 23 -> MapEvent.ViewLoaded(
                     request(),
                     run {
@@ -230,6 +230,21 @@ class MapReducerFuzzTest {
             if (after.sources[Source.Ends] is SourceData.Ends && after.sources[Source.Ends] != before.sources[Source.Ends]) {
                 val route = ((showing?.view as? ViewState.Ready)?.info?.route)
                 assertTrue("Start/End on a stationary route $route", route != null && route.length > 1 && route.farthestFromStartM > 50.0)
+            }
+
+            // 11. M-10: a finished session reloads the shown view only while it is live or loading, and moves nothing
+            if (event == MapEvent.SessionsChanged) {
+                val was = (before.session as? Session.Showing)?.view
+                val live = was is ViewState.Loading || (was as? ViewState.Ready)?.info?.live == true
+                val loads = step.effects.filterIsInstance<MapEffect.LoadView>()
+                if (live) {
+                    assertEquals(showing?.scope, loads.single().scope)
+                    assertEquals(ViewState.Loading(loads.single().request), showing?.view)
+                } else {
+                    assertTrue("reloaded a frozen view", loads.isEmpty())
+                    assertEquals(before, after)
+                }
+                assertTrue(step.effects.none { it is MapEffect.Move })
             }
 
             // 9. the first-run location shows only while no scope is shown

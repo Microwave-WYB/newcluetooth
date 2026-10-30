@@ -64,6 +64,7 @@ object MapReducer {
             is MapEvent.LocationChanged -> locationChanged(b, event)
             is MapEvent.Live -> live(b, event)
             MapEvent.LiveTick -> liveTick(b)
+            MapEvent.SessionsChanged -> sessionsChanged(b)
             is MapEvent.ViewLoaded -> viewLoaded(b, event)
             is MapEvent.PointsLoaded -> pointsLoaded(b, event)
             is MapEvent.RoutesLoaded -> routesLoaded(b, event)
@@ -327,6 +328,25 @@ object MapReducer {
         if (!session.liveDirty || !live) return
         b.state = b.state.copy(session = session.copy(liveDirty = false))
         b.requestPoints(force = true)
+    }
+
+    /**
+     * M-10, R-7/V-3: Stop leaves the same scope shown, now frozen, so `show` sees no change. When the core reports a
+     * finished session while the shown view is live (or still loading, and maybe live), the view is loaded again:
+     * the frozen view then refits without animation and its final points load. A frozen view is left alone.
+     */
+    private fun sessionsChanged(b: Builder) {
+        val session = b.state.session as? Session.Showing ?: return
+        val live = when (val view = session.view) {
+            is ViewState.Loading -> true
+            is ViewState.Ready -> view.info.live
+        }
+        if (!live) return
+        val request = b.newRequest()
+        b.state = b.state.copy(
+            session = session.copy(view = ViewState.Loading(request), points = PointsState.Unrequested, routes = null, liveDirty = false),
+        )
+        b.query(MapEffect.LoadView(request, session.scope))
     }
 
     /** M-8: Start and End, unless the session barely moved (every point within 50 m of the first, RouteEnds). */
