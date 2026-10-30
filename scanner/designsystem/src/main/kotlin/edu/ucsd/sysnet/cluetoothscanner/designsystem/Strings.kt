@@ -46,8 +46,8 @@ object Strings {
     const val Stop = "Stop"
     const val ShowRecordingDetails = "Show recording details"
     const val FitRoute = "Show the route on the map"
-    /** R-4: "26 devices · 32.88012, -117.23421 ±8 m"; [where] from [Format.location], or null without a fix. */
-    fun recorderMeta(devices: Int, where: String?) = listOfNotNull(devices(devices), where).joinToString(" · ")
+    /** R-4a: the discovery-rate chart's one label, the current value at the line's end. */
+    fun newPerMinute(n: Int) = "$n new/min"
 
     // ---- Search (Q-3 … Q-7) ----
     const val SearchPlaceholder = "Search name or MAC"

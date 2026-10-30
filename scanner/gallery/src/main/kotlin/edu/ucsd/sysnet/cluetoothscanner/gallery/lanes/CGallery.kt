@@ -38,6 +38,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeState
+import edu.ucsd.sysnet.cluetoothscanner.chrome.gallery.DiscoverySamples
 import edu.ucsd.sysnet.cluetoothscanner.chrome.gallery.chromeCells
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.gallery.DesignSystemGallery
@@ -64,7 +65,7 @@ object CGallery : LaneGallery {
 
 @Composable
 private fun RecorderDemo() {
-    var ui by remember { mutableStateOf(RecorderUi(RecorderUi.Form.Fab, false, 754_000, 26, null)) }
+    var ui by remember { mutableStateOf(RecorderUi(RecorderUi.Form.Fab, false, DiscoverySamples.ELAPSED_MS, DiscoverySamples.rising)) }
     Box(Modifier.fillMaxSize().height(600.dp).background(CluetoothTheme.colors.fill2)) {
         RecorderControl(
             ui,

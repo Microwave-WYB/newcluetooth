@@ -13,7 +13,7 @@ class StringsTest {
         .filter { it.type == String::class.java && java.lang.reflect.Modifier.isStatic(it.modifiers) }
         .map { it.get(null) as String } + listOf(
         Strings.devices(1), Strings.devices(3), Strings.lastScanned("2 h ago"), Strings.locationAge(4),
-        Strings.recorderMeta(26, Format.location(32.88012, -117.23421, 8.0)), Strings.resultsHeader(1, true),
+        Strings.newPerMinute(12), Strings.resultsHeader(1, true),
         Strings.resultsHeader(3, false), Strings.filterActive(2), Strings.productStatus(false, 3, 0, "just now"),
         Strings.productStatus(true, 3, 2, "just now"), Strings.productStatus(true, 3, 0, "4 min ago"),
         Strings.seenAt(20, "just now"), Strings.dbm(Format.signed(-56)), Strings.startedAt("7:12 PM", 26),
@@ -53,7 +53,7 @@ class StringsTest {
         assertEquals("Last scanned just now", Strings.productStatus(true, 1, 0, "just now"))
         assertEquals("2 devices", Strings.productStatus(false, 2, 0, "just now"))
         assertEquals("Started 7:12 PM · 26 devices", Strings.startedAt("7:12 PM", 26))
-        assertEquals("26 devices · 32.88012, -117.23421 ±8 m", Strings.recorderMeta(26, Format.location(32.88012, -117.23421, 8.0)))
+        assertEquals("12 new/min", Strings.newPerMinute(12))
     }
 
     /** No other module source of :designsystem spells a UI string outside [Strings] with "heard" either. */

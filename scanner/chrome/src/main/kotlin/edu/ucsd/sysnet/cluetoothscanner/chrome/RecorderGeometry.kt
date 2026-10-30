@@ -1,19 +1,17 @@
 package edu.ucsd.sysnet.cluetoothscanner.chrome
 
 import androidx.compose.ui.unit.Dp
-import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Concentric
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.SpecValues
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 
-/** docs/v2-api.md §5.4: the recorder's UI state (R-1: one control in three forms). */
+/** docs/v2-api.md §5.4: the recorder's UI state (R-1: one control in three forms); the panel shows [discovery] (R-4a). */
 data class RecorderUi(
     val form: Form,
     val paused: Boolean,
     val elapsedMs: Long,
-    val deviceCount: Int,
-    val fix: FixSummary?,
+    val discovery: DiscoveryBins = DiscoveryBins.Empty,
 ) {
     enum class Form { Fab, Capsule, Panel }
 }
@@ -35,14 +33,13 @@ data class RecorderGeometry(
     val buttonsInset: Dp,
     val buttonSize: Dp,
     val buttonGap: Dp,
-    /** The panel's extra content (the meta line) sits below the row (phone) or above it (tablet). */
+    /** The panel's extra content (the discovery-rate chart, R-4a) sits below the row (phone) or above it (tablet). */
     val extrasBelowRow: Boolean,
 ) {
     val right: Dp get() = x + width
     val bottom: Dp get() = y + height
 
     companion object {
-        private val PanelSlack = SpecValues.recorderPanelSlack
         private val CapsuleSlack = SpecValues.recorderCapsuleSlack
 
         /** The width of the Pause–Stop pair. */
@@ -50,14 +47,17 @@ data class RecorderGeometry(
             if (tablet) Tokens.iconBtn * 2 + Tokens.recGapTablet else Tokens.islandIb * 2 + Tokens.recGapPhone
 
         /**
-         * The panel's height, from its content: the row and the one-line meta (R-4; R-5's mini map is removed). On
-         * phone the panel ends `--edge` below the meta, the margin the mini map used to close it with.
+         * The panel's height, from its content: the row and the discovery-rate chart (R-4a), which takes the place
+         * and the padding of the old meta line (`.rec-meta`). On phone the panel ends `--edge` below the chart.
          */
         fun panelHeight(tablet: Boolean): Dp = if (tablet) {
-            Css.RecMeta.padding.top + Css.RecMeta.lineHeight + Tokens.fab + PanelSlack
+            chartTop(true) + SpecValues.recorderChartHeight + Tokens.fab
         } else {
-            Tokens.islandH + Css.RecorderTop_RecMeta.paddingTop + Css.RecMeta.lineHeight + Tokens.edge + PanelSlack
+            Tokens.islandH + chartTop(false) + SpecValues.recorderChartHeight + Tokens.edge
         }
+
+        /** The chart's top padding within the panel's extras: `.rec-meta`'s 14 on tablet, `.recorder.top`'s 0 on phone. */
+        fun chartTop(tablet: Boolean): Dp = if (tablet) Css.RecMeta.padding.top else Css.RecorderTop_RecMeta.paddingTop
 
         /**
          * @param screenWidth, screenHeight the screen (the map's box), dp

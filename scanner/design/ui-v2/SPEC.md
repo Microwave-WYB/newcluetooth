@@ -67,6 +67,14 @@ expanded (G-2).
   - Live values update in place and new rows are appended. Filters (category, area, search, Apple) only hide rows.
   - Only an explicit user action builds a new order (S-6, M-9, Q-7).
   - Keep each list's order as explicit state (a list of keys), not as a sort applied on every update.
+- **G-9a Scanning warm-up (#91).** When a recording has just started, the live Discover view waits 3 s of scanning
+  before its first order.
+  - During those 3 s, the sheet body shows a pulsing Bluetooth glyph with "Scanning…" (`--t2`) instead of rows. The
+    header, segments and filter stay usable. Map points may already appear.
+  - At 3 s, the first order is the RSSI sort of everything scanned so far. If nothing has been scanned by then, the
+    scanning state stays until the first device arrives. After that, G-9 applies unchanged.
+  - Not for history, All sessions, a resumed pause, or a live session that was already running when the view
+    opened.
 - **G-10 Restore on return.** Going back to a list after opening an item restores its scroll position, view, filters
   and sheet height exactly.
 - **G-11 No duplicate information.** The same information is never shown twice on one screen. For example, the product
@@ -77,7 +85,6 @@ expanded (G-2).
 - **G-13a Inner corners.** An element inside a rounded container's corner region has the same inset on its top and
   sides, and its radius is the container radius minus that inset. Examples:
   - tablet panel rows: 30 − 8 = 22;
-  - the recorder mini map: panel radius − 12 (phone 22 − 12 = 10, tablet 28 − 12 = 16);
   - the location popover: its radius is 28, concentric with its pill button (16 + 12).
 
   The recorder panel radius is concentric with its Pause/Stop buttons: 22 on phone (18 + 4) and 28 on tablet
@@ -222,8 +229,17 @@ Each component is built once. Its size, color and state rules come from these to
     bottom-right on tablet (8 dp). The Pause–Stop gap is 6 dp on phone and 8 dp on tablet. All of it animates with
     the panel's width (`--t-morph`), and collapsing returns exactly to the capsule layout.
   - On phone the panel widens symmetrically to the full width minus 2 × `--edge`, with a 22 dp radius and
-    `--shadow-raised`. Its extra content grows downward below the row:
-    - "N devices · lat, lon ±N m" (13/20 `--t2`, one line).
+    `--shadow-raised`. Its extra content grows downward below the row: the discovery-rate chart (R-4a). There is no
+    device count and no coordinates.
+- **R-4a Discovery rate.** A line chart of how fast new devices are found during this recording.
+  - x: the recording's elapsed time from its start to now (paused time left out; the line breaks across a pause).
+  - y: new devices per minute, i.e. devices first scanned in each 30 s bin × 2, lightly smoothed. Baseline 0, no
+    grid, no axis labels except the current value at the line's end: "N new/min" (12 `--t2`, tabular).
+  - About 72 dp tall, inset by the panel padding, line in `--blue`, a soft fill under it in `--blue` at low opacity.
+  - Standing in one place, the line falls towards 0 as everything nearby has been found; walking somewhere new
+    raises it.
+  - It updates with the live deltas. The data comes from the core (first-scanned time of each device in the
+    session), so it survives an app restart mid-recording.
   - Its height is measured from its content.
   - While it is open, ☰ and search fade out because the panel covers them.
   - A tap outside, or Back, collapses it to the capsule.
@@ -237,7 +253,7 @@ Each component is built once. Its size, color and state rules come from these to
   - The UI stays on the session that just ended, now frozen (V-3).
   - Stop does nothing to the sheets: the stack, each sheet's height (or the tablet panel's state), the open tab,
     scroll positions, filters and the current order all stay as they were. Only live-only parts change (the chart
-    stop, Nearby becomes unavailable as in D-1, the list stops appending).
+    stops, Nearby becomes unavailable as in D-1, the list stops appending).
 - **R-8 Deliberate asymmetry.** Starting sits at the thumb (bottom-right) and stopping needs a reach to the top (phone).
   This is intended; do not add a stop control near the bottom.
 - **R-9 Search state (phone).** The island sits centered directly below the search bar (top = `--edge` + 44 + 8 dp)
@@ -366,7 +382,8 @@ Each component is built once. Its size, color and state rules come from these to
   no slide); the sheet height doesn't change.
 - **D-1b Remembered view.** The Discover view (categories or list) is remembered: it is saved when the user switches
   and restored on every session view and after an app restart. Categories is the default only on first launch.
-  Search's forced list view (Q-5) doesn't change the saved choice.
+  Search's forced list view (Q-5) doesn't change the saved choice. It is UI state, not a setting: there is nothing
+  for it on the Settings page.
 - **D-2 Categories view (default on first launch).** CategorySections built from the session:
   - Each identified product appears once, under its own category.
   - "Unidentified devices" comes last as a single card.
@@ -584,6 +601,8 @@ Each component is built once. Its size, color and state rules come from these to
   - The current session is pinned at the top of the sidebar and selected.
 - **V-3 After Stop.** The UI stays on the session that just ended, now frozen: no live values, no
   chart, [This area | All]. It stays there until the app restarts or a new recording starts.
+  - Even if the session scanned no devices, it still shows its route, with Start/End per M-8, and the map fits it
+    (M-10). The sidebar keeps hiding empty sessions (L-*); only the view of the session the user is on keeps its route.
 - **V-4 History session.** Frozen, like V-3. The FAB is available.
 - **V-5 All sessions.** The union of all local data, frozen: every device at its strongest point, every route faint
   (M-8). It behaves like a history session.

@@ -11,6 +11,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.AllSessionsSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
@@ -22,6 +23,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
+import edu.ucsd.sysnet.cluetoothscanner.chrome.DiscoveryBins
 import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
@@ -43,6 +45,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -95,6 +98,12 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     val sessions: StateFlow<SessionsListState?> = _sessions.asStateFlow()
 
     val recorder: StateFlow<RecorderState> get() = graph.recorder.state
+
+    private val _discovery = MutableStateFlow(DiscoveryBins.Empty)
+    /** R-4a: the current recording's discovery rate (empty while not recording). */
+    val discovery: StateFlow<DiscoveryBins> = _discovery.asStateFlow()
+    /** R-4a: bumped by [MainEffect.ReloadDiscoveryRate] to read the rate again. */
+    private val discoveryReads = MutableStateFlow(0)
     val settings: StateFlow<Settings> get() = graph.settings.settings
     val location: StateFlow<LocationStatus> get() = graph.location.status
 
@@ -185,8 +194,25 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             // #79: storing kept failing; the recording paused
             launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFailed.collect { dispatch(MainEvent.StorageFailed(it)) } } }
             launch { viewWork(q) }
+            launch { discoveryWork() }
         }
     }
+
+    /** R-4a: the recording's discovery rate, per session and per read; an Err is the notice's (Failed). */
+    private suspend fun discoveryWork() =
+        combine(graph.recorder.state.map { r -> r.sessionId.takeIf { r.phase != RecorderState.Phase.Idle } }.distinctUntilChanged(), discoveryReads) { id, _ -> id }
+            .collectLatest { id ->
+                _discovery.value = DiscoveryBins.Empty
+                if (id == null) return@collectLatest
+                guard(MainTask.DiscoveryRate) {
+                    graph.discoveryRates.feed(id).collect { r ->
+                        when (r) {
+                            is CoreResult.Ok -> _discovery.value = r.value
+                            is CoreResult.Err -> fail(MainTask.DiscoveryRate, r.error)
+                        }
+                    }
+                }
+            }
 
     /** V-2 / V-7: the shown scope's view, read once per key; the search page's work lives inside it. */
     private suspend fun viewWork(q: CoreQueries) = ui.map { it.viewKey }.distinctUntilChanged().collectLatest { key ->
@@ -244,6 +270,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
                 // deliberate exception to the no-log-only rule (owner's OK): the remembered view is pure UI state
                 is UiStateResult.Err -> Log.w(TAG, "D-1b: the Discover view was not remembered: ${saved.message}")
             }
+            MainEffect.ReloadDiscoveryRate -> discoveryReads.value += 1
             MainEffect.ReadLaunchFacts -> dispatch(MainEvent.LaunchFactsRead(launchFacts()))
             // a refused start, pause, resume or stop is the notice's (Failed), never only a log line
             MainEffect.StartRecording -> graph.recorder.start().orFail(effect)?.let { dispatch(MainEvent.RecordingStarted(it)) }

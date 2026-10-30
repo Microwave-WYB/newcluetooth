@@ -356,6 +356,14 @@ class MainFailureTest {
         assertEquals(Notice("Could not save the settings: boom", retry = update), failed(s, MainTask.Effect(update)).state.notice)
         s.searchKey?.let { assertEquals(Step(s), failed(s, MainTask.Search(it))) }
     }
+
+    /** R-4a: an unreadable discovery rate is never only a log line: the notice says why and reads it again. */
+    @Test fun anUnreadableDiscoveryRateSaysWhyAndRetries() {
+        val s = MainUiState(scope = sessionA)
+        val failed = failed(s, MainTask.DiscoveryRate).state
+        assertEquals(Notice("Could not read the discovery rate: boom", retry = MainEffect.ReloadDiscoveryRate), failed.notice)
+        assertEquals(Step(s, listOf(MainEffect.ReloadDiscoveryRate)), reduce(failed, MainEvent.RetryNotice))
+    }
 }
 
 /** The runner's one wrapper: a throw becomes the task's failure; cancellation stays the caller's. */

@@ -30,7 +30,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionScope
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
@@ -77,9 +76,9 @@ fun MainScreen(vm: MainViewModel) {
     val searchResults by vm.search.collectAsState()
     val sessionsList by vm.sessions.collectAsState()
     val rec by vm.recorder.collectAsState()
+    val discovery by vm.discovery.collectAsState()
     val settings by vm.settings.collectAsState()
     val location by vm.location.collectAsState()
-    val myLocation by vm.graph.location.myLocation.collectAsState()
     val coreState by vm.coreState.collectAsState()
     val dispatch = vm::dispatch
     (coreState as? CoreState.Failed)?.let { CoreErrorScreen(Strings.CoreOpenFailed, it.error, vm::retryCore); return }
@@ -100,8 +99,7 @@ fun MainScreen(vm: MainViewModel) {
         val view = shownView(ui, viewData)
         val live = view?.live == true
         val form = recorderForm(rec.phase, ui.recorderPanelOpen)
-        val recorderUi = RecorderUi(form, rec.phase == RecorderState.Phase.Paused, rememberElapsedMs(rec.activeBeforeMs, rec.runningSinceMs),
-            rec.deviceCount, myLocation?.let { FixSummary(it.at.lat, it.at.lon, it.accuracyM, it.ageMs) })
+        val recorderUi = RecorderUi(form, rec.phase == RecorderState.Phase.Paused, rememberElapsedMs(rec.activeBeforeMs, rec.runningSinceMs), discovery)
         val recorderActions = remember(vm) {
             RecorderActions({ dispatch(MainEvent.StartRecording) }, { dispatch(MainEvent.SetRecorderPanel(true)) },
                 { dispatch(MainEvent.SetRecorderPanel(false)) }, { dispatch(MainEvent.PauseRecording) }, { dispatch(MainEvent.ResumeRecording) },
