@@ -117,6 +117,49 @@ class MapStyleSpecTest {
         assertEquals(expected, spec.selection(null))
     }
 
+    /**
+     * M-5 (design b0fa4d5): the ramp runs transparent -> blue -> cyan -> yellow -> red in both themes and never ends
+     * near white, so the densest spot reads as the hottest instead of a hole in the light base map.
+     */
+    @Test fun `M-5 heatmap ramp is transparent, blue, cyan, yellow, red and its top is not near white`() {
+        for (theme in MapTheme.entries) {
+            val density = spec.layers(theme).single { it.getValue("id").jsonPrimitive.content == "density" }
+            val ramp = density.getValue("paint").jsonObject.getValue("heatmap-color").jsonArray
+            assertEquals(Json.parseToJsonElement("""["heatmap-density"]"""), ramp[2])
+            val stops = ramp.drop(3).chunked(2).map { (at, color) -> at.jsonPrimitive.content.toDouble() to rgba(color.jsonPrimitive.content) }
+            assertEquals(0.0, stops.first().first, 0.0)
+            assertEquals(1.0, stops.last().first, 0.0)
+            assertTrue("stops ascend", stops.zipWithNext().all { (a, b) -> a.first < b.first })
+            assertEquals("transparent at 0", 0.0, stops.first().second[3], 0.0)
+            assertEquals(listOf("blue", "cyan", "yellow", "red"), stops.drop(1).map { hue(it.second) })
+            val top = stops.last().second
+            assertTrue("top stop luminance ${luminance(top)}", luminance(top) < 0.7)
+        }
+    }
+
+    private fun rgba(css: String): List<Double> {
+        val v = Regex("""rgba\(([^)]*)\)""").find(css)?.groupValues?.get(1)?.split(",")?.map { it.trim().toDouble() }
+            ?: throw AssertionError("not rgba(): $css")
+        return listOf(v[0] / 255, v[1] / 255, v[2] / 255, v[3])
+    }
+
+    /** WCAG relative luminance of an sRGB color. */
+    private fun luminance(c: List<Double>): Double {
+        fun lin(x: Double) = if (x <= 0.03928) x / 12.92 else Math.pow((x + 0.055) / 1.055, 2.4)
+        return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+    }
+
+    private fun hue(c: List<Double>): String {
+        val (r, g, b) = c
+        return when {
+            b > 0.6 && r < 0.3 && g < 0.6 -> "blue"
+            b > 0.6 && g > 0.6 && r < 0.3 -> "cyan"
+            r > 0.8 && g > 0.6 && b < 0.3 -> "yellow"
+            r > 0.6 && g < 0.3 && b < 0.3 -> "red"
+            else -> "other $c"
+        }
+    }
+
     @Test fun `M-3 M-4 M-5 M-8 paint values come from the tokens, light and dark`() {
         for (theme in MapTheme.entries) {
             val t = Design.tokens

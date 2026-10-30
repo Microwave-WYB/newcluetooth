@@ -31,9 +31,20 @@
   };
   const numeric = ["routeOpacity", "densityOpacity", "densityRadius"];
   const font = "Noto Sans Bold";
-  /** M-5: the heatmap's color by density, blue -> cyan -> white, the same in light and dark (so not a themed token). */
+  /**
+   * M-5: the heatmap's color by density, transparent -> blue -> cyan -> yellow -> red, the same in light and dark (so
+   * not a themed token). It never ends near white: the densest spot must read as the hottest, not as a hole.
+   */
   const heatRamp = ["interpolate", ["linear"], ["heatmap-density"],
-    0, "rgba(0,100,212,0)", 0.25, "rgba(0,100,212,0.7)", 0.6, "rgba(34,211,238,0.9)", 1, "rgba(255,255,255,1)"];
+    0, "rgba(0,100,212,0)", 0.02, "rgba(0,100,212,0.6)", 0.25, "rgba(34,211,238,0.8)",
+    0.55, "rgba(250,204,21,0.9)", 1, "rgba(220,38,38,1)"];
+  /**
+   * M-5: the intensity, tuned on a stationary session (40 devices on one spot, 10 spread nearby, zoom 16.5): at 1.2
+   * the spot is yellow to red around its cluster bubble and fades through cyan and blue, a lone device is blue, a
+   * close pair turns cyan to yellow. At 2.5 a lone device is already red. Zoomed out, more devices share a pixel, so
+   * the intensity drops.
+   */
+  const heatIntensity = ["interpolate", ["linear"], ["zoom"], 12, 0.5, 16, 1.2];
   /** The layers() values, given tok(name) -> the token's value as a string (app.js: getComputedStyle). */
   const valuesFrom = (tok) => {
     const c = {};
@@ -65,7 +76,7 @@
     { id: "density", type: "heatmap", source: "density",
       paint: {
         "heatmap-weight": ["coalesce", ["get", "point_count"], 1],
-        "heatmap-radius": c.densityRadius, "heatmap-intensity": 1, "heatmap-color": heatRamp,
+        "heatmap-radius": c.densityRadius, "heatmap-intensity": heatIntensity, "heatmap-color": heatRamp,
         "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 16, c.densityOpacity, 18, 0],
       } },
     { id: "clusters", type: "circle", source: "devices", filter: ["has", "point_count"],

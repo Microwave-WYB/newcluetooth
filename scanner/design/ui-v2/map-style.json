@@ -122,7 +122,19 @@
             1
           ],
           "heatmap-radius": 24,
-          "heatmap-intensity": 1,
+          "heatmap-intensity": [
+            "interpolate",
+            [
+              "linear"
+            ],
+            [
+              "zoom"
+            ],
+            12,
+            0.5,
+            16,
+            1.2
+          ],
           "heatmap-color": [
             "interpolate",
             [
@@ -133,12 +145,14 @@
             ],
             0,
             "rgba(0,100,212,0)",
+            0.02,
+            "rgba(0,100,212,0.6)",
             0.25,
-            "rgba(0,100,212,0.7)",
-            0.6,
-            "rgba(34,211,238,0.9)",
+            "rgba(34,211,238,0.8)",
+            0.55,
+            "rgba(250,204,21,0.9)",
             1,
-            "rgba(255,255,255,1)"
+            "rgba(220,38,38,1)"
           ],
           "heatmap-opacity": [
             "interpolate",
@@ -395,7 +409,19 @@
             1
           ],
           "heatmap-radius": 24,
-          "heatmap-intensity": 1,
+          "heatmap-intensity": [
+            "interpolate",
+            [
+              "linear"
+            ],
+            [
+              "zoom"
+            ],
+            12,
+            0.5,
+            16,
+            1.2
+          ],
           "heatmap-color": [
             "interpolate",
             [
@@ -406,12 +432,14 @@
             ],
             0,
             "rgba(0,100,212,0)",
+            0.02,
+            "rgba(0,100,212,0.6)",
             0.25,
-            "rgba(0,100,212,0.7)",
-            0.6,
-            "rgba(34,211,238,0.9)",
+            "rgba(34,211,238,0.8)",
+            0.55,
+            "rgba(250,204,21,0.9)",
             1,
-            "rgba(255,255,255,1)"
+            "rgba(220,38,38,1)"
           ],
           "heatmap-opacity": [
             "interpolate",
