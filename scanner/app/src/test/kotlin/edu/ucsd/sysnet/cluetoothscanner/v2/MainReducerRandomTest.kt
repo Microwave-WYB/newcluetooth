@@ -41,7 +41,8 @@ class MainReducerRandomTest {
             // RecorderState.pause is non-null exactly while paused
             val pause = if (phase != Phase.Paused) null
             else listOf(edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.User,
-                edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFull(nextLong(0, 300_000_000))).random(this)
+                edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFull(nextLong(0, 300_000_000)),
+                edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFailed("disk I/O error")).random(this)
             MainEvent.RecorderChanged(phase, pause)
         }
         6 -> MainEvent.RecordingStarted(listOf("a", "b").random(this))
@@ -75,7 +76,8 @@ class MainReducerRandomTest {
             IllegalStateException("random failure"),
         )
         40 -> MainEvent.RetryLink
-        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate, MainEvent.DismissNotice, MainEvent.RetryNotice).random(this)
+        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate, MainEvent.DismissNotice, MainEvent.RetryNotice,
+            MainEvent.StorageFailed("disk I/O error")).random(this)
         42 -> MainEvent.StorageFull(Bytes(nextLong(0, 400_000_000)))
         43 -> MainEvent.ReclaimableRead(randomRead())
         44, 45 -> MainEvent.ChooseCleanup(Cleanup.entries.random(this), nextBoolean())
@@ -167,6 +169,14 @@ class MainReducerRandomTest {
                 if (e is MainEvent.SpaceFreed && s.storage?.cleaning == true) {
                     check("settings shows a failure as freed", (n.storage?.cleanupFreed == null) == e.outcome.freed.isEmpty())
                     check("settings hides the failure", (n.storage?.cleanupFailure == null) == e.outcome.failed.isEmpty())
+                }
+                // #79: the failure pause's notice shows while it lasts and never outlives it
+                if (e is MainEvent.RecorderChanged) {
+                    val failure = e.pause is edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFailed
+                    val wasFailure = (s.recorder as? RecorderMirror.Active)?.pausedForFailure == true
+                    (n.recorder as? RecorderMirror.Active)?.let { check("failure pause mirror", it.pausedForFailure == failure) }
+                    if (failure && !wasFailure) check("failure pause without its notice", n.notice?.storagePause == true)
+                    if (!failure && wasFailure) check("failure notice outlived its pause", n.notice?.storagePause != true)
                 }
                 // R-10: a failed read is always on screen (dialog and Settings), and never with sizes
                 val read = (e as? MainEvent.ReclaimableRead)?.result ?: (e as? MainEvent.SpaceFreed)?.after

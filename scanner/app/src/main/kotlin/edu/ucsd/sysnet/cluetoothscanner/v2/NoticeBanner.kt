@@ -39,7 +39,7 @@ internal fun NoticeBanner(notice: Notice, onRetry: () -> Unit, onDismiss: () -> 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(notice.message, Modifier.weight(1f), color = CluetoothTheme.colors.warn, maxLines = 3)
-        if (notice.retry != null) TextButton(Strings.TryAgain, onRetry, Modifier.testTag("noticeRetry"))
+        if (notice.retry != null) TextButton(notice.retryLabel ?: Strings.TryAgain, onRetry, Modifier.testTag("noticeRetry"))
         TextButton(DISMISS, onDismiss, Modifier.testTag("noticeDismiss"))
     }
 }

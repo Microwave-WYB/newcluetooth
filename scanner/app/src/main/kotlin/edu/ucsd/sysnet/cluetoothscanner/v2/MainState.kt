@@ -78,8 +78,11 @@ sealed interface SheetsLink {
 /** The recorder as the screen mirrors it (V-3, R-4): the panel exists only while a recording is active. */
 sealed interface RecorderMirror {
     data object Idle : RecorderMirror
-    /** [pausedForStorage]: R-10's pause (`RecorderState.pause` is StorageFull), which the storage-full dialog follows. */
-    data class Active(val panelOpen: Boolean, val pausedForStorage: Boolean = false) : RecorderMirror
+    /**
+     * [pausedForStorage]: R-10's pause (`RecorderState.pause` is StorageFull), which the storage-full dialog follows.
+     * [pausedForFailure]: #79's pause (StorageFailed), which its notice follows.
+     */
+    data class Active(val panelOpen: Boolean, val pausedForStorage: Boolean = false, val pausedForFailure: Boolean = false) : RecorderMirror
 }
 
 /** O-2: the onboarding page and the steps it was opened with. */
@@ -175,8 +178,16 @@ data class MainUiState(
     val attachedSheets: SheetsState? get() = (sheets as? SheetsLink.Attached)?.sheets
 }
 
-/** A failure the user must see: the error's own words, and Retry when [retry] can run it again. */
-data class Notice(val message: String, val retry: MainEffect? = null)
+/**
+ * A failure the user must see: the error's own words, and Retry when [retry] can run it again ([retryLabel] names
+ * that action when it isn't "Try again"). [storagePause]: the recording paused because storing kept failing (#79);
+ * the notice closes when that pause ends.
+ */
+data class Notice(val message: String, val retry: MainEffect? = null, val retryLabel: String? = null, val storagePause: Boolean = false)
+
+/** #79: the recording paused because storing kept failing; Resume makes the core try again. */
+fun storageFailedNotice(message: String) =
+    Notice(Strings.storageFailedPaused(message), retry = MainEffect.ResumeRecording, retryLabel = Strings.Resume, storagePause = true)
 
 /** The words a failure shows: a platform call's typed error, else the throwable's message. */
 fun Throwable.userMessage(): String = (this as? PlatformFailure)?.error?.message ?: message ?: this::class.simpleName.orEmpty()
@@ -243,6 +254,8 @@ sealed interface MainEvent {
     // ---- R-10 storage full ----
     /** `CoreEvent.StorageFull { freeBytes }`: the core stopped writing (and the recorder paused, B). */
     data class StorageFull(val free: Bytes) : MainEvent
+    /** `CoreEvent.StorageFailed { message }` (#79): storing kept failing for 60 s; the core stopped writing and paused. */
+    data class StorageFailed(val message: String) : MainEvent
     /** What each cleanup frees, or null when the core could not say. */
     /** The free space and what each cleanup frees, or why they couldn't be read. */
     data class ReclaimableRead(val result: CleanupResult<Reclaim>) : MainEvent
@@ -358,8 +371,19 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
         val idle = e.phase == RecorderState.Phase.Idle
         val storagePause = e.pause as? RecorderState.PauseReason.StorageFull
         val wasStoragePause = (s.recorder as? RecorderMirror.Active)?.pausedForStorage == true
-        val next = if (idle) RecorderMirror.Idle else RecorderMirror.Active(s.recorderPanelOpen, storagePause != null)
-        val mirrored = s.copy(recorder = next)
+        val failurePause = e.pause as? RecorderState.PauseReason.StorageFailed
+        val wasFailurePause = (s.recorder as? RecorderMirror.Active)?.pausedForFailure == true
+        val next = if (idle) RecorderMirror.Idle else RecorderMirror.Active(s.recorderPanelOpen, storagePause != null, failurePause != null)
+        // #79: the failure pause shows its notice, and the notice goes when the pause ends (Resume, here or from the
+        // notification, or Stop); another notice that came in meanwhile stays
+        val mirrored = s.copy(
+            recorder = next,
+            notice = when {
+                failurePause != null && !wasFailurePause -> storageFailedNotice(failurePause.message)
+                failurePause == null && wasFailurePause && s.notice?.storagePause == true -> null
+                else -> s.notice
+            },
+        )
         val base = when {
             // R-10: the storage pause ended (a Resume the core accepted, from the app or the notification, or a Stop)
             wasStoragePause && storagePause == null -> Step(mirrored.copy(storageFull = null))
@@ -452,6 +476,8 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.EnableBluetooth -> s.with(MainEffect.EnableBluetooth)
     MainEvent.OpenAppSettings -> s.with(MainEffect.OpenAppSettings)
     MainEvent.UploadNow -> s.with(MainEffect.UploadNow)
+    // #79: shown at once; the recorder's own pause (lane B) follows and keeps it until the pause ends
+    is MainEvent.StorageFailed -> s.copy(notice = storageFailedNotice(e.message)).only()
     is MainEvent.StorageFull -> s.storageFull?.let { s.copy(storageFull = it.copy(free = e.free)).only() }
         ?: s.copy(storageFull = StorageFullState(e.free, ReclaimRead.Reading, emptySet(), CleanupStep.Choosing(null))).with(MainEffect.LoadReclaimable)
     is MainEvent.ReclaimableRead -> s.copy(

@@ -187,6 +187,7 @@ class MainStorageFullTest {
         val calls = mutableListOf<Cleanup>()
         val port = object : StorageCleanup {
             override val storageFull: Flow<Bytes> = emptyFlow()
+            override val storageFailed: Flow<String> = emptyFlow()
             override suspend fun reclaimable(): CleanupResult<Reclaim> = CleanupResult.Ok(reclaim)
             override suspend fun deleteUploadedRaw(): CleanupResult<Bytes> = CleanupResult.Err(busy).also { calls += Cleanup.UploadedRaw }
             override suspend fun clearLocalDatabase(): CleanupResult<Bytes> = CleanupResult.Ok(Bytes(40)).also { calls += Cleanup.LocalDatabase }
@@ -266,5 +267,77 @@ class MainStoragePauseTest {
         fake.storageFull(150_000_000)
         val paused = rec.follow().on(MainEvent.SetRecorderPanel(true), MainEvent.SetRecorderPanel(false))
         assertEquals(RecorderMirror.Active(panelOpen = false, pausedForStorage = true), paused.recorder)
+    }
+}
+
+/**
+ * #79: storing kept failing (not for space), so the core stopped writing and the recording paused. It shows as a
+ * paused recording with the failure's words and Resume, on the R-10 notice path; the events come from
+ * [FakeRecorder.storageFailed] as the runner derives them.
+ */
+class MainStorageFailedTest {
+    private val fake = edu.ucsd.sysnet.cluetoothscanner.platform.fake.FakeRecorder(onStart = { "a" }, onStop = { "a" }, nowMs = { 0L })
+    private val failure = "local database failed: disk I/O error"
+
+    private fun MainUiState.follow(): MainUiState = fake.state.value.let { on(MainEvent.RecorderChanged(it.phase, it.pause)) }
+
+    private suspend fun recording(): MainUiState {
+        fake.start()
+        return MainUiState(scope = sessionA).follow()
+    }
+
+    @Test fun theFailurePauseShowsItsWordsAndResume() = runTest {
+        val rec = recording()
+        fake.storageFailed(failure)
+        val paused = rec.follow()
+        val n = paused.notice ?: error("the notice shows")
+        assertEquals("Recording paused: saving keeps failing ($failure)", n.message)
+        assertEquals(MainEffect.ResumeRecording, n.retry)
+        assertEquals("Resume", n.retryLabel)
+        assertEquals(RecorderMirror.Active(panelOpen = false, pausedForFailure = true), paused.recorder)
+        // Resume on the notice asks the recorder to resume, which makes the core try again
+        val resume = reduce(paused, MainEvent.RetryNotice)
+        assertNull(resume.state.notice)
+        assertEquals(listOf(MainEffect.ResumeRecording), resume.effects)
+        // and the storage-full dialog is not involved
+        assertNull(paused.storageFull)
+    }
+
+    @Test fun aResumeFromTheNotificationOrAStopClosesIt() = runTest {
+        val rec = recording()
+        fake.storageFailed(failure)
+        val paused = rec.follow()
+        fake.resume()
+        assertNull(paused.follow().notice)
+        fake.storageFailed(failure)
+        val again = paused.follow().follow()
+        assertEquals(true, again.notice?.storagePause)
+        fake.stop()
+        assertNull(again.follow().notice)
+    }
+
+    @Test fun theCoresEventShowsItAndThePauseKeepsIt() = runTest {
+        val rec = recording().on(MainEvent.StorageFailed(failure))
+        assertEquals(storageFailedNotice(failure), rec.notice)
+        fake.storageFailed(failure)
+        val paused = rec.follow()
+        assertEquals(storageFailedNotice(failure), paused.notice)
+        fake.resume()
+        assertNull(paused.follow().notice)
+    }
+
+    @Test fun anotherNoticeThatCameMeanwhileStays() = runTest {
+        val rec = recording()
+        fake.storageFailed(failure)
+        val other = Notice("Export failed: disk full")
+        val paused = rec.follow().copy(notice = other)
+        fake.resume()
+        assertEquals(other, paused.follow().notice)
+    }
+
+    @Test fun aUserPauseShowsNoNotice() = runTest {
+        val rec = recording()
+        fake.pause()
+        assertNull(rec.follow().notice)
     }
 }

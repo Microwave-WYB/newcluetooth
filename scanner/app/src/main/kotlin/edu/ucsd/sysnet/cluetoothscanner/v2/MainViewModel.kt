@@ -182,6 +182,8 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
             // R-10: the core stopped writing for lack of space
             launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFull.collect { dispatch(MainEvent.StorageFull(it)) } } }
+            // #79: storing kept failing; the recording paused
+            launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFailed.collect { dispatch(MainEvent.StorageFailed(it)) } } }
             launch { viewWork(q) }
         }
     }
