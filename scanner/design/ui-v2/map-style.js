@@ -7,7 +7,7 @@
  * Sources (GeoJSON, data set at runtime):
  *   route      the session's route (LineString features; All sessions: several)
  *   ends       Start and End points: properties { kind: "start" | "end", label: "Start" | "End" }
- *   density    one point per device (the density wash)
+ *   density    one point per device, or one per cell in Cells mode (the M-5 heatmap)
  *   devices    one point per device, clustered: properties { addr }
  *   sightings  the selected device's sightings: properties { rssi }
  *   me         the user's location (shown when there is no session)
@@ -24,13 +24,16 @@
   /** Where each layers() value comes from: a tokens.css custom property. Numbers are parsed; the rest are colors. */
   const tokenOf = {
     route: "--map-route", routeOpacity: "--map-route-opacity",
-    density: "--map-density", densityOpacity: "--map-density-opacity", densityRadius: "--map-density-radius",
+    densityOpacity: "--map-density-opacity", densityRadius: "--map-density-radius",
     point: "--blue", stroke: "--on-blue", clusterText: "--on-blue", selected: "--t1", me: "--blue",
     rssiStrong: "--rssi-strong", rssiFair: "--rssi-fair", rssiWeak: "--rssi-weak",
     start: "--map-start", end: "--map-end", endText: "--map-end", halo: "--fill1",
   };
   const numeric = ["routeOpacity", "densityOpacity", "densityRadius"];
   const font = "Noto Sans Bold";
+  /** M-5: the heatmap's color by density, blue -> cyan -> white, the same in light and dark (so not a themed token). */
+  const heatRamp = ["interpolate", ["linear"], ["heatmap-density"],
+    0, "rgba(0,100,212,0)", 0.25, "rgba(0,100,212,0.7)", 0.6, "rgba(34,211,238,0.9)", 1, "rgba(255,255,255,1)"];
   /** The layers() values, given tok(name) -> the token's value as a string (app.js: getComputedStyle). */
   const valuesFrom = (tok) => {
     const c = {};
@@ -51,15 +54,20 @@
 
   /**
    * The layers, bottom to top. c: {
-   *   route, routeOpacity, density, densityOpacity, densityRadius, point, stroke, clusterText,
+   *   route, routeOpacity, densityOpacity, densityRadius, point, stroke, clusterText,
    *   rssiStrong, rssiFair, rssiWeak, start, end, endText, halo, selected, me, font
    * }
    */
   const layers = (c) => [
     { id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": c.route, "line-width": 4, "line-opacity": c.routeOpacity } },
-    { id: "density", type: "circle", source: "density",
-      paint: { "circle-radius": c.densityRadius, "circle-color": c.density, "circle-opacity": c.densityOpacity } },
+    // M-5: a native heatmap below the clusters and points; a device weighs 1, a Cells-mode cell its device count
+    { id: "density", type: "heatmap", source: "density",
+      paint: {
+        "heatmap-weight": ["coalesce", ["get", "point_count"], 1],
+        "heatmap-radius": c.densityRadius, "heatmap-intensity": 1, "heatmap-color": heatRamp,
+        "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 16, c.densityOpacity, 18, 0],
+      } },
     { id: "clusters", type: "circle", source: "devices", filter: ["has", "point_count"],
       paint: {
         "circle-color": c.point, "circle-stroke-color": c.stroke, "circle-stroke-width": 2,
