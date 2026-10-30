@@ -653,7 +653,8 @@ Each component is built once. Its size, color and state rules come from these to
 ## O. Pages
 
 - **O-1 Settings.**
-  - Opened from the sidebar. The page slides in from the right (`--t-page`) and has a `--bg` top strip
+  - Opened from the sidebar. On phone the page fades in over the screen and fades out on Back (`--t-page`, `--ease`),
+    with no slide; on tablet it opens as before. It has a `--bg` top strip
     (`--top-zone` tall) holding a back FloatButton and "Settings" (17/650).
   - Rows, in order:
     1. User ID (value on the right);
