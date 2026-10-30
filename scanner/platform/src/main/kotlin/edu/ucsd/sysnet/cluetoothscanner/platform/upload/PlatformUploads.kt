@@ -28,6 +28,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +39,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.async
 
 /**
  * SPEC O-1 "Pending uploads", docs/v2-api.md §1.6, §4.5: [Uploads] over WorkManager and the v3 Firebase transport.
@@ -89,11 +93,17 @@ class PlatformUploads internal constructor(
     private val wifiOnlyNow = MutableStateFlow(false)
     private val guard = failureHandler(TAG)
 
-    /** A pass request: answered with what the pass (or passes) it waited for did. */
-    private class PassRequest(val reply: CompletableDeferred<UploadTally>)
+    /** What the kind's actor hears: a worker asks for a pass, or a worker that asked was stopped. */
+    private sealed interface PassMessage {
+        /** Answered with what the pass (or passes) it waited for did. */
+        class Ask(val reply: CompletableDeferred<UploadTally>) : PassMessage
 
-    private val inboxes: Map<UploadKind, Channel<PassRequest>> = UploadKind.entries.associateWith {
-        Channel(Channel.UNLIMITED, onUndeliveredElement = { request -> request.reply.complete(STOPPED) })
+        /** The worker behind [reply] was stopped (WorkManager cancelled it): its pass must not run on for it. */
+        class Withdraw(val reply: CompletableDeferred<UploadTally>) : PassMessage
+    }
+
+    private val inboxes: Map<UploadKind, Channel<PassMessage>> = UploadKind.entries.associateWith {
+        Channel(Channel.UNLIMITED, onUndeliveredElement = { message -> if (message is PassMessage.Ask) message.reply.complete(STOPPED) })
     }
 
     /** Set by [uploadNeeded]: a file of this kind was sealed, maybe after the running pass listed for the last time. */
@@ -131,34 +141,80 @@ class PlatformUploads internal constructor(
 
     override fun uploadNow(): PlatformResult<Unit> = schedule(Schedule.Now, wifiOnlyNow.value).also { refresh() }
 
-    /** One worker run of [kind]: its pass runs on the kind's actor, after any pass of that kind already running. */
+    /**
+     * One worker run of [kind]: its pass runs on the kind's actor, after any pass of that kind already running. When
+     * WorkManager stops the worker, the pass stops too (and its transfer with it) unless another worker still waits
+     * for it: a lost Wi-Fi constraint must not leave an upload running over cellular.
+     */
     internal suspend fun pass(kind: UploadKind): UploadTally {
+        val inbox = inboxes.getValue(kind)
         val reply = CompletableDeferred<UploadTally>()
-        if (inboxes.getValue(kind).trySend(PassRequest(reply)).isFailure) return STOPPED
-        return reply.await()
+        if (inbox.trySend(PassMessage.Ask(reply)).isFailure) return STOPPED
+        return try {
+            reply.await()
+        } catch (cancelled: CancellationException) {
+            inbox.trySend(PassMessage.Withdraw(reply))
+            throw cancelled
+        }
     }
 
-    private suspend fun actor(kind: UploadKind, inbox: Channel<PassRequest>) {
-        for (first in inbox) {
-            // Every request queued by now shares the pass; later ones wait for the next.
-            val waiting = mutableListOf(first)
-            while (true) waiting += inbox.tryReceive().getOrNull() ?: break
-            var answer = STOPPED
-            try {
-                var tally = UploadTally()
-                var passes = 0
-                do {
-                    sealedDuringPass.getValue(kind).set(false)
-                    tally += runner.run(kind)
-                } while (sealedDuringPass.getValue(kind).get() && ++passes < MAX_EXTRA_PASSES)
-                shown.update { it.copy(passProblem = tally.problem) }
-                refreshNow()
-                answer = tally
-            } finally {
-                // Answered however the pass ended: a pass cut off (the process shutting down) reads as failed.
-                waiting.forEach { it.reply.complete(answer) }
+    /** The pass running now, as the actor's child, and the workers still waiting for it. */
+    private class Running(val job: Deferred<UploadTally>, val waiters: MutableList<CompletableDeferred<UploadTally>>)
+
+    /**
+     * The kind's single owner. It runs one pass at a time as its child: requests that arrive meanwhile queue and share
+     * the next pass; a withdrawal leaves the queue, and when no live waiter remains the running pass is cancelled. A
+     * pass that throws answers its waiters with a typed failure and the actor goes on.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class) // a completed Deferred's result or failure, read in onJoin
+    private suspend fun actor(kind: UploadKind, inbox: Channel<PassMessage>) = supervisorScope {
+        val queued = mutableListOf<CompletableDeferred<UploadTally>>()
+        var running: Running? = null
+        while (true) {
+            val idle = running == null
+            if (idle && queued.isNotEmpty()) {
+                running = Running(async { passes(kind) }, queued.toMutableList())
+                queued.clear()
+            }
+            val current = running
+            select {
+                inbox.onReceive { message ->
+                    when (message) {
+                        is PassMessage.Ask -> queued += message.reply
+                        is PassMessage.Withdraw -> {
+                            queued.remove(message.reply)
+                            if (current != null && current.waiters.remove(message.reply) && current.waiters.isEmpty()) {
+                                // Nobody waits any more: stop the pass and its transfer; the file stays pending.
+                                current.job.cancel()
+                            }
+                        }
+                    }
+                }
+                current?.job?.onJoin {
+                    val answer = when (val failure = current.job.getCompletionExceptionOrNull()) {
+                        null -> current.job.getCompleted()
+                        is CancellationException -> STOPPED
+                        else -> UploadTally(failed = 1, problem = "the upload pass failed: ${failure.message ?: failure::class.java.simpleName}")
+                    }
+                    current.waiters.forEach { it.complete(answer) }
+                    running = null
+                }
             }
         }
+    }
+
+    /** A pass, and another for each file sealed after its last listing (at most [MAX_EXTRA_PASSES] more). */
+    private suspend fun passes(kind: UploadKind): UploadTally {
+        val sealed = sealedDuringPass.getValue(kind)
+        var tally = UploadTally()
+        var extra = 0
+        do {
+            sealed.set(false)
+            tally += runner.run(kind)
+        } while (sealed.get() && extra++ < MAX_EXTRA_PASSES)
+        shown.update { it.copy(passProblem = tally.problem) }
+        refreshNow()
+        return tally
     }
 
     private fun schedule(why: Schedule, wifi: Boolean): PlatformResult<Unit> = try {
@@ -209,7 +265,7 @@ class PlatformUploads internal constructor(
     private companion object {
         const val TAG = "PlatformUploads"
 
-        /** Extra passes for files sealed during a pass; recording seals every few minutes, so this stays bounded. */
+        /** At most this many extra passes for files sealed during a pass (recording seals every few minutes). */
         const val MAX_EXTRA_PASSES = 5
 
         /** The answer when no pass can run (the process is shutting down): a failure, so WorkManager retries. */

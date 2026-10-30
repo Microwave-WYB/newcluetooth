@@ -1427,7 +1427,9 @@ interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLo
     v3 worker classes that cannot work in v2, so the first v2 start replaces every one of them, once (prefs
     `cluetooth_uploads`); later starts keep what is queued. v3's resumable sessions resume;
   - passes of one kind never overlap: one actor per kind runs them in turn (one-time and periodic work alike), and a
-    file sealed during a pass gets another pass right after it;
+    file sealed during a pass gets another pass right after it (at most 5 more). A worker WorkManager stops (a lost
+    Wi-Fi constraint, quota, a replacing "Upload now") stops its pass and the transfer with it, unless another worker
+    still waits for that pass; the file stays pending. A pass that throws is a failed pass, and the actor goes on;
   - `status` is `core.uploadStatus()`, read again after every pass; its `lastError` also shows what the core cannot
     ("Uploads not scheduled: …", a failure the core could not record).
 - The pre-0.0.5 JSONL uploader and the first-launch `legacy_pending` step (§1.5) follow in their own change.
