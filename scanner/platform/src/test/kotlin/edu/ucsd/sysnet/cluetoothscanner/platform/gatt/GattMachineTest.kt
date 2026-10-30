@@ -208,5 +208,10 @@ class GattMachineTest {
         assertEquals(listOf("Close", "Finish"), ends(GattMachine.reduce(failed.model, EngineInput.TimedOut, late).effects))
         // the disconnect call itself throws: closed at once (no loop)
         assertEquals(listOf("Close", "Finish"), ends(GattMachine.reduce(failed.model, EngineInput.LinkFailed, env).effects))
+        // the disconnect was sent: wait for its callback; refused: no callback will come, so closed at once
+        val sent = GattMachine.reduce(failed.model, EngineInput.DisconnectRequested(sent = true), env)
+        assertEquals(emptyList<String>(), ends(sent.effects))
+        assertEquals(wait, sent.model.wait)
+        assertEquals(listOf("Close", "Finish"), ends(GattMachine.reduce(failed.model, EngineInput.DisconnectRequested(sent = false), env).effects))
     }
 }

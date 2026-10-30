@@ -96,6 +96,7 @@ internal object GattMachine {
                 }
                 is EngineInput.Listed -> if (wait == EngineWait.ListingServices) startReading(input.snapshots)
                 is EngineInput.ReadRequested -> if (wait is EngineWait.Reading && wait.step is ReadStep.Requesting) readRequested(wait.read, wait.step, input.accepted)
+                is EngineInput.DisconnectRequested -> if (wait is EngineWait.Disconnecting && !input.sent) disconnectEnded(wait, status = null)
                 is EngineInput.Link, EngineInput.Cancel, EngineInput.TimedOut -> awaited(wait, input)
                 EngineInput.LinkFailed -> if (wait !is EngineWait.Finished) linkFailed()
             }
@@ -192,10 +193,7 @@ internal object GattMachine {
                     is ReadStep.Grace -> stalled(wait.read, step.graceMs)
                     is ReadStep.Requesting -> Unit
                 }
-                is EngineWait.Disconnecting -> {
-                    run { copy(disconnect = GattDisconnect(wait.initiator, null)) }
-                    endAttempt(retry = wait.retryIf133 && !env.cancelled, close = true)
-                }
+                is EngineWait.Disconnecting -> disconnectEnded(wait, status = null)
                 is EngineWait.Backoff -> {
                     // A fresh attempt after Android's generic status 133.
                     model = model.copy(attempt = model.attempt + 1, run = RunFacts.FRESH, phy = null)
@@ -225,14 +223,17 @@ internal object GattMachine {
             when (wait) {
                 is EngineWait.Connecting, is EngineWait.Mtu, is EngineWait.Discovering -> failRemote(status)
                 is EngineWait.Reading -> readDisconnected(wait.read, status)
-                is EngineWait.Disconnecting -> {
-                    run { copy(disconnect = GattDisconnect(wait.initiator, status)) }
-                    endAttempt(retry = wait.retryIf133 && !env.cancelled, close = true)
-                }
+                is EngineWait.Disconnecting -> disconnectEnded(wait, status)
                 EngineWait.ConnectRequest, is EngineWait.MtuRequest, is EngineWait.DiscoverRequest, EngineWait.ListingServices,
                 is EngineWait.Backoff, is EngineWait.Finished,
                 -> Unit
             }
+        }
+
+        /** The disconnect's callback came ([status]), timed out, or was never sent (null): close the link. */
+        private fun disconnectEnded(wait: EngineWait.Disconnecting, status: Int?) {
+            run { copy(disconnect = GattDisconnect(wait.initiator, status)) }
+            endAttempt(retry = wait.retryIf133 && !env.cancelled, close = true)
         }
 
         private fun mtuDone(since: Long) {
@@ -496,6 +497,9 @@ internal sealed interface EngineInput {
     data class DiscoverRequested(val accepted: Boolean) : EngineInput
     data class Listed(val snapshots: List<GattServiceSnapshot>) : EngineInput
     data class ReadRequested(val accepted: Boolean) : EngineInput
+
+    /** The disconnect call's answer; a refused one ([sent] false) has no callback to wait for. */
+    data class DisconnectRequested(val sent: Boolean) : EngineInput
     data class Link(val attempt: Int, val event: GattEvent) : EngineInput
     data object Cancel : EngineInput
     data object TimedOut : EngineInput
