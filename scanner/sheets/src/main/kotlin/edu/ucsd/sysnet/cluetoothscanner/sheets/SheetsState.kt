@@ -23,6 +23,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveChart
 import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ProductDetail
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
+import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionScope
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
@@ -32,6 +33,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 
@@ -47,8 +49,7 @@ import kotlinx.coroutines.launch
  */
 class SheetsState internal constructor(
     internal val scope: Scope,
-    /** The view is the live recording (V-2): Nearby, sparklines, the chart. */
-    val live: Boolean,
+    live: Boolean?,
     private val routesFaint: Boolean,
     private val core: CoreQueries,
     private val gattRunner: GattRunner,
@@ -89,6 +90,24 @@ class SheetsState internal constructor(
     /** The Discover sheet's list, segment, filter, area and search state (G-9, D-1..D-4, Q-5..Q-7). */
     val discover = DiscoverModel(core.forScope(scope), live, stack)
     internal val rows = RowStore(core, scope, coroutines)
+
+    /** The view is the live recording (V-2): Nearby, sparklines, the chart. It ends at Stop (R-7) and never comes back. */
+    val live: Boolean get() = discover.live
+
+    /**
+     * :app passes the view's live flag: null until the view is read. A read is an event into the same sheets:
+     * live → frozen is R-7's Stop, so the stack, the heights, tabs, scroll, filters and the order all stay; only the
+     * live-only parts end (sparklines, the chart, appends, Nearby). A frozen view never turns live.
+     */
+    internal fun setLive(live: Boolean?) {
+        if (live == null) return
+        val before = discover.liveness
+        if (Liveness.of(live) == before) return
+        launch {
+            discover.liveRead(live)
+            if (discover.liveness != before) followDiscover() // S-17: the segment may have changed the point set
+        }
+    }
 
     /** Category ids to their vocabulary labels (the core's, G-8), for headers and the Filter sheet. */
     internal var categoryLabels by mutableStateOf<Map<String, String>>(emptyMap())
@@ -228,7 +247,9 @@ class SheetsState internal constructor(
      * ([DiscoverPhase.Loading.pending]); nothing depends on which one finishes first.
      */
     internal suspend fun start() = coroutineScope {
-        if (live) launch(start = CoroutineStart.UNDISPATCHED) { rows.followLive(discover) }
+        // only this session's own deltas count: they come while it records (a frozen or All view gets none)
+        val session = (scope.sessions as? SessionScope.Sessions)?.ids?.singleOrNull()
+        if (session != null && discover.liveness != Liveness.Frozen) launch(start = CoroutineStart.UNDISPATCHED) { rows.followLive(discover, session) }
         open()
     }
 
@@ -329,11 +350,14 @@ internal fun boundsOf(points: List<GeoPoint>): Bbox? =
     if (points.isEmpty()) null
     else Bbox(points.minOf { it.lon }, points.minOf { it.lat }, points.maxOf { it.lon }, points.maxOf { it.lat })
 
-/** The sheets for [scope]; keyed by the scope and [live], so a new session view starts fresh (V-7). */
+/**
+ * The sheets for [scope]; keyed by the scope, so a new session view starts fresh (V-7). [live] is null until :app
+ * has read the view; reads reach the same sheets as events, and live → frozen for the same scope is Stop (R-7).
+ */
 @Composable
 fun rememberSheetsState(
     scope: Scope,
-    live: Boolean,
+    live: Boolean?,
     routesFaint: Boolean,
     core: CoreQueries,
     gatt: GattRunner,
@@ -342,10 +366,11 @@ fun rememberSheetsState(
     reducedMotion: Boolean = false,
 ): SheetsState {
     val coroutines = rememberCoroutineScope()
-    val state = remember(scope, live) {
+    val state = remember(scope) {
         SheetsState(scope, live, routesFaint, core, gatt, map, coroutines, nowMs, SheetMetrics(reducedMotion = reducedMotion))
     }
     LaunchedEffect(state) { state.start() }
+    LaunchedEffect(state, live) { state.setLive(live) }
     return state
 }
 
@@ -438,11 +463,11 @@ internal class RowStore(private val core: CoreQueries, private val scope: Scope,
         for (effect in apply(RowEvent.Requested(keys))) if (effect is RowEffect.Load) load(effect.keys)
     }
 
-    /** §2.6: applies live deltas to the loaded rows and appends new devices to the order. */
-    suspend fun followLive(discover: DiscoverModel) {
-        core.live.outcomes().collect { delta ->
+    /** §2.6: applies [session]'s live deltas to the loaded rows and appends new devices to the order, until it is frozen (R-7). */
+    suspend fun followLive(discover: DiscoverModel, session: String) {
+        core.live.outcomes().takeWhile { discover.liveness != Liveness.Frozen }.collect { delta ->
             when (delta) {
-                is Outcome.Ok -> for (effect in apply(RowEvent.Live(delta.value))) run(effect, discover)
+                is Outcome.Ok -> if (delta.value.sessionId == session) for (effect in apply(RowEvent.Live(delta.value))) run(effect, discover)
                 is Outcome.Failed -> Unit // the feed ended: the rows keep their last values
             }
         }

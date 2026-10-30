@@ -123,14 +123,33 @@ internal sealed interface SearchPurpose {
 }
 
 /**
+ * Whether the session view is the live recording (V-2). :app reads the view after the sheets exist, so it starts
+ * [Pending]; a [Live] view ends at Stop (R-7); a [Frozen] one never turns live (a new recording is a new scope).
+ */
+sealed interface Liveness {
+    /** The view has not been read yet: the frozen segments, no sparklines; the session's own appends are kept. */
+    data object Pending : Liveness
+    data object Live : Liveness
+    data object Frozen : Liveness
+
+    companion object {
+        fun of(live: Boolean?): Liveness = when (live) {
+            null -> Pending
+            true -> Live
+            false -> Frozen
+        }
+    }
+}
+
+/**
  * The Discover sheet's whole state (G-9, D-1..D-4, Q-5..Q-7). The versions number the queries: an answer is applied
  * only if it answers the newest query of its kind, so a stale answer never wins.
  */
 internal data class DiscoverState(
-    val live: Boolean,
+    val liveness: Liveness,
     val phase: DiscoverPhase = DiscoverPhase.Loading(),
     val view: DiscoverView = DiscoverView.Categories,
-    val segment: SegmentState = SegmentState.of(defaultSegment(live)),
+    val segment: SegmentState = SegmentState.of(defaultSegment(liveness == Liveness.Live)),
     val filter: DeviceFilter = DeviceFilter(),
     val searching: Searching? = null,
     val rows: LongArray = LongArray(0),
@@ -140,6 +159,9 @@ internal data class DiscoverState(
     val liveAppends: Int = 0,
     val viewport: Bbox? = null,
 ) {
+    /** The view is the live recording now (Nearby, sparklines, the chart). */
+    val live: Boolean get() = liveness == Liveness.Live
+
     /** D-4: the area, only in This area. */
     val area: AreaState? get() = (segment as? SegmentState.ThisArea)?.area
 
@@ -157,6 +179,8 @@ internal sealed interface DiscoverEvent {
     /** A failure escaped a runner (the scope's handler): the sheet fails, and can be retried. */
     data class Faulted(val message: String) : DiscoverEvent
     class LiveAppended(val keys: LongArray) : DiscoverEvent
+    /** :app read the view: live or not. Live → frozen is R-7's Stop; only the live-only parts change. */
+    data class LiveRead(val live: Boolean) : DiscoverEvent
     data object ViewToggled : DiscoverEvent
     data class SegmentSelected(val next: Segment) : DiscoverEvent
     data class FilterSet(val filter: DeviceFilter) : DiscoverEvent
@@ -243,7 +267,9 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
                 rowsVersion = state.rowsVersion + 1, searchVersion = state.searchVersion + 1,
             ),
         )
-        is DiscoverEvent.LiveAppended -> when (val p = state.phase) {
+        // R-7: a frozen session's list stops appending (and its order is never touched again); before the view is
+        // read the session's own appends are kept (they come only while it records)
+        is DiscoverEvent.LiveAppended -> if (state.liveness == Liveness.Frozen) DiscoverStep(state) else when (val p = state.phase) {
             is DiscoverPhase.Loading -> DiscoverStep(state.copy(phase = p.copy(pending = p.pending + event.keys.asList())))
             is DiscoverPhase.Failed -> DiscoverStep(state)
             is DiscoverPhase.Ready -> {
@@ -257,6 +283,7 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
                 )
             }
         }
+        is DiscoverEvent.LiveRead -> liveRead(state, event.live)
         DiscoverEvent.ViewToggled -> DiscoverStep(
             state.copy(view = if (state.view == DiscoverView.Categories) DiscoverView.List else DiscoverView.Categories),
             listOf(DiscoverEffect.RaiseRoot), // D-1a keeps the height; S-12 raises a Collapsed root
@@ -339,6 +366,25 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
     }
 }
 
+/**
+ * :app's read of the view. Pending → Live: Nearby, the live default (D-1). Pending → Frozen: nothing else changes.
+ * Live → Frozen is R-7's Stop: everything stays as it was (order, rows, view, filters, area, search, and nothing for
+ * the stack) except what only exists while recording: Nearby becomes All (D-1), its rows re-read. A frozen view never
+ * turns live, and a repeated read changes nothing.
+ */
+private fun liveRead(state: DiscoverState, live: Boolean): DiscoverStep = when (state.liveness) {
+    Liveness.Pending ->
+        if (live) DiscoverStep(state.copy(liveness = Liveness.Live, segment = SegmentState.Nearby), listOf(DiscoverEffect.Refresh))
+        else DiscoverStep(state.copy(liveness = Liveness.Frozen))
+    Liveness.Live -> when {
+        live -> DiscoverStep(state)
+        state.segment == SegmentState.Nearby ->
+            DiscoverStep(state.copy(liveness = Liveness.Frozen, segment = SegmentState.All), listOf(DiscoverEffect.Refresh))
+        else -> DiscoverStep(state.copy(liveness = Liveness.Frozen))
+    }
+    Liveness.Frozen -> DiscoverStep(state)
+}
+
 /** Q-4..Q-6: the newest search answer. Appends that came in while it was asked are searched again. */
 private fun searchAnswered(state: DiscoverState, ready: DiscoverPhase.Ready, event: DiscoverEvent.SearchLoaded): DiscoverStep {
     val s = state.searching
@@ -373,8 +419,14 @@ private fun searchAnswered(state: DiscoverState, ready: DiscoverPhase.Ready, eve
  * acts on the current state. Every query goes through [attempt]: a failure comes back as a typed event, never a
  * throw. Live appends while the first sort loads are kept by [DiscoverPhase.Loading].
  */
-class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, private val stack: SheetStackController) {
-    private var state by mutableStateOf(DiscoverState(live))
+class DiscoverModel(private val queries: DiscoverQueries, live: Boolean?, private val stack: SheetStackController) {
+    private var state by mutableStateOf(DiscoverState(Liveness.of(live)))
+
+    /** The view is the live recording now (V-2): not before the view is read, never after Stop (R-7). */
+    val live: Boolean get() = state.live
+
+    /** Pending until :app has read the view; then live, or frozen (from the start, or after Stop). */
+    val liveness: Liveness get() = state.liveness
     /** The phase, for [awaitReady] (a state flow, so a retry is awaited too). */
     private val phases = MutableStateFlow<DiscoverPhase>(state.phase)
 
@@ -407,6 +459,9 @@ class DiscoverModel(private val queries: DiscoverQueries, val live: Boolean, pri
 
     /** The filter the core queries use: the sheet's filters plus Nearby and This area. */
     fun queryFilter(): DeviceFilter = state.queryFilter()
+
+    /** :app read the view; live → frozen is R-7's Stop (the session stays shown, frozen). */
+    suspend fun liveRead(live: Boolean) = send(DiscoverEvent.LiveRead(live))
 
     /** G-9: new devices of the live view, in arrival order. */
     suspend fun appendLive(keys: LongArray) = send(DiscoverEvent.LiveAppended(keys))

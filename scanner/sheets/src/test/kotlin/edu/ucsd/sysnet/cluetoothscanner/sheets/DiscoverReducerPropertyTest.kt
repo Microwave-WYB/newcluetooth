@@ -7,6 +7,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -64,9 +65,9 @@ class DiscoverReducerPropertyTest {
         for (seed in 1..30) {
             val rnd = Random(seed)
             val world = World(rnd)
-            val live = seed % 2 == 0
+            val start = listOf<Boolean?>(true, false, null)[seed % 3] // live, frozen, or not read yet
             var orderFailures = if (seed % 5 == 0) 2 else 0 // some runs see the first sorts fail, then Try again
-            var state = DiscoverState(live = live)
+            var state = DiscoverState(Liveness.of(start))
             val pending = mutableListOf<DiscoverEvent>()
             val areaAsked = HashMap<Long, Bbox>()
             var nextKey = 1000L
@@ -83,6 +84,23 @@ class DiscoverReducerPropertyTest {
                     is DiscoverPhase.Ready -> assertTrue(ctx, after.phase is DiscoverPhase.Ready || event is DiscoverEvent.Faulted)
                     is DiscoverPhase.Failed -> assertTrue(ctx, after.phase is DiscoverPhase.Failed || event == DiscoverEvent.RetryRequested)
                 }
+                // R-7 and the view read: a read changes only liveness and the live-only segment (Pending → Live: Nearby;
+                // Live → Frozen, i.e. Stop: Nearby → All), re-reads rows only then, and asks nothing of the stack
+                if (event is DiscoverEvent.LiveRead) {
+                    val expected = when {
+                        before.liveness == Liveness.Pending && event.live -> before.copy(liveness = Liveness.Live, segment = SegmentState.Nearby)
+                        before.liveness == Liveness.Pending -> before.copy(liveness = Liveness.Frozen)
+                        before.liveness == Liveness.Live && !event.live ->
+                            before.copy(liveness = Liveness.Frozen, segment = if (before.segment == SegmentState.Nearby) SegmentState.All else before.segment)
+                        else -> before
+                    }
+                    assertEquals(ctx, expected, after.copy(rowsVersion = expected.rowsVersion))
+                    assertTrue(ctx, step.effects.all { it == DiscoverEffect.Refresh })
+                    assertEquals(ctx, expected.segment != before.segment, step.effects.isNotEmpty())
+                }
+                // frozen stays frozen; a frozen view's appends change nothing
+                if (before.liveness == Liveness.Frozen) assertEquals(ctx, Liveness.Frozen, after.liveness)
+                if (event is DiscoverEvent.LiveAppended && before.liveness == Liveness.Frozen) assertSame(ctx, before, after)
                 // G-9: the order only grows by appends
                 val was = sessionOrder(before)
                 val now = sessionOrder(after)
@@ -136,7 +154,7 @@ class DiscoverReducerPropertyTest {
             repeat(400) {
                 val event: DiscoverEvent = when (rnd.nextInt(14)) {
                     0 -> DiscoverEvent.OpenRequested
-                    1 -> if (!live) DiscoverEvent.ViewToggled else {
+                    1 -> if (!state.live) DiscoverEvent.ViewToggled else {
                         val k = nextKey++
                         world.devices += Dev(k, GeoPoint(rnd.nextDouble(0.0, 2.0), rnd.nextDouble(0.0, 2.0)), listOf("qt", "lamp").random(rnd) + k, true)
                         DiscoverEvent.LiveAppended(longArrayOf(k))
@@ -149,7 +167,11 @@ class DiscoverReducerPropertyTest {
                     7 -> DiscoverEvent.SearchAreaRequested(bbox(rnd), 15.0)
                     8 -> DiscoverEvent.SearchEverywhereRequested
                     9 -> DiscoverEvent.SearchExited
-                    10 -> if (rnd.nextInt(8) == 0) DiscoverEvent.Faulted("bug") else DiscoverEvent.RetryRequested
+                    10 -> when (rnd.nextInt(8)) {
+                        0 -> DiscoverEvent.Faulted("bug")
+                        1 -> DiscoverEvent.LiveRead(rnd.nextBoolean()) // the view read; R-7's Stop at any point of a live run
+                        else -> DiscoverEvent.RetryRequested
+                    }
                     else -> if (pending.isEmpty()) DiscoverEvent.RefreshRequested else pending.removeAt(rnd.nextInt(pending.size))
                 }
                 apply(event)
@@ -191,7 +213,7 @@ class DiscoverReducerPropertyTest {
 
     @Test
     fun `D-13_1 Try again leaves Failed for Loading and reads the order again`() {
-        var s = reduceDiscover(DiscoverState(live = false), DiscoverEvent.OpenRequested).state
+        var s = reduceDiscover(DiscoverState(Liveness.Frozen), DiscoverEvent.OpenRequested).state
         s = reduceDiscover(s, DiscoverEvent.OrderFailed("closed")).state
         assertEquals(DiscoverPhase.Failed("closed"), s.phase)
         val retry = reduceDiscover(s, DiscoverEvent.RetryRequested)
@@ -207,9 +229,46 @@ class DiscoverReducerPropertyTest {
 
     @Test
     fun `a segment not offered in the view is ignored, never a crash`() {
-        val frozen = DiscoverState(live = false)
+        val frozen = DiscoverState(Liveness.Frozen)
         assertEquals(frozen, reduceDiscover(frozen, DiscoverEvent.SegmentSelected(Segment.Nearby)).state)
-        val live = DiscoverState(live = true)
+        val live = DiscoverState(Liveness.Live)
         assertEquals(live, reduceDiscover(live, DiscoverEvent.SegmentSelected(Segment.ThisArea)).state)
+    }
+
+    @Test
+    fun `R-7 Stop keeps the order, rows, view, filters, area and search, ends Nearby, and asks nothing of the stack`() {
+        val searching = Searching("qt", null, CameraSnapshot(GeoPoint(1.0, 1.0), 15.0), false, KeyOrder.of(longArrayOf(3, 1)), DeviceFilter(), back)
+        val ready = DiscoverState(
+            Liveness.Live, phase = DiscoverPhase.Ready(KeyOrder.of(longArrayOf(3, 1, 2))), view = DiscoverView.List,
+            filter = DeviceFilter(readable = true), searching = searching, rows = longArrayOf(3, 1), rowsVersion = 4, liveAppends = 2,
+        )
+        // Nearby (the live default) becomes All, and the rows are re-read for it; everything else stays as it was
+        val nearby = reduceDiscover(ready, DiscoverEvent.LiveRead(false))
+        assertEquals(ready.copy(liveness = Liveness.Frozen, segment = SegmentState.All), nearby.state)
+        assertSame(ready.rows, nearby.state.rows)
+        assertEquals(listOf(DiscoverEffect.Refresh), nearby.effects)
+        // on All nothing at all is asked
+        val all = ready.copy(segment = SegmentState.All)
+        assertEquals(DiscoverStep(all.copy(liveness = Liveness.Frozen)), reduceDiscover(all, DiscoverEvent.LiveRead(false)))
+        // idempotent; frozen: live appends and Nearby are gone
+        val frozen = nearby.state
+        assertSame(frozen, reduceDiscover(frozen, DiscoverEvent.LiveRead(false)).state)
+        assertSame(frozen, reduceDiscover(frozen, DiscoverEvent.LiveRead(true)).state) // a frozen view never turns live
+        assertSame(frozen, reduceDiscover(frozen, DiscoverEvent.LiveAppended(longArrayOf(9))).state)
+        assertEquals(frozen.copy(segment = SegmentState.All), reduceDiscover(frozen, DiscoverEvent.SegmentSelected(Segment.Nearby)).state)
+    }
+
+    @Test
+    fun `before the view is read - frozen segments, the session's appends kept, then Live opens on Nearby or Frozen changes nothing`() {
+        val pending = reduceDiscover(DiscoverState(Liveness.Pending), DiscoverEvent.OrderLoaded(longArrayOf(3, 1))).state
+        assertFalse(pending.live) // no sparklines, no chart yet
+        assertEquals(SegmentState.All, pending.segment)
+        val appended = reduceDiscover(pending, DiscoverEvent.LiveAppended(longArrayOf(7))).state
+        assertArrayEquals(longArrayOf(3, 1, 7), sessionOrder(appended)) // kept: they come only while it records
+        val live = reduceDiscover(appended.copy(segment = SegmentState.ThisArea()), DiscoverEvent.LiveRead(true))
+        assertEquals(appended.copy(liveness = Liveness.Live, segment = SegmentState.Nearby), live.state)
+        assertEquals(listOf(DiscoverEffect.Refresh), live.effects)
+        val frozen = reduceDiscover(appended, DiscoverEvent.LiveRead(false))
+        assertEquals(DiscoverStep(appended.copy(liveness = Liveness.Frozen)), frozen)
     }
 }

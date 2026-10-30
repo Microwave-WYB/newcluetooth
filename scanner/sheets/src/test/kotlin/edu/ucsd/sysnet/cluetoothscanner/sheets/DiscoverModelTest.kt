@@ -92,7 +92,7 @@ class DiscoverModelTest {
     fun `G-9 filters, categories and the area only hide rows, and the order only grows by appends`() = runTest {
         val rnd = Random(7)
         val s = session()
-        val m = model(s)
+        val m = model(s, live = true) // live appends exist only while recording (R-7: a frozen view ignores them)
         val initial = m.ordered(DeviceKeys(longArrayOf(10, 20, 30, 40, 50, 60, 70), 0)).toList()
         var nextKey = 60L
         repeat(200) {
@@ -100,7 +100,7 @@ class DiscoverModelTest {
                 0 -> m.setFilter(m.filter.copy(readable = !m.filter.readable))
                 1 -> m.setFilter(m.filter.toggleCategory(listOf("wearable", "asset-tracker", "lighting-control").random(rnd)))
                 2 -> m.setFilter(m.filter.copy(identification = Identification.entries.random(rnd)))
-                3 -> m.selectSegment(segmentsFor(false).random(rnd))
+                3 -> m.selectSegment(segmentsFor(true).random(rnd))
                 4 -> m.onCameraIdle(true, listOf(west, east, Bbox(0.0, 0.0, 2.0, 1.0)).random(rnd), 15.0)
                 else -> if (nextKey <= 70) {
                     val d = FakeSession.Dev(nextKey++, "new", p(rnd.nextDouble(0.0, 2.0), 0.5))
