@@ -154,7 +154,7 @@ class TopChromeActions(
  * Q-4 empty text, search state's bar (Q-5) and the "Search this area" chip (Q-6).
  *
  * @param rows the result rows of [TopChromeState.page] in its fixed order (G-9), resolved by the caller
- * @param live sparklines in the rows (a live session)
+ * @param live a live session: out-of-range rows are dimmed
  */
 @Composable
 fun PhoneTopChrome(
@@ -378,7 +378,7 @@ fun SearchResults(
         else -> LazyColumn(modifier.fillMaxSize().testTag("searchResults")) {
             items(rows, key = { it.key }) { d ->
                 DeviceRow(
-                    d.name, d.addr, d.rssi?.toInt(), if (live) d.spark else null, { actions.onPick(d.key) },
+                    d.name, d.addr, d.rssi?.toInt(), { actions.onPick(d.key) },
                     stale = live && !d.inRange, radius = rowRadius,
                 )
             }

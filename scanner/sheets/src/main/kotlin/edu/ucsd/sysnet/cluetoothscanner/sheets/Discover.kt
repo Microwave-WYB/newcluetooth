@@ -127,7 +127,7 @@ internal sealed interface SearchPurpose {
  * [Pending]; a [Live] view ends at Stop (R-7); a [Frozen] one never turns live (a new recording is a new scope).
  */
 sealed interface Liveness {
-    /** The view has not been read yet: the frozen segments, no sparklines; the session's own appends are kept. */
+    /** The view has not been read yet: the frozen segments, no chart; the session's own appends are kept. */
     data object Pending : Liveness
     data object Live : Liveness
     data object Frozen : Liveness
@@ -159,7 +159,7 @@ internal data class DiscoverState(
     val liveAppends: Int = 0,
     val viewport: Bbox? = null,
 ) {
-    /** The view is the live recording now (Nearby, sparklines, the chart). */
+    /** The view is the live recording now (Nearby, the chart). */
     val live: Boolean get() = liveness == Liveness.Live
 
     /** D-4: the area, only in This area. */

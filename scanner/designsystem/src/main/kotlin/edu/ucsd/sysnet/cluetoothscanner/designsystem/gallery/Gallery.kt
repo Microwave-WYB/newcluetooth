@@ -87,15 +87,14 @@ private fun slug(t: String) = t.lowercase().replace(Regex("[^a-z0-9]+"), "-").tr
 
 /** data.js samples (the gallery's normal, stale and no-name devices, and the first products). */
 object GallerySamples {
-    private fun spark(vararg h: Int?): ByteArray = ByteArray(h.size) { i -> h[i]?.let { (-it).toByte() } ?: 0 }
 
-    val normal = Sample("ihoment_H6008_1A2B", "72:CD:4C:4B:E4:6F", -48, spark(-48, -43, -44, -45, -43, -45, -52, -54, -51, -51, -52, -47, -42, -43, -46, -45, -47, -53, -55, -51, -49, -50, -46, -41, -43, -47, -47, -48, -54, -48))
-    val stale = Sample("Hue color lamp", "D8:A6:D2:31:30:FE", -67, spark(-63, -66, -65, -67, -73, -73, -69, -68, -68, -64, -60, -63, -67, -66, -68, -73, -74, -68, -66, -67, null, null, null, null, null, null, null, null, null, null), stale = true)
-    val noName = Sample(null, "4D:5D:F7:FA:3A:92", -58, spark(-58, -58, -62, -65, -61, -57, -58, -56, -51, -52, -58, -60, -59, -62, -65, -60, -55, -56, -56, -52, -53, -59, -62, -60, -62, -64, -59, -54, -54, -58))
-    val airpods = Sample("AirPods Pro", "40:E7:7D:3F:7A:CD", -52, spark(-46, -48, -50, -49, -52, -58, -58, -54, -54, -54, -48, -45, -48, -51, -50, -53, -59, -58, -53, -52, -52, -48, -45, -49, -53, -52, -54, -59, -58, -52))
-    val strip = Sample("Govee_H6199_RGBIC_LED_Strip_Living_Room_Cabinet", "A8:7D:4A:D7:4F:E4", -55, spark(-52, -54, -53, -57, -62, -60, -56, -56, -55, -49, -48, -53, -56, -55, -58, -62, -60, -54, -54, -54, -49, -48, -54, -57, -56, -58, -62, -59, -53, -55))
+    val normal = Sample("ihoment_H6008_1A2B", "72:CD:4C:4B:E4:6F", -48)
+    val stale = Sample("Hue color lamp", "D8:A6:D2:31:30:FE", -67, stale = true)
+    val noName = Sample(null, "4D:5D:F7:FA:3A:92", -58)
+    val airpods = Sample("AirPods Pro", "40:E7:7D:3F:7A:CD", -52)
+    val strip = Sample("Govee_H6199_RGBIC_LED_Strip_Living_Room_Cabinet", "A8:7D:4A:D7:4F:E4", -55)
 
-    class Sample(val name: String?, val mac: String, val rssi: Int, val spark: ByteArray, val stale: Boolean = false)
+    class Sample(val name: String?, val mac: String, val rssi: Int, val stale: Boolean = false)
 }
 
 @Composable
@@ -144,11 +143,11 @@ fun designSystemCells(): List<GalleryCell> {
     cells += GalleryCell("FilterButton", "3 filters") { IconButton(Glyphs.filter, Strings.filterActive(3), noop, kind = IconButtonKind.Selected, badge = 3) }
 
     val g = GallerySamples
-    cells += GalleryCell("DeviceRow", "normal", 412.dp, padded = false) { DeviceRow(g.normal.name, g.normal.mac, g.normal.rssi, g.normal.spark, noop) }
-    cells += GalleryCell("DeviceRow", "stale", 412.dp, padded = false) { DeviceRow(g.stale.name, g.stale.mac, g.stale.rssi, g.stale.spark, noop, stale = true) }
-    cells += GalleryCell("DeviceRow", "no name", 412.dp, padded = false) { DeviceRow(g.noName.name, g.noName.mac, g.noName.rssi, g.noName.spark, noop) }
-    cells += GalleryCell("DeviceRow", "map list (no sparkline), selected", 412.dp, padded = false) {
-        DeviceRow(g.normal.name, g.normal.mac, g.normal.rssi, null, noop, selected = true)
+    cells += GalleryCell("DeviceRow", "normal", 412.dp, padded = false) { DeviceRow(g.normal.name, g.normal.mac, g.normal.rssi, noop) }
+    cells += GalleryCell("DeviceRow", "stale", 412.dp, padded = false) { DeviceRow(g.stale.name, g.stale.mac, g.stale.rssi, noop, stale = true) }
+    cells += GalleryCell("DeviceRow", "no name", 412.dp, padded = false) { DeviceRow(g.noName.name, g.noName.mac, g.noName.rssi, noop) }
+    cells += GalleryCell("DeviceRow", "selected", 412.dp, padded = false) {
+        DeviceRow(g.normal.name, g.normal.mac, g.normal.rssi, noop, selected = true)
     }
 
     cells += GalleryCell("ProductCard and CategorySection", "in range") {
@@ -225,7 +224,7 @@ fun designSystemCells(): List<GalleryCell> {
     cells += GalleryCell("Handle and SheetFade", "handle", 412.dp, padded = false) { Handle() }
     cells += GalleryCell("Handle and SheetFade", "sheet fade over a list", 412.dp, padded = false) {
         Box(Modifier.background(c.panel)) {
-            Column { DeviceRow(g.airpods.name, g.airpods.mac, g.airpods.rssi, g.airpods.spark, noop) }
+            Column { DeviceRow(g.airpods.name, g.airpods.mac, g.airpods.rssi, noop) }
             SheetFade(scrolled = true)
         }
     }

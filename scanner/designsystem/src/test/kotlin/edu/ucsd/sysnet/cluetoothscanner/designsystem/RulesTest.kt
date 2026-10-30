@@ -5,7 +5,6 @@ import androidx.compose.animation.core.TweenSpec
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.CategoryIcons
-import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.sparklineSegments
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Glyphs
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import org.junit.Assert.assertEquals
@@ -60,22 +59,6 @@ class RulesTest {
         assertEquals(0f, cssBlurToBlurMaskRadius(0f))
         assertEquals(16.dp, Tokens.lightShadows.shadowFloat.blur)
         assertEquals((-6).dp, Tokens.lightShadows.shadowSheet.y)
-    }
-
-    /** C-6: the sparkline geometry equals app.js; gaps break the line. */
-    @Test fun sparkline() {
-        val s = ByteArray(30) { if (it in 10..12) 0 else (50 + it).toByte() }
-        val segs = sparklineSegments(s, 56f, 22f)
-        assertEquals(2, segs.size)
-        assertEquals(10, segs[0].size)
-        assertEquals(17, segs[1].size)
-        // k = 0, r = −50: x 0, y = 1 + (−30 + 50) / 70 · 20
-        assertEquals(Offset(0f, 1f + 20f / 70f * 20f), segs[0][0])
-        // clamping: −120 draws at −100 (the bottom, 21), −10 at −30 (the top, 1)
-        val c = sparklineSegments(byteArrayOf(120.toByte(), 10), 56f, 22f).single()
-        assertEquals(21f, c[0].y, 1e-4f)
-        assertEquals(1f, c[1].y, 1e-4f)
-        assertEquals(56f, c[1].x, 1e-4f)
     }
 
     /** C-17 and docs/v2-api.md §3.4: the 21 categories, the unidentified and the generic glyph. */

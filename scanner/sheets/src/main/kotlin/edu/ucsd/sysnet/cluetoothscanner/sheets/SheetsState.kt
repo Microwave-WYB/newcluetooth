@@ -91,13 +91,13 @@ class SheetsState internal constructor(
     val discover = DiscoverModel(core.forScope(scope), live, stack)
     internal val rows = RowStore(core, scope, coroutines)
 
-    /** The view is the live recording (V-2): Nearby, sparklines, the chart. It ends at Stop (R-7) and never comes back. */
+    /** The view is the live recording (V-2): Nearby, the chart. It ends at Stop (R-7) and never comes back. */
     val live: Boolean get() = discover.live
 
     /**
      * :app passes the view's live flag: null until the view is read. A read is an event into the same sheets:
      * live → frozen is R-7's Stop, so the stack, the heights, tabs, scroll, filters and the order all stay; only the
-     * live-only parts end (sparklines, the chart, appends, Nearby). A frozen view never turns live.
+     * live-only parts end (the chart, appends, Nearby). A frozen view never turns live.
      */
     internal fun setLive(live: Boolean?) {
         if (live == null) return
