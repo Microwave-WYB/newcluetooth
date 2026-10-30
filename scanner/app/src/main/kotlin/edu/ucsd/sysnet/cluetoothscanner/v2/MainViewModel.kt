@@ -30,7 +30,6 @@ import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
-import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -187,32 +186,13 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         }
     }
 
-    /** V-2 / V-7: the shown scope's view, re-read while it is live; the search page's work lives inside it. */
+    /** V-2 / V-7: the shown scope's view, read once per key; the search page's work lives inside it. */
     private suspend fun viewWork(q: CoreQueries) = ui.map { it.viewKey }.distinctUntilChanged().collectLatest { key ->
         val scope = key.scope
         if (scope == null) { _view.value = null; return@collectLatest }
         coroutineScope {
             launch { searchWork(q, key) }
-            guard(MainTask.View(key)) { followView(q, key, scope) }
-        }
-    }
-
-    /**
-     * V-2: the view read once; while live, the live deltas' route points are appended to it (§2.6: subscribed
-     * before the read, deltas up to the read's `seq` ignored). It is never re-read whole; V-3 re-selects after Stop.
-     */
-    private suspend fun followView(q: CoreQueries, key: ViewKey, scope: Scope) = coroutineScope {
-        val deltas = Channel<LiveDelta>(Channel.UNLIMITED)
-        val subscription = launch(start = CoroutineStart.UNDISPATCHED) { q.live.collect { deltas.send(it) } }
-        var v = q.sessionView(scope)
-        _view.value = ViewData(key, v)
-        val session = v.sessionIds.singleOrNull()
-        if (!v.live || session == null) { subscription.cancel(); return@coroutineScope }
-        val route = LiveRoute(v.route)
-        for (d in deltas) {
-            if (d.sessionId != session || d.seq <= v.seq || d.routeAppended.isEmpty()) continue
-            v = v.copy(route = route.append(d.routeAppended), seq = d.seq)
-            _view.value = ViewData(key, v)
+            guard(MainTask.View(key)) { _view.value = ViewData(key, q.sessionView(scope)) }
         }
     }
 

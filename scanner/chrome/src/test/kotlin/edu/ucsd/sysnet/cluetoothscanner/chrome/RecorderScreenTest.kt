@@ -12,6 +12,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.onNodeWithText
 import com.github.takahirom.roborazzi.captureRoboImage
 import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
@@ -63,6 +66,31 @@ class RecorderScreenTest {
             assertEquals(listOf("start", "pause", "expand", "collapse", "resume", "stop"), log)
         }
     }
+
+    /**
+     * R-4: the catch is behind the panel (`.recorder-catch` in the prototype): a tap on the panel itself, its meta line
+     * or its empty space, keeps it open, and its buttons still work; only a tap outside collapses it.
+     */
+    private fun insideTapsKeepThePanel(tablet: Boolean) {
+        val log = mutableListOf<String>()
+        val actions = RecorderActions({ log += "start" }, { log += "expand" }, { log += "collapse" }, { log += "pause" },
+            { log += "resume" }, { log += "stop" })
+        compose.setContent {
+            CluetoothTheme(reducedMotion = true) {
+                Box(Modifier.fillMaxSize()) { RecorderControl(ui(RecorderUi.Form.Panel), actions, tablet, bottomCover = if (tablet) Tokens0 else Peek) }
+            }
+        }
+        compose.onNodeWithText("26 devices · 32.88012, -117.23421 ±8 m").performClick()
+        // the panel's empty start of the row, left of the centered dot and time
+        compose.onNodeWithTag("recorder").performTouchInput { click(androidx.compose.ui.geometry.Offset(width * 0.05f, height / 2f)) }
+        compose.runOnIdle { assertEquals(emptyList<String>(), log) }
+        compose.onNodeWithContentDescription("Pause").performClick()
+        compose.onNodeWithTag("recorderCatch").performTouchInput { click(androidx.compose.ui.geometry.Offset(width / 2f, height - 10f)) }
+        compose.runOnIdle { assertEquals(listOf("pause", "collapse"), log) }
+    }
+
+    @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneInsideTapsKeepThePanel() = insideTapsKeepThePanel(false)
+    @Config(sdk = [35], qualifiers = "w1024dp-h768dp-xhdpi") @Test fun tabletInsideTapsKeepThePanel() = insideTapsKeepThePanel(true)
 
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneLight() = shots(false, "412x915", false)
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneDark() = shots(false, "412x915", true)
