@@ -14,10 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -87,7 +84,9 @@ internal fun Kicker(text: String) {
 
 @Composable
 internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?) {
-    var content by remember { mutableStateOf(ProductContent()) }
+    // the content is a state machine: the effects only send events, each reduced into the current content
+    val sheet = rememberSheetMachine(::ProductContent, ::reduceProduct)
+    val content = sheet.state
     val filter = state.productFilter(pageId)
     LaunchedEffect(filter) {
         val detail = state.load(SheetQuery.Product(pageId, filter))
@@ -96,11 +95,13 @@ internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?
             null -> ""
             else -> if (p.page == null) Strings.Unidentified else p.categories.firstOrNull()?.let { state.labelOf(it, pageId) }.orEmpty()
         }
-        content = content.withDetail(detail).withTitle(title)
+        sheet.dispatch(ProductEvent.DetailLoaded(detail, title))
     }
     // D-7.6: sorted once by RSSI (the session order), filtered by This area; G-9: live devices of the product
     // are appended as they arrive (the order only grows)
-    LaunchedEffect(filter, state.discover.liveAppends, state.opened) { content = content.withKeys(state.discover.keysFor(filter)) }
+    LaunchedEffect(filter, state.discover.liveAppends, state.opened) {
+        sheet.dispatch(ProductEvent.KeysLoaded(state.discover.keysFor(filter)))
+    }
     val tablet = state.stack.tablet
     val detail = content.detail
     SheetFrame(state.stack, entry, state.metrics, header = {
@@ -108,8 +109,9 @@ internal fun ProductSheet(state: SheetsState, entry: SheetEntry, pageId: String?
         PushedHeader(state) { Kicker(content.title) }
     }) {
         when (detail) {
-            Loaded.Pending, Loaded.Missing -> Unit
-            is Loaded.Failed -> edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText(detail.message)
+            Loaded.Pending -> LoadPending()
+            Loaded.Missing -> LoadMissing(LoadTexts.ProductMissing)
+            is Loaded.Failed -> LoadFailed(detail.message)
             is Loaded.Found -> DeviceList(state, entry, content.keys, SheetEntry.MAIN_LIST, empty = {
                 edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText(Strings.NoMatchingDevices)
             }, header = { ProductHead(state, detail.value, tablet) })
@@ -172,14 +174,15 @@ internal fun WikiLink(label: String, url: String, modifier: Modifier = Modifier)
 @Composable
 internal fun FilterSheet(state: SheetsState, entry: SheetEntry) {
     val d = state.discover
-    var content by remember { mutableStateOf<FilterRows>(FilterRows.Pending) }
+    val filterRows = rememberSheetMachine<FilterRows, FilterCounts>({ FilterRows.Pending }, ::reduceFilterRows)
+    val content = filterRows.state
     // faceted counts: every constraint but the categories facet, with Nearby and This area (D-3a)
     val countsFilter = d.queryFilter()
     LaunchedEffect(countsFilter) {
         when (val counts = state.load(SheetQuery.Counts(countsFilter))) {
             is Outcome.Ok -> {
                 state.learnLabels(counts.value.map { it.category to it.label })
-                content = content.withCounts(counts.value, d.filter.categories) { state.categoryLabels[it] ?: it }
+                filterRows.dispatch(FilterCounts(counts.value, d.filter.categories, state.categoryLabels))
             }
             is Outcome.Failed -> Unit // the rows keep their last counts (or none yet); the next filter change asks again
         }

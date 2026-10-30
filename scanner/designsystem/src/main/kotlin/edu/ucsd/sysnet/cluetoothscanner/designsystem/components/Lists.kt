@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -95,7 +96,9 @@ fun DeviceRow(
         }
         Text(
             rssi?.let { Format.signed(it) } ?: "",
-            Modifier.width(Css.RowRssi.width),
+            // at least 34 dp, wider when the number needs it ("−127" at a large font scale): never clipped; the
+            // name column gives way
+            Modifier.widthIn(min = Css.RowRssi.width),
             style = t.body.copy(fontWeight = Weights.Medium).tabular(),
             color = band,
             textAlign = TextAlign.End,
