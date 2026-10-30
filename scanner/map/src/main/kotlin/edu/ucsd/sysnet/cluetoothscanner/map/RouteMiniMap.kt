@@ -31,6 +31,7 @@ import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapEffect
 import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapEvent
 import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapReducer
 import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniMapState
+import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniSnapshotter
 import edu.ucsd.sysnet.cluetoothscanner.map.model.MiniTarget
 import edu.ucsd.sysnet.cluetoothscanner.map.model.SnapshotterId
 import kotlinx.coroutines.delay
@@ -75,11 +76,13 @@ fun RouteMiniMap(
     DisposableEffect(runner) { onDispose { runner.dispatch(MiniMapEvent.Disposed) } }
     LaunchedEffect(route, fallback) { runner.dispatch(MiniMapEvent.Inputs(route, fallback)) }
 
-    // refreshed when it appears and every 10 s while shown
+    // refreshed when it appears and every 10 s while shown; a size is used once it held for FRAME_SETTLE_MS (the
+    // recorder panel's morph resizes it every frame, and each new frame means a new native snapshotter)
     LaunchedEffect(size, density, theme, baseStyleJson) {
         val frame = if (size.width == 0 || size.height == 0) null else MiniFrame(size.width, size.height, density, theme, baseStyleJson)
+        if (frame == null) return@LaunchedEffect runner.dispatch(MiniMapEvent.Configure(null))
+        delay(MiniMapReducer.FRAME_SETTLE_MS)
         runner.dispatch(MiniMapEvent.Configure(frame))
-        if (frame == null) return@LaunchedEffect
         while (true) {
             runner.dispatch(MiniMapEvent.Tick)
             delay(MiniMapReducer.REFRESH_MS)
@@ -92,12 +95,27 @@ fun RouteMiniMap(
 }
 
 /**
- * The mini map's runner: it owns the MapSnapshotter (main thread) and executes [MiniMapReducer]'s effects; every
+ * Strong references to every MapSnapshotter a mini map has built and not yet released, for the whole process (main
+ * thread only). MapLibre holds a snapshotter only weakly, and a snapshotter collected while its style loads crashes
+ * natively (see MiniSnapshotter); a disposed mini map's runner would be garbage too, so the keeper, not the
+ * composition, holds them until the reducer releases them.
+ */
+internal object SnapshotterKeeper {
+    private val held = HashSet<MapSnapshotter>()
+    fun hold(s: MapSnapshotter) { held += s }
+    fun release(s: MapSnapshotter) { held -= s }
+    val size: Int get() = held.size
+}
+
+/**
+ * The mini map's runner: it owns the MapSnapshotters (main thread) and executes [MiniMapReducer]'s effects; every
  * MapLibre call that throws becomes a Failed event.
  */
 private class MiniMapRunner(private val context: android.content.Context, private val spec: MapStyleSpec) {
     private var state = MiniMapState.Initial
-    private var snapshotter: MapSnapshotter? = null
+    private val snapshotters = HashMap<SnapshotterId, MapSnapshotter>()
+    /** Snapshotters with a start whose callback has not come yet (a release of one would be the crash). */
+    private val running = HashSet<SnapshotterId>()
     var image by mutableStateOf<Bitmap?>(null)
         private set
 
@@ -125,41 +143,48 @@ private class MiniMapRunner(private val context: android.content.Context, privat
                     .withStyleBuilder(miniMapStyle(spec, f.theme, effect.target, f.baseStyleJson))
                     .withCameraPosition(position(effect.target.camera))
                 options.showAttribution = false
-                snapshotter = MapSnapshotter(context, options)
+                val s = MapSnapshotter(context, options)
+                snapshotters[effect.id] = s
+                SnapshotterKeeper.hold(s)
                 MiniMapStats.created++
             }
             is MiniMapEffect.Update -> guarded(effect.id) {
-                val s = snapshotter ?: return@guarded
+                val s = snapshotters[effect.id] ?: return@guarded
                 (s.getSource("route") as? GeoJsonSource)?.setGeoJson(GeoJson.routes(listOf(effect.target.route)))
                 (s.getSource("ends") as? GeoJsonSource)?.setGeoJson(endsJson(spec, effect.target))
                 s.setCameraPosition(position(effect.target.camera))
             }
             is MiniMapEffect.Start -> guarded(effect.id) {
-                val s = snapshotter ?: return@guarded dispatch(MiniMapEvent.Failed(effect.id))
+                val s = snapshotters[effect.id] ?: return@guarded dispatch(MiniMapEvent.Failed(effect.id))
+                running += effect.id
                 s.start(
                     { snapshot ->
-                        image = snapshot.bitmap
+                        running -= effect.id
                         MiniMapStats.snapshots++
                         dispatch(MiniMapEvent.Done(effect.id, effect.target))
+                        // only the current snapshotter's picture is shown (a retired one was for another frame)
+                        if ((state.snapshotter as? MiniSnapshotter.Idle)?.id == effect.id) image = snapshot.bitmap
                     },
-                    { dispatch(MiniMapEvent.Failed(effect.id)) },
+                    {
+                        running -= effect.id
+                        dispatch(MiniMapEvent.Failed(effect.id))
+                    },
                 )
             }
-            MiniMapEffect.Cancel -> {
-                val s = snapshotter
-                snapshotter = null
-                // the snapshotter is being dropped: nothing waits on it, so a failed cancel needs no event
-                guarded(null) { s?.cancel() }
+            is MiniMapEffect.Release -> {
+                if (effect.id in running) MiniMapStats.releasedWhileRunning++
+                snapshotters.remove(effect.id)?.let(SnapshotterKeeper::release)
             }
         }
     }
 
-    /** The runner's one wrapper around every MapLibre call; a throw fails the snapshot of [id] (if any). */
-    private fun guarded(id: SnapshotterId?, call: () -> Unit) {
+    /** The runner's one wrapper around every MapLibre call; a throw fails the snapshot of [id]. */
+    private fun guarded(id: SnapshotterId, call: () -> Unit) {
         try {
             call()
         } catch (e: Exception) {
-            if (id != null) dispatch(MiniMapEvent.Failed(id))
+            running -= id
+            dispatch(MiniMapEvent.Failed(id))
         }
     }
 
@@ -206,4 +231,6 @@ internal fun miniMapStyleJson(baseStyleJson: String, spec: MapStyleSpec, theme: 
 internal object MiniMapStats {
     var created = 0
     var snapshots = 0
+    /** Releases of a snapshotter whose start had not called back; any is the Note10 crash's precondition. */
+    var releasedWhileRunning = 0
 }

@@ -59,17 +59,40 @@ class MiniMapReducerTest {
         assertTrue(r.send(MiniMapEvent.Tick).any { it is MiniMapEffect.Create })
     }
 
-    @Test fun `a new frame cancels the snapshotter and a late result of the old one is dropped`() {
+    @Test fun `a new frame retires a busy snapshotter until its callback, then releases it, and builds the next`() {
         val r = Run()
         r.send(MiniMapEvent.Inputs(listOf(a, b), null))
         r.send(MiniMapEvent.Configure(frame))
         val old = r.send(MiniMapEvent.Tick).filterIsInstance<MiniMapEffect.Start>().single()
-        assertEquals(listOf(MiniMapEffect.Cancel), r.send(MiniMapEvent.Configure(frame.copy(theme = MapTheme.Dark))))
-        assertTrue(r.send(MiniMapEvent.Done(old.id, old.target)).isEmpty())
-        val fresh = r.send(MiniMapEvent.Tick)
-        val created = fresh.filterIsInstance<MiniMapEffect.Create>().single()
+        // busy: no release, no cancel; it retires
+        assertTrue(r.send(MiniMapEvent.Configure(frame.copy(theme = MapTheme.Dark))).isEmpty())
+        assertEquals(setOf(old.id), r.state.retiring)
+        // one native snapshotter at a time: nothing new while the old one is still loading
+        assertTrue(r.send(MiniMapEvent.Tick).isEmpty())
+        // its callback releases it, and the next tick builds one for the new frame
+        assertEquals(listOf(MiniMapEffect.Release(old.id)), r.send(MiniMapEvent.Done(old.id, old.target)))
+        val created = r.send(MiniMapEvent.Tick).filterIsInstance<MiniMapEffect.Create>().single()
         assertTrue(created.id != old.id)
         assertEquals(MapTheme.Dark, created.frame.theme)
+    }
+
+    @Test fun `an idle snapshotter is released at once on a new frame or dispose`() {
+        val r = Run()
+        r.send(MiniMapEvent.Inputs(listOf(a, b), null))
+        r.send(MiniMapEvent.Configure(frame))
+        val s = r.send(MiniMapEvent.Tick).filterIsInstance<MiniMapEffect.Start>().single()
+        r.send(MiniMapEvent.Done(s.id, s.target))
+        assertEquals(listOf(MiniMapEffect.Release(s.id)), r.send(MiniMapEvent.Disposed))
+        assertEquals(MiniSnapshotter.None, r.state.snapshotter)
+    }
+
+    @Test fun `disposing while the style loads keeps the snapshotter until it calls back`() {
+        val r = Run()
+        r.send(MiniMapEvent.Inputs(listOf(a, b), null))
+        r.send(MiniMapEvent.Configure(frame))
+        val s = r.send(MiniMapEvent.Tick).filterIsInstance<MiniMapEffect.Start>().single()
+        assertTrue(r.send(MiniMapEvent.Disposed).isEmpty())
+        assertEquals(listOf(MiniMapEffect.Release(s.id)), r.send(MiniMapEvent.Failed(s.id)))
     }
 
     @Test fun `a failed snapshot keeps the previous image and tries again on the next tick`() {
@@ -78,55 +101,80 @@ class MiniMapReducerTest {
         r.send(MiniMapEvent.Configure(frame))
         val s = r.send(MiniMapEvent.Tick).filterIsInstance<MiniMapEffect.Start>().single()
         r.send(MiniMapEvent.Failed(s.id))
-        assertEquals(MiniShot.Idle(null), r.state.shot)
+        assertEquals(null, r.state.rendered)
+        assertEquals(MiniSnapshotter.Idle(s.id, frame), r.state.snapshotter)
         assertTrue(r.send(MiniMapEvent.Tick).any { it is MiniMapEffect.Start })
     }
 
-    /** Random sequences: at most one snapshot in flight, one snapshotter per frame, starts only on a snapshotter. */
+    /**
+     * Random sequences against a model of the native side: callbacks come only for running snapshots (sometimes
+     * late, sometimes duplicated). After every step: a running snapshotter is never released (the Note10 SIGSEGV),
+     * at most one native snapshotter exists, starts run one at a time on a live idle snapshotter, and every live
+     * snapshotter is the state's own or retiring (none is dropped while it could still call back). At the end every
+     * snapshotter is released.
+     */
     @Test fun `invariants hold after every step of random event sequences`() {
         for (seed in 1..40) {
             val rnd = Random(seed)
             var state = MiniMapState.Initial
-            var live: SnapshotterId? = null
+            val alive = HashSet<SnapshotterId>()
+            val running = HashMap<SnapshotterId, MiniTarget>()
             var creates = 0
-            var inFlight: SnapshotterId? = null
             val frames = listOf(frame, frame.copy(theme = MapTheme.Dark), frame.copy(widthPx = 600), null)
             val routes = listOf(emptyList(), listOf(a), listOf(a, b), listOf(a, b, GeoPoint(-117.2, 32.9)))
-            val started = ArrayList<MiniMapEffect.Start>()
-            for (i in 0 until 2_000) {
-                val event = when (rnd.nextInt(7)) {
-                    0 -> MiniMapEvent.Configure(frames[rnd.nextInt(frames.size)])
-                    1 -> MiniMapEvent.Inputs(routes[rnd.nextInt(routes.size)], if (rnd.nextBoolean()) a else null)
-                    2, 3 -> MiniMapEvent.Tick
-                    4 -> started.randomOrNull(rnd)?.let { MiniMapEvent.Done(it.id, it.target) } ?: MiniMapEvent.Tick
-                    5 -> started.randomOrNull(rnd)?.let { MiniMapEvent.Failed(it.id) } ?: MiniMapEvent.Tick
-                    else -> if (rnd.nextInt(10) == 0) MiniMapEvent.Disposed else MiniMapEvent.Tick
-                }
+            fun apply(event: MiniMapEvent, i: Int) {
                 val step = MiniMapReducer.reduce(state, event)
                 state = step.state
                 try {
                     for (e in step.effects) when (e) {
-                        is MiniMapEffect.Create -> { assertEquals(null, live); live = e.id; creates++ }
-                        is MiniMapEffect.Update -> assertEquals(live, e.id)
-                        is MiniMapEffect.Start -> {
-                            assertEquals(live, e.id)
-                            assertEquals("one snapshot at a time", null, inFlight)
-                            inFlight = e.id
-                            started += e
+                        is MiniMapEffect.Create -> {
+                            assertTrue("one native snapshotter at a time: $alive", alive.isEmpty())
+                            alive += e.id; creates++
                         }
-                        MiniMapEffect.Cancel -> { live = null; inFlight = null }
+                        is MiniMapEffect.Update -> assertTrue(e.id in alive && e.id !in running)
+                        is MiniMapEffect.Start -> {
+                            assertTrue("start on a live snapshotter", e.id in alive)
+                            assertTrue("one snapshot at a time", running.isEmpty())
+                            running[e.id] = e.target
+                        }
+                        is MiniMapEffect.Release -> {
+                            assertTrue("released a running snapshotter ${e.id}", e.id !in running)
+                            assertTrue(alive.remove(e.id))
+                        }
                     }
-                    val shot = state.shot
-                    if (shot is MiniShot.Idle) inFlight = null
-                    assertEquals(shot is MiniShot.InFlight, inFlight != null)
-                    val s = state.snapshotter
-                    assertEquals((s as? MiniSnapshotter.Created)?.id, live)
-                    if (s is MiniSnapshotter.Created) assertEquals("a snapshotter serves its own frame", state.frame, s.frame)
-                    if (state.frame == null) assertTrue(step.effects.none { it is MiniMapEffect.Create || it is MiniMapEffect.Start })
+                    val own = when (val s = state.snapshotter) {
+                        MiniSnapshotter.None -> null
+                        is MiniSnapshotter.Idle -> s.id
+                        is MiniSnapshotter.Busy -> s.id
+                    }
+                    assertEquals("every live snapshotter is accounted for", alive, (listOfNotNull(own) + state.retiring).toSet())
+                    assertEquals("busy exactly while it runs", state.snapshotter is MiniSnapshotter.Busy, own != null && own in running)
+                    for (id in state.retiring) assertTrue("retiring $id must still be running", id in running)
                 } catch (e: AssertionError) {
                     fail("seed $seed step $i after $event: ${e.message}")
                 }
             }
+            for (i in 0 until 2_000) {
+                val event = when (rnd.nextInt(8)) {
+                    0 -> MiniMapEvent.Configure(frames[rnd.nextInt(frames.size)])
+                    1 -> MiniMapEvent.Inputs(routes[rnd.nextInt(routes.size)], if (rnd.nextBoolean()) a else null)
+                    2, 3 -> MiniMapEvent.Tick
+                    4, 5 -> running.entries.randomOrNull(rnd)?.let { (id, t) ->
+                        running -= id
+                        if (rnd.nextBoolean()) MiniMapEvent.Done(id, t) else MiniMapEvent.Failed(id)
+                    } ?: MiniMapEvent.Tick
+                    6 -> if (rnd.nextInt(4) == 0) MiniMapEvent.Disposed else MiniMapEvent.Tick
+                    // a duplicated or late callback for something no longer running
+                    else -> MiniMapEvent.Failed(SnapshotterId(rnd.nextInt(1, state.nextSnapshotter + 1)))
+                }
+                // the native side calls back at most once per start
+                if (event is MiniMapEvent.Failed && event.snapshotter in running) running -= event.snapshotter
+                apply(event, i)
+            }
+            // dispose and let every callback arrive: nothing stays alive
+            apply(MiniMapEvent.Disposed, -1)
+            for ((id, t) in running.toList()) { running -= id; apply(MiniMapEvent.Done(id, t), -2) }
+            assertTrue("seed $seed leaked $alive", alive.isEmpty())
             assertTrue("seed $seed exercised snapshots", creates > 0)
         }
     }
