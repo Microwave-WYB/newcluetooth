@@ -68,7 +68,13 @@ class GattAndRowsPropertyTest {
                 }
                 // a run's events count only while that run shows
                 if (event is GattEvent.Progress && (event.run != s.run || s.ui !is GattUi.Running)) assertSame(ctx, s, next)
-                if (event is GattEvent.Finished && (event.run != s.run || s.ui !is GattUi.Running)) assertSame(ctx, s, next)
+                if (event is GattEvent.Finished && event.run == s.run && s.ui is GattUi.Failed) {
+                    // D-13.5: the run's link is closed; a failed list only gains its closing "Disconnected" step
+                    val before = (s.ui as GattUi.Failed).view.steps
+                    val after = (next.ui as? GattUi.Failed)?.view?.steps
+                    assertTrue(ctx, after == before || after == before + GattStep(GattStepKind.Disconnected, GattStepState.Done, null, null, null, null, null))
+                    assertEquals(ctx, s.copy(ui = next.ui), next)
+                } else if (event is GattEvent.Finished && (event.run != s.run || s.ui !is GattUi.Running)) assertSame(ctx, s, next)
                 if (event is GattEvent.RunFailed) {
                     if (event.run != s.run || s.ui !is GattUi.Running) assertSame(ctx, s, next) else assertTrue(ctx, next.ui is GattUi.Failed)
                 }

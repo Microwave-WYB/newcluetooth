@@ -77,7 +77,7 @@ class GattDiscoverAgainTest {
     fun `a failure shows its steps and Try again, with the last result kept below`() {
         val run = after(read, GattEvent.Discover, GattEvent.Authorized(7, 0))
         val fail = after(run, GattEvent.Progress(1, failed), GattEvent.Finished(1, failed))
-        assertEquals(GattUi.Failed(failed), fail.ui)
+        assertEquals(GattUi.Failed(failed.copy(steps = failed.steps + GattStep(GattStepKind.Disconnected, GattStepState.Done, null, null, null, null, null))), fail.ui)
         assertEquals(old, fail.last)
         // the runner throwing fails the running step, the last result kept too
         assertEquals(old, after(run, GattEvent.RunFailed(1)).last)

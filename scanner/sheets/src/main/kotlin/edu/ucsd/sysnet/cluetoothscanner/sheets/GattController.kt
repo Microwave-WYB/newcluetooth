@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GattFailure
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStep
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepKind
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepState
@@ -149,7 +150,7 @@ internal fun reduceGatt(state: GattState, event: GattEvent): GattStepResult {
     return when (event) {
         is GattEvent.LastLoaded -> {
             val last = event.last
-            if (ui != GattUi.Idle || last == null) GattStepResult(state) else show(classify(last, final = true))
+            if (ui != GattUi.Idle || last == null) GattStepResult(state) else show(closed(classify(last, final = true)))
         }
         // D-13.3, D-13.7: "Discover GATT" (never read) and "Discover again" (a last result) lead to the same prompt
         GattEvent.Discover -> show(if (ui == GattUi.Idle || ui is GattUi.Done) GattUi.Confirm else ui)
@@ -162,15 +163,36 @@ internal fun reduceGatt(state: GattState, event: GattEvent): GattStepResult {
                 GattStepResult(state.copy(ui = GattUi.Running(starting(event.key, event.startedMs)), run = run), listOf(GattEffect.StartRun(run)))
             }
         is GattEvent.Progress -> if (current(event.run)) show(classify(event.view, final = false)) else GattStepResult(state)
-        is GattEvent.Finished ->
-            if (current(event.run)) show(event.last?.let { classify(it, final = true) }?.takeUnless { it == GattUi.Idle } ?: state.resting)
-            else GattStepResult(state)
+        // the run's flow ended, so the link is closed: a failure's list ends with Disconnected (D-13.5), also when a
+        // progress view or the runner's throw already showed the failure
+        is GattEvent.Finished -> when {
+            current(event.run) -> show(event.last?.let { closed(classify(it, final = true)) }?.takeUnless { it == GattUi.Idle } ?: state.resting)
+            ui is GattUi.Failed && event.run == state.run -> show(closed(ui))
+            else -> GattStepResult(state)
+        }
         is GattEvent.RunFailed -> {
             val running = ui as? GattUi.Running
             if (running == null || !current(event.run)) GattStepResult(state) else show(GattUi.Failed(failRunning(running.view)))
         }
         GattEvent.Cancel -> GattStepResult(state.copy(ui = if (ui is GattUi.Running) state.resting else ui), listOf(GattEffect.CancelRun))
     }
+}
+
+/**
+ * D-13.5: a failed run's steps stop at the failed row, and the list ends with Disconnected once the link is closed. A
+ * precondition failure (Bluetooth off or permission missing, no target) never had a link, so it gets none.
+ */
+private fun closed(ui: GattUi): GattUi = when (ui) {
+    is GattUi.Failed -> GattUi.Failed(closedView(ui.view))
+    GattUi.Idle, GattUi.Confirm, is GattUi.Running, is GattUi.Done -> ui
+}
+
+private fun closedView(view: GattView): GattView {
+    val failure = view.steps.firstOrNull { it.state == GattStepState.Failed }?.failure
+    val precondition = failure is GattFailure.Other &&
+        (failure.status == GattRunner.GATT_UNAVAILABLE || failure.status == GattRunner.GATT_NO_TARGET)
+    if (precondition || view.steps.lastOrNull()?.kind == GattStepKind.Disconnected) return view
+    return view.copy(steps = view.steps + GattStep(GattStepKind.Disconnected, GattStepState.Done, null, null, null, null, null))
 }
 
 /** The view with its running step failed (no reason claimed: the runner gave none). */

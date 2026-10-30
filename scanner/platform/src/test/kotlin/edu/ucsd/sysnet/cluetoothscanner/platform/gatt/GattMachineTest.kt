@@ -180,4 +180,33 @@ class GattMachineTest {
     private companion object {
         const val SEEDS = 500
     }
+
+    /** The disconnect-related effects, in order. */
+    private fun ends(effects: List<EngineEffect>) = effects.filter { it == EngineEffect.Disconnect || it == EngineEffect.Close || it is EngineEffect.Finish }
+        .map { if (it is EngineEffect.Finish) "Finish" else it.toString() }
+
+    @Test
+    fun `D-13 a link call throwing mid-discovery disconnects, then closes on the callback or the timeout`() {
+        val env = EngineEnv(0, wallMs = 1_000, cancelled = false)
+        var step = GattMachine.start(GattTimeouts(), request, env)
+        step = GattMachine.reduce(step.model, EngineInput.Linked, env)
+        step = GattMachine.reduce(step.model, EngineInput.Link(1, GattEvent.Connected), env) // asks for the MTU: a link call
+        // that link call throws: the run fails, and the link is disconnected first, not just closed
+        val failed = GattMachine.reduce(step.model, EngineInput.LinkFailed, env)
+        assertEquals(listOf("Disconnect"), ends(failed.effects))
+        val wait = failed.model.wait
+        assertTrue("$wait", wait is EngineWait.Disconnecting)
+        // the disconnect callback closes it, then the result: failed with the engine's own status
+        val closed = GattMachine.reduce(failed.model, EngineInput.Link(1, GattEvent.Disconnected(0)), env)
+        assertEquals(listOf("Close", "Finish"), ends(closed.effects))
+        val result = closed.effects.filterIsInstance<EngineEffect.Finish>().single().result
+        assertEquals(GattOutcome.FAILED, result.outcome)
+        assertEquals(GattStatus.INTERNAL_ERROR, result.error?.status)
+        assertNotNull(result.disconnect)
+        // no callback: the disconnect timeout closes it
+        val late = EngineEnv(wait.until ?: 0, wallMs = 1_000, cancelled = false)
+        assertEquals(listOf("Close", "Finish"), ends(GattMachine.reduce(failed.model, EngineInput.TimedOut, late).effects))
+        // the disconnect call itself throws: closed at once (no loop)
+        assertEquals(listOf("Close", "Finish"), ends(GattMachine.reduce(failed.model, EngineInput.LinkFailed, env).effects))
+    }
 }
