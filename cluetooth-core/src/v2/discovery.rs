@@ -1,4 +1,4 @@
-//! SPEC R-4a discovery rate (`docs/v2-api.md` §2.5.1): the devices first scanned in each 30 s bin of a recording,
+//! SPEC R-4a discovery rate (`docs/v2-api.md` §2.5.1): the devices first scanned in each 5 s bin of a recording,
 //! with its running intervals, computed from the first-sighting times and pauses in `local.db`, so it survives a
 //! restart.
 
@@ -10,7 +10,8 @@ use super::error::CoreError;
 use super::types::{DiscoveryBin, DiscoveryRate, DiscoveryRun, DiscoveryUpdate};
 
 /// The bin width.
-pub(crate) const BIN_MS: i64 = 30_000;
+/// 5 s, so the UI's trailing 30 s window (R-4a, 51b8ce79) follows a burst and its decay within seconds.
+pub(crate) const BIN_MS: i64 = 5_000;
 
 /// The running intervals (wall clock) of a recording that started at `started`, with the pauses `(from, to)` in
 /// order (`to = None` while paused) and `ended` once finished. The open run has `end_ms = None`; empty runs are left
@@ -49,7 +50,7 @@ pub(crate) fn runs(
     out
 }
 
-/// The start of the bin a first sighting at `t` counts in: bins are 30 s from the start of the run that holds `t`
+/// The start of the bin a first sighting at `t` counts in: bins are 5 s from the start of the run that holds `t`
 /// (a time outside every run counts in the nearest run before it, else the first one). `None` without runs.
 pub(crate) fn bin_of(runs: &[DiscoveryRun], t: i64) -> Option<i64> {
     let run = runs
@@ -57,9 +58,11 @@ pub(crate) fn bin_of(runs: &[DiscoveryRun], t: i64) -> Option<i64> {
         .rev()
         .find(|r| r.start_ms <= t)
         .or_else(|| runs.first())?;
+    // past the run's end (in a pause): its last bin. A sighting at the end instant keeps its own bin, so an
+    // interrupted session, which ends at its last sighting, rebuilds the bins it had live.
     let t = match run.end_ms {
-        Some(end) => t.min(end - 1),
-        None => t,
+        Some(end) if t > end => end - 1,
+        Some(_) | None => t,
     };
     Some(run.start_ms + (t - run.start_ms).max(0) / BIN_MS * BIN_MS)
 }
@@ -210,16 +213,16 @@ mod tests {
     fn bins_count_from_each_runs_own_start() {
         let rs = vec![run(1_000, Some(61_000)), run(100_000, None)];
         assert_eq!(bin_of(&rs, 1_000), Some(1_000));
-        assert_eq!(bin_of(&rs, 30_999), Some(1_000));
-        assert_eq!(bin_of(&rs, 31_000), Some(31_000));
+        assert_eq!(bin_of(&rs, 5_999), Some(1_000));
+        assert_eq!(bin_of(&rs, 6_000), Some(6_000));
         assert_eq!(
             bin_of(&rs, 61_000),
-            Some(31_000),
-            "the run's end is exclusive"
+            Some(61_000),
+            "a sighting at the end instant keeps its bin"
         );
         assert_eq!(
             bin_of(&rs, 80_000),
-            Some(31_000),
+            Some(56_000),
             "in a pause: the run before"
         );
         assert_eq!(
@@ -238,7 +241,7 @@ mod tests {
             b.iter()
                 .map(|b| (b.start_ms, b.new_devices))
                 .collect::<Vec<_>>(),
-            vec![(1_000, 2), (31_000, 1), (130_000, 1)],
+            vec![(1_000, 2), (41_000, 1), (130_000, 1)],
             "sparse: empty bins are missing"
         );
     }

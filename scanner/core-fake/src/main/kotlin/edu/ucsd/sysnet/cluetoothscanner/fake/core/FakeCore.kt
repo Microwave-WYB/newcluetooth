@@ -443,7 +443,7 @@ class FakeCore(
     }
 
     /**
-     * R-4a, the core's rule: devices counted in the 30 s bin of their first sighting, per run from the run's own
+     * R-4a, the core's rule: devices counted in the 5 s bin of their first sighting, per run from the run's own
      * start; sparse; devices the display filter hides are not counted. A data.js session has one run, and its
      * points' last-seen times stand in for first sightings.
      */
@@ -471,7 +471,7 @@ class FakeCore(
         val counts = sortedMapOf<Long, Int>()
         for (t in firstSeen) {
             val run = runs.lastOrNull { it.startMs <= t } ?: runs.firstOrNull() ?: continue
-            val clamped = run.endMs?.let { minOf(t, it - 1) } ?: t
+            val clamped = run.endMs?.takeIf { t > it }?.let { it - 1 } ?: t // as in the core: the end instant keeps its bin
             val start = run.startMs + maxOf(0L, clamped - run.startMs) / DiscoveryRate.BIN_MS * DiscoveryRate.BIN_MS
             counts[start] = (counts[start] ?: 0) + 1
         }

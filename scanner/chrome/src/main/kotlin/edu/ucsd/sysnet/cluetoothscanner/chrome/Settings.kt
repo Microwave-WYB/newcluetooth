@@ -1,6 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.chrome
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
@@ -109,7 +111,8 @@ class SettingsActions(
 )
 
 /**
- * O-1: the Settings page. It slides in from the right (`--t-page`) over a `--bg` page with a `--top-zone` strip that
+ * O-1: the Settings page. On phone it fades in over the screen and fades out on Back (`--t-page`, `--ease`), with no
+ * slide; on [tablet] it slides in from the right as before. It is a `--bg` page with a `--top-zone` strip that
  * holds the back FloatButton and "Settings" (17/650). The rows are O-1 items 1–12 in order, with the Storage group
  * (8–11): usage with its breakdown, Export (scope, format, share or Downloads) and Delete (scope, confirmation, and
  * the explicit second step to lose un-uploaded data).
@@ -127,12 +130,19 @@ fun SettingsPage(
     sessionScope: Scope? = null,
     statusInset: Dp = 0.dp,
     bottomInset: Dp = 0.dp,
+    tablet: Boolean = false,
 ) {
     val c = CluetoothTheme.colors
     BoxWithConstraints(modifier.fillMaxSize()) {
-        val x by animateDpAsState(if (open) 0.dp else maxWidth, CluetoothTheme.motion.page(), label = "settingsX")
-        if (x >= maxWidth) return@BoxWithConstraints
-        Box(Modifier.fillMaxSize().offset { IntOffset(x.roundToPx(), 0) }.background(c.bg).testTag("settingsPage")) {
+        // both follow [open], so a breakpoint crossing never shows one half-way; the layout picks which one applies
+        val slide by animateDpAsState(if (open) 0.dp else maxWidth, CluetoothTheme.motion.page(), label = "settingsX")
+        val fade by animateFloatAsState(if (open) 1f else 0f, CluetoothTheme.motion.page(), label = "settingsAlpha")
+        val x = if (tablet) slide else 0.dp
+        val alpha = if (tablet) 1f else fade
+        if (x >= maxWidth || alpha <= 0f) return@BoxWithConstraints
+        Box(
+            Modifier.fillMaxSize().offset { IntOffset(x.roundToPx(), 0) }.alpha(alpha).background(c.bg).testTag("settingsPage"),
+        ) {
             Column(
                 Modifier.fillMaxSize().padding(top = statusInset + Css.PageBar.height).verticalScroll(rememberScrollState())
                     .padding(bottom = Tokens.gutter + bottomInset),

@@ -24,8 +24,9 @@ import kotlin.math.roundToInt
 /**
  * R-4a's data: a recording's new devices per bin and its runs, wall-clock ms, as the core keeps them (each device's
  * first-scanned time in the session, so it survives an app restart). [bins] may be sparse (a bin without new devices
- * may be left out) and in any order; a bin belongs to the run its start falls in, or counts in the next run's first
- * bin if it starts in a pause (or before the first run). [runs] are the stretches from a start or resume to a pause or stop, in order.
+ * may be left out) and in any order; a bin belongs to the run its start falls in (its end included: the core keeps a
+ * device first seen exactly at a run's end in that run), or counts in the next run's first bin if it starts in a
+ * pause (or before the first run). [runs] are the stretches from a start or resume to a pause or stop, in order.
  */
 data class DiscoveryBins(val binMs: Long, val bins: List<Bin>, val runs: List<Run>) {
     data class Bin(val startMs: Long, val newDevices: Int)
@@ -34,8 +35,8 @@ data class DiscoveryBins(val binMs: Long, val bins: List<Bin>, val runs: List<Ru
     data class Run(val startMs: Long, val endMs: Long?)
 
     companion object {
-        /** R-4a: devices first scanned in each 30 s bin. */
-        const val BIN_MS = 30_000L
+        /** R-4a: the core keeps first-scanned counts in 5 s bins. */
+        const val BIN_MS = 5_000L
         val Empty = DiscoveryBins(BIN_MS, emptyList(), emptyList())
     }
 }
@@ -57,11 +58,17 @@ object DiscoveryChart {
     /** The series in pixels: one polyline per run, the 0 baseline's y, and the line's end (for the label). */
     data class Shape(val lines: List<List<Offset>>, val baseline: Float, val end: Offset?)
 
+    /** One bin of a run in recording time: [start]..[end] (ms of the recording, pauses left out) and its devices. */
+    private class Slot(val start: Long, val end: Long, val n: Int)
+
     /**
-     * The series at [elapsedMs] of recording. Each run is cut into bins from its own start; a bin's devices × 2 is
-     * its rate (a run's last, shorter bin is scaled by its length, at least half a bin), lightly smoothed with
-     * 1-2-1 weights. The bin still filling in the running run is left out until it is complete, so the line never
-     * dips at its end. A run's line starts at the run's start at its first bin's rate, then a point per bin end.
+     * The series at [elapsedMs] of recording. Each run is cut into bins from its own start; the value at a time t
+     * of recording is the devices first scanned in the trailing [WINDOW_MS] (30 s) of recording × 2, i.e. per
+     * minute (before 30 s have been recorded, over the time recorded, at least [MIN_WINDOW_MS]). A window that
+     * starts inside a bin counts that bin's share of its time. The line has a point per bin end, plus one at each
+     * run's start; the bin still filling in the running run is included, its point at now, so the end follows the
+     * live deltas. Nothing is smoothed: a point counts only what was scanned before it, and a burst leaves the
+     * window 30 s after it ended. The window runs over recording time, so it spans a pause; the line breaks there.
      */
     fun series(data: DiscoveryBins, elapsedMs: Long): Series {
         val binMs = data.binMs
@@ -69,48 +76,63 @@ object DiscoveryChart {
         val bins = data.bins.sortedBy { it.startMs }
         var next = 0
         var activeStart = 0L
-        val out = ArrayList<List<Point>>()
+        val slots = ArrayList<Slot>()
+        // each run's slots, and where each run's begin in [slots]
+        val runs = ArrayList<Pair<Long, IntRange>>()
         for (run in data.runs) {
             val end = run.endMs
             val len = (if (end == null) elapsedMs - activeStart else end - run.startMs).coerceAtLeast(0)
-            val slots = (if (end == null) len / binMs else (len + binMs - 1) / binMs).toInt()
-            val counts = IntArray(slots)
-            // the bins up to this run's end; one that starts before the run counts in its first bin
-            while (next < bins.size && (end == null || bins[next].startMs < end)) {
+            val count = ((len + binMs - 1) / binMs).toInt()
+            val counts = IntArray(count)
+            // the bins up to this run's end; one that starts before the run counts in its first bin, and the core's
+            // bin of a device first seen exactly at the run's end (it starts at the end) in its last
+            while (next < bins.size && (end == null || bins[next].startMs <= end)) {
                 val b = bins[next++]
-                val slot = ((b.startMs - run.startMs).coerceAtLeast(0) / binMs).toInt()
-                if (slot < slots) counts[slot] += b.newDevices.coerceAtLeast(0)
+                val slot = if (b.startMs == end) count - 1 else ((b.startMs - run.startMs).coerceAtLeast(0) / binMs).toInt()
+                if (slot in 0 until count) counts[slot] += b.newDevices.coerceAtLeast(0)
             }
-            if (slots > 0) {
-                val rates = FloatArray(slots) { k ->
-                    val dur = minOf(binMs, len - k * binMs).coerceAtLeast(binMs / 2)
-                    counts[k] * MINUTE_MS / dur
-                }
-                val smooth = smooth(rates)
-                val pts = ArrayList<Point>(slots + 1)
-                pts += Point(activeStart, smooth[0])
-                for (k in 0 until slots) pts += Point(activeStart + minOf((k + 1) * binMs, len), smooth[k])
-                out += pts
-            }
+            val first = slots.size
+            for (k in 0 until count) slots += Slot(activeStart + k * binMs, activeStart + minOf((k + 1) * binMs, len), counts[k])
+            if (count > 0) runs += activeStart to (first until slots.size)
             activeStart += len
         }
-        return Series(out)
+        return Series(
+            runs.map { (start, range) ->
+                listOf(Point(start, rateAt(slots, start))) + range.map { k -> Point(slots[k].end, rateAt(slots, slots[k].end)) }
+            },
+        )
     }
 
-    /** 1-2-1 weights, renormalized at the ends. */
-    internal fun smooth(v: FloatArray): FloatArray = FloatArray(v.size) { i ->
-        var sum = v[i] * 2
-        var w = 2f
-        if (i > 0) { sum += v[i - 1]; w += 1 }
-        if (i < v.size - 1) { sum += v[i + 1]; w += 1 }
-        sum / w
+    /**
+     * New devices per minute at [t] of recording: the trailing window's devices over its length. [slots] are in
+     * order and back to back, so only the few under the window are visited (a long session stays linear).
+     */
+    private fun rateAt(slots: List<Slot>, t: Long): Float {
+        val from = t - WINDOW_MS
+        // the first slot that ends after the window's start
+        var lo = 0
+        var hi = slots.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (slots[mid].end <= from) lo = mid + 1 else hi = mid
+        }
+        var devices = 0f
+        var k = lo
+        while (k < slots.size && slots[k].start < t) {
+            val s = slots[k++]
+            val dur = s.end - s.start
+            val overlap = minOf(s.end, t) - maxOf(s.start, from)
+            if (dur > 0 && overlap > 0) devices += s.n * overlap.toFloat() / dur
+        }
+        return devices * MINUTE_MS / minOf(WINDOW_MS, t).coerceAtLeast(MIN_WINDOW_MS)
     }
 
     /**
      * The series in a [width] × [height] px box: x spans the series' elapsed time with a [gap] wide break per pause,
      * y runs from 0 at the bottom to the highest rate (at least [MIN_SCALE_PER_MIN], with a little headroom) at [top],
-     * the room kept free above for the label; the line stays [stroke]/2 inside the box. Each run is thinned to at most four points per pixel column (first,
-     * lowest, highest, last), so a long session costs the box's width, not its length.
+     * the room kept free above for the label; the line stays [stroke]/2 inside the box. Each run is thinned to at
+     * most four points per pixel column (first, lowest, highest, last), so a long session costs the box's width, not
+     * its length.
      */
     fun layout(series: Series, width: Float, height: Float, stroke: Float, gap: Float, top: Float = 0f): Shape {
         val half = stroke / 2
@@ -190,6 +212,10 @@ object DiscoveryChart {
     fun current(series: Series): Int? = series.last?.perMin?.roundToInt()
 
     private const val MINUTE_MS = 60_000f
+    /** R-4a: the rate is over the trailing 30 s of recording. */
+    const val WINDOW_MS = 30_000L
+    /** R-4a: before 30 s have been recorded, over the time recorded, but at least 10 s. */
+    const val MIN_WINDOW_MS = 10_000L
     private const val HEADROOM = 1.15f
     /** A near-empty recording's 0–1 devices per minute does not fill the chart's height. */
     const val MIN_SCALE_PER_MIN = 4f

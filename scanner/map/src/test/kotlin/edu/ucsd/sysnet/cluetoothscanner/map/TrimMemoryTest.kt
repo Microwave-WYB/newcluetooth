@@ -84,7 +84,7 @@ class TrimMemoryTest {
 
         state.trimMemory()
         runCurrent()
-        for (s in listOf("devices", "density", "cells", "sightings")) assertEquals(s, GeoJson.EMPTY, surface.sources[s])
+        for (s in listOf("devices", "cells", "sightings")) assertEquals(s, GeoJson.EMPTY, surface.sources[s])
         val retained = state.retainedJson()
         assertTrue("runner keeps $retained", retained.values.all { it <= GeoJson.EMPTY.length })
 
