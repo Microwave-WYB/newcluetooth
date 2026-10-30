@@ -1295,7 +1295,13 @@ Before a run:
   `Other(GATT_UNAVAILABLE)` (−4); the UI shows the onboarding piece.
 - `core.gattTarget(key)` must exist. If it doesn't, emit a failed Connecting step with `Other(GATT_NO_TARGET)` (−5).
 - Both codes are named constants in `:platform-api`, next to `GattRunner`. Neither precondition failure connects or
-  writes a gatt/v1 object, so the codes never collide with the engine's status values in stored results.
+  writes a gatt/v1 object.
+- `GATT_INTERNAL_ERROR` (−6), also in `:platform-api`, is the status of a discovery whose engine itself failed (a link
+  call threw mid-discovery). It is stored in gatt/v1 as the error's status, and never reads as `GATT_UNAVAILABLE`.
+  The engine's other codes are −1 (timed out), −2 (process death) and −3 (read queue stalled).
+- Failures (§2.7): a known status, Android's (133, 62, 19, …) or an engine code, is `Other(status)`, so the UI can name
+  it. `ConnectionFailed` and `DisconnectedUnexpectedly` remain only when no status is known; `TimedOut` and
+  `Cancelled` are unchanged.
 
 During and after:
 
