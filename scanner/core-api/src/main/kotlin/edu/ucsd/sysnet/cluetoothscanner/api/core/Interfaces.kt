@@ -64,9 +64,10 @@ interface CoreStorage {
  */
 interface CoreIngest {
     /**
-     * Throws [CoreException.Backpressure] while commits keep failing and the pending buffer is full: keep the batch
-     * and retry. Throws [CoreException.StorageFull] while the recording is paused for storage (R-10): the batch
-     * cannot be stored; drop and count it.
+     * Throws [CoreException.Backpressure] when the payload refuses the batch (not for space), or while commits keep
+     * failing and the pending buffer is full: keep the batch and retry. A refusal that lasts 60 s pauses the
+     * recording (`storageFailure`, [CoreEvent.StorageFailed]). Throws [CoreException.StorageFull] when the batch
+     * cannot be stored for lack of space or while the recording is paused for storage (R-10): drop and count it.
      */
     fun ingestScans(batch: List<ScanObservationInput>): IngestAck
     fun ingestLocation(fix: LocationFix)
