@@ -78,7 +78,17 @@ class MapLibreSurface(
         map.addOnMapClickListener(click)
     }
 
+    /** Set by [release]: the MapView is going away, so nothing may reach its map or style any more. */
+    var released = false
+        private set
+
+    /**
+     * Ends this surface's use of MapLibre's native objects, before the MapView is destroyed: the listeners go and the
+     * Style is dropped, so a late call (an effect, a style callback) finds no style and does nothing.
+     */
     fun release() {
+        released = true
+        style = null
         map.removeOnCameraMoveStartedListener(moveStarted)
         map.removeOnCameraIdleListener(idle)
         map.removeOnMapClickListener(click)

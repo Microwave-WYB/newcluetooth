@@ -116,8 +116,11 @@ fun CluetoothMap(
 
     DisposableEffect(mapView) {
         var attached: MapLibreSurface? = null
+        var disposed = false
         guard("getMapAsync") {
             mapView.getMapAsync { m ->
+                // the map can arrive after the composable left; its MapView is destroyed then
+                if (disposed) return@getMapAsync
                 val s = guard("create surface") {
                     MapLibreSurface(mapView, m, state, Tokens.dragSlop.value) { op, e -> state.onPlatformFailure(op, e) }
                 } ?: return@getMapAsync
@@ -133,6 +136,7 @@ fun CluetoothMap(
         }
         guard("addOnDidFailLoadingMapListener") { mapView.addOnDidFailLoadingMapListener(failed) }
         onDispose {
+            disposed = true
             guard("removeOnDidFailLoadingMapListener") { mapView.removeOnDidFailLoadingMapListener(failed) }
             attached?.let { s ->
                 state.detach(s)
@@ -144,8 +148,9 @@ fun CluetoothMap(
     val theme = if (dark) MapTheme.Dark else MapTheme.Light
     LaunchedEffect(map, theme, offline, baseStyleJson) {
         val m = map ?: return@LaunchedEffect
+        val target = surface
         // until the new style loads, nothing may touch the old one's sources
-        surface?.style = null
+        target?.style = null
         state.onStyleLoading()
         guard("setStyle") {
             val builder = when {
@@ -155,8 +160,9 @@ fun CluetoothMap(
             }
             m.setStyle(builder) { style ->
                 when (val installed = StyleInstaller.install(style, spec, theme)) {
-                    StyleInstaller.Installed.Ok -> {
-                        surface?.style = style
+                    // a style that loads after the surface was released belongs to a destroyed MapView: leave it
+                    StyleInstaller.Installed.Ok -> if (target != null && !target.released) {
+                        target.style = style
                         state.onStyleLoaded()
                     }
                     is StyleInstaller.Installed.Err -> state.onPlatformFailure("install overlay", IllegalStateException(installed.reason))
