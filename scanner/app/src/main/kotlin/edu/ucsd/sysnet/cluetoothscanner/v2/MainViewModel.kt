@@ -11,7 +11,6 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.AllSessionsSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
-import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
@@ -45,8 +44,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
@@ -194,25 +193,18 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             // #79: storing kept failing; the recording paused
             launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFailed.collect { dispatch(MainEvent.StorageFailed(it)) } } }
             launch { viewWork(q) }
-            launch { discoveryWork() }
+            launch { discoveryWork(q) }
         }
     }
 
-    /** R-4a: the recording's discovery rate, per session and per read; an Err is the notice's (Failed). */
-    private suspend fun discoveryWork() =
-        combine(graph.recorder.state.map { r -> r.sessionId.takeIf { r.phase != RecorderState.Phase.Idle } }.distinctUntilChanged(), discoveryReads) { id, _ -> id }
-            .collectLatest { id ->
-                _discovery.value = DiscoveryBins.Empty
-                if (id == null) return@collectLatest
-                guard(MainTask.DiscoveryRate) {
-                    graph.discoveryRates.feed(id).collect { r ->
-                        when (r) {
-                            is CoreResult.Ok -> _discovery.value = r.value
-                            is CoreResult.Err -> fail(MainTask.DiscoveryRate, r.error)
-                        }
-                    }
-                }
-            }
+    /** R-4a: the recording's discovery rate, read per session, per Retry and per `DataInvalidated` ([follow]). */
+    private suspend fun discoveryWork(q: CoreQueries) = graph.discoveryRates.follow(
+        session = graph.recorder.state.map { r -> r.sessionId.takeIf { r.phase != RecorderState.Phase.Idle } },
+        reads = discoveryReads,
+        invalidated = q.events.filterIsInstance<CoreEvent.DataInvalidated>().map { },
+        show = { _discovery.value = it },
+        failed = ::fail,
+    )
 
     /** V-2 / V-7: the shown scope's view, read once per key; the search page's work lives inside it. */
     private suspend fun viewWork(q: CoreQueries) = ui.map { it.viewKey }.distinctUntilChanged().collectLatest { key ->
