@@ -982,6 +982,98 @@ impl CluetoothCore {
     }
 }
 
+/// One empty marker per session whose uploaded files "Delete uploaded raw files" removed.
+fn deleted_archive_root(root: &Path) -> PathBuf {
+    root.join("upload-state/archive-deleted")
+}
+
+/// For the v2 core, which owns this object on its writer thread.
+impl CluetoothCore {
+    /// Each session's upload state from the known files and the failure markers, without reading any file
+    /// (`scan_sessions` reads every payload).
+    pub(crate) fn session_upload_states(
+        &self,
+    ) -> Result<std::collections::HashMap<String, crate::SessionUploadState>, CoreError> {
+        let inner = self.lock_inner();
+        let failed = discover_failed_ids(&self.data_directory)?;
+        // session → (files, archived files, any failed)
+        let mut by: std::collections::HashMap<String, (usize, usize, bool)> =
+            std::collections::HashMap::new();
+        for payload in inner.pending.iter().chain(&inner.archived) {
+            let session = payload
+                .session_id
+                .clone()
+                .unwrap_or_else(|| payload.payload_id.clone());
+            let entry = by.entry(session).or_default();
+            entry.0 += 1;
+            entry.1 += usize::from(payload.archived);
+            entry.2 |= failed.contains(&payload.payload_id);
+        }
+        let mut states: std::collections::HashMap<String, crate::SessionUploadState> =
+            std::collections::HashMap::new();
+        // sessions whose uploaded files were deleted (R-10) stay uploaded
+        visit_regular_files(&deleted_archive_root(&self.data_directory), &mut |path| {
+            if let Some(session) = path.file_name().and_then(|n| n.to_str()) {
+                states.insert(session.to_owned(), crate::SessionUploadState::Uploaded);
+            }
+            Ok(())
+        })?;
+        states.extend(by.into_iter().map(|(session, (files, archived, failed))| {
+            let state = if failed {
+                crate::SessionUploadState::Failed
+            } else if archived == files {
+                crate::SessionUploadState::Uploaded
+            } else {
+                crate::SessionUploadState::Pending
+            };
+            (session, state)
+        }));
+        Ok(states)
+    }
+
+    /// SPEC R-10 "Delete uploaded raw files": deletes every archived (uploaded) payload and gatt/v1 file and forgets
+    /// it; pending files are never touched. Returns the bytes freed; a file that cannot be deleted stays known.
+    pub(crate) fn delete_archived(&self) -> Result<u64, CoreError> {
+        fn remove(path: &Path, freed: &mut u64, error: &mut Option<CoreError>) -> bool {
+            let len = std::fs::metadata(path).map_or(0, |m| m.len());
+            match std::fs::remove_file(path) {
+                Ok(()) => {
+                    *freed += len;
+                    false
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                Err(e) => {
+                    error.get_or_insert(CoreError::io(e));
+                    true
+                }
+            }
+        }
+        let mut inner = self.lock_inner();
+        let mut freed = 0;
+        let mut error = None;
+        for payload in &inner.archived {
+            let session = payload.session_id.as_deref().unwrap_or(&payload.payload_id);
+            // ids are UUIDv7s; anything else cannot name a marker file and simply gets none
+            if parse_canonical_uuid_v7(session).is_ok() {
+                write_atomic_state_file(
+                    &deleted_archive_root(&self.data_directory).join(session),
+                    b"uploaded\n",
+                )?;
+            }
+        }
+        inner
+            .archived
+            .retain(|p| remove(Path::new(&p.local_path), &mut freed, &mut error));
+        inner
+            .gatt_archived
+            .retain(|g| remove(&g.local_path, &mut freed, &mut error));
+        match error {
+            Some(e) => Err(e),
+            None => Ok(freed),
+        }
+    }
+}
+
 fn recover_exact_published_payload(
     file: &mut File,
     path: &Path,

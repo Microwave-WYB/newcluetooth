@@ -185,7 +185,7 @@ The data directory is `filesDir/cluetooth-core/`, the same as v3, so the in-plac
 | `pending/gatt/v1/…/<uuid>.json` | plaintext gatt/v1 awaiting upload | same |
 | `archive/sessions/<session>/scans/…`, `archive/gatt/v1/…` | uploaded plaintext | kept; removed only by Delete local data or "Delete uploaded raw files" (§2.4.1) |
 | `upload-cache/<object path>.encrypted` | ciphertext | transient (§1.6) |
-| `upload-state/`, `active-payload/`, `export-temp/` | as v3 | as v3 |
+| `upload-state/`, `active-payload/`, `export-temp/` | as v3; `upload-state/archive-deleted/<session>` marks a session whose uploaded files were deleted (R-10), so it stays Uploaded | as v3 |
 | `sessions/*.json` | pre-v2 session metadata | kept; these sessions are not imported into the DB |
 | `local.db` (+ `-wal`, `-shm`) | the v2 DB (§3) | kept; user deletion only |
 
@@ -386,6 +386,7 @@ pub struct RecordingState {
     pub active_before_ms: i64, pub running_since_ms: Option<i64>,  // elapsed = before + (now − since); UI ticks locally
     pub device_count: u32, pub distance_m: f64,                   // shown devices (display filter applied)
     pub paused_for_storage: bool,                                 // SPEC R-10 pause (§2.4.1)
+    pub storage_failure: Option<String>,                          // paused after 60 s of failures (§2.4)
 }
 
 #[uniffi::export(with_foreign)]
@@ -431,8 +432,9 @@ recorded in `session_pauses`.
 impl Core {
     pub fn ingest_scans(&self, batch: Vec<ScanObservationInput>) -> Result<IngestAck, CoreError>;
     // [W] validates (v3 rules: ≤ 64 rows, ≤ 1 MiB, raw ≤ 1650 B) and buffers until the next commit.
-    //     Err(Backpressure) while commits keep failing and the buffer is at its cap: keep the batch and retry.
-    //     Err(StorageFull) while paused for storage (§2.4.1): the batch cannot be stored; drop and count it.
+    //     Answers after the payload took the batch. Err(Backpressure) when the payload refused it (not for space),
+    //     or while commits keep failing and the buffer is at its cap: keep the batch and retry.
+    //     Err(StorageFull) for lack of space or while paused for storage (§2.4.1): drop and count it.
     pub fn ingest_location(&self, fix: LocationFix);                 // [N] fix ring + route (≤ 100 m accuracy, ≥ 5 m or 30 s)
     pub fn clear_location(&self);                                    // [N]
     pub fn new_gatt_discovery_id(&self) -> Result<String, CoreError>;          // [N]
@@ -474,6 +476,16 @@ would pass the cap commits at once. A commit that fails for another reason keeps
 backs off: the next interval commit waits the interval, doubled per failure, at most 60 s. While commits fail and
 the buffer is at its cap, `ingest_scans` returns `Backpressure`, so memory stays below the cap plus one batch.
 
+**Staging before the ack.** `ingest_scans` answers only after the Parquet payload took the batch. A refusal for lack
+of space (`ENOSPC`) is `StorageFull` and the R-10 pause; any other refusal is `Backpressure` (keep the batch,
+retry) with a `StorageWarning`, and the batch is not buffered. When staging or committing keeps failing for 60 s,
+writing stops: the buffer is dropped (counted), the recording pauses with `storage_failure`, and
+`CoreEvent::StorageFailed { message, dropped_scans }` is emitted. Resume tries again.
+
+**Upload states.** The session list's upload state comes from the payload core's known files. When reading them
+fails, the last states read stand (with a `StorageWarning`); before any read, `sessions()` returns the error.
+`Empty` means only a session with no payload: local-only, recorded before the Parquet staging (no backfill).
+
 #### 2.4.1 Storage full (SPEC R-10)
 
 ```rust
@@ -497,7 +509,8 @@ impl Core {
 - **Resume** is the UI's call. It returns `Err(StorageFull)` while free space is still below the floor; above it,
   recording continues in the same session. A user pause is not a storage pause: its resume needs no free space.
 - **Delete uploaded raw files** removes the regular files under `archive/` (uploaded plaintext). `pending/` and the
-  upload markers are never touched.
+  upload markers are never touched. The payload core forgets the deleted files and marks their sessions, which stay
+  Uploaded in the session list; exporting a session's raw data needs the files, so it fails for those sessions.
 - **Clear local database** deletes every session except the current one with its rows, the GATT discoveries outside
   it and the payloads nothing references any more, recomputes the devices, then `VACUUM`s. No file is touched, so
   un-uploaded raw files still upload. When both actions are chosen, run Delete uploaded raw files first: the vacuum
@@ -656,6 +669,7 @@ pub enum CoreEvent {
     UploadNeeded,                          // a payload or GATT file was sealed
     StorageWarning { message: String },    // also covers persistence failures
     StorageFull { free_bytes: u64, dropped_scans: u64 },  // SPEC R-10: writing stopped, recording paused (§2.4.1)
+    StorageFailed { message: String, dropped_scans: u64 }, // 60 s of staging/commit failures: stopped, paused (§2.4)
 }
 ```
 

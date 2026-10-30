@@ -94,6 +94,8 @@ data class CoreRecordingState(
     val deviceCount: Int, val distanceM: Double,
     /** SPEC R-10: paused because storage is full; resuming needs free space above the floor. */
     val pausedForStorage: Boolean = false,
+    /** Paused because staging or committing kept failing for 60 s, not for space; resume tries again. */
+    val storageFailure: String? = null,
 )
 
 // ---- §2.4 Ingest ----
@@ -219,6 +221,11 @@ sealed interface CoreEvent {
      * paused (`pausedForStorage`); [droppedScans] buffered rows could not be stored. Show the storage-full dialog.
      */
     data class StorageFull(val freeBytes: Long, val droppedScans: Long) : CoreEvent
+    /**
+     * Staging or committing kept failing for 60 s for another reason: writing stopped and the recording paused
+     * (`storageFailure`); [droppedScans] buffered rows could not be stored.
+     */
+    data class StorageFailed(val message: String, val droppedScans: Long) : CoreEvent
 }
 
 // ---- §2.7 GATT view ----

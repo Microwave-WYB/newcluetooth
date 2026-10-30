@@ -261,6 +261,7 @@ internal fun GRecordingState.api() = CoreRecordingState(
         GRecordingPhase.PAUSED -> RecordingPhase.Paused
     },
     sessionId, startedMs, activeBeforeMs, runningSinceMs, deviceCount.toInt(), distanceM, pausedForStorage,
+    storageFailure,
 )
 
 internal fun GFixSummary.api() = FixSummary(lat, lon, accuracyM, ageMs)
@@ -280,6 +281,8 @@ internal fun GCoreEvent.api(): CoreEvent = when (this) {
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.StorageWarning -> CoreEvent.StorageWarning(message)
     is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.StorageFull ->
         CoreEvent.StorageFull(freeBytes.toLong(), droppedScans.toLong())
+    is edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreEvent.StorageFailed ->
+        CoreEvent.StorageFailed(message, droppedScans.toLong())
 }
 
 internal fun GReclaimable.api() = Reclaimable(freeBytes.toLong(), uploadedRawBytes.toLong(), localDatabaseBytes.toLong())

@@ -73,7 +73,7 @@ class CoreBridgeTest {
                 o["fake_product"]?.jsonPrimitive?.contentOrNull?.let { pageOfProduct[it] = o.getValue("id").jsonPrimitive.content }
             }
             core = CoreBridge.open(
-                CoreConfig(dataDirectory = dir.path, recipientPublicKey = ByteArray(32)),
+                CoreConfig(dataDirectory = dir.path, recipientPublicKey = edu.ucsd.sysnet.cluetoothscanner.core.generated.defaultCoreConfig().recipientPublicKey),
                 CoreAssets(bundle, "company\t0057\tHarman International\n"),
             )
             val fixture = Json.parseToJsonElement(resource("data-js-fixture.json")).jsonObject

@@ -64,6 +64,19 @@ fn not_yet(what: &str) -> CoreError {
     }
 }
 
+/// A payload core error; out of space (ENOSPC, "os error 28") becomes R-10's `StorageFull`, whose free space the
+/// writer fills in.
+fn payload_error(e: crate::CoreError) -> CoreError {
+    match &e {
+        crate::CoreError::Io { detail } | crate::CoreError::Parquet { detail }
+            if detail.contains("os error 28") || detail.contains("No space left on device") =>
+        {
+            CoreError::StorageFull { free_bytes: 0 }
+        }
+        _ => CoreError::from(e),
+    }
+}
+
 fn new_uuid(now: i64) -> Result<String, CoreError> {
     let mut random = [0u8; 10];
     getrandom::fill(&mut random).map_err(|e| CoreError::Clock {
@@ -314,6 +327,15 @@ struct Runner {
     listener: Option<Arc<dyn CoreListener>>,
     reader: mpsc::Sender<ReaderMsg>,
     notify: mpsc::Sender<Note>,
+    /// The v3 payload core, owned here alone: the staging WAL, Parquet v3 rotation and sealing, the pending and
+    /// archived files (v2, v3 and gatt/v1, including those a v3 app left), and the upload queue. Payload v3 and
+    /// gatt/v1 bytes are unchanged (§1.5, §1.6).
+    payloads: Arc<crate::CluetoothCore>,
+    /// The last upload states read, kept when a later read fails (a missing session means local-only).
+    upload_cache: Option<std::collections::HashMap<String, UploadState>>,
+    /// Test hook: staging fails with a payload I/O error of this detail.
+    #[cfg(test)]
+    fail_staging: Option<String>,
 }
 
 impl Runner {
@@ -336,12 +358,17 @@ impl Runner {
     fn run(&mut self, effect: machine::Effect, queue: &mut VecDeque<Event>) -> Option<Reply> {
         use machine::Effect as E;
         match effect {
-            E::CreateSession { uuid, started } => {
-                let result = self
-                    .store
-                    .create_session(&uuid.0, started.0)
-                    .map(SessionRow);
+            E::CreateSession { env, started } => {
+                let result = self.create_session(env, started);
                 queue.push_back(Event::SessionCreated { result });
+            }
+            E::ConfigureScan { env } => {
+                let update = self.payloads.configure_scan(env);
+                self.payload_update(update);
+            }
+            E::SealPayload => {
+                let sealed = self.payloads.flush_payload().map(|r| r.sealed.is_some());
+                self.payload_sealed(sealed);
             }
             E::ResetLive => {
                 self.live = LiveState::default();
@@ -350,6 +377,20 @@ impl Runner {
                 self.last_route = None;
                 self.failed = None;
                 self.committed_route.clear();
+            }
+            E::Stage {
+                rows,
+                rejected,
+                now,
+            } => {
+                // §2.4: the payload records every row the DB will commit, so DB rows ⊆ staged rows
+                let result = self.stage(&rows).map_err(|e| self.measured(e));
+                queue.push_back(Event::Staged {
+                    rows,
+                    rejected,
+                    now,
+                    result,
+                });
             }
             E::Append(rows) => {
                 for machine::Accepted { key, input } in rows {
@@ -378,6 +419,7 @@ impl Runner {
                 }
             }
             E::AddFix { fix, route } => {
+                self.v3_effects(self.payloads.update_location(fix.clone()));
                 self.live.fix = Some((fix.lat, fix.lon, fix.accuracy_meters, fix.observed_at_ms));
                 self.fixes.push(fix.clone());
                 if route && fix.accuracy_meters <= ROUTE_MAX_ACCURACY_M {
@@ -400,22 +442,28 @@ impl Runner {
                     }
                 }
             }
-            E::ClearFixes => self.fixes.clear(),
+            E::ClearFixes => {
+                self.v3_effects(self.payloads.clear_location());
+                self.fixes.clear();
+            }
             E::Commit { row, now } => {
                 let batch = Batch {
                     obs: std::mem::take(&mut self.pending),
                     route: std::mem::take(&mut self.route),
                 };
-                let result = match self
-                    .store
-                    .commit(row.0, &batch.obs, &batch.route, &self.catalog)
-                {
-                    // R-10: report the free space measured now
-                    Err(CoreError::StorageFull { .. }) => Err(CoreError::StorageFull {
-                        free_bytes: space::free_bytes(&self.data_dir).unwrap_or(0),
-                    }),
-                    other => other,
-                };
+                // §2.4 commit gating: append the staging WAL first; the DB commits only what it covered
+                let staged = self
+                    .payloads
+                    .checkpoint_active_payload()
+                    .map_err(payload_error);
+                let committed = staged.and_then(|staged| {
+                    if staged.sealed.is_some() {
+                        self.emit(CoreEvent::UploadNeeded);
+                    }
+                    self.store
+                        .commit(row.0, &batch.obs, &batch.route, &self.catalog)
+                });
+                let result = committed.map_err(|e| self.measured(e));
                 match &result {
                     Ok(()) => self.committed_route = batch.route,
                     Err(_) => self.failed = Some(batch),
@@ -455,6 +503,9 @@ impl Runner {
                 }
                 .and_then(|()| self.store.finish(row.0, 2, ended.0, active.0));
                 self.warn(result);
+                // seals the session's payload into pending/ (§1.4)
+                let update = self.payloads.finish_scan_session();
+                self.payload_update(update);
             }
             E::Delta { now, force } => self.delta(now.0, force),
             E::Snapshot => {
@@ -472,6 +523,13 @@ impl Runner {
                 reason: reason.into(),
             }),
             E::EmitStorageWarning(message) => self.emit(CoreEvent::StorageWarning { message }),
+            E::EmitStorageFailed {
+                message,
+                dropped_scans,
+            } => self.emit(CoreEvent::StorageFailed {
+                message,
+                dropped_scans,
+            }),
             E::EmitStorageFull {
                 free_bytes,
                 dropped_scans,
@@ -482,6 +540,33 @@ impl Runner {
             E::Reply(r) => return Some(r),
         }
         None
+    }
+
+    /// Records the rows in the Parquet payload; a refusal is typed (ENOSPC is `StorageFull`).
+    fn stage(&self, rows: &[machine::Accepted]) -> Result<(), CoreError> {
+        #[cfg(test)]
+        if let Some(detail) = &self.fail_staging {
+            return Err(payload_error(crate::CoreError::Io {
+                detail: detail.clone(),
+            }));
+        }
+        let inputs: Vec<ScanObservationInput> = rows.iter().map(|a| a.input.clone()).collect();
+        let update = self
+            .payloads
+            .record_observations(inputs)
+            .map_err(payload_error)?;
+        self.v3_effects(update);
+        Ok(())
+    }
+
+    /// R-10: a lack of space carries the free space measured now.
+    fn measured(&self, e: CoreError) -> CoreError {
+        match e {
+            CoreError::StorageFull { .. } => CoreError::StorageFull {
+                free_bytes: space::free_bytes(&self.data_dir).unwrap_or(0),
+            },
+            other => other,
+        }
     }
 
     /// A failed bookkeeping write becomes a StorageWarning.
@@ -543,6 +628,7 @@ impl Runner {
             device_count: if session.is_some() { count } else { 0 },
             distance_m: if session.is_some() { distance } else { 0.0 },
             paused_for_storage: rec.paused_for_storage(),
+            storage_failure: rec.storage_failure().map(str::to_owned),
         }
     }
 
@@ -660,15 +746,119 @@ impl Runner {
 
     /// §2.4 `ingest_gatt`: the plaintext under `pending/gatt/v1`, then the rows.
     fn ingest_gatt(&mut self, json: &str) -> Result<GattView, CoreError> {
-        let file = crate::gatt::save(&self.data_dir, json.as_bytes())?;
+        // validated and kept as plaintext under pending/gatt/v1 by the payload core, which also queues its upload
+        let update = self
+            .payloads
+            .save_gatt_discovery(json.to_owned())
+            .map_err(payload_error)?;
         let (view, _) = gatt_view::view(&self.catalog, json)?;
         let tx = self.store.conn.transaction()?;
         gatt_view::store(&tx, json)?;
         tx.commit()?;
-        if !file.archived {
-            self.emit(CoreEvent::UploadNeeded);
-        }
+        self.v3_effects(update);
         Ok(view)
+    }
+
+    /// The payload session (its UUIDv7 is the v2 session id and the Parquet `scan_session_id`), then the row.
+    fn create_session(
+        &mut self,
+        env: ScanEnvironment,
+        started: EpochMs,
+    ) -> Result<(SessionUuid, SessionRow), CoreError> {
+        let update = self.payloads.configure_scan(env).map_err(payload_error)?;
+        self.v3_effects(update);
+        let uuid = self.payloads.start_scan_session().map_err(payload_error)?;
+        match self.store.create_session(&uuid, started.0) {
+            Ok(row) => Ok((SessionUuid(uuid), SessionRow(row))),
+            Err(e) => {
+                let update = self.payloads.finish_scan_session();
+                self.payload_update(update);
+                Err(e)
+            }
+        }
+    }
+
+    /// The payload core's effects: sealed payloads need an upload; its warnings are ours.
+    fn v3_effects(&self, update: crate::CoreUpdate) {
+        for effect in update.effects {
+            match effect {
+                crate::CoreEffect::ScheduleUpload => self.emit(CoreEvent::UploadNeeded),
+                crate::CoreEffect::CancelUpload => {}
+                crate::CoreEffect::StorageWarning { message }
+                | crate::CoreEffect::PersistenceDegraded { message } => {
+                    self.emit(CoreEvent::StorageWarning { message })
+                }
+            }
+        }
+    }
+
+    fn payload_update(&self, update: Result<crate::CoreUpdate, crate::CoreError>) {
+        match update {
+            Ok(u) => self.v3_effects(u),
+            Err(e) => self.emit(CoreEvent::StorageWarning {
+                message: e.to_string(),
+            }),
+        }
+    }
+
+    fn payload_sealed(&self, sealed: Result<bool, crate::CoreError>) {
+        match sealed {
+            Ok(true) => self.emit(CoreEvent::UploadNeeded),
+            Ok(false) => {}
+            Err(e) => self.emit(CoreEvent::StorageWarning {
+                message: e.to_string(),
+            }),
+        }
+    }
+
+    fn upload_status(&self) -> UploadStatus {
+        let s = self.payloads.state();
+        UploadStatus {
+            pending_count: u32::try_from(s.pending_upload_count).unwrap_or(u32::MAX),
+            pending_bytes: self
+                .payloads
+                .pending_uploads()
+                .iter()
+                .map(|u| u.size_bytes)
+                .sum(),
+            failed_count: u32::try_from(s.failed_upload_count).unwrap_or(u32::MAX),
+            last_error: s.last_upload_error,
+        }
+    }
+
+    /// Each payload session's upload state, for the session list (L-2), from the known files (none is read). When
+    /// the read fails, the last states read stand (with a StorageWarning); before any read it is an error. A session
+    /// missing from the map has no payload: local-only, recorded before the Parquet staging.
+    fn upload_states(
+        &mut self,
+    ) -> Result<std::collections::HashMap<String, UploadState>, CoreError> {
+        match self.payloads.session_upload_states() {
+            Ok(states) => {
+                let states: std::collections::HashMap<String, UploadState> = states
+                    .into_iter()
+                    .map(|(session, state)| {
+                        let state = match state {
+                            crate::SessionUploadState::Pending => UploadState::Pending,
+                            crate::SessionUploadState::Uploaded => UploadState::Uploaded,
+                            crate::SessionUploadState::Failed => UploadState::Failed,
+                            crate::SessionUploadState::Empty => UploadState::Empty,
+                        };
+                        (session, state)
+                    })
+                    .collect();
+                self.upload_cache = Some(states.clone());
+                Ok(states)
+            }
+            Err(e) => match &self.upload_cache {
+                Some(last) => {
+                    self.emit(CoreEvent::StorageWarning {
+                        message: format!("upload states kept from the last read: {e}"),
+                    });
+                    Ok(last.clone())
+                }
+                None => Err(payload_error(e)),
+            },
+        }
     }
 
     fn current_session(&self, now: i64) -> Result<Option<SessionSummary>, CoreError> {
@@ -785,6 +975,19 @@ impl Core {
         let dir = Path::new(&config.data_directory);
         std::fs::create_dir_all(dir).map_err(CoreError::from_io)?;
         let db_path = dir.join("local.db");
+        // The payload core first: it seals a staging WAL a killed recording left (v3 or v2 staging alike), marks
+        // its session interrupted, and discovers every pending and archived file in the same directory (§1.5).
+        let payloads = crate::CluetoothCore::open(
+            config.data_directory.clone(),
+            crate::CoreConfig {
+                location_max_age_ms: config.location_max_age_ms,
+                recent_location_capacity: crate::config::DEFAULT_RECENT_LOCATION_CAPACITY,
+                payload_max_rows: config.payload_max_rows,
+                payload_max_estimated_bytes: config.payload_max_estimated_bytes,
+                payload_max_age_ms: config.payload_max_age_ms,
+                recipient_public_key: config.recipient_public_key.clone(),
+            },
+        )?;
         let (conn, _corrupt) = db::open_writer(&db_path, now)?;
         // A session left open by a killed process is interrupted at its last committed data (§1.2).
         conn.execute(
@@ -836,6 +1039,10 @@ impl Core {
             listener: None,
             reader: reader.clone(),
             notify,
+            payloads,
+            upload_cache: None,
+            #[cfg(test)]
+            fail_staging: None,
         })?;
         let _ticker = if ticker {
             Some(spawn_ticker(
@@ -958,9 +1165,7 @@ impl Core {
         env: ScanEnvironment,
         now: i64,
     ) -> Result<String, CoreError> {
-        let uuid = SessionUuid(new_uuid(now)?);
         self.ask_session(Event::Start {
-            uuid,
             env,
             now: EpochMs(now),
         })
@@ -1027,6 +1232,13 @@ impl Core {
             free,
         });
         let _ = self.job(|_| ());
+    }
+
+    /// Staging fails with a payload I/O error of `detail` until called with `None`.
+    #[cfg(test)]
+    pub(crate) fn fail_staging(&self, detail: Option<&str>) {
+        let detail = detail.map(str::to_owned);
+        let _ = self.job(move |r| r.fail_staging = detail);
     }
 
     /// Every commit fails with `error` until called with `None`.
@@ -1178,8 +1390,13 @@ impl Core {
 
     /// [P] Finished sessions, newest first, no empty ones.
     pub async fn sessions(&self) -> Result<Vec<SessionSummary>, CoreError> {
-        self.read(|c, ctx| query::sessions(c, ctx, &|_| UploadState::Pending))
-            .await
+        let states = Arc::new(self.job_async(|r| r.upload_states()).await??);
+        self.read(move |c, ctx| {
+            query::sessions(c, ctx, &|id| {
+                states.get(id).copied().unwrap_or(UploadState::Empty)
+            })
+        })
+        .await
     }
 
     /// [W]
@@ -1363,8 +1580,12 @@ impl Core {
     /// [W] SPEC R-10 "Delete uploaded raw files": only files that already uploaded (`archive/`); returns the bytes
     /// freed. Files not yet uploaded are never touched.
     pub async fn delete_uploaded_raw(&self) -> Result<u64, CoreError> {
-        self.job_async(|r| space::delete_uploaded_raw(&r.data_dir))
-            .await?
+        self.job_async(|r| {
+            // the payload core forgets the files it knew; anything else left under archive/ goes too
+            let known = r.payloads.delete_archived().map_err(payload_error)?;
+            Ok(known + space::delete_uploaded_raw(&r.data_dir)?)
+        })
+        .await?
     }
 
     /// [W] SPEC R-10 "Clear local database": the stored history of every session except the current one; raw files
@@ -1396,30 +1617,44 @@ impl Core {
 
     /// [N]
     pub fn upload_status(&self) -> Result<UploadStatus, CoreError> {
-        Ok(UploadStatus::default())
+        self.job(|r| r.upload_status())
     }
 
-    /// [N] Unchanged from v3.
+    /// [W] Unchanged from v3: every pending Parquet payload (v3, and v2 or pre-v2 files a v3 app left) and gatt/v1
+    /// object, oldest first (§1.5, §6.8.4).
     pub fn pending_uploads(&self) -> Result<Vec<PendingUpload>, CoreError> {
-        Ok(Vec::new())
+        self.job(|r| r.payloads.pending_uploads())
     }
 
     /// [F] Unchanged from v3: encrypts to `upload-cache/`.
     pub fn prepare_upload(&self, id: String) -> Result<PreparedUpload, CoreError> {
-        let _ = id;
-        Err(not_yet("prepare_upload"))
+        self.job(move |r| r.payloads.prepare_upload(id))?
+            .map_err(payload_error)
     }
 
     /// [F] Plaintext → archive; the ciphertext is deleted.
     pub fn mark_upload_succeeded(&self, id: String) -> Result<(), CoreError> {
-        let _ = id;
-        Err(not_yet("mark_upload_succeeded"))
+        self.job(move |r| {
+            let update = r
+                .payloads
+                .mark_upload_succeeded(id)
+                .map_err(payload_error)?;
+            r.v3_effects(update);
+            r.emit(CoreEvent::SessionsChanged);
+            Ok(())
+        })?
     }
 
     /// [F]
     pub fn mark_upload_failed(&self, id: String, message: String) -> Result<(), CoreError> {
-        let _ = (id, message);
-        Err(not_yet("mark_upload_failed"))
+        self.job(move |r| {
+            let update = r
+                .payloads
+                .mark_upload_failed(id, message)
+                .map_err(payload_error)?;
+            r.v3_effects(update);
+            Ok(())
+        })?
     }
 }
 
@@ -1443,6 +1678,7 @@ mod tests {
             device_count: 0,
             distance_m: 0.0,
             paused_for_storage: false,
+            storage_failure: None,
         }
     }
 
