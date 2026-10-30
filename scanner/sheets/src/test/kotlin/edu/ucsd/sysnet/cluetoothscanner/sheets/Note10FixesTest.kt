@@ -23,6 +23,7 @@ import edu.ucsd.sysnet.cluetoothscanner.fake.core.FakeCore
 import edu.ucsd.sysnet.cluetoothscanner.fake.core.FakeDemo
 import edu.ucsd.sysnet.cluetoothscanner.platform.fake.FakeGattDevice
 import edu.ucsd.sysnet.cluetoothscanner.platform.fake.FakeGattRunner
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -50,6 +51,7 @@ class Note10FixesTest {
         // --top-zone (12 + 44 + 12 dp) below the status bar: ☰ and search stay visible and tappable at Full
         assertEquals(status + 68f * density, s.geometry(s.root).full, 0.01f)
         s.setHeight(s.root, SheetHeight.Full)
+        advanceUntilIdle() // S-16a: the height change animates
         assertEquals(status + 68f * density, s.offsetOf(s.root), 0.01f)
         val noInset = SheetStackController(this, { _, to, _, onValue -> onValue(to) }).also { it.setScreen(2280f, density, 0f) }
         assertEquals(68f * density, noInset.geometry(noInset.root).full, 0.01f) // the tablet panel's host has none

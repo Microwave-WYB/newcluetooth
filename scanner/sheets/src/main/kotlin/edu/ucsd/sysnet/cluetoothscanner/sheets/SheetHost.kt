@@ -214,7 +214,7 @@ fun SheetFrame(
     body: @Composable () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxWidth().onSizeChanged { entry.peek = it.height.toFloat() }) {
+        Column(Modifier.fillMaxWidth().onSizeChanged { controller.setPeek(entry, it.height.toFloat()) }) {
             Handle(tablet = controller.tablet)
             // S-2, S-3, T-3: the header line's centre sits on the corner arc's centre (48 dp deep on phone, under
             // the handle zone; 30 dp on tablet). Like `.sheet-top`'s min-height, a one-line header gets 8 dp under

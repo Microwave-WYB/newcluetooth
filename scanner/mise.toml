@@ -20,6 +20,16 @@ description = "Host Android lint without Firebase credentials or native packagin
 depends = ["sdk-check"]
 run = "./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true :app:lintDebug -x :app:buildCluetoothCoreAndroid"
 
+[tasks.android-test-compile]
+description = "Compile every module's instrumented test sources (no APK, device, Firebase or native build), so androidTest drift fails the check"
+depends = ["sdk-check"]
+run = [
+  # a module that gains androidTest sources must be listed here
+  'mods=$(ls -d */src/androidTest | cut -d/ -f1 | sort | tr "\n" " "); [ "$mods" = "app core-bridge map sheets " ] || { echo "androidTest sources in: $mods; list each in android-test-compile" >&2; exit 1; }',
+  "./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true :app:compileDebugAndroidTestKotlin -x :app:buildCluetoothCoreAndroid",
+  "./gradlew --no-daemon --max-workers=2 :core-bridge:compileDebugAndroidTestKotlin :map:compileDebugAndroidTestKotlin :sheets:compileDebugAndroidTestKotlin",
+]
+
 [tasks.host-guard-check]
 description = "Prove unrelated task selectors fail before execution in host-only mode"
 run = '''
@@ -108,6 +118,7 @@ run = [
   "mise run //scanner:single-renderer",
   "mise run //scanner:wiki-bundle-test",
   "mise run //scanner:test",
+  "mise run //scanner:android-test-compile",
   "mise run //scanner:core-test",
   "mise run //scanner:ui-contract-test",
   "mise run //scanner:platform-test",

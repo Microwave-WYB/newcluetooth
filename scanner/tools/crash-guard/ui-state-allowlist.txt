@@ -4,10 +4,11 @@
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetContent.kt:25  SheetMachine: the reducer holder itself, written only by dispatch (reduce of the current state)
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/Discover.kt:491  DiscoverModel runner: the single DiscoverState, written only as reduceDiscover(current, event)
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/GattController.kt:49  GattController runner: the single GattState, written only as reduceGatt(current, event)
-sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:128  SheetStackController runner: the single StackState, written only as reduceStack(current, event)
+sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:133  SheetStackController runner: the single StackState, written only as reduceStack(current, event)
 sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetsState.kt:468  RowStore runner: the RowState version, written only as reduceRows(current, event)
-sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:65  execution layer: the composed content's scroll handle (gestures), set by the composition
-sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:144  execution layer: screen facts (height, density, insets) set by the host on layout
+sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:70  execution layer: the composed content's scroll handle (gestures), set by the composition
+sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:149  execution layer: screen facts (height, density, insets) set by the host on layout; a resting sheet whose target moves eases there (S-16a)
+sheets/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/sheets/SheetStack.kt:165  S-16a: the sheets' live offsets, private to the runner; written only by its animate-to-target path and its drag-follow path (place)
 map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/CluetoothMap.kt:69  execution layer: the MapLibre map handle (platform object), set once by the view callback
 map/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/map/CluetoothMap.kt:70  execution layer: the MapLibre surface handle (platform object), set once by the view callback
 app/src/main/kotlin/edu/ucsd/sysnet/cluetoothscanner/v2/MainScreen.kt:304  rememberViewLive: the last value of the pure viewLive(scope, live, last), written in a SideEffect

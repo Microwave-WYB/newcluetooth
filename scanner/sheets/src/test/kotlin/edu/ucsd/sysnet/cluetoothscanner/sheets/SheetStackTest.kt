@@ -99,7 +99,7 @@ class SheetStackTest {
         val p = s.push(product) // over Full: opens at Full
         p.content = FakeContent()
         advanceTimeBy(300) // almost in: within half a px of Full is "at Full"
-        p.liveOffset = s.geometry(p).full
+        s.placeForTest(p, s.geometry(p).full)
         s.beginDrag(p, DragRegion.Content, 200f, 700f, 0)
         assertFalse(s.dragMove(p, 200f, 650f, 16)) // up at Full with content at its top: native scroll
         assertEquals(SheetDrag.Mode.Native, p.drag!!.mode)
