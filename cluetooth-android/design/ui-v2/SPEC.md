@@ -531,7 +531,8 @@ Each component is built once. Its size, color and state rules come from these to
   - Tapping a cluster eases to its expansion zoom + 0.2.
 - **M-5 Heatmap.** A native MapLibre heatmap layer on the `density` source, below the clusters and points. It is
   always on.
-  - Weight 1 per device (a cell's device count in Cells mode), radius 24 dp, opacity 0.6.
+  - Weight 1 per device (a cell's device count in Cells mode), radius 56 dp, opacity 0.6; intensity about 0.15 at
+    zoom 12 rising to 0.35 at zoom 16, so the gradient reaches well outside a cluster bubble.
   - Color ramp transparent → blue → cyan → yellow → red, the same in light and dark. It never ends in white or any
     color close to the light base map, so the densest spot reads as the hottest, not as a hole.
   - Intensity is scaled so a stationary session (tens of devices on one spot) does not saturate: the center of such a
