@@ -1,6 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -22,7 +23,8 @@ import kotlinx.coroutines.launch
 
 /**
  * v2 (§1.2.2): the system splash stays until the core is open; then the one adaptive main screen (G-2). It also
- * launches what needs an Activity (O-2 permission requests, the Bluetooth enable dialog, P-5 location settings).
+ * launches what needs an Activity (O-2 permission requests, the Bluetooth enable dialog, P-5 location settings), and
+ * keeps the screen on while it is in the foreground (G-15).
  */
 class MainActivity : ComponentActivity() {
     /** The manifest names [CluetoothApplication], so the graph is always there; without it there is nothing to show. */
@@ -31,6 +33,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
+        // G-15: in the foreground the screen never turns off by itself (as the v3 app did); the window drops it in the background
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val graph = graph ?: return finish()
         val vm = ViewModelProvider(this, MainViewModel.factory(application, graph))[MainViewModel::class.java]
         // §1.2.2: the splash renders from the core state: it holds while Opening (and until the screen's state is built)
