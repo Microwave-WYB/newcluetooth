@@ -387,6 +387,8 @@ Design principles for app and core code (they take precedence over the more spec
   immutable value updated by a pure `(state, event) -> state` function; keep
   mutation at the edges (Compose state holder, Android callbacks, MapLibre,
   the SQLite transaction). Test the pure functions directly.
+- Async results enter UI state only as events through a reducer; no local mutable state updated from
+  effects (`//scanner:crash-guard`'s ui-state-guard enforces it in v2 UI code).
 - Concurrency: lock-free structured concurrency. Prefer queues and single-owner
   actors to locks: one task or thread owns a piece of mutable state, and others
   talk to it through messages (with a one-shot reply when they need an answer).

@@ -28,9 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -45,6 +43,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import edu.ucsd.sysnet.cluetoothscanner.api.core.AdvFormat
@@ -78,6 +77,7 @@ internal object DeviceTags {
     const val CANCEL = "gatt-cancel"
     const val TRY_AGAIN = "gatt-try-again"
     const val NOTE = "gatt-note"
+    const val HEAD_RSSI = "device-head-rssi"
     const val REASON = "gatt-reason"
     const val CODE = "gatt-code"
     fun rawLen(header: Boolean) = if (header) "raw-len-head" else "raw-len"
@@ -88,17 +88,22 @@ internal object DeviceTags {
 /** The device sheet (D-9..D-13). */
 @Composable
 internal fun DeviceSheet(state: SheetsState, entry: SheetEntry, key: Long) {
-    var content by remember { mutableStateOf(DeviceContent()) }
+    // the content is a state machine: the effects only send events, each reduced into the current content
+    val sheet = rememberSheetMachine(::DeviceContent, ::reduceDevice)
+    val content = sheet.state
     val gatt = remember(entry.id) { state.gattFor(entry, key) }
     LaunchedEffect(key) {
-        content = content.withDetail(state.load(SheetQuery.Device(key)))
-        // D-13.7; a failed read shows the tab as never read
-        if (gatt.state == GattUi.Idle) (state.load(SheetQuery.LastGatt(key)) as? Outcome.Ok)?.let { gatt.showLast(it.value) }
+        sheet.dispatch(DeviceEvent.DetailLoaded(state.load(SheetQuery.Device(key))))
+        // D-13.7, into the GATT tab's own state machine; a failed read shows the tab as never read
+        when (val last = state.load(SheetQuery.LastGatt(key))) {
+            is Outcome.Ok -> gatt.showLast(last.value)
+            is Outcome.Failed -> Unit
+        }
     }
     if (state.live) {
         LaunchedEffect(key) { // D-10: the chart rides on the deltas of the focused key
-            content = content.withChart(state.load(SheetQuery.Chart(key)))
-            state.chartUpdates(key).collect { content = content.withChart(it) }
+            sheet.dispatch(DeviceEvent.ChartLoaded(state.load(SheetQuery.Chart(key))))
+            state.chartUpdates(key).collect { sheet.dispatch(DeviceEvent.ChartDelta(it)) }
         }
     }
     val row = state.rows[key]
@@ -107,9 +112,10 @@ internal fun DeviceSheet(state: SheetsState, entry: SheetEntry, key: Long) {
         PushedHeader(state) { detail.valueOrNull()?.let { DeviceHead(it, row?.rssi ?: it.rssi) } }
     }) {
         when (detail) {
-            Loaded.Pending, Loaded.Missing -> Unit
-            is Loaded.Failed -> EmptyText(detail.message)
-            is Loaded.Found -> DeviceBody(state, entry, content, detail.value, row?.rssi ?: detail.value.rssi, gatt) { content = content.withTab(it) }
+            Loaded.Pending -> LoadPending()
+            Loaded.Missing -> LoadMissing(LoadTexts.DeviceMissing)
+            is Loaded.Failed -> LoadFailed(detail.message)
+            is Loaded.Found -> DeviceBody(state, entry, content, detail.value, row?.rssi ?: detail.value.rssi, gatt) { sheet.dispatch(DeviceEvent.TabSelected(it)) }
         }
     }
 }
@@ -146,7 +152,7 @@ private fun DeviceBody(state: SheetsState, entry: SheetEntry, content: DeviceCon
 
 /** D-9: the name (or "No name"), the product link, the MAC and "−56 dBm" in the band color. */
 @Composable
-private fun DeviceHead(d: DeviceDetail, rssi: Int?) {
+internal fun DeviceHead(d: DeviceDetail, rssi: Int?) {
     val c = CluetoothTheme.colors
     val t = CluetoothTheme.type
     // `.dev-head`: the name on its 24 dp line from the header's top, the wiki link, the MAC line, 12 dp under them
@@ -156,11 +162,14 @@ private fun DeviceHead(d: DeviceDetail, rssi: Int?) {
         val url = d.wikiUrl
         if (page != null && url != null) WikiLink(page.title, url)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(d.addr, style = t.sub.tabular(), color = c.t2)
+            // the RSSI is never clipped ("−127 dBm" at a large font scale): the MAC gives way first
+            Text(d.addr, Modifier.weight(1f, fill = false), style = t.sub.tabular(), color = c.t2, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (rssi != null) {
                 Text(
                     Format.dbm(rssi),
-                    Modifier.padding(start = Css.DevRssi.marginLeft),
+                    Modifier.padding(start = Css.DevRssi.marginLeft).testTag(DeviceTags.HEAD_RSSI),
+                    maxLines = 1,
+                    softWrap = false,
                     style = t.sub.tabular().copy(fontWeight = FontWeight(Css.DevRssi.fontWeight.toInt())),
                     color = bandColor(rssi),
                 )
@@ -254,13 +263,17 @@ internal fun RawTable(d: DeviceDetail) {
     val shape = RoundedCornerShape(Css.Raw.borderRadius)
     val style = CluetoothTheme.type.sub.copy(fontSize = Css.Raw.fontSize.sp, lineHeight = Css.Raw.lineHeight.sp)
     val head = style.copy(fontWeight = FontWeight(Css.Raw_Th.fontWeight.toInt()))
-    // D-12: Len and Type are 44 and 56 dp, or wider when the header (in this font and size) needs it, as a table
-    // column grows to fit an unbreakable word; every row uses the same widths, so the columns line up
+    // D-12: Len and Type are 44 and 56 dp, or wider when their header or a value (in this font and size) needs it, as
+    // a table column grows to fit an unbreakable word; every row uses the same widths, so the columns line up
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val pad = Css.Raw_Td.padding.left * 2
-    val lenW = with(density) { maxOf(Css.Raw_ColLen.width, measurer.measure(Strings.Len, head, softWrap = false).size.width.toDp() + pad) }
-    val typeW = with(density) { maxOf(Css.Raw_ColType.width, measurer.measure(Strings.Type, head, softWrap = false).size.width.toDp() + pad) }
+    fun widest(min: androidx.compose.ui.unit.Dp, header: String, values: List<String>) = with(density) {
+        val texts = listOf(head to header) + values.map { style.tabular() to it }
+        maxOf(min, texts.maxOf { (st, text) -> measurer.measure(text, st, softWrap = false).size.width }.toDp() + pad)
+    }
+    val lenW = widest(Css.Raw_ColLen.width, Strings.Len, d.structures.map { it.len.toString() })
+    val typeW = widest(Css.Raw_ColType.width, Strings.Type, d.structures.map { Format.adType(it.adType) })
     Column(
         Modifier
             .padding(horizontal = Css.Raw.margin.left)

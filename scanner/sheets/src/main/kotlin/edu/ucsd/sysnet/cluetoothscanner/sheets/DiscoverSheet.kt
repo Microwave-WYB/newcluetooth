@@ -15,10 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -226,18 +223,19 @@ private fun Row(state: SheetsState, row: DeviceRow, tablet: Boolean, onClick: ()
 @Composable
 private fun Categories(state: SheetsState, entry: SheetEntry) {
     val d = state.discover
-    var groups by remember { mutableStateOf<Loaded<List<CategoryGroup>>>(Loaded.Pending) }
+    val cards = rememberSheetMachine<Loaded<List<CategoryGroup>>, CategoriesEvent>({ Loaded.Pending }, ::reduceCategories)
+    val groups = cards.state
     val filter = d.queryFilter()
     LaunchedEffect(filter, d.rows) {
         // every answer also teaches the category labels (D-6: titles never show an id)
         suspend fun read() = state.load(SheetQuery.Products(filter)).also { o ->
             (o as? Outcome.Ok)?.let { state.learnLabels(it.value.map { g -> g.category to g.label }) }
         }
-        groups = loadedOf(read())
+        cards.dispatch(CategoriesEvent.Loaded(read()))
         if (state.live) while (true) { // live cards update in place (§2.6); new ones are appended by the core order
             delay(LIVE_REFRESH_MS)
             // a failed refresh keeps the cards shown
-            (read() as? Outcome.Ok)?.let { groups = Loaded.Found(it.value) }
+            cards.dispatch(CategoriesEvent.Refreshed(read()))
         }
     }
     val listState = rememberSheetListState(entry, CATEGORIES_LIST)

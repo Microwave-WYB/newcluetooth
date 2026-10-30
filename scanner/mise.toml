@@ -56,8 +56,13 @@ description = "Fail if the committed design/ui-v2 JSON exports are out of date"
 run = "node design/ui-v2/export.mjs --check"
 
 [tasks.crash-guard]
-description = "Fail on the constructs AGENTS.md bans from v2 production Kotlin (!!, lateinit, unchecked as, error/check/require, TODO(), runBlocking, GlobalScope); exceptions in tools/crash-guard/allowlist.txt"
-run = ["python3 tools/crash-guard/crash_guard.py --self-test", "python3 tools/crash-guard/crash_guard.py"]
+description = "Fail on the constructs AGENTS.md bans from v2 production Kotlin (!!, lateinit, unchecked as, error/check/require, TODO(), runBlocking, GlobalScope; exceptions in tools/crash-guard/allowlist.txt) and on non-ephemeral Compose mutable state in v2 UI code (ui_state_guard.py; exceptions in tools/crash-guard/ui-state-allowlist.txt)"
+run = [
+  "python3 tools/crash-guard/crash_guard.py --self-test",
+  "python3 tools/crash-guard/crash_guard.py",
+  "python3 tools/crash-guard/ui_state_guard.py --self-test",
+  "python3 tools/crash-guard/ui_state_guard.py",
+]
 
 [tasks.single-renderer]
 description = "Fail on a MapSnapshotter or a second MapLibre MapView in any src/main (one map renderer at a time, SPEC R-5 removed)"

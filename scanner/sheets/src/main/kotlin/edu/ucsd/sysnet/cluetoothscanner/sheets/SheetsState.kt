@@ -114,19 +114,18 @@ class SheetsState internal constructor(
         }
     }
 
-    /** Category ids to their vocabulary labels (the core's, G-8), for headers and the Filter sheet. */
-    internal var categoryLabels by mutableStateOf<Map<String, String>>(emptyMap())
-        private set
+    /** Category ids to their vocabulary labels (the core's, G-8): a state machine fed by every answer that has them. */
+    private val labels = SheetMachine<Map<String, String>, List<Pair<String, String>>>(emptyMap(), ::mergeLabels)
+
+    /** Category ids to their vocabulary labels, for headers and the Filter sheet. */
+    internal val categoryLabels: Map<String, String> get() = labels.state
 
     /**
      * Learns category labels from any core answer that carries them (category counts, product groups). The first read
      * at open can come back empty (a live session that has not seen a device yet), so labels are never a one-time
      * snapshot.
      */
-    internal fun learnLabels(labels: List<Pair<String, String>>) {
-        val merged = mergeLabels(categoryLabels, labels)
-        if (merged !== categoryLabels) categoryLabels = merged
-    }
+    internal fun learnLabels(learned: List<Pair<String, String>>) = labels.dispatch(learned)
 
     /** D-6: the display label of [category] for a product sheet's title; read from the product's counts if unknown. */
     internal suspend fun labelOf(category: String, pageId: String?): String {
