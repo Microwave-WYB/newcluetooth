@@ -42,7 +42,12 @@ class LoadStatesUiTest {
             Mode.Missing -> null
             Mode.Slow -> awaitCancellation()
             Mode.Fail -> throw IllegalStateException("core closed")
-            Mode.ChartLast -> real()
+            // both reads in flight at once, the chart's landing last (as on the reader while recording): the detail
+            // takes 100 ms, the chart 1 s
+            Mode.ChartLast -> {
+                delay(100)
+                real()
+            }
         }
         override suspend fun device(scope: Scope, key: DeviceKey): DeviceDetail? = read { core.device(scope, key) }
         override suspend fun product(scope: Scope, pageId: String?, filter: DeviceFilter): ProductDetail? = read { core.product(scope, pageId, filter) }

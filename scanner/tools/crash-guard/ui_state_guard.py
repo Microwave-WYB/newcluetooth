@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""ui-state-guard: fail on Compose mutable state that holds more than an ephemeral UI primitive in v2 code.
+"""ui-state-guard: fail on mutable state that holds more than an ephemeral UI primitive in v2 UI code.
 
 AGENTS.md: async results enter UI state only as events through a reducer; no local mutable state updated from
 effects. A `mutableStateOf` (or `mutableStateListOf` / `mutableStateMapOf`) is allowed without an entry only when it
 holds an ephemeral UI primitive: a Boolean, a String (a text field), or a Float / Dp / Offset (gestures), as its type
 argument (`mutableStateOf<Dp?>(null)`) or its literal initial value (`false`, `""`, `0f`, `0.dp`, `Offset.Zero`).
-Anything else is non-trivial state: put it in a state machine (an immutable value, a pure reducer, one dispatch), or,
+`mutableIntStateOf` / `mutableLongStateOf` / `mutableDoubleStateOf` and every `MutableStateFlow` / `MutableSharedFlow`
+constructed in v2 UI code count as state too (a flow written from effects is the same lost-update hazard as Compose
+state). Anything else is non-trivial state: put it in a state machine (an immutable value, a pure reducer, one dispatch), or,
 for a runner's single state holder or an execution-layer handle, add an entry with its reason to
 ui-state-allowlist.txt next to this script:
 
@@ -36,6 +38,8 @@ SCANNED = [
 ]
 
 STATE = re.compile(r"\bmutableState(?:Of|ListOf|MapOf)\b")
+# always state: numeric Compose state that isn't a gesture Float, and flows constructed as holders or channels
+ALWAYS = re.compile(r"\b(?:mutable(?:Int|Long|Double)StateOf|Mutable(?:State|Shared)Flow\s*(?:<.*?>)?\s*\()")
 EPHEMERAL_TYPES = {"Boolean", "String", "Float", "Dp", "Offset"}
 TYPE_ARG = re.compile(r"\bmutableStateOf\s*<\s*([\w.]+)\??\s*>")
 # the first argument after `mutableStateOf(`: a literal of an ephemeral type (strings are blanked to quotes)
@@ -48,6 +52,9 @@ def hits(src: str) -> list[tuple[int, str]]:
     lines = src.split("\n")
     for no, code in enumerate(code_only(src).split("\n"), 1):
         if SKIPPED_LINE.match(code):
+            continue
+        if ALWAYS.search(code):
+            found.append((no, lines[no - 1].strip()))
             continue
         for m in STATE.finditer(code):
             rest = code[m.start():]
@@ -115,6 +122,13 @@ def self_test() -> int:
         "val items = mutableStateListOf<Row>()",
         "val m = mutableStateMapOf<Long, Row>()",
         "var n by mutableStateOf(count)",
+        "private val content = MutableStateFlow(DeviceContent())",
+        "private val _ui = MutableStateFlow<MainUiState>(MainUiState())",
+        "val events = MutableSharedFlow<Event>(extraBufferCapacity = 4)",
+        "val m = MutableStateFlow<Map<Long, List<Row>>>(emptyMap())",
+        "var n by remember { mutableIntStateOf(0) }",
+        "var t by remember { mutableLongStateOf(now()) }",
+        "var d by mutableDoubleStateOf(0.0)",
     ]
     ephemeral = [
         "var shown by remember { mutableStateOf(false) }",
@@ -132,6 +146,10 @@ def self_test() -> int:
         "val s = \"mutableStateOf(Foo())\"",
         "var p by mutableFloatStateOf(0f)",
         "import androidx.compose.runtime.mutableStateOf",
+        "import kotlinx.coroutines.flow.MutableStateFlow",
+        "fun f(x: StateFlow<Int>): StateFlow<Int> = x",
+        "val s: MutableStateFlow<Int> get() = holder",
+        "// MutableStateFlow(DeviceContent())",
     ]
     failures = []
     for src in flagged:
@@ -140,11 +158,16 @@ def self_test() -> int:
     for src in ephemeral:
         if hits(src):
             failures.append(f"expected no hit in {src!r}, got {hits(src)}")
+    # the lost update the owner's blank sheet came from, as a flow: the holder is the hit, on its own line
+    lost = "private val content = MutableStateFlow(DeviceContent())\n" \
+        "suspend fun open() {\n    content.value = content.value.withDetail(core.device(key))\n}"
+    if [no for no, _ in hits(lost)] != [1]:
+        failures.append(f"lost update via MutableStateFlow: expected a hit on line 1, got {hits(lost)}")
     for f in failures:
         print(f"ui-state-guard self-test: {f}", file=sys.stderr)
     if failures:
         return 1
-    print(f"ui-state-guard self-test: ok ({len(flagged) + len(ephemeral)} cases)")
+    print(f"ui-state-guard self-test: ok ({len(flagged) + len(ephemeral) + 1} cases)")
     return 0
 
 

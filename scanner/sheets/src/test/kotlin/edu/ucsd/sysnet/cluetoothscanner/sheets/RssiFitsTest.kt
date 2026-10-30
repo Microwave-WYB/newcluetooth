@@ -79,7 +79,8 @@ class RssiFitsTest {
             inRange = true, live = false, connectable = true, format = AdvFormat.Legacy, companyId = null, companyName = null,
             serviceUuid = null, txPower = null, structures = listOf(AdStructure(2, 1, byteArrayOf(6))), tail = null, decoded = null, lastSeenMs = 0,
         )
-        scaled { Column(Modifier.width(318.dp)) { DeviceHead(d, -127) } } // the phone header's content width
+        // narrow enough that the MAC and "−127 dBm" don't both fit at font scale 1.3: the MAC must give way
+        scaled { Column(Modifier.width(200.dp)) { DeviceHead(d, -127) } }
         assertFits(compose.onNodeWithTag(DeviceTags.HEAD_RSSI, useUnmergedTree = true).fetchSemanticsNode(), "−127 dBm")
         compose.onNodeWithText(Format.dbm(-127)).assertExists()
     }
