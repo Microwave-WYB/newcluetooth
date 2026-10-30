@@ -7,6 +7,7 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
@@ -139,7 +140,7 @@ class UploadPassRunnerTest {
         assertTrue(sessions.ids().isEmpty())
         assertTrue(cache.listFiles().orEmpty().isEmpty())
         core.listFails = true
-        assertEquals(UploadTally(failed = 1), runner.run(UploadKind.SCANS))
+        assertEquals(UploadTally(failed = 1, problem = "the pending uploads could not be read: db locked"), runner.run(UploadKind.SCANS))
     }
 
     @Test
@@ -158,32 +159,63 @@ class UploadPassRunnerTest {
             calls += "$kind $policy wifi=$wifiOnly"
         }
 
-        override fun periodic(wifiOnly: Boolean, replace: Boolean) {
+        override fun periodic(wifiOnly: Boolean, policy: Periodic) {
             if (throws) throw IllegalStateException("WorkManager is not initialized")
-            calls += "periodic replace=$replace wifi=$wifiOnly"
+            calls += "periodic $policy wifi=$wifiOnly"
+        }
+    }
+
+    private class Marks(var replaced: Boolean = false) : UploadMarks {
+        override fun v3WorkReplaced() = replaced
+        override fun markV3WorkReplaced() {
+            replaced = true
         }
     }
 
     @Test
-    fun `scheduling - start replaces v3's periodic work, Wi-Fi changes re-schedule, upload now restarts scans expedited`() = runBlocking {
+    fun `the first v2 start takes over v3's queued work once, later starts keep what is queued (#100 review)`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Unconfined)
+        val scheduler = Scheduler()
+        val marks = Marks()
+        PlatformUploads(core, runner, scheduler, marks, scope, MutableStateFlow(false)).start()
+        assertEquals(listOf("periodic Replace wifi=false", "SCANS Replace wifi=false", "GATT Replace wifi=false"), scheduler.calls)
+        assertTrue(marks.replaced)
+        scheduler.calls.clear()
+        PlatformUploads(core, runner, scheduler, marks, scope, MutableStateFlow(false)).start()
+        assertEquals(listOf("periodic Keep wifi=false", "SCANS Keep wifi=false", "GATT Keep wifi=false"), scheduler.calls)
+        // A takeover that could not be scheduled is tried again at the next start.
+        val failing = Scheduler().apply { throws = true }
+        val fresh = Marks()
+        PlatformUploads(core, runner, failing, fresh, scope, MutableStateFlow(false)).start()
+        assertFalse(fresh.replaced)
+        UploadLink.uploads = null
+        scope.cancel()
+    }
+
+    @Test
+    fun `scheduling - Wi-Fi changes re-schedule, upload now restarts both, failures show in the status`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Unconfined)
         val scheduler = Scheduler()
         val wifi = MutableStateFlow(false)
-        val uploads = PlatformUploads(core, runner, scheduler, scope, wifi)
+        val uploads = PlatformUploads(core, runner, scheduler, Marks(replaced = true), scope, wifi)
         uploads.start()
-        assertEquals(listOf("periodic replace=true wifi=false", "SCANS Keep wifi=false", "GATT Keep wifi=false"), scheduler.calls)
         assertTrue("the workers find it", UploadLink.uploads === uploads)
         scheduler.calls.clear()
         wifi.value = true
-        assertEquals(listOf("periodic replace=false wifi=true", "SCANS Replace wifi=true", "GATT Replace wifi=true"), scheduler.calls)
+        assertEquals(listOf("periodic Update wifi=true", "SCANS Replace wifi=true", "GATT Replace wifi=true"), scheduler.calls)
         scheduler.calls.clear()
         assertEquals(PlatformResult.Ok(Unit), uploads.uploadNow())
-        assertEquals(listOf("SCANS ReplaceExpedited wifi=true", "GATT Keep wifi=true"), scheduler.calls)
+        assertEquals(listOf("SCANS ReplaceExpedited wifi=true", "GATT Replace wifi=true"), scheduler.calls)
         scheduler.calls.clear()
         uploads.uploadNeeded()
         assertEquals(listOf("SCANS Keep wifi=true", "GATT Keep wifi=true"), scheduler.calls)
         scheduler.throws = true
         assertTrue("a scheduling failure is a typed result", uploads.uploadNow() is PlatformResult.Err)
+        uploads.uploadNeeded()
+        assertEquals("and the user sees it", "Uploads not scheduled: WorkManager is not initialized", uploads.status.value.lastError)
+        scheduler.throws = false
+        uploads.uploadNeeded()
+        assertEquals("it clears once scheduling works", null, uploads.status.value.lastError)
         // The status follows a pass.
         core.pending += scan
         val reads = core.statusReads
@@ -191,6 +223,70 @@ class UploadPassRunnerTest {
         assertTrue(core.statusReads > reads)
         assertEquals(0, uploads.status.value.pendingCount)
         UploadLink.uploads = null
+        scope.cancel()
+    }
+
+    @Test
+    fun `a failure the core could not record shows in the status (#100 review)`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Unconfined)
+        val recordingFails = object : UploadCore by core {
+            override suspend fun markFailed(id: String, message: String): PlatformResult<Unit> = PlatformResult.Err(PlatformError.Core("db locked"))
+        }
+        val uploads = PlatformUploads(
+            recordingFails, UploadPassRunner(recordingFails, store, { UploadPlace(sessions, cache) }, Dispatchers.Unconfined),
+            Scheduler(), Marks(replaced = true), scope, MutableStateFlow(false),
+        )
+        core.pending += scan
+        store.next = { StoreResult.Failed("http=503") }
+        val tally = uploads.pass(UploadKind.SCANS)
+        assertEquals(1, tally.failed)
+        assertEquals("a failed (http=503) and the core could not record it: db locked", uploads.status.value.lastError)
+        scope.cancel()
+    }
+
+    /** A store whose first upload waits until [release], recording overlaps and whether its bytes stayed on disk. */
+    private class SlowStore : ObjectStore {
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var active = 0
+        var maxActive = 0
+        var puts = 0
+        val bytesSeen = mutableListOf<String>()
+        override suspend fun put(objectPath: String, file: File, sessionUri: String?, onSession: (String) -> Unit): StoreResult {
+            active++
+            maxActive = maxOf(maxActive, active)
+            puts++
+            onSession("https://upload/s$puts")
+            if (puts == 1) release.await()
+            // The file it streams is still there, unchanged, when the transfer ends.
+            bytesSeen += if (file.isFile) String(file.readBytes()) else "<deleted>"
+            active--
+            return StoreResult.Stored
+        }
+
+        override suspend fun exists(objectPath: String) = false
+    }
+
+    @Test
+    fun `two passes of one kind never overlap, so one cannot overwrite or delete the file the other streams (#100 review)`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val slow = SlowStore()
+        val uploads = PlatformUploads(
+            core, UploadPassRunner(core, slow, { UploadPlace(sessions, cache) }, Dispatchers.Default),
+            Scheduler(), Marks(replaced = true), scope, MutableStateFlow(false),
+        )
+        core.pending += scan
+        // The one-time and the periodic work start together over the same pending file.
+        val first = scope.async { uploads.pass(UploadKind.SCANS) }
+        while (slow.puts == 0) kotlinx.coroutines.delay(5)
+        val second = scope.async { uploads.pass(UploadKind.SCANS) }
+        kotlinx.coroutines.delay(200)
+        assertEquals("the second waits for the first", 1, slow.puts)
+        slow.release.complete(Unit)
+        val tallies = listOf(first.await(), second.await())
+        assertEquals("never two transfers at once", 1, slow.maxActive)
+        assertEquals("the streamed file was intact", listOf("a#1"), slow.bytesSeen)
+        assertEquals("the file went up once", listOf("a"), core.succeeded)
+        assertEquals(1, tallies[0].succeeded)
         scope.cancel()
     }
 }

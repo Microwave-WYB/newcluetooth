@@ -46,8 +46,11 @@ internal class UploadPassRunner(
             is PlatformResult.Ok -> UploadEvent.MarkedSucceeded(effect.id)
             is PlatformResult.Err -> UploadEvent.MarkSucceededFailed(effect.id, marked.error.message)
         }
-        // Its own failure is not the useful one: the send's diagnostic is what the core records.
-        is UploadEffect.MarkFailed -> core.markFailed(effect.id, effect.message).let { UploadEvent.MarkedFailed(effect.id) }
+        is UploadEffect.MarkFailed -> when (val marked = core.markFailed(effect.id, effect.message)) {
+            is PlatformResult.Ok -> UploadEvent.MarkedFailed(effect.id)
+            is PlatformResult.Err ->
+                UploadEvent.MarkedFailed(effect.id, "${effect.id} failed (${effect.message}) and the core could not record it: ${marked.error.message}")
+        }
         is UploadEffect.Discard -> {
             files { discard(where, effect.id) }
             null

@@ -18,14 +18,19 @@ internal object UploadMachine {
 
     fun reduce(pass: UploadPass, event: UploadEvent): UploadStep = when (event) {
         is UploadEvent.Listed -> listed(pass, event.pending)
-        is UploadEvent.ListFailed -> finish(pass.copy(tally = pass.tally.copy(failed = pass.tally.failed + 1)))
+        is UploadEvent.ListFailed ->
+            finish(pass.copy(tally = pass.tally.copy(failed = pass.tally.failed + 1, problem = "the pending uploads could not be read: ${event.message}")))
         is UploadEvent.Sent -> step(pass, event.id) { sent(pass, it) }
         is UploadEvent.SendFailed -> step(pass, event.id) { sendFailed(pass, it, event.failure) }
         is UploadEvent.Checked -> step(pass, event.id) { checked(pass, it, event.stored) }
         is UploadEvent.MarkedSucceeded -> step(pass, event.id) { done(pass, it, Outcome.Succeeded) }
         is UploadEvent.MarkSucceededFailed ->
             step(pass, event.id) { markFailed(pass, it, event.message, denied = false) }
-        is UploadEvent.MarkedFailed -> step(pass, event.id) { done(pass, it, it.outcome()) }
+        is UploadEvent.MarkedFailed -> step(pass, event.id) { item ->
+            // The core could not record the failure: the user sees it in the status (lastError), not only a log.
+            val noted = event.problem?.let { pass.copy(tally = pass.tally.copy(problem = it)) } ?: pass
+            done(noted, item, item.outcome())
+        }
     }
 
     private fun listed(pass: UploadPass, pending: List<PendingFile>): UploadStep {
@@ -134,8 +139,14 @@ internal data class PendingFile(val id: String, val objectPath: String) {
     val kind: UploadKind get() = UploadKind.of(objectPath)
 }
 
-/** What one pass did. [failed] files are worth a retry with backoff; [denied] ones wait for rules or credentials. */
-data class UploadTally(val succeeded: Int = 0, val failed: Int = 0, val denied: Int = 0)
+/**
+ * What one pass did. [failed] files are worth a retry with backoff; [denied] ones wait for rules or credentials.
+ * [problem] is a failure the core's own status cannot show (the pending list unreadable, a failure it could not record).
+ */
+data class UploadTally(val succeeded: Int = 0, val failed: Int = 0, val denied: Int = 0, val problem: String? = null) {
+    operator fun plus(other: UploadTally) =
+        UploadTally(succeeded + other.succeeded, failed + other.failed, denied + other.denied, other.problem ?: problem)
+}
 
 internal data class UploadPass(
     val kind: UploadKind,
@@ -193,8 +204,8 @@ internal sealed interface UploadEvent {
     /** `markUploadSucceeded` failed: the file is marked failed instead (as v3). */
     data class MarkSucceededFailed(val id: String, val message: String) : UploadEvent
 
-    /** `markUploadFailed` ran (or failed; the send's failure is still the useful one). */
-    data class MarkedFailed(val id: String) : UploadEvent
+    /** `markUploadFailed` ran; [problem] when it failed (the send's failure is the one the core lost). */
+    data class MarkedFailed(val id: String, val problem: String? = null) : UploadEvent
 }
 
 internal sealed interface UploadEffect {

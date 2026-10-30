@@ -1423,9 +1423,13 @@ interface LocationStatusSource { val status: StateFlow<LocationStatus>; val myLo
     typed result;
   - each kind has its own unique work and backoff (scans 30 s, GATT 5 min), plus an hourly periodic run; "Upload
     now" restarts the scan work expedited, `CoreEvent.UploadNeeded` and app start keep queued work;
-  - v3's unique work names, session prefs and cache directories are reused, so an in-place upgrade replaces v3's
-    queued work and resumes its sessions;
-  - `status` is `core.uploadStatus()`, read again after every pass.
+  - v3's unique work names, session prefs and cache directories are reused. v3's queued work under those names runs
+    v3 worker classes that cannot work in v2, so the first v2 start replaces every one of them, once (prefs
+    `cluetooth_uploads`); later starts keep what is queued. v3's resumable sessions resume;
+  - passes of one kind never overlap: one actor per kind runs them in turn (one-time and periodic work alike), and a
+    file sealed during a pass gets another pass right after it;
+  - `status` is `core.uploadStatus()`, read again after every pass; its `lastError` also shows what the core cannot
+    ("Uploads not scheduled: …", a failure the core could not record).
 - The pre-0.0.5 JSONL uploader and the first-launch `legacy_pending` step (§1.5) follow in their own change.
 - `sig-numbers.tsv` is loaded from assets into `CoreAssets`.
 
