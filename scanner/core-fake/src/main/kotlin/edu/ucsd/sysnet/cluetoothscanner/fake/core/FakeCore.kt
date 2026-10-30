@@ -314,7 +314,8 @@ class FakeCore(
 
     /**
      * The resolved sessions of [scope] (`sessions ∩ filter`), the current one included. Empty sessions never take
-     * part (§2.1), except the live scope itself, which is the current session even before its first device.
+     * part (§2.1), except the live scope itself, which is the current session even before its first device, and
+     * exactly one session asked for by id without a filter (V-3: its route and frame still show).
      */
     private fun resolve(scope: Scope, now: Long): List<Sess> {
         val l = rec
@@ -327,7 +328,8 @@ class FakeCore(
         val f = scope.filter
         val from = f?.startedFromMs
         val to = f?.startedToMs
-        return picked.filter(::hasData).filter { s ->
+        val exactlyOne = f == null && (scope.sessions as? SessionScope.Sessions)?.ids?.size == 1
+        return picked.filter { exactlyOne || hasData(it) }.filter { s ->
             (from == null || s.startedMs >= from) && (to == null || s.startedMs <= to)
         }
     }

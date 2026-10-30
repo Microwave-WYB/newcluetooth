@@ -471,7 +471,7 @@ fn products_and_product_match_the_fake() {
     );
 }
 
-/// L-2: newest first, the empty session (r4) never appears.
+/// L-2: newest first, the empty session (r4) never appears in the list; on its own (V-3) it resolves, empty.
 #[test]
 fn sessions_match_the_fake() {
     let w = world();
@@ -485,12 +485,9 @@ fn sessions_match_the_fake() {
         .map(|id| w.sessions[*id].0.clone())
         .collect();
     assert_eq!(ids, expected);
-    assert!(
-        block(w.core.session_view(scope(&w, "r4")))
-            .unwrap()
-            .session_ids
-            .is_empty()
-    );
+    let r4 = block(w.core.session_view(scope(&w, "r4"))).unwrap();
+    assert_eq!(r4.session_ids, vec![w.sessions["r4"].0.clone()]);
+    assert_eq!(r4.device_count, 0);
 }
 
 /// Q-1/Q-2 and §2.5 map points: search keeps the order; `addr` is uppercase colon; the viewport is padded by a
@@ -1812,4 +1809,79 @@ fn cleanup_frees_space_and_keeps_unuploaded_files() {
             .unwrap();
         assert!(n <= 2, "orphan payloads are gone ({n})");
     });
+}
+
+/// SPEC V-3 (600c2de): a session that stopped with 0 devices keeps its route and frame when the scope is exactly that
+/// session; every other scope (All, several sessions, a filter, the session list) still leaves it out.
+#[test]
+fn an_empty_session_shows_only_on_its_own() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, _c) = fresh_core(t0);
+    // a session with a device, then one with only a route
+    let full = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(
+        vec![obs("AA:00:00:00:00:01", -60, t0 + 1_000, 1, "A")],
+        t0 + 1_000,
+    )
+    .unwrap();
+    core.stop_recording_at(t0 + 2_000).unwrap();
+    let t1 = t0 + 10_000;
+    let empty = core.start_recording_at(env(), t1).unwrap();
+    for k in 0..4i64 {
+        core.ingest_location_at(LocationFix {
+            lat: 32.88 + k as f64 * 0.001,
+            lon: -117.234,
+            accuracy_meters: 5.0,
+            observed_at_ms: t1 + 1_000 * (k + 1),
+            elapsed_realtime_nanos: 1_000_000_000 * (k as u64 + 1),
+        });
+    }
+    core.tick_at(t1 + 6_000);
+    core.stop_recording_at(t1 + 7_000).unwrap();
+    let one = |id: &str, filter: Option<SessionFilter>| Scope {
+        sessions: SessionScope::Sessions {
+            ids: vec![id.to_owned()],
+        },
+        filter,
+    };
+
+    let v = block(core.session_view(one(&empty, None))).unwrap();
+    assert_eq!(v.session_ids, vec![empty.clone()]);
+    assert_eq!(v.device_count, 0);
+    assert_eq!(v.route.len(), 4, "its route");
+    let frame = v.frame.expect("its frame");
+    assert!(frame.south <= 32.88 && frame.north >= 32.883);
+    assert!(!v.routes_faint, "one route with Start and End (M-8)");
+    assert!(keys(&block(core.device_order(one(&empty, None))).unwrap()).is_empty());
+    let routes = block(core.routes(one(&empty, None), None, 15.0)).unwrap();
+    assert!(routes.contains("LineString"));
+
+    // every other scope keeps the rule
+    let all = block(core.session_view(ALL)).unwrap();
+    assert!(!all.session_ids.contains(&empty));
+    assert!(all.session_ids.contains(&full));
+    let both = Scope {
+        sessions: SessionScope::Sessions {
+            ids: vec![empty.clone(), full.clone()],
+        },
+        filter: None,
+    };
+    assert_eq!(
+        block(core.session_view(both)).unwrap().session_ids,
+        vec![full.clone()]
+    );
+    let filtered = one(&empty, Some(SessionFilter::default()));
+    assert!(
+        block(core.session_view(filtered))
+            .unwrap()
+            .session_ids
+            .is_empty()
+    );
+    let listed: Vec<String> = block(core.sessions())
+        .unwrap()
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    assert_eq!(listed, vec![full.clone()]);
+    assert_eq!(block(core.all_sessions_summary()).unwrap().session_count, 1);
 }

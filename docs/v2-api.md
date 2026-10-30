@@ -284,6 +284,9 @@ pub struct Scope { pub sessions: SessionScope, #[uniffi(default = None)] pub fil
 
 - **Resolution.** The session set is `sessions ∩ filter`.
   - Empty sessions never take part.
+    - Exception (V-3): a scope of exactly one session, `Scope.session(id)` with no filter, resolves to that session
+      even with 0 devices. `session_view` then has its route and frame (Start/End per M-8), and the device lists are
+      empty. All sessions, several sessions, any filter, and `sessions()` still leave empty sessions out.
   - The filter selects whole sessions and never cuts sightings inside a session.
   - Unknown ids are ignored, and an empty resolution returns empty results.
 - **Union, as in All sessions (V-5).**
