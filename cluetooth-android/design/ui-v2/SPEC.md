@@ -102,6 +102,8 @@ expanded (G-2).
   6. search state.
 
   With none of these open, Back leaves the app.
+- **G-15 Screen stays on.** While the app is in the foreground the screen never turns off by itself, as in the
+  previous app. Leaving the app or locking the phone works as usual.
 
 ## C. Components
 
