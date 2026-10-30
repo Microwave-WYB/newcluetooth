@@ -2203,8 +2203,19 @@ fn the_live_chart_follows_the_last_minute() {
     )
     .unwrap();
     core.tick_at(t0 + 66_000);
-    let deltas = wait_for(&c, 1);
-    let last = deltas.last().unwrap();
+    // ct-notify delivers asynchronously: wait for the delta that carries the chart, not just any delta
+    for _ in 0..400 {
+        if c.deltas.lock().unwrap().iter().any(|d| d.chart.is_some()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let deltas = c.deltas.lock().unwrap().clone();
+    let last = deltas
+        .iter()
+        .rev()
+        .find(|d| d.chart.is_some())
+        .expect("a delta with the focused chart");
     let ch = last.chart.as_ref().expect("the focused chart");
     assert_eq!((ch.key, ch.end_ms), (key, last.at_ms));
     let bucket = |sec: i64, end_ms: i64| (sec - (end_ms / 1000 - (t0 / 1000) - 59)) as usize;
@@ -2365,6 +2376,8 @@ fn randomized_snapshot_plus_deltas_equals_a_fresh_read() {
         let mut paused = false;
         let mut hidden = true;
         let mut next = 0usize;
+        // named devices that were alone in their bin: (device, first sighting)
+        let mut solo: Vec<(usize, i64)> = Vec::new();
         for _ in 0..300 {
             now += 1 + rnd(6_000) as i64;
             match rnd(20) {
@@ -2376,17 +2389,33 @@ fn randomized_snapshot_plus_deltas_equals_a_fresh_read() {
                     }
                     paused = !paused;
                 }
-                1 => {
+                // a filter flip empties the bins that hold only unnamed Apple devices
+                1..=2 => {
                     hidden = !hidden;
                     hide_apple(&core, hidden);
                 }
-                2..=4 => core.tick_at(now),
-                5..=6 => {
+                3..=4 => core.tick_at(now),
+                // a bin of its own: jump past the current bin, one new device, committed soon
+                5..=8 => {
+                    now += 30_000 + rnd(15_000) as i64;
                     next += 1;
-                    core.ingest_scans_at(vec![apple(next, now)], now).unwrap();
+                    if rnd(2) == 0 {
+                        core.ingest_scans_at(vec![apple(next, now)], now).unwrap();
+                    } else {
+                        core.ingest_scans_at(vec![dev(next, -60, now)], now)
+                            .unwrap();
+                        solo.push((next, now));
+                    }
+                    now += 5_001;
+                    core.tick_at(now);
                 }
-                7..=9 if next > 0 => {
-                    // a late sighting of a known device
+                // a late sighting moves a lone device to an earlier bin and empties its own
+                9..=11 if !solo.is_empty() => {
+                    let (i, first) = solo.swap_remove(rnd(solo.len() as u64) as usize);
+                    let at = first - 30_000 - rnd(30_000) as i64;
+                    core.ingest_scans_at(vec![dev(i, -60, at)], now).unwrap();
+                }
+                12..=13 if next > 0 => {
                     let at = now - rnd(90_000) as i64;
                     let i = rnd(next as u64) as usize;
                     core.ingest_scans_at(vec![dev(i, -60, at)], now).unwrap();
@@ -2413,6 +2442,16 @@ fn randomized_snapshot_plus_deltas_equals_a_fresh_read() {
             applied(&deltas, &id),
             (bins(&fresh), fresh.runs.clone()),
             "seed {seed}: snapshot + deltas = a fresh read"
+        );
+        let zeros = deltas
+            .iter()
+            .filter_map(|d| d.discovery.as_ref())
+            .flat_map(|u| u.bins.iter())
+            .filter(|b| b.new_devices == 0)
+            .count();
+        assert!(
+            zeros >= 3,
+            "seed {seed}: the generator empties whole bins ({zeros} sent as 0)"
         );
     }
 }
