@@ -61,12 +61,16 @@ object FakeGatt {
         val errorStage = o["error"]["stage"].str()
         val errorStatus = o["error"]["status"].int()
         val initiator = o["disconnect"]["initiator"].str()
-        val connected = o["timings_ms"]["connect"].int() != null
-        val failure: GattFailure? = if (outcome == "complete") null else when {
-            initiator == "timeout" || errorStatus == -1 -> GattFailure.TimedOut
-            initiator == "remote" && connected -> GattFailure.DisconnectedUnexpectedly
-            !connected -> GattFailure.ConnectionFailed
-            else -> GattFailure.Other(errorStatus ?: 0)
+        // §2.7, the core's table (#99): a known status (the error's, else the disconnect's; 0 is none) is Other
+        val status = (errorStatus ?: o["disconnect"]["status"].int())?.takeIf { it != 0 }
+        val failure: GattFailure? = when {
+            outcome == "complete" -> null
+            outcome == "cancelled" -> GattFailure.Cancelled
+            initiator == "timeout" || status == -1 -> GattFailure.TimedOut
+            status != null -> GattFailure.Other(status)
+            errorStage == "connect" -> GattFailure.ConnectionFailed
+            initiator == "remote" -> GattFailure.DisconnectedUnexpectedly
+            else -> GattFailure.Other(133)
         }
         val failedAt = when (errorStage ?: o["stage_reached"].str()) {
             "connect", "mtu" -> 0

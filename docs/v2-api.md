@@ -711,12 +711,17 @@ pub struct GattCharView { pub uuid: String, pub name: Option<String>, pub proper
 
 Failure mapping:
 
+The status is `error.status`, else `disconnect.status`; 0 (success) is no status. `:platform` uses the same table
+(#99).
+
 | gatt/v1 | GattFailure |
 |---|---|
+| `outcome = cancelled` | `Cancelled` |
 | `disconnect.initiator = timeout` or status −1 | `TimedOut` |
-| `initiator = remote` after connect | `DisconnectedUnexpectedly` |
-| connect status 133 and others before connect | `ConnectionFailed` |
-| anything else | `Other{status}` |
+| any other status: Android's (133, 62, 19, …) or the engine's (`GATT_INTERNAL_ERROR` −6, …) | `Other{status}` |
+| no status, `error.stage = connect` | `ConnectionFailed` |
+| no status, `initiator = remote` | `DisconnectedUnexpectedly` |
+| no status, anything else | `Other{133}` |
 
 ### 2.8 Storage, export, delete, upload (SPEC O-1 items 8–11)
 
