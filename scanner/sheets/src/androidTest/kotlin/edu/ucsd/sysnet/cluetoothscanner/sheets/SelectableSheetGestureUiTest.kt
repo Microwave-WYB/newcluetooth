@@ -109,6 +109,21 @@ class SelectableSheetGestureUiTest {
     }
 
     @Test
+    fun d15_aLongPressOnALabelThenADragUpRaisesTheSheet() {
+        start(Half)
+        val top0 = sheetTop()
+        longPress(center(SheetHarness.rowLabel(2))) // in the selection area, but not selectable
+        var finger = 0f
+        repeat(10) {
+            moveBy(-dp(12f))
+            finger -= dp(12f)
+            rule.waitForIdle()
+            if (abs(finger) > slopPx) assertEquals("finger $finger", finger, sheetTop() - top0, 1.5f)
+        }
+        screen().performTouchInput { up() }
+    }
+
+    @Test
     fun d15_aLongPressOnHeaderTextSelectsWithoutTheHeaderTap() {
         start(Collapsed)
         longPress(center(SheetHarness.headerText(root.id)))
