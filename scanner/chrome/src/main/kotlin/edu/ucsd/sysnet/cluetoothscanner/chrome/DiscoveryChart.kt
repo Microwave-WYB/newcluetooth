@@ -150,6 +150,42 @@ object DiscoveryChart {
         return out
     }
 
+    /**
+     * Where the [w] × [h] label goes: right-aligned to the line's end, [gap] above the highest point of the line
+     * within the label's own x span (the stroke's half included), so a line that falls or rises at its end never
+     * runs through it; below the lowest point there if there is no room above; at the top if neither fits.
+     * [DiscoveryRateChart] keeps the room above free ([layout]'s `top`), so it is always above there.
+     */
+    fun labelAt(shape: Shape, w: Float, h: Float, gap: Float, stroke: Float, height: Float): Offset? {
+        val end = shape.end ?: return null
+        val x = (end.x - w).coerceAtLeast(0f)
+        val (highest, lowest) = ySpan(shape.lines, x, x + w) ?: (end.y to end.y)
+        val above = highest - stroke / 2 - gap - h
+        val below = lowest + stroke / 2 + gap
+        return Offset(x, if (above >= 0f) above else if (below + h <= height) below else 0f)
+    }
+
+    /** The smallest and largest y of [lines] over x in [x0]..[x1], interpolated at the edges; null where none runs. */
+    internal fun ySpan(lines: List<List<Offset>>, x0: Float, x1: Float): Pair<Float, Float>? {
+        var lo = Float.POSITIVE_INFINITY
+        var hi = Float.NEGATIVE_INFINITY
+        fun take(y: Float) { lo = minOf(lo, y); hi = maxOf(hi, y) }
+        for (pts in lines) {
+            pts.singleOrNull()?.let { if (it.x in x0..x1) take(it.y) }
+            pts.zipWithNext { a, b ->
+                val from = maxOf(a.x, x0)
+                val to = minOf(b.x, x1)
+                if (from <= to) {
+                    if (b.x == a.x) { take(a.y); take(b.y) } else {
+                        take(a.y + (b.y - a.y) * (from - a.x) / (b.x - a.x))
+                        take(a.y + (b.y - a.y) * (to - a.x) / (b.x - a.x))
+                    }
+                }
+            }
+        }
+        return if (lo <= hi) lo to hi else null
+    }
+
     /** The label's value: the line's end, rounded. */
     fun current(series: Series): Int? = series.last?.perMin?.roundToInt()
 
@@ -161,7 +197,8 @@ object DiscoveryChart {
 
 /**
  * R-4a: the discovery-rate line (`--blue`) with a soft fill under it, baseline 0 and no grid; the one label,
- * "N new/min" (12 `--t2`, tabular), sits above the line's end, right-aligned to it, in room the plot keeps free.
+ * "N new/min" (12 `--t2`, tabular), right-aligned to the line's end, sits above the line under it ([DiscoveryChart.labelAt])
+ * in room the plot keeps free.
  * An empty series (no bin complete yet) draws nothing.
  */
 @Composable
@@ -178,7 +215,7 @@ fun DiscoveryRateChart(series: DiscoveryChart.Series, modifier: Modifier = Modif
                 val stroke = SpecValues.recorderChartStroke.toPx()
                 val labelGap = SpecValues.recorderChartLabelGap.toPx()
                 val text = label?.let { measurer.measure(it, style) }
-                val top = text?.let { it.size.height + labelGap } ?: 0f
+                val top = text?.let { it.size.height + labelGap + stroke / 2 } ?: 0f
                 val shape = DiscoveryChart.layout(series, size.width, size.height, stroke, SpecValues.recorderChartPauseGap.toPx(), top)
                 val lines = shape.lines.map { pts -> Path().apply { pts.forEachIndexed { k, p -> if (k == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y) } } }
                 val fills = shape.lines.map { pts ->
@@ -189,10 +226,7 @@ fun DiscoveryRateChart(series: DiscoveryChart.Series, modifier: Modifier = Modif
                     }
                 }
                 val fill = Brush.verticalGradient(listOf(c.blue.copy(alpha = FILL_TOP_ALPHA), c.blue.copy(alpha = FILL_BOTTOM_ALPHA)))
-                val end = shape.end
-                val textAt = if (text == null || end == null) null else {
-                    Offset((end.x - text.size.width).coerceAtLeast(0f), (end.y - labelGap - text.size.height).coerceAtLeast(0f))
-                }
+                val textAt = text?.let { DiscoveryChart.labelAt(shape, it.size.width.toFloat(), it.size.height.toFloat(), labelGap, stroke, size.height) }
                 onDrawBehind {
                     fills.forEach { drawPath(it, fill) }
                     lines.forEach { drawPath(it, c.blue, style = Stroke(stroke, join = StrokeJoin.Round)) }

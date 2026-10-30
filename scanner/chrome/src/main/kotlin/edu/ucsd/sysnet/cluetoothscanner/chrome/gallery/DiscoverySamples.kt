@@ -30,6 +30,12 @@ object DiscoverySamples {
     /** Standing in one place: everything nearby is found, and the line falls towards 0. */
     val stationary = DiscoveryBins(BIN, bins(T0, List(25) { k -> (18 * exp(-k / 3.5)).roundToInt() }), listOf(Run(T0, null)))
 
+    /** [dropAtEnd]'s elapsed time: six bins and a few seconds. */
+    const val DROP_ELAPSED_MS = 6 * BIN + 5_000L
+
+    /** Two busy minutes, then nothing new: the line drops at its end, under where the label goes. */
+    val dropAtEnd = DiscoveryBins(BIN, bins(T0, listOf(20, 20, 20, 20, 0, 0)), listOf(Run(T0, null)))
+
     /** Five still minutes, a two-minute pause, then a walk: the line breaks across the pause. */
     val pauseGap = run {
         val resume = T0 + 7 * 60_000L

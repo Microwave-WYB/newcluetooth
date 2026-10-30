@@ -108,22 +108,69 @@ class DiscoveryChartTest {
         assertEquals(DiscoveryChart.Shape(emptyList(), 99f, null), DiscoveryChart.layout(full, 100f, 100f, 2f, 6f, top = 99f))
     }
 
-    /** A long session costs the panel's width: at most four points per pixel column, the peaks and the end kept. */
+    /**
+     * A long session costs the panel's width: at most four points per pixel column, the peaks and the end kept. The
+     * box is narrow enough (about ten bins per column) that an unthinned line breaks the bound.
+     */
     @Test fun longSessionsThinToThePixelWidth() {
         val hours = 8
         val n = hours * 120
         val counts = List(n) { k -> if (k == 500) 40 else k % 3 }
         val s = DiscoveryChart.series(data(counts.mapIndexed { k, c -> Bin(k * bin, c) }, Run(0, null)), n * bin + 5_000)
         assertEquals(n + 1, s.runs.single().size)
-        val width = 300f
+        val width = 100f
         val shape = DiscoveryChart.layout(s, width, 72f, 2f, 6f)
         val line = shape.lines.single()
+        val perColumn = line.groupingBy { kotlin.math.floor(it.x).toInt() }.eachCount()
+        assertTrue("$perColumn", perColumn.values.all { it <= 4 })
         assertTrue("${line.size}", line.size <= 4 * width.toInt())
         assertTrue(line.zipWithNext().all { (a, b) -> a.x <= b.x })
         val unthinned = s.runs.single().maxOf { it.perMin }
         val top = 72f - 1f - unthinned / (unthinned * 1.15f) * 70f
         assertEquals(top, line.minOf { it.y }, 1e-3f)
         assertEquals(width - 1f, shape.end?.x ?: 0f, 1e-3f)
+    }
+
+    /** Samples every stroke of [lines] at 0.25 px steps. */
+    private fun samples(lines: List<List<Offset>>): List<Offset> = lines.flatMap { pts ->
+        pts.zipWithNext().flatMap { (a, b) ->
+            val steps = maxOf(1, (kotlin.math.hypot(b.x - a.x, b.y - a.y) * 4).toInt())
+            (0..steps).map { k -> Offset(a.x + (b.x - a.x) * k / steps, a.y + (b.y - a.y) * k / steps) }
+        }
+    }
+
+    /**
+     * The label sits over the line under its own x span, not over the end point alone: a rate that drops at the end
+     * (20, 20, 20, 20, 0, 0 on a phone panel, 2.625 px/dp) never runs through it, the stroke's width included.
+     */
+    @Test fun theLabelClearsALineThatDropsAtItsEnd() {
+        val d = 2.625f
+        val (w, h, gap, stroke) = listOf(150f, 32f, 4 * d, 2 * d)
+        val width = (412 - 24 - 32) * d
+        val height = 72 * d
+        val s = DiscoveryChart.series(DiscoverySamples.dropAtEnd, DiscoverySamples.DROP_ELAPSED_MS)
+        assertEquals(0, DiscoveryChart.current(s))
+        val shape = DiscoveryChart.layout(s, width, height, stroke, 6 * d, top = h + gap + stroke / 2)
+        val at = DiscoveryChart.labelAt(shape, w, h, gap, stroke, height) ?: Offset.Unspecified
+        val pts = samples(shape.lines)
+        fun inside(o: Offset, p: Offset) = p.x >= o.x - stroke / 2 && p.x <= o.x + w + stroke / 2 && p.y >= o.y - stroke / 2 && p.y <= o.y + h + stroke / 2
+        assertEquals(emptyList<Offset>(), pts.filter { inside(at, it) })
+        assertTrue("inside the chart", at.y >= 0f && at.y + h <= height && at.x + w <= width)
+        // the end point alone would have put it on the falling stroke
+        val end = shape.end ?: Offset.Unspecified
+        assertTrue(pts.any { inside(Offset(end.x - w, end.y - gap - h), it) })
+    }
+
+    /** No room above: below the lowest point under the label; no room either way: at the top. */
+    @Test fun theLabelGoesBelowWithoutRoomAbove() {
+        val shape = DiscoveryChart.Shape(listOf(listOf(Offset(0f, 1f), Offset(60f, 3f), Offset(100f, 1f))), 99f, Offset(100f, 1f))
+        assertEquals(Offset(70f, 2.5f + 1f + 2f), DiscoveryChart.labelAt(shape, 30f, 10f, 2f, 2f, 100f))
+        assertEquals(Offset(70f, 0f), DiscoveryChart.labelAt(shape, 30f, 10f, 2f, 2f, 12f))
+        assertNull(DiscoveryChart.labelAt(DiscoveryChart.Shape(emptyList(), 99f, null), 30f, 10f, 2f, 2f, 100f))
+        // a single point counts where it is, and the edges are interpolated
+        assertEquals(1f to 2.5f, DiscoveryChart.ySpan(shape.lines, 70f, 100f))
+        assertNull(DiscoveryChart.ySpan(shape.lines, 101f, 120f))
+        assertEquals(5f to 5f, DiscoveryChart.ySpan(listOf(listOf(Offset(10f, 5f))), 0f, 20f))
     }
 
     @Test fun thinKeepsShortLinesAndOrder() {
