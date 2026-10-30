@@ -658,7 +658,6 @@
       M.at = Object.fromEntries(points.map((p) => [p.addr, p.at]));
       const pts = points.map((p) => ({ addr: p.addr, at: p.at }));
       map.getSource("devices").setData(fc(pts));
-      map.getSource("density").setData(fc(pts));
     }
     /** null: only the user's location. Otherwise the session's route(s) and points, framed. */
     M.setSession = (sess, points) => whenReady(() => {
@@ -1693,7 +1692,7 @@
     { // the map style on a past session
       const r = D.getRecording("r5"), m = new maplibregl.Map({ container: $("#g-style-map"), style: MAP_STYLE(), attributionControl: false, bounds: boundsOf(r.route), fitBoundsOptions: { padding: 30 } });
       m.on("load", () => { addStyle(m); m.getSource("route").setData(lineGeo([r.route])); m.getSource("ends").setData(MS.endsOf(r.route));
-        const pts = r.points.map((p) => ({ addr: p.addr, at: p.at })); m.getSource("devices").setData(fc(pts)); m.getSource("density").setData(fc(pts)); });
+        const pts = r.points.map((p) => ({ addr: p.addr, at: p.at })); m.getSource("devices").setData(fc(pts)); });
     }
     $("#g-q").focus();
   }
