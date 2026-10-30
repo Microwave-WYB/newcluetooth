@@ -291,7 +291,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         }
     }
 
-    /** A platform call's typed failure takes the path a thrown one took: [MainEvent.Failed] for its effect. */
+    /** D-1b: a UI-state read's typed failure takes the path a thrown one took: [MainEvent.Failed] for its effect. */
     private fun <T> UiStateResult<T>.orFail(effect: MainEffect): T? = when (this) {
         is UiStateResult.Ok -> value
         is UiStateResult.Err -> {
@@ -300,6 +300,7 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
         }
     }
 
+    /** A platform call's typed failure takes the path a thrown one took: [MainEvent.Failed] for its effect. */
     private fun <T> PlatformResult<T>.orFail(effect: MainEffect): T? = when (this) {
         is PlatformResult.Ok -> value
         is PlatformResult.Err -> {

@@ -164,7 +164,7 @@ data class MainUiState(
     /** A failure the user must see, shown as a banner until dismissed or retried; null when there is none. */
     val notice: Notice? = null,
     /** D-1b: the remembered Discover view (UI state, not a setting); every new session view opens on it. */
-    val discoverView: DiscoverView = DiscoverView.Categories,
+    val discoverView: RememberedView = RememberedView.Unread,
 ) {
     val viewKey: ViewKey get() = ViewKey(scope, epoch)
     val searchPage: Page.SearchPage? get() = page as? Page.SearchPage
@@ -328,6 +328,20 @@ sealed interface MainEffect {
     data class SaveDiscoverView(val view: DiscoverView) : MainEffect
 }
 
+/**
+ * D-1b: the remembered Discover view: [Unread] (Categories, the first-launch default) until the store answers or the
+ * user chooses, then [Known]. A late store read never overrides a choice.
+ */
+sealed interface RememberedView {
+    val view: DiscoverView
+
+    data object Unread : RememberedView {
+        override val view: DiscoverView get() = DiscoverView.Categories
+    }
+
+    data class Known(override val view: DiscoverView) : RememberedView
+}
+
 /** One transition: the next state and the effects to run, in order. */
 data class Step(val state: MainUiState, val effects: List<MainEffect> = emptyList())
 
@@ -449,8 +463,13 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     is MainEvent.SheetsAttached -> s.copy(sheets = SheetsLink.Attached(e.sheets)).only()
     // D-1b: the user's switch is remembered (search's forced list never comes here: the sheets don't emit it)
     is MainEvent.DiscoverViewChosen ->
-        if (e.view == s.discoverView) s.only() else s.copy(discoverView = e.view).with(MainEffect.SaveDiscoverView(e.view))
-    is MainEvent.UiStateRead -> s.copy(discoverView = e.discoverView).only()
+        if (s.discoverView == RememberedView.Known(e.view)) s.only()
+        else s.copy(discoverView = RememberedView.Known(e.view)).with(MainEffect.SaveDiscoverView(e.view))
+    // the store read applies only while nothing is known: a choice made before it came back (a slow disk) wins
+    is MainEvent.UiStateRead -> when (s.discoverView) {
+        RememberedView.Unread -> s.copy(discoverView = RememberedView.Known(e.discoverView)).only()
+        is RememberedView.Known -> s.only()
+    }
     // only the sheets that are attached detach (a new scope's sheets may have attached first)
     is MainEvent.SheetsDetached -> (if (s.attachedSheets === e.sheets) s.copy(sheets = SheetsLink.None) else s).only()
     is MainEvent.UpdateSettings -> s.with(MainEffect.UpdateSettings(e.transform))

@@ -22,9 +22,9 @@ class DiscoverViewRememberedTest {
     @Test
     fun theUsersSwitchIsRememberedAndSaved_aRepeatSavesNothing() {
         val s = MainUiState()
-        assertEquals(DiscoverView.Categories, s.discoverView) // first launch
+        assertEquals(DiscoverView.Categories, s.discoverView.view) // first launch
         val chosen = reduce(s, MainEvent.DiscoverViewChosen(DiscoverView.List))
-        assertEquals(DiscoverView.List, chosen.state.discoverView)
+        assertEquals(RememberedView.Known(DiscoverView.List), chosen.state.discoverView)
         assertEquals(listOf(MainEffect.SaveDiscoverView(DiscoverView.List)), chosen.effects)
         assertEquals(Step(chosen.state), reduce(chosen.state, MainEvent.DiscoverViewChosen(DiscoverView.List)))
     }
@@ -32,14 +32,23 @@ class DiscoverViewRememberedTest {
     @Test
     fun theStoredViewIsReadAtLaunch_andANewSessionViewKeepsIt() {
         val read = reduce(MainUiState(), MainEvent.UiStateRead(DiscoverView.List)).state
-        assertEquals(DiscoverView.List, read.discoverView)
+        assertEquals(RememberedView.Known(DiscoverView.List), read.discoverView)
         // V-7: another session view resets search and the sidebar, never the remembered view
-        assertEquals(DiscoverView.List, reduce(read, MainEvent.SelectScope(edu.ucsd.sysnet.cluetoothscanner.api.core.Scope.All)).state.discoverView)
+        assertEquals(DiscoverView.List, reduce(read, MainEvent.SelectScope(edu.ucsd.sysnet.cluetoothscanner.api.core.Scope.All)).state.discoverView.view)
+    }
+
+    @Test
+    fun aChoiceBeforeTheLaunchReadComesBackWins() {
+        // a slow disk: the user switches to List, then the read of an older Categories lands
+        val chosen = reduce(MainUiState(), MainEvent.DiscoverViewChosen(DiscoverView.List)).state
+        val late = reduce(chosen, MainEvent.UiStateRead(DiscoverView.Categories))
+        assertEquals(Step(chosen), late)
+        assertEquals(DiscoverView.List, late.state.discoverView.view)
     }
 
     @Test
     fun aFailedWriteOrReadIsOnlyLogged_noNotice_theViewStays() {
-        val s = MainUiState(discoverView = DiscoverView.List)
+        val s = MainUiState(discoverView = RememberedView.Known(DiscoverView.List))
         for (effect in listOf(MainEffect.SaveDiscoverView(DiscoverView.List), MainEffect.LoadUiState)) {
             val after = reduce(s, MainEvent.Failed(MainTask.Effect(effect), IllegalStateException("disk full")))
             assertEquals(Step(s), after)
