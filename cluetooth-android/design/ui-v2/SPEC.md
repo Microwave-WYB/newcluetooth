@@ -67,6 +67,14 @@ expanded (G-2).
   - Live values update in place and new rows are appended. Filters (category, area, search, Apple) only hide rows.
   - Only an explicit user action builds a new order (S-6, M-9, Q-7).
   - Keep each list's order as explicit state (a list of keys), not as a sort applied on every update.
+- **G-9a Scanning warm-up (#91).** When a recording has just started, the live Discover view waits 3 s of scanning
+  before its first order.
+  - During those 3 s, the sheet body shows a pulsing Bluetooth glyph with "Scanning…" (`--t2`) instead of rows. The
+    header, segments and filter stay usable. Map points may already appear.
+  - At 3 s, the first order is the RSSI sort of everything scanned so far. If nothing has been scanned by then, the
+    scanning state stays until the first device arrives. After that, G-9 applies unchanged.
+  - Not for history, All sessions, a resumed pause, or a live session that was already running when the view
+    opened.
 - **G-10 Restore on return.** Going back to a list after opening an item restores its scroll position, view, filters
   and sheet height exactly.
 - **G-11 No duplicate information.** The same information is never shown twice on one screen. For example, the product
