@@ -39,8 +39,9 @@ class GattReasonsTest {
             GattRunner.GATT_UNAVAILABLE to "Bluetooth is off or permission is missing",
             GattRunner.GATT_NO_TARGET to "This device hasn't been seen with a connectable address yet. Stay near it and try again",
             GattRunner.GATT_INTERNAL_ERROR to "The Bluetooth stack failed during discovery",
-            -2 to "The app was closed while the discovery ran",
-            -3 to "The device stopped answering reads",
+            GattRunner.GATT_PROCESS_DEATH to "The app was closed while the discovery ran",
+            GattRunner.GATT_READ_QUEUE_STALLED to "The device stopped answering reads",
+            257 to "Android's Bluetooth stack refused the request",
             133 to "The connection failed with a generic Bluetooth error. Try again",
             8 to "The device stopped responding",
             19 to "The device closed the connection",
@@ -67,7 +68,7 @@ class GattReasonsTest {
 
     @Test
     fun `any other status is an unexpected Bluetooth error with its code`() {
-        for (status in listOf(0, 1, 7, 128, 257, -1, -7, -99)) {
+        for (status in listOf(0, 1, 7, 128, 256, -1, -7, -99)) {
             val problem = reasonOf(status)
             assertEquals(GattProblem.Unknown(status), problem)
             assertEquals("Unexpected Bluetooth error", problem.reason())
@@ -108,7 +109,7 @@ class GattReasonsTest {
 
     @Test
     fun `no reason is a bare number`() {
-        val all = listOf(-6, -5, -4, -3, -2, 0, 5, 8, 15, 19, 22, 62, 133, 999).map { reasonOf(it) } +
+        val all = listOf(-6, -5, -4, -3, -2, 0, 5, 8, 15, 19, 22, 62, 133, 257, 999).map { reasonOf(it) } +
             listOf(GattProblem.NotConnectable, GattProblem.NotSeenRecently)
         // words, and the code only in the secondary text
         for (p in all) assertTrue(p.reason(), p.reason().any { it.isLetter() } && !p.reason().contains("${p.code}") && !p.reason().contains("status"))

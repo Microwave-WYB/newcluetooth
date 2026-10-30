@@ -63,6 +63,15 @@ interface GattRunner {
          * discovery is stored as failed with this status in gatt/v1; it never means Bluetooth is off.
          */
         const val GATT_INTERNAL_ERROR = -6
+
+        /**
+         * `GattFailure.Other` status of a discovery that was in flight when the app's process died (stored as failed
+         * on the next start).
+         */
+        const val GATT_PROCESS_DEATH = -2
+
+        /** `GattFailure.Other` status when a read never answered (Android allows one outstanding request). */
+        const val GATT_READ_QUEUE_STALLED = -3
     }
 }
 
