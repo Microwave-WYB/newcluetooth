@@ -28,6 +28,11 @@ class MainReducerRandomTest {
         MainEffect.Export(Scope.All, ExportFormat.Csv, false), MainEffect.SaveOnboarding("ab1", true), MainEffect.Delete(Scope.All, true),
         MainEffect.StartRecording, MainEffect.SheetsBack, MainEffect.UploadNow)
 
+    /** A reclaimable read: the sizes, or a typed failure. */
+    private fun Random.randomRead(): CleanupResult<Reclaim> =
+        if (nextInt(3) == 0) CleanupResult.Err(listOf(CleanupError.Unavailable, CleanupError.Failed("busy")).random(this))
+        else CleanupResult.Ok(Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(nextLong(1_000)), Bytes(nextLong(1_000))))
+
     private fun Random.event(): MainEvent = when (nextInt(50)) {
         0 -> MainEvent.SettingsLoaded(settings(done = nextBoolean(), userId = listOf(null, "ab1", "BAD").random(this)), perms)
         1 -> MainEvent.PermissionsChanged(perms.copy(bluetoothOn = nextBoolean()))
@@ -73,7 +78,7 @@ class MainReducerRandomTest {
         40 -> MainEvent.RetryLink
         41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate, MainEvent.DismissNotice, MainEvent.RetryNotice).random(this)
         42 -> MainEvent.StorageFull(Bytes(nextLong(0, 400_000_000)))
-        43 -> MainEvent.ReclaimableRead(if (nextBoolean()) null else Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(nextLong(1_000)), Bytes(nextLong(1_000))))
+        43 -> MainEvent.ReclaimableRead(randomRead())
         44, 45 -> MainEvent.ChooseCleanup(Cleanup.entries.random(this), nextBoolean())
         46 -> MainEvent.FreeUpSpace
         // each cleanup of a run: not run, freed something, or failed with a typed error
@@ -83,7 +88,7 @@ class MainReducerRandomTest {
                     split[1].orEmpty().associateWith { Bytes(nextLong(1_000)) },
                     split[2].orEmpty().associateWith { listOf(CleanupError.Unavailable, CleanupError.Failed("busy")).random(this) },
                 ),
-                if (nextBoolean()) null else Reclaim(Bytes(nextLong(0, 400_000_000)), Bytes(0), Bytes(0)),
+                if (nextInt(3) == 0) null else randomRead(),
             )
         }
         48 -> listOf(MainEvent.StorageFullNotNow, MainEvent.StorageFullResume).random(this)
@@ -163,6 +168,15 @@ class MainReducerRandomTest {
                 if (e is MainEvent.SpaceFreed && s.storage?.cleaning == true) {
                     check("settings shows a failure as freed", (n.storage?.cleanupFreed == null) == e.outcome.freed.isEmpty())
                     check("settings hides the failure", (n.storage?.cleanupFailure == null) == e.outcome.failed.isEmpty())
+                }
+                // R-10: a failed read is always on screen (dialog and Settings), and never with sizes
+                val read = (e as? MainEvent.ReclaimableRead)?.result ?: (e as? MainEvent.SpaceFreed)?.after
+                if (read is CleanupResult.Err) {
+                    val d = n.storageFull
+                    if (d != null && (e is MainEvent.ReclaimableRead || s.storageFull?.step is CleanupStep.Freeing)) {
+                        check("a failed read the dialog hides", storageFullUi(d).readFailure != null && storageFullUi(d).reclaimable == null)
+                    }
+                    n.storage?.let { check("a failed read Settings hides", it.reclaimFailure != null && it.reclaimable == null) }
                 }
                 // storage: an export runs only with a format
                 n.storage?.let { if (it.exporting) check("export without a format", it.exportFormat != null) }

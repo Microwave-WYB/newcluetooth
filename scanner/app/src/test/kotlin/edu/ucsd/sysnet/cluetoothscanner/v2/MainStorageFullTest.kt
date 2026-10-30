@@ -20,7 +20,7 @@ class MainStorageFullTest {
     private val busy = CleanupError.Failed("the database is busy")
 
     private fun freed(vararg freed: Pair<Cleanup, Bytes>, failed: Map<Cleanup, CleanupError> = emptyMap(), after: Reclaim? = null) =
-        MainEvent.SpaceFreed(CleanupOutcome(freed.toMap(), failed), after)
+        MainEvent.SpaceFreed(CleanupOutcome(freed.toMap(), failed), after?.let { CleanupResult.Ok(it) })
 
     private fun freeing(vararg chosen: Cleanup) =
         opened.on(*chosen.map { MainEvent.ChooseCleanup(it, true) }.toTypedArray(), MainEvent.FreeUpSpace)
@@ -31,13 +31,13 @@ class MainStorageFullTest {
         val step = reduce(MainUiState(), MainEvent.StorageFull(low))
         assertEquals(StorageFullState(low, ReclaimRead.Reading, emptySet(), CleanupStep.Choosing(null)), step.state.storageFull)
         assertEquals(listOf(MainEffect.LoadReclaimable), step.effects)
-        val ui = storageFullUi(dialog(opened.on(MainEvent.ReclaimableRead(reclaim))))
+        val ui = storageFullUi(dialog(opened.on(MainEvent.ReclaimableRead(CleanupResult.Ok(reclaim)))))
         assertEquals(150_000_000L, ui.freeBytes)
         assertEquals(Reclaimable(300_000_000, 40_000_000), ui.reclaimable)
         assertEquals(false, ui.canResume)
         assertEquals(false, ui.checking)
         assertEquals(true, storageFullUi(dialog(opened)).checking)
-        assertEquals(false, storageFullUi(dialog(opened.on(MainEvent.ReclaimableRead(null)))).checking)
+        assertEquals(false, storageFullUi(dialog(opened.on(MainEvent.ReclaimableRead(CleanupResult.Err(CleanupError.Unavailable))))).checking)
         // a second report while open only updates the free space
         assertEquals(Step(opened.copy(storageFull = opened.storageFull?.copy(free = Bytes(1)))), reduce(opened, MainEvent.StorageFull(Bytes(1))))
     }
@@ -116,10 +116,41 @@ class MainStorageFullTest {
         assertEquals(setOf(Cleanup.UploadedRaw, Cleanup.LocalDatabase), d.chosen)
         assertEquals(listOf(CleanupFailure(Cleanup.UploadedRaw, "x"), CleanupFailure(Cleanup.LocalDatabase, "x")), storageFullUi(d).failures)
         assertNull(storageFullUi(d).freedBytes)
-        assertEquals(ReclaimRead.Unknown, opened.on(MainEvent.Failed(MainTask.Effect(MainEffect.LoadReclaimable), IllegalStateException("x"))).storageFull?.reclaim)
+        assertEquals(ReclaimRead.Failed(CleanupError.Failed("x")), opened.on(MainEvent.Failed(MainTask.Effect(MainEffect.LoadReclaimable), IllegalStateException("x"))).storageFull?.reclaim)
     }
 
-    private val settings = MainUiState(scope = sessionA).on(MainEvent.OpenSettings, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)), MainEvent.ReclaimableRead(reclaim))
+    @Test fun aFailedReadShowsItsReasonAndNoSizes() {
+        val failed = dialog(opened.on(MainEvent.ReclaimableRead(CleanupResult.Err(busy))))
+        val ui = storageFullUi(failed)
+        assertEquals("the database is busy", ui.readFailure)
+        assertNull(ui.reclaimable)
+        assertEquals(false, ui.checking)
+        // the next good read clears it
+        assertNull(storageFullUi(dialog(opened.on(MainEvent.ReclaimableRead(CleanupResult.Err(busy)), MainEvent.ReclaimableRead(CleanupResult.Ok(reclaim))))).readFailure)
+    }
+
+    /** A cleanup that worked, then a follow-up read that failed: the old free space stays, and why is on screen. */
+    @Test fun aFailedFollowUpReadExplainsTheFreeSpace() {
+        val run = freeing(Cleanup.UploadedRaw)
+        val after = dialog(run.on(MainEvent.SpaceFreed(CleanupOutcome(mapOf(Cleanup.UploadedRaw to Bytes(300_000_000)), emptyMap()), CleanupResult.Err(busy))))
+        val ui = storageFullUi(after)
+        assertEquals(low, after.free)
+        assertEquals(false, ui.canResume)
+        assertEquals(300_000_000L, ui.freedBytes)
+        assertEquals("the database is busy", ui.readFailure)
+    }
+
+    @Test fun settingsShowsAFailedRead() {
+        val st = MainUiState(scope = sessionA).on(MainEvent.OpenSettings, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)),
+            MainEvent.ReclaimableRead(CleanupResult.Ok(reclaim)), MainEvent.ReclaimableRead(CleanupResult.Err(CleanupError.Unavailable)))
+        assertNull(st.storage?.reclaimable)
+        assertEquals("not available in this version", st.storage?.reclaimFailure)
+        // a re-read of the storage figures keeps it; a good read clears it
+        assertEquals("not available in this version", st.on(MainEvent.StorageLoaded(StorageFacts(1, 1, null, 0))).storage?.reclaimFailure)
+        assertNull(st.on(MainEvent.ReclaimableRead(CleanupResult.Ok(reclaim))).storage?.reclaimFailure)
+    }
+
+    private val settings = MainUiState(scope = sessionA).on(MainEvent.OpenSettings, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)), MainEvent.ReclaimableRead(CleanupResult.Ok(reclaim)))
 
     @Test fun settingsOffersTheSameCleanupsWithAConfirmation() {
         assertEquals(Reclaimable(300_000_000, 40_000_000), settings.storage?.reclaimable)
