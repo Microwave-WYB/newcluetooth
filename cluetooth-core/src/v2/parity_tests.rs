@@ -2506,3 +2506,35 @@ fn queries_after_stop_see_it() {
         assert!(!block(core.session_view(scope)).unwrap().live, "round {k}");
     }
 }
+
+/// Owner bug (51cce33): while recording, the device sheet of a device on the live map was blank, so `device(scope,
+/// key)` gave nothing for the live session. Every key the live map or rows can show resolves to a detail.
+#[test]
+fn a_live_device_has_a_detail() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, _c) = fresh_core(t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    let key = 0xAA00_0000_0001i64;
+    let live = Scope {
+        sessions: SessionScope::Sessions {
+            ids: vec![id.clone()],
+        },
+        filter: None,
+    };
+    core.ingest_scans_at(
+        vec![obs("AA:00:00:00:00:01", -60, t0 + 1_000, 1, "A")],
+        t0 + 1_000,
+    )
+    .unwrap();
+    core.tick_at(t0 + 6_000);
+    for scope in [live.clone(), ALL] {
+        let d = block(core.device(scope.clone(), key)).unwrap();
+        assert!(d.is_some(), "committed, {scope:?}");
+    }
+    // the sheet's D-10 chart: the device's last minute
+    let chart = block(core.device_chart_at(key, t0 + 6_000))
+        .unwrap()
+        .expect("a live chart");
+    assert_eq!(chart.samples.len(), 60);
+    assert!(chart.samples.iter().any(|b| *b != 0));
+}
