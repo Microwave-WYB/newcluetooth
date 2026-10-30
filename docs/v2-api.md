@@ -256,10 +256,10 @@ queue, and the future awaits its one-shot reply, so no async runtime is needed. 
 dropping the future:
 
 - **Not started:** the reader skips the job when its reply has been dropped.
-- **In flight:** dropping the future calls the read connection's `InterruptHandle::interrupt()`
-  (`sqlite3_interrupt`); the query stops at its next VM step with `CoreError::Cancelled`. An interrupt that lands on
-  the next query instead (the cancelled one had just finished) is harmless: a query whose caller still waits runs
-  again.
+- **In flight:** dropping the future sets the query's own cancel flag. The reader's progress handler checks it every
+  1,000 VM steps and stops the query with `CoreError::Cancelled`. The flag belongs to that query alone, so no other
+  query is ever hit, and a drop can't fall between the reader's look and the first step (as `sqlite3_interrupt`,
+  a no-op while nothing runs, could).
 - **There is no `Superseded`** and no per-kind latest-wins in the core. Callers that only want the newest result
   (the camera, search) use `mapLatest`/`collectLatest`: cancelling the previous coroutine drops its future, which
   cancels its query as above.
@@ -550,7 +550,7 @@ impl Core {
         -> Result<Option<ProductDetail>, CoreError>;                               // [P] None page = Unidentified devices
     pub async fn device(&self, scope: Scope, key: DeviceKey) -> Result<Option<DeviceDetail>, CoreError>;  // [P]
     pub async fn device_sightings(&self, scope: Scope, key: DeviceKey) -> Result<Vec<Sighting>, CoreError>; // [P] ≤ 10 000
-    pub fn device_chart(&self, key: DeviceKey) -> Option<LiveChart>;                // [N] D-10, live only
+    pub async fn device_chart(&self, key: DeviceKey) -> Option<LiveChart>;          // [P] D-10, live only
     pub async fn device_gatt(&self, key: DeviceKey) -> Result<Option<GattView>, CoreError>;  // [P] D-13.7
     pub async fn search(&self, scope: Scope, query: String, area: Option<Bbox>) -> Result<Option<DeviceKeys>, CoreError>;
         // [V Search] Q-1/Q-2; None for a blank query; device_order order
@@ -585,7 +585,7 @@ pub struct DeviceRow {                 // C-5
     pub icon: Option<String>,          // the page's product icon (asset path, §3.4); None → the category icon
     pub rssi: Option<i16>,             // live: current; frozen: strongest
     pub in_range: bool,                // live: not stale; frozen: true
-    pub spark: Option<Vec<u8>>,        // live only: 30 × 2 s buckets (C-6)
+    pub spark: Option<Vec<u8>>,        // always None: rows have no sparkline (C-5/C-6, ab39eb5); kept for compatibility
     pub best: Option<GeoPoint>, pub last_seen_ms: i64,
 }
 #[derive(uniffi::Record)]
@@ -637,11 +637,26 @@ pub struct DeviceDetail {              // D-9, D-12; from the device's latest pa
 In every `MapData.geojson`, the feature property `addr` is the uppercase colon form `AA:BB:CC:DD:EE:FF`, the same as
 `DeviceRow.addr` and `data.js`.
 
-Encoding of `spark` and `samples`:
+Encoding of `samples`:
 
 - One byte per bucket, with value = −RSSI clamped to 30..100; **0 is a gap.**
-- A spark bucket is 2 s, the max of its two 1 s buckets. A 1 s bucket holds the max RSSI of that second.
+- A 1 s bucket holds the max RSSI of that second (by scan time).
 - The chart has 60 one-second buckets ending at `end_ms`.
+
+The chart (D-10):
+
+- **Source.** The writer keeps, per device of the live session, an in-memory ring of the last 60 s at 1 s
+  resolution, committed rows or not. The reader sees immutable snapshots of it. Nothing is stored in `local.db`, so
+  the chart starts empty after a restart.
+- **Bounds.** A device not heard for 60 s is dropped. At most 2,000 devices keep a ring; past that, the one heard
+  longest ago goes.
+- **Answers.**
+  - `device_chart(key)` is `Some` while a session is live (recording or paused), for a device of that session.
+    Seconds without a sighting are gaps, and so is paused time. `rssi` is the latest reading while not stale.
+  - It is `None` when no session is live, so after Stop.
+- **Deltas.** `set_live_focus(key)` makes that device's chart ride on every delta (§2.6).
+- **No sparklines.** Rows and deltas carry no sparkline (C-5/C-6, ab39eb5): `DeviceRow.spark` is `None` and
+  `DeviceLive.spark` is empty.
 
 The core returns numbers, ids, raw names, page titles and vocabulary labels. UI wording lives in `:designsystem`
 (G-8).
@@ -661,7 +676,7 @@ pub struct LiveDelta {
 }
 #[derive(uniffi::Record)]
 pub struct DeviceLive {
-    pub key: DeviceKey, pub rssi: Option<i16>, pub in_range: bool, pub spark: Vec<u8>,
+    pub key: DeviceKey, pub rssi: Option<i16>, pub in_range: bool, pub spark: Vec<u8>, // always empty (C-5/C-6)
     pub name: Option<String>,              // Some only when changed (never reverts)
     pub page: Option<PageRef>,             // Some only when changed; with it the row's flags/categories are re-read
     pub best: Option<GeoPoint>,            // Some only when the strongest point moved

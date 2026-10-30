@@ -1,6 +1,6 @@
 //! Live deltas (`docs/v2-api.md` §2.6), first cut: one delta per commit of the live recording, built by diffing
-//! the session's devices and cards against what was last sent. Sparklines and the focused chart come with the
-//! in-memory live snapshot.
+//! the session's devices and cards against what was last sent. The focused device's chart (D-10) comes from the
+//! in-memory RSSI rings; rows carry no sparklines (C-5/C-6).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use rusqlite::Connection;
 use super::catalog::{Catalog, UNIDENTIFIED};
 use super::error::CoreError;
 use super::keys::addr_of;
+use super::rssi::Rings;
 use super::store::RoutePoint;
 use super::types::*;
 
@@ -30,14 +31,19 @@ pub(crate) struct LiveState {
     cards: HashMap<String, ProductCard>,
     /// The latest RSSI heard per device ("live: current", §2.5), committed or not.
     pub current: Arc<HashMap<i64, i16>>,
+    /// D-10: each device's last minute of RSSI, committed or not. The writer owns it; the reader gets snapshots.
+    pub rings: Arc<Rings>,
+    /// The device whose chart rides on the deltas (`set_live_focus`).
+    pub focus: Option<i64>,
     /// The latest fix: (lat, lon, accuracy, observed_at_ms).
     pub fix: Option<(f64, f64, f64, i64)>,
 }
 
 impl LiveState {
-    pub fn hear(&mut self, key: i64, rssi: Option<i16>) {
+    pub fn hear(&mut self, key: i64, rssi: Option<i16>, at_ms: i64) {
         if let Some(r) = rssi {
             Arc::make_mut(&mut self.current).insert(key, r);
+            Arc::make_mut(&mut self.rings).hear(key, at_ms, r);
         }
     }
 }
@@ -73,6 +79,12 @@ pub(crate) fn delta(
         force,
     } = input;
     let fresh = now - stale_after_ms;
+    if live.rings.len() > 0 {
+        Arc::make_mut(&mut live.rings).evict(now);
+    }
+    let chart = live
+        .focus
+        .map(|key| live.rings.chart(key, now, stale_after_ms));
     let mut stmt = conn.prepare_cached(
         "SELECT addr, name, is_apple, page_id, rssi_max, best_lon, best_lat, last_seen_ms
          FROM session_devices WHERE session_id = ?1 ORDER BY id",
@@ -198,6 +210,7 @@ pub(crate) fn delta(
         })
         .collect();
     if !force
+        && chart.is_none()
         && changed.is_empty()
         && appended.is_empty()
         && products.is_empty()
@@ -221,6 +234,6 @@ pub(crate) fn delta(
             accuracy_m,
             age_ms: now - at,
         }),
-        chart: None,
+        chart,
     }))
 }

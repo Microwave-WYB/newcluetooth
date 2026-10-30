@@ -346,6 +346,12 @@ class FakeCoreTest {
         advanceTimeBy(1_000)
         runCurrent()
         assertEquals(60, deltas.last().chart!!.samples.size)
+        val chart = c.deviceChart(order.first())!!
+        assertEquals(60, chart.samples.size)
+        assertTrue("D-10: some of the last minute was heard", chart.samples.any { it != 0.toByte() })
+        // C-5/C-6 (ab39eb5): no sparklines in rows or deltas
+        assertTrue(deltas.all { d -> d.appended.all { it.spark == null } && d.changed.all { it.spark.isEmpty() } })
+        assertTrue(c.deviceRows(scope, order.take(20).toLongArray()).all { it.spark == null })
         c.pauseRecording()
         runCurrent()
         val paused = deltas.size

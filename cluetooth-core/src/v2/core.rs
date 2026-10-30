@@ -14,13 +14,13 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_channel::oneshot;
-use rusqlite::{Connection, InterruptHandle, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::location::RecentLocationFixes;
 use crate::payload_identity::generate_uuid_v7;
@@ -219,6 +219,7 @@ struct LiveSnapshot {
     uuid: String,
     seq: u64,
     current: Arc<std::collections::HashMap<i64, i16>>,
+    rings: Arc<super::rssi::Rings>,
 }
 
 impl Snapshot {
@@ -232,6 +233,8 @@ impl Snapshot {
                 stale_before_ms: now - self.stale_after_ms,
                 seq: l.seq,
                 current: l.current.clone(),
+                rings: l.rings.clone(),
+                stale_after_ms: self.stale_after_ms,
             }),
         }
     }
@@ -241,30 +244,45 @@ type ReadJob = Box<dyn FnOnce(&Connection, &Snapshot) + Send>;
 
 enum ReaderMsg {
     Snapshot(Snapshot),
-    Job(ReadJob),
+    /// A query and its own cancel flag (set when its future is dropped).
+    Job(ReadJob, Arc<AtomicBool>),
 }
 
-fn spawn_reader(conn: Connection, first: Snapshot) -> Result<mpsc::Sender<ReaderMsg>, CoreError> {
+/// SQLite VM steps between two looks at a query's cancel flag.
+const CANCEL_CHECK_OPS: i32 = 1_000;
+
+fn spawn_reader(
+    mut conn: Connection,
+    first: Snapshot,
+) -> Result<mpsc::Sender<ReaderMsg>, CoreError> {
     let (tx, rx) = mpsc::channel::<ReaderMsg>();
     spawn("ct-read", move || {
         let mut snapshot = first;
         while let Ok(msg) = rx.recv() {
             match msg {
                 ReaderMsg::Snapshot(s) => snapshot = s,
-                ReaderMsg::Job(job) => job(&conn, &snapshot),
+                ReaderMsg::Job(job, cancel) => {
+                    // the query stops at its next check once its future is dropped (§2 cancellation)
+                    let flag = cancel.clone();
+                    let _ = conn.progress_handler(
+                        CANCEL_CHECK_OPS,
+                        Some(move || flag.load(Ordering::SeqCst)),
+                    );
+                    job(&conn, &snapshot);
+                    let _ = conn.progress_handler(0, None::<fn() -> bool>);
+                }
             }
         }
     })?;
     Ok(tx)
 }
 
-/// The reply of one query. Dropping it before it resolves cancels the query: a query that has not started is
-/// skipped, and one in flight is interrupted (`sqlite3_interrupt`, §2 cancellation).
+/// The reply of one query. Dropping it before it resolves cancels the query (§2 cancellation): a query that has not
+/// started is skipped, and one in flight stops at its next progress check (it ends `Cancelled`). The flag is the
+/// query's own, so no other query is ever hit, and a cancellation can't fall between a look and a start.
 pub(crate) struct ReadFuture<T> {
     rx: oneshot::Receiver<Result<T, CoreError>>,
-    id: u64,
-    running: Arc<AtomicU64>,
-    interrupt: Arc<InterruptHandle>,
+    cancel: Arc<AtomicBool>,
     done: bool,
 }
 
@@ -284,8 +302,8 @@ impl<T> Future for ReadFuture<T> {
 
 impl<T> Drop for ReadFuture<T> {
     fn drop(&mut self) {
-        if !self.done && self.running.load(Ordering::SeqCst) == self.id {
-            self.interrupt.interrupt();
+        if !self.done {
+            self.cancel.store(true, Ordering::SeqCst);
         }
     }
 }
@@ -398,7 +416,7 @@ impl Runner {
                         .fixes
                         .most_recent_preceding(input.elapsed_realtime_nanos)
                         .map(|f| (f.lat, f.lon, f.accuracy_meters));
-                    self.live.hear(key, input.rssi);
+                    self.live.hear(key, input.rssi, input.scanned_at_ms);
                     self.pending.push(Obs {
                         addr: key,
                         at_ms: input.scanned_at_ms,
@@ -596,6 +614,7 @@ impl Runner {
                     uuid: s.uuid.0.clone(),
                     seq: self.live.seq,
                     current: self.live.current.clone(),
+                    rings: self.live.rings.clone(),
                 }),
                 _ => None,
             },
@@ -937,10 +956,6 @@ pub struct Core {
     data_dir: PathBuf,
     writer: mpsc::Sender<WriterMsg>,
     reader: mpsc::Sender<ReaderMsg>,
-    interrupt: Arc<InterruptHandle>,
-    /// The id of the query the reader runs now (0 = none).
-    running: Arc<AtomicU64>,
-    next_query: AtomicU64,
     /// Dropping it stops `ct-tick`.
     _ticker: Option<mpsc::Sender<()>>,
 }
@@ -1009,7 +1024,6 @@ impl Core {
             )?;
         }
         let read_conn = db::open_reader(&db_path)?;
-        let interrupt = Arc::new(read_conn.get_interrupt_handle());
         let stale_after_ms = i64::try_from(config.stale_after_ms).unwrap_or(i64::MAX);
         let control = Control::new(Millis(
             i64::try_from(config.durability_interval_ms).unwrap_or(i64::MAX),
@@ -1058,9 +1072,6 @@ impl Core {
             data_dir: dir.to_path_buf(),
             writer,
             reader,
-            interrupt,
-            running: Arc::new(AtomicU64::new(0)),
-            next_query: AtomicU64::new(1),
             _ticker,
         }))
     }
@@ -1125,35 +1136,25 @@ impl Core {
         rx.await.map_err(closed)
     }
 
-    /// Queues a query on the reader. `f` may run twice: an interrupt meant for a cancelled query that just ended
-    /// can reach the next one, which then runs again.
+    /// Queues a query on the reader; dropping the future cancels it.
     pub(crate) fn read<T: Send + 'static>(
         &self,
-        f: impl Fn(&Connection, &Ctx<'_>) -> Result<T, CoreError> + Send + 'static,
+        f: impl FnOnce(&Connection, &Ctx<'_>) -> Result<T, CoreError> + Send + 'static,
     ) -> ReadFuture<T> {
         let (tx, rx) = oneshot::channel();
-        let id = self.next_query.fetch_add(1, Ordering::SeqCst);
-        let running = self.running.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
         let catalog = self.catalog.clone();
         let job: ReadJob = Box::new(move |conn, snapshot| {
             if tx.is_canceled() {
                 return; // dropped before it started
             }
-            running.store(id, Ordering::SeqCst);
             let ctx = snapshot.ctx(&catalog, now_ms());
-            let mut result = f(conn, &ctx);
-            if matches!(result, Err(CoreError::Cancelled)) && !tx.is_canceled() {
-                result = f(conn, &ctx);
-            }
-            running.store(0, Ordering::SeqCst);
-            let _ = tx.send(result);
+            let _ = tx.send(f(conn, &ctx));
         });
-        let _ = self.reader.send(ReaderMsg::Job(job));
+        let _ = self.reader.send(ReaderMsg::Job(job, cancel.clone()));
         ReadFuture {
             rx,
-            id,
-            running: self.running.clone(),
-            interrupt: self.interrupt.clone(),
+            cancel,
             done: false,
         }
     }
@@ -1169,6 +1170,16 @@ impl Core {
             env,
             now: EpochMs(now),
         })
+    }
+
+    /// `device_chart` with an explicit clock.
+    pub(crate) async fn device_chart_at(
+        &self,
+        key: DeviceKey,
+        now: i64,
+    ) -> Result<Option<LiveChart>, CoreError> {
+        self.read(move |c, ctx| query::device_chart(c, ctx, key, now))
+            .await
     }
 
     pub(crate) fn pause_recording_at(&self, now: i64) -> Result<(), CoreError> {
@@ -1312,10 +1323,11 @@ impl Core {
         })
     }
 
-    /// [N] The chart rides on deltas (D-10).
+    /// [N] The focused device's chart rides on the deltas (D-10).
     pub fn set_live_focus(&self, key: Option<DeviceKey>) -> Result<(), CoreError> {
-        let _ = key;
-        Ok(())
+        self.writer
+            .send(WriterMsg::Job(Box::new(move |r| r.live.focus = key)))
+            .map_err(closed)
     }
 
     // ---- §2.3 recording ----
@@ -1505,10 +1517,9 @@ impl Core {
             .await
     }
 
-    /// [N] D-10, live only.
-    pub fn device_chart(&self, key: DeviceKey) -> Result<Option<LiveChart>, CoreError> {
-        let _ = key;
-        Ok(None)
+    /// [P] D-10, live only: the device's last 60 s at 1 s resolution, `None` when no session is live.
+    pub async fn device_chart(&self, key: DeviceKey) -> Result<Option<LiveChart>, CoreError> {
+        self.device_chart_at(key, now_ms()).await
     }
 
     /// [P] D-13.7.
