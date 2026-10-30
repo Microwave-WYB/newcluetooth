@@ -2,6 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.sheets
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
@@ -9,6 +10,7 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CameraSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /** Moves an offset over time; the Compose host eases it, tests apply it at once. */
 fun interface OffsetAnimator {
@@ -55,8 +57,11 @@ class SheetEntry internal constructor(val id: Long, val kind: SheetKind, private
     var peek by mutableFloatStateOf(Float.NaN)
         internal set
 
-    /** The top edge while dragged or animating; null while resting at [height]. */
-    internal var liveOffset by mutableStateOf<Float?>(null)
+    /**
+     * The top edge while dragged or animating; null while resting at [height]. S-16a: read-only here; only the runner
+     * writes it, through its animate-to-target path or its drag-follow path.
+     */
+    internal val liveOffset: Float? get() = owner.liveOf(id)
 
     /** The y the sheet was last placed at: the frame its pointer positions are relative to. */
     internal var placedTop = 0f
@@ -152,9 +157,53 @@ class SheetStackController(
     /** S-9: only while a pushed sheet is at Full, never on the tablet panel. */
     val scrimVisible: Boolean get() = state.scrimVisible
 
-    fun setScreen(heightPx: Float, density: Float, bottomInsetPx: Float, topInsetPx: Float = 0f) {
-        screen = Screen(heightPx, density, bottomInsetPx, topInsetPx)
+    /**
+     * The sheets' live offsets by id (S-16a): private to the runner. Every write is [place], called only by the
+     * animate-to-target path ([animate], its start and end) and the drag-follow path ([dragMove]); a resting sheet has
+     * none and shows its target.
+     */
+    private val live = mutableStateMapOf<Long, Float>()
+
+    internal fun liveOf(id: Long): Float? = live[id]
+
+    private fun place(entry: SheetEntry, offset: Float?) {
+        if (offset == null) live.remove(entry.id) else live[entry.id] = offset
     }
+
+    /** Screen facts (the keyboard, rotation, insets): a resting sheet whose target moves animates there (S-16a). */
+    fun setScreen(heightPx: Float, density: Float, bottomInsetPx: Float, topInsetPx: Float = 0f) {
+        val next = Screen(heightPx, density, bottomInsetPx, topInsetPx)
+        if (next == screen) return
+        val first = screen.height == 0f // the first layout places the sheets; nothing moves yet
+        retarget { screen = next }.takeUnless { first }?.let(::easeMoved)
+    }
+
+    /** S-5 peek: the measured header; a Collapsed sheet whose target moves animates there (S-16a). */
+    internal fun setPeek(entry: SheetEntry, px: Float) {
+        if (entry.peek == px) return
+        val first = entry.peek.isNaN()
+        retarget { entry.peek = px }.takeUnless { first }?.let(::easeMoved)
+    }
+
+    /** The resting sheets' offsets before [change], to animate from (S-16a). */
+    private inline fun retarget(change: () -> Unit): Map<SheetEntry, Float> {
+        val resting = rendered.filter { it.drag == null && it.animation?.isActive != true && live[it.id] == null }
+        val before = resting.associateWith { offsetOf(it) }
+        change()
+        return before
+    }
+
+    /** Each resting sheet whose target moved eases there from where it was, instead of jumping. */
+    private fun easeMoved(before: Map<SheetEntry, Float>) {
+        for ((e, was) in before) {
+            if (abs(offsetOf(e) - was) <= SAME_PX) continue
+            place(e, was)
+            animate(e, geometry(e).offsetOf(e.height), StackEvent.Settled(SheetId(e.id)))
+        }
+    }
+
+    /** Tests only: puts a sheet where an animation frame would. */
+    internal fun placeForTest(entry: SheetEntry, offset: Float?) = place(entry, offset)
 
     private val density: Float get() = screen.density
 
@@ -263,7 +312,7 @@ class SheetStackController(
         val drag = entry.drag ?: return false
         if (!drag.move(x, y, timeMs)) return false
         dispatch(StackEvent.DragStarted(SheetId(entry.id))) // S-7: once dragged, nothing below the top is drawn
-        entry.liveOffset = drag.offset
+        place(entry, drag.offset) // S-10a: the drag-follow path, the only direct move
         return true
     }
 
@@ -299,10 +348,16 @@ class SheetStackController(
 
     /** Reduces [event] and executes its effects in order. */
     internal fun dispatch(event: StackEvent) {
+        // S-16a: every shown sheet stays where it is drawn while the state changes, so the effects animate from
+        // there (an Ease of a resting sheet used to start at its new target: a jump)
+        val shown = rendered.filter { it.drag == null }
+        for (e in shown) if (live[e.id] == null) place(e, offsetOf(e))
         val step = reduceStack(state, event)
         if (step.state !== state) state = step.state
         step.effects.forEach(::execute)
         prune()
+        // then each one no effect moved rests: in place if it is at its target, else it eases there
+        for (e in shown) if (e.id in handles && e.drag == null && e.animation?.isActive != true) rest(e)
     }
 
     private fun handle(level: Level<SheetKind>): SheetEntry = handles.getOrPut(level.id.raw) { SheetEntry(level.id.raw, level.kind, this, level) }
@@ -318,15 +373,15 @@ class SheetStackController(
     private fun execute(effect: StackEffect) {
         when (effect) {
             is StackEffect.Stop -> handles[effect.id.raw]?.let(::stop)
-            is StackEffect.Rest -> handles[effect.id.raw]?.liveOffset = null
-            is StackEffect.Pin -> handleOf(effect.id)?.let { it.liveOffset = offsetOf(it) }
+            is StackEffect.Rest -> handles[effect.id.raw]?.let(::rest)
+            is StackEffect.Pin -> handleOf(effect.id)?.let { place(it, offsetOf(it)) } // where it is: nothing moves
             is StackEffect.SlideIn -> handleOf(effect.id)?.let { e ->
-                e.liveOffset = geometry(e).dismissed
+                place(e, geometry(e).dismissed) // below the screen: the slide's start
                 animate(e, geometry(e).offsetOf(e.height), StackEvent.Settled(effect.id))
             }
             is StackEffect.Ease -> handleOf(effect.id)?.let { e -> animate(e, geometry(e).offsetOf(e.height), StackEvent.Settled(effect.id)) }
             is StackEffect.Reveal -> handleOf(effect.id)?.let { e ->
-                handles[effect.from.raw]?.let { from -> e.liveOffset = offsetOf(from) }
+                handles[effect.from.raw]?.let { from -> place(e, offsetOf(from)) } // under it: nothing moves
                 animate(e, geometry(e).offsetOf(e.height), StackEvent.Settled(effect.id))
             }
             is StackEffect.SlideOut -> handleOf(effect.id)?.let { e -> animate(e, geometry(e).dismissed, StackEvent.SlidOut(effect.id)) }
@@ -348,15 +403,27 @@ class SheetStackController(
         entry.animation = null
     }
 
+    /** S-16a: rest at the target; a sheet not there yet animates there instead of jumping. */
+    private fun rest(entry: SheetEntry) {
+        val at = live[entry.id] ?: return
+        val target = geometry(entry).offsetOf(entry.height)
+        if (abs(at - target) <= SAME_PX) place(entry, null)
+        else animate(entry, target, StackEvent.Settled(SheetId(entry.id)))
+    }
+
+    /** S-16a: the animate-to-target path (`--t-page`, `--ease`; instant only with reduced motion, G-7). */
     private fun animate(entry: SheetEntry, to: Float, done: StackEvent) {
         stop(entry)
         val from = offsetOf(entry)
-        entry.liveOffset = from
+        place(entry, from)
         val ms = if (metrics.reducedMotion) 0 else metrics.pageMs
         entry.animation = scope.launch {
-            animator.animate(from, to, ms) { entry.liveOffset = it }
-            entry.liveOffset = to
+            animator.animate(from, to, ms) { place(entry, it) }
+            place(entry, to)
             dispatch(done)
         }
     }
 }
+
+/** Offsets within half a pixel are the same place. */
+private const val SAME_PX = 0.5f
