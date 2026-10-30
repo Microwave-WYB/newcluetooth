@@ -28,7 +28,7 @@ class MapStyleSpecTest {
             assertEquals(expected, ids(spec.layers(theme)))
         }
         assertEquals(
-            listOf("route", "density", "clusters", "cluster-count", "cells", "cell-count", "points", "sightings",
+            listOf("route", "clusters", "cluster-count", "cells", "cell-count", "points", "sightings",
                 "point-selected", "me", "end-dots", "end-labels"),
             ids(spec.layers(MapTheme.Light)),
         )
@@ -38,15 +38,16 @@ class MapStyleSpecTest {
         for (theme in MapTheme.entries) assertEquals(rawLayers(theme.key), spec.styleLayers(theme))
     }
 
-    @Test fun `only the types the installer knows, and the one heatmap is density, below the devices`() {
+    @Test fun `no heatmap layer and no density layer or source, only the types the installer knows`() {
         for (theme in MapTheme.entries) {
             val layers = spec.layers(theme)
             val types = layers.map { it.getValue("type").jsonPrimitive.content }.toSet()
-            assertTrue("$types", types.all { it in setOf("circle", "line", "symbol", "heatmap") })
-            val ids = layers.map { it.getValue("id").jsonPrimitive.content }
-            assertEquals(listOf("density"), layers.filter { it.getValue("type").jsonPrimitive.content == "heatmap" }.map { it.getValue("id").jsonPrimitive.content })
-            assertTrue(ids.indexOf("density") < ids.indexOf("clusters") && ids.indexOf("density") < ids.indexOf("points"))
+            // M-5 is removed: the native heatmap crashed the renderer on an Adreno 640
+            assertTrue("$types", "heatmap" !in types)
+            assertTrue("$types", types.all { it in setOf("circle", "line", "symbol") })
+            assertTrue(layers.none { it.getValue("id").jsonPrimitive.content == "density" || it["source"]?.jsonPrimitive?.content == "density" })
         }
+        assertTrue(spec.sources.none { it.id == "density" })
     }
 
     @Test fun `cells layers clone clusters and cluster-count with identical paint, layout and filter`() {
@@ -67,7 +68,7 @@ class MapStyleSpecTest {
     }
 
     @Test fun `M-2 M-4 sources, devices clustered at radius 50 to zoom 18, plus cells`() {
-        assertEquals(listOf("route", "ends", "density", "devices", "sightings", "me", "cells"), spec.sources.map { it.id })
+        assertEquals(listOf("route", "ends", "devices", "sightings", "me", "cells"), spec.sources.map { it.id })
         val devices = spec.sources.single { it.id == "devices" }
         assertTrue(devices.cluster)
         assertEquals(50, devices.clusterRadius)
@@ -117,7 +118,7 @@ class MapStyleSpecTest {
         assertEquals(expected, spec.selection(null))
     }
 
-    @Test fun `M-3 M-4 M-5 M-8 paint values come from the tokens, light and dark`() {
+    @Test fun `M-3 M-4 M-8 paint values come from the tokens, light and dark`() {
         for (theme in MapTheme.entries) {
             val t = Design.tokens
             val hex = { name: String -> "#%06x".format(t.argb(name, theme) and 0xFFFFFF) }
@@ -126,12 +127,6 @@ class MapStyleSpecTest {
             assertEquals(JsonPrimitive(hex("--blue")), paint("points", "circle-color"))
             assertEquals(JsonPrimitive(5), paint("points", "circle-radius"))
             assertEquals(JsonPrimitive(hex("--blue")), paint("clusters", "circle-color"))
-            // M-5: the native heatmap, the same in both themes: weight 1 per device (a cell's count), radius 24,
-            // opacity 0.6 fading out from zoom 16 to 18
-            assertEquals(JsonPrimitive("heatmap"), layers.getValue("density").getValue("type"))
-            assertEquals(JsonPrimitive(24), paint("density", "heatmap-radius"))
-            assertEquals(Json.parseToJsonElement("""["coalesce",["get","point_count"],1]"""), paint("density", "heatmap-weight"))
-            assertEquals(Json.parseToJsonElement("""["interpolate",["linear"],["zoom"],16,0.6,18,0]"""), paint("density", "heatmap-opacity"))
             assertEquals(JsonPrimitive(hex("--map-route")), paint("route", "line-color"))
         }
     }

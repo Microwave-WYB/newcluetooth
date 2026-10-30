@@ -37,7 +37,7 @@ object MapReducer {
     /** Cells are re-aggregated per zoom; Points cluster natively and reload only outside the loaded area. */
     const val CELLS_RELOAD_DZ = 0.5
     /** The sources Trim drops: the large, re-queryable ones. */
-    val TRIMMED_SOURCES: Set<Source<*>> = setOf(Source.Devices, Source.Density, Source.Cells, Source.Sightings)
+    val TRIMMED_SOURCES: Set<Source<*>> = setOf(Source.Devices, Source.Cells, Source.Sightings)
 
     fun reduce(state: MapState, event: MapEvent): Step {
         val b = Builder(state)
@@ -221,7 +221,6 @@ object MapReducer {
         val session = b.state.session
         b.effects += MapEffect.DropSources(TRIMMED_SOURCES)
         b.onMap(MapEffect.SetSource(Source.Devices, SourceData.Empty))
-        b.onMap(MapEffect.SetSource(Source.Density, SourceData.Empty))
         b.onMap(MapEffect.SetSource(Source.Cells, SourceData.Empty))
         b.onMap(MapEffect.SetSource(Source.Sightings, SourceData.Empty))
         b.state = b.state.copy(
@@ -277,8 +276,6 @@ object MapReducer {
                 b.setSource(Source.Cells, payload)
             }
         }
-        // M-5: the density wash is always on, one circle per device (per cell in Cells mode)
-        b.setSource(Source.Density, payload)
         var next = session.copy(points = PointsState.Loaded(requested.coverage, e.mode))
         if (session.routesFaint) {
             val routes = b.newRequest()

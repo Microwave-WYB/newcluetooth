@@ -20,13 +20,6 @@
         "features": []
       }
     },
-    "density": {
-      "type": "geojson",
-      "data": {
-        "type": "FeatureCollection",
-        "features": []
-      }
-    },
     "devices": {
       "type": "geojson",
       "data": {
@@ -56,8 +49,6 @@
     "light": {
       "route": "#0064d4",
       "routeOpacity": 0.35,
-      "densityOpacity": 0.6,
-      "densityRadius": 24,
       "point": "#0064d4",
       "stroke": "#ffffff",
       "clusterText": "#ffffff",
@@ -75,8 +66,6 @@
     "dark": {
       "route": "#3b9bff",
       "routeOpacity": 0.35,
-      "densityOpacity": 0.6,
-      "densityRadius": 24,
       "point": "#3b9bff",
       "stroke": "#ffffff",
       "clusterText": "#ffffff",
@@ -106,53 +95,6 @@
           "line-color": "#0064d4",
           "line-width": 4,
           "line-opacity": 0.35
-        }
-      },
-      {
-        "id": "density",
-        "type": "heatmap",
-        "source": "density",
-        "paint": {
-          "heatmap-weight": [
-            "coalesce",
-            [
-              "get",
-              "point_count"
-            ],
-            1
-          ],
-          "heatmap-radius": 24,
-          "heatmap-intensity": 1,
-          "heatmap-color": [
-            "interpolate",
-            [
-              "linear"
-            ],
-            [
-              "heatmap-density"
-            ],
-            0,
-            "rgba(0,100,212,0)",
-            0.25,
-            "rgba(0,100,212,0.7)",
-            0.6,
-            "rgba(34,211,238,0.9)",
-            1,
-            "rgba(255,255,255,1)"
-          ],
-          "heatmap-opacity": [
-            "interpolate",
-            [
-              "linear"
-            ],
-            [
-              "zoom"
-            ],
-            16,
-            0.6,
-            18,
-            0
-          ]
         }
       },
       {
@@ -379,53 +321,6 @@
           "line-color": "#3b9bff",
           "line-width": 4,
           "line-opacity": 0.35
-        }
-      },
-      {
-        "id": "density",
-        "type": "heatmap",
-        "source": "density",
-        "paint": {
-          "heatmap-weight": [
-            "coalesce",
-            [
-              "get",
-              "point_count"
-            ],
-            1
-          ],
-          "heatmap-radius": 24,
-          "heatmap-intensity": 1,
-          "heatmap-color": [
-            "interpolate",
-            [
-              "linear"
-            ],
-            [
-              "heatmap-density"
-            ],
-            0,
-            "rgba(0,100,212,0)",
-            0.25,
-            "rgba(0,100,212,0.7)",
-            0.6,
-            "rgba(34,211,238,0.9)",
-            1,
-            "rgba(255,255,255,1)"
-          ],
-          "heatmap-opacity": [
-            "interpolate",
-            [
-              "linear"
-            ],
-            [
-              "zoom"
-            ],
-            16,
-            0.6,
-            18,
-            0
-          ]
         }
       },
       {

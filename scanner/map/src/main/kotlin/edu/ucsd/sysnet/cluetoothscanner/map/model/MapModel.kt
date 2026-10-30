@@ -69,7 +69,6 @@ sealed class Source<D : SourceData>(val id: String) {
 
     data object Route : Source<SourceData.RouteData>("route") { override fun accept(data: SourceData) = data as? SourceData.RouteData }
     data object Ends : Source<SourceData.EndsData>("ends") { override fun accept(data: SourceData) = data as? SourceData.EndsData }
-    data object Density : Source<SourceData.PointsData>("density") { override fun accept(data: SourceData) = data as? SourceData.PointsData }
     data object Devices : Source<SourceData.PointsData>("devices") { override fun accept(data: SourceData) = data as? SourceData.PointsData }
     data object Sightings : Source<SourceData.PointsData>("sightings") { override fun accept(data: SourceData) = data as? SourceData.PointsData }
     data object Me : Source<SourceData.MeData>("me") { override fun accept(data: SourceData) = data as? SourceData.MeData }

@@ -517,7 +517,6 @@ Each component is built once. Its size, color and state rules come from these to
   There are no view or DOM markers. Colors and sizes come from tokens. Sources:
   - `route`;
   - `ends`;
-  - `density`;
   - `devices`: clustered, radius 50, max zoom 18;
   - `sightings`;
   - `me`.
@@ -529,16 +528,8 @@ Each component is built once. Its size, color and state rules come from these to
   - A `--blue` circle with a 2 dp white stroke and the white count (`point_count_abbreviated`, 12 sp).
   - Radius steps by count: 13, then 16 from 10, 20 from 50, and 24 from 200.
   - Tapping a cluster eases to its expansion zoom + 0.2.
-- **M-5 Heatmap.** A native MapLibre heatmap layer on the `density` source, below the clusters and points. It is
-  always on.
-  - Weight 1 per device (a cell's device count in Cells mode), radius 56 dp, opacity 0.6; intensity about 0.15 at
-    zoom 12 rising to 0.35 at zoom 16, so the gradient reaches well outside a cluster bubble.
-  - Color ramp transparent → blue → cyan → yellow → red, the same in light and dark. It never ends in white or any
-    color close to the light base map, so the densest spot reads as the hottest, not as a hole.
-  - Intensity is scaled so a stationary session (tens of devices on one spot) does not saturate: the center of such a
-    spot is yellow to red, and its edge fades through cyan and blue.
-  - It fades out between zoom 16 and 18.
-  - If it proves unstable on a device, it is removed rather than imitated with circles.
+- **M-5 (removed) Heatmap.** There is no heatmap or density layer. MapLibre's native heatmap layer crashed the
+  renderer (SIGSEGV) on the Note10's Adreno 640, and the owner chose removing it over imitating it with circles.
 - **M-6 Selection.**
   - The selected device's sightings show as radius-6 circles colored by RSSI band, with a white stroke.
   - Its own point gets an 8 dp `--t1` marker.
@@ -661,7 +652,9 @@ Each component is built once. Its size, color and state rules come from these to
     2. switch "Record when the app opens", with "Starts a recording each time Cluetooth opens";
     3. switch "Upload over Wi-Fi only";
     4. switch "Scan LE Coded PHY", with "Also scan long-range devices; applies within a minute";
-    5. "Pending uploads", with the count and size, plus a small tonal "Upload now";
+    5. "Pending uploads", with the count and size, plus a small tonal "Upload now". With failures it adds "N uploads
+       failed; retrying" and the latest failure's reason in a few words with its code ("Network error", "Timed
+       out"), kept across restarts. A denial reads "N uploads failed · Denied (403)": retrying does not fix it;
     6. a "Filters" section label;
     7. switch "Hide unnamed Apple devices" (default on), with "Only what you see; scanning and recording keep
        everything";

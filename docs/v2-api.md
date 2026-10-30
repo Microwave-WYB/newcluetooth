@@ -556,7 +556,7 @@ impl Core {
     pub async fn search(&self, scope: Scope, query: String, area: Option<Bbox>) -> Result<Option<DeviceKeys>, CoreError>;
         // [V Search] Q-1/Q-2; None for a blank query; device_order order
     pub async fn map_points(&self, scope: Scope, filter: DeviceFilter, viewport: Bbox, zoom: f64) -> Result<MapData, CoreError>;
-        // [V MapPoints] "devices"/"density" for the viewport (+50 %: the bbox padded by a quarter of its width
+        // [V MapPoints] "devices" for the viewport (+50 %: the bbox padded by a quarter of its width
         //     and height on each side), never the whole scope (§3.7); filter.query limits it to search matches (Q-5)
 }
 #[uniffi::export] pub fn match_device(query: String, name: Option<String>, addr: String) -> bool;  // [N] Q-1, pure
@@ -1963,7 +1963,7 @@ contracts. "I" is integration.
 - **Provides:** `CluetoothMap(state, events: MapEvents)`, the `MapRequests` implementation, `RouteMiniMap` and
   `MapCacheInfo`.
 - **GeoJSON updates:**
-  - devices and density from `MapData` on idle, scope or filter change (a newer query cancels the older through `collectLatest`);
+  - devices (and Cells) from `MapData` on idle, scope or filter change (a newer query cancels the older through `collectLatest`);
   - live `best` changes at most every 5 s;
   - sightings on selection.
 - **Consumes:** `CoreQueries` (`:core-fake`), `LocationStatusSource` (`FakeLocationStatus`) and `:designsystem`.
