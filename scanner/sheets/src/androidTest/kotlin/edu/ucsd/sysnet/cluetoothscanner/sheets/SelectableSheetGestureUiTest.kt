@@ -124,6 +124,34 @@ class SelectableSheetGestureUiTest {
     }
 
     @Test
+    fun s13_aContentDragStartingOnATokenValueRaisesTheSheet() {
+        start(Half)
+        val top0 = sheetTop()
+        screen().performTouchInput { down(center(SheetHarness.rowToken(2))) }
+        var finger = 0f
+        repeat(10) {
+            moveBy(-dp(12f))
+            finger -= dp(12f)
+            rule.waitForIdle()
+            if (abs(finger) > slopPx) assertEquals("finger $finger", finger, sheetTop() - top0, 1.5f)
+        }
+        screen().performTouchInput { up() }
+    }
+
+    @Test
+    fun d15_selectingATokenValueNeverMovesTheSheet() {
+        start(Half)
+        val top0 = sheetTop()
+        longPress(center(SheetHarness.rowToken(2)))
+        repeat(10) { moveBy(dp(12f)); rule.waitForIdle() }
+        assertEquals(top0, sheetTop(), 0.5f)
+        screen().performTouchInput { up() }
+        rule.waitForIdle()
+        assertEquals(top0, sheetTop(), 0.5f)
+        assertEquals(Half, root.height)
+    }
+
+    @Test
     fun d15_aLongPressOnHeaderTextSelectsWithoutTheHeaderTap() {
         start(Collapsed)
         longPress(center(SheetHarness.headerText(root.id)))

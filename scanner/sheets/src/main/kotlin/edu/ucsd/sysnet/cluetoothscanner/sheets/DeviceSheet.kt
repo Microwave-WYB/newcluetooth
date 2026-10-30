@@ -1,5 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.sheets
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
@@ -23,6 +25,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.key
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.LocalContentColor
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.CompositionLocalProvider
@@ -139,6 +149,60 @@ internal val LocalSheetSelectable = staticCompositionLocalOf<Modifier> { Modifie
 @Composable
 private fun Modifier.selectableText(): Modifier = then(LocalSheetSelectable.current)
 
+/** D-15: one token: a MAC, a UUID, hex, a number (no whitespace). */
+internal fun isToken(text: String): Boolean = text.isNotEmpty() && text.none { it.isWhitespace() }
+
+/**
+ * D-15: a token's first selection (a long press picks one word of it) is the whole token; the handles can narrow it
+ * after that. Its text never changes (read-only).
+ */
+internal fun wholeToken(old: TextFieldValue, new: TextFieldValue): TextFieldValue =
+    if (old.selection.collapsed && !new.selection.collapsed) new.copy(selection = TextRange(0, new.text.length)) else new
+
+/**
+ * D-15: a selectable value. The system selects by words, and its word rules split a token at digits and punctuation
+ * (a long press on a MAC picked "38:"), so a token ([isToken]) is a read-only field whose long press selects all of it
+ * ([wholeToken]), with the system copy toolbar; it then takes no part in a selection across texts. Any other value is
+ * plain selectable text. [singleLine]: one line (a token scrolls instead of being cut off).
+ */
+@Composable
+internal fun ValueText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = CluetoothTheme.type.body,
+    color: Color = Color.Unspecified,
+    textAlign: TextAlign? = null,
+    singleLine: Boolean = false,
+) {
+    if (!isToken(text)) {
+        Text(
+            text, modifier.selectableText(), style = style, color = color, textAlign = textAlign,
+            maxLines = if (singleLine) 1 else Int.MAX_VALUE, overflow = if (singleLine) TextOverflow.Ellipsis else TextOverflow.Clip,
+        )
+        return
+    }
+    val c = color.takeOrElse { LocalContentColor.current.takeOrElse { CluetoothTheme.colors.t1 } }
+    // a field is at least 10 characters wide, and a long press past the text places a cursor instead of selecting:
+    // the slot ([modifier]) holds the field as wide as its text (at most the slot, where a long token wraps), aligned
+    // as the text is
+    val measurer = rememberTextMeasurer()
+    val textWidth = with(LocalDensity.current) { measurer.measure(text, style, softWrap = false).size.width.toDp() } + CURSOR_ROOM
+    val end = (textAlign ?: style.textAlign) == TextAlign.End
+    // the field's selection is a small state machine (a new value starts a new one)
+    Box(modifier, contentAlignment = if (end) Alignment.TopEnd else Alignment.TopStart) { key(text) {
+        val field = rememberSheetMachine({ TextFieldValue(text) }, ::wholeToken)
+        BasicTextField(
+            value = field.state,
+            onValueChange = field::dispatch,
+            modifier = Modifier.widthIn(max = textWidth).selectableText(),
+            readOnly = true,
+            singleLine = singleLine,
+            textStyle = style.copy(color = c, textAlign = textAlign ?: style.textAlign),
+            cursorBrush = SolidColor(Color.Transparent),
+        )
+    } }
+}
+
 @Composable
 private fun DeviceBody(state: SheetsState, entry: SheetEntry, content: DeviceContent, d: DeviceDetail, rssi: Int?, gatt: GattController, onTab: (DeviceTab) -> Unit) {
     val list = rememberSheetListState(entry)
@@ -185,7 +249,7 @@ internal fun DeviceHead(d: DeviceDetail, rssi: Int?) {
         if (page != null && url != null) WikiLink(page.title, url, Modifier.selectableText())
         Row(verticalAlignment = Alignment.CenterVertically) {
             // the RSSI is never clipped ("−127 dBm" at a large font scale): the MAC gives way first
-            Text(d.addr, Modifier.selectableText().weight(1f, fill = false), style = t.sub.tabular(), color = c.t2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ValueText(d.addr, Modifier.weight(1f, fill = false), style = t.sub.tabular(), color = c.t2, singleLine = true)
             if (rssi != null) {
                 Text(
                     Format.dbm(rssi),
@@ -257,7 +321,7 @@ internal fun Advertising(d: DeviceDetail) {
                 Row(Modifier.fillMaxWidth().padding(vertical = Css.Kv_Div.padding.top), horizontalArrangement = Arrangement.spacedBy(Css.Kv_Div.gap)) {
                     val style = CluetoothTheme.type.body.copy(fontSize = Css.Kv_Div.fontSize.sp, lineHeight = Css.Kv_Div.lineHeight.sp)
                     DisableSelection { Text(k, style = style, color = CluetoothTheme.colors.t2) }
-                    Text(v, Modifier.selectableText().weight(1f), style = style.tabular().copy(fontWeight = FontWeight(Css.Kv_Dd.fontWeight.toInt())), textAlign = TextAlign.End)
+                    ValueText(v, Modifier.weight(1f), style = style.tabular().copy(fontWeight = FontWeight(Css.Kv_Dd.fontWeight.toInt())), textAlign = TextAlign.End)
                 }
             }
         }
@@ -315,17 +379,24 @@ internal fun RawTable(d: DeviceDetail) {
 private fun RawRow(len: String, type: String, data: String, style: androidx.compose.ui.text.TextStyle, header: Boolean, lenW: Dp, typeW: Dp) {
     val c = CluetoothTheme.colors
     val pad = Css.Raw_Td.padding
-    val cell = if (header) Modifier else Modifier.selectableText()
     Column {
         if (!header) Box(Modifier.fillMaxWidth().height(Css.Raw_Td.borderTopLengths[0]).background(c.div))
         Row(Modifier.fillMaxWidth().background(if (header) c.fill2 else c.panel)) {
-            Text(len, cell.width(lenW).padding(horizontal = pad.left, vertical = pad.top).testTag(DeviceTags.rawLen(header)), style = style.tabular(), maxLines = 1, softWrap = false)
-            Text(type, cell.width(typeW).padding(horizontal = pad.left, vertical = pad.top), style = style.tabular(), maxLines = 1, softWrap = false)
+            val lenCell = Modifier.width(lenW).padding(horizontal = pad.left, vertical = pad.top).testTag(DeviceTags.rawLen(header))
+            val typeCell = Modifier.width(typeW).padding(horizontal = pad.left, vertical = pad.top)
+            if (header) {
+                Text(len, lenCell, style = style.tabular(), maxLines = 1, softWrap = false)
+                Text(type, typeCell, style = style.tabular(), maxLines = 1, softWrap = false)
+            } else {
+                ValueText(len, lenCell, style = style.tabular(), singleLine = true)
+                ValueText(type, typeCell, style = style.tabular(), singleLine = true)
+            }
             // G-3: the raw data column is the one place with the code font; it breaks anywhere: the hex is one word,
             // which breaks greedily at the edge (D-15: no inserted break characters, so a copy is the exact hex)
             val dataStyle = (if (header) style else CluetoothTheme.type.code.copy(fontSize = style.fontSize, lineHeight = style.lineHeight))
                 .copy(lineBreak = LineBreak.Simple)
-            Text(data, cell.weight(1f).padding(horizontal = pad.left, vertical = pad.top), style = dataStyle, color = if (header) c.t1 else c.t2)
+            val dataCell = Modifier.weight(1f).padding(horizontal = pad.left, vertical = pad.top)
+            if (header) Text(data, dataCell, style = dataStyle, color = c.t1) else ValueText(data, dataCell, style = dataStyle, color = c.t2)
         }
     }
 }
@@ -423,7 +494,7 @@ private fun StepRow(step: GattStep, device: GattDeviceFacts) {
         val problem = gattProblem(step.failure, device)
         Column(Modifier.padding(start = Css.Gmark.width + Css.Gstep.gap, bottom = Css.Gstep.gap)) {
             Text(problem.reason(), Modifier.selectableText().testTag(DeviceTags.REASON), style = CluetoothTheme.type.sub, color = c.t1)
-            problem.codeText()?.let { Text(it, Modifier.selectableText().testTag(DeviceTags.CODE), style = CluetoothTheme.type.small.tabular(), color = c.t3) }
+            problem.codeText()?.let { ValueText(it, Modifier.testTag(DeviceTags.CODE), style = CluetoothTheme.type.small.tabular(), color = c.t3) }
         }
     }
 }
@@ -488,14 +559,14 @@ private fun Services(view: GattView) {
     Column(Modifier.padding(top = Css.GattSvc.padding.top)) {
         for (s in view.services) {
             Column(Modifier.padding(vertical = Css.GattSvc.padding.top)) {
-                Text(s.name ?: s.uuid, Modifier.selectableText(), style = t.body.copy(fontWeight = FontWeight(Css.GattSvc_B.fontWeight.toInt())))
-                Text(s.uuid, Modifier.selectableText(), style = t.sub, color = c.t2)
+                ValueText(s.name ?: s.uuid, style = t.body.copy(fontWeight = FontWeight(Css.GattSvc_B.fontWeight.toInt())))
+                ValueText(s.uuid, style = t.sub, color = c.t2)
                 for (ch in s.characteristics) {
                     val style = t.body.copy(fontSize = Css.GattChar.fontSize.sp, lineHeight = Css.GattChar.lineHeight.sp)
                     Column(Modifier.padding(start = Css.GattChar.padding.left, top = Css.GattChar.padding.top, bottom = Css.GattChar.padding.bottom)) {
-                        Text(ch.name ?: ch.uuid, Modifier.selectableText(), style = style)
+                        ValueText(ch.name ?: ch.uuid, style = style)
                         Text(listOf(ch.uuid, ch.properties.joinToString(", ")).joinToString(" · "), Modifier.selectableText(), style = style, color = c.t2)
-                        ch.valueText?.let { Text(it, Modifier.selectableText(), style = style, color = c.t2) }
+                        ch.valueText?.let { ValueText(it, style = style, color = c.t2) }
                     }
                 }
             }
@@ -508,3 +579,8 @@ private const val CHART_RIGHT = 6f
 private const val CHART_PAD = 4f
 private const val CHART_AXIS = 20f   // 96 − 76: the plot is 76 of the 96 dp
 private const val CHART_MARKER = 4.5f
+
+private inline fun Color.takeOrElse(block: () -> Color): Color = if (this != Color.Unspecified) this else block()
+
+/** Room for the (hidden) cursor, so a token field never scrolls its own text. */
+private val CURSOR_ROOM = 2.dp

@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
@@ -58,6 +59,7 @@ internal class SheetHarness(private val lazy: Boolean = true, private val select
         fun headerText(id: Long) = "header text $id"
         fun rowText(i: Int) = "row text $i"
         fun rowLabel(i: Int) = "label $i"
+        fun rowToken(i: Int) = "A4:C1:38:9F:0B:%02X".format(i)
     }
 
     @Composable
@@ -92,10 +94,13 @@ internal class SheetHarness(private val lazy: Boolean = true, private val select
                 DisposableEffect(state) { lists[entry.id] = state; onDispose { lists.remove(entry.id) } }
                 LazyColumn(state = state, modifier = Modifier.fillMaxSize().testTag(list(entry.id))) {
                     items(200) { i ->
-                        if (selectable) SelectionContainer {
-                            Row(Modifier.fillMaxWidth().height(ROW)) {
-                                DisableSelection { BasicText(rowLabel(i), Modifier.width(120.dp)) }
-                                BasicText(rowText(i), Modifier.sheetSelectable(controller, entry))
+                        if (selectable) CompositionLocalProvider(LocalSheetSelectable provides Modifier.sheetSelectable(controller, entry)) {
+                            SelectionContainer {
+                                Row(Modifier.fillMaxWidth().height(ROW)) {
+                                    DisableSelection { BasicText(rowLabel(i), Modifier.width(120.dp)) }
+                                    BasicText(rowText(i), Modifier.width(120.dp).sheetSelectable(controller, entry))
+                                    ValueText(rowToken(i), singleLine = true) // a token value, as the MAC (D-15)
+                                }
                             }
                         }
                         else Box(Modifier.fillMaxWidth().height(ROW))

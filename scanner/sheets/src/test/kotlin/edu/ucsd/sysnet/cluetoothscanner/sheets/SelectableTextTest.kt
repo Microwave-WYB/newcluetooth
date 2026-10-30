@@ -61,7 +61,7 @@ import org.robolectric.annotation.Implements
 /** D-15: a long press selects the sheet's text and offers the system copy toolbar; buttons are not selectable. */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi", shadows = [NoMagnifier::class])
+@Config(sdk = [35], qualifiers = "w412dp-h1600dp-420dpi", shadows = [NoMagnifier::class]) // tall: a field shows its toolbar only on screen
 class SelectableTextTest {
     @get:Rule val compose = createComposeRule()
 
@@ -79,12 +79,13 @@ class SelectableTextTest {
             ?.let { item -> { item.onClick(object : TextContextMenuSession { override fun close() = Unit }) } }
     }
 
+    private val uuid = "0000fe2c-0000-1000-8000-00805f9b34fb"
     private val hex = byteArrayOf(0x4c, 0x00, 0x10, 0x05, 0x01, 0x18, 0x2a, 0x7b, 0x3c, 0x5d, 0x6e, 0x7f, 0x11, 0x22, 0x33, 0x44)
     private val d = DeviceDetail(
         key = 1, addr = "A4:C1:38:9F:0B:2E", name = "AirPods Pro", page = null, categories = emptyList(), traits = emptyList(),
         readable = false, vulnerable = false, vulnerabilities = emptyList(), wikiUrl = null, icon = null, rssi = -60,
         inRange = true, live = false, connectable = true, format = AdvFormat.Legacy, companyId = null, companyName = null,
-        serviceUuid = null, txPower = null, structures = listOf(AdStructure(17, 0xff, hex)), tail = null, decoded = null, lastSeenMs = 0,
+        serviceUuid = uuid, txPower = null, structures = listOf(AdStructure(17, 0xff, hex)), tail = null, decoded = null, lastSeenMs = 0,
     )
     private val read = GattView(
         "g", 1, 0, ok = true,
@@ -124,17 +125,16 @@ class SelectableTextTest {
     }
 
     @Test
-    fun d15_longPressingTheMacSelectsItForCopying() {
+    fun d15_oneLongPressOnTheMacSelectsTheWholeMac() {
         show()
-        // a long press selects one word, and a MAC's digits and colons split it into several ("38:"); long-pressing
-        // its start and dragging across it selects the whole MAC
-        compose.onNodeWithText(d.addr, useUnmergedTree = true).performTouchInput {
-            down(Offset(left + 2f, centerY))
-            moveBy(Offset.Zero, delayMillis = viewConfiguration.longPressTimeoutMillis + 100)
-            moveTo(Offset(right - 1f, centerY), delayMillis = 100)
-            up()
-        }
-        assertEquals(d.addr, copy())
+        // one long press, anywhere on it: the whole MAC (the system's word rules alone picked "38:")
+        assertEquals(d.addr, longPressAndCopy(d.addr))
+    }
+
+    @Test
+    fun d15_oneLongPressOnAUuidSelectsTheWholeUuid() {
+        show()
+        assertEquals(uuid, longPressAndCopy(uuid))
     }
 
     @Test
