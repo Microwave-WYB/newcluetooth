@@ -26,8 +26,6 @@ class RulesTest {
         assertEquals(28.dp, Concentric.recorderPanel(tablet = true))
         assertEquals(4.dp, Concentric.recorderButtonInset(tablet = false))
         assertEquals(8.dp, Concentric.recorderButtonInset(tablet = true))
-        assertEquals(10.dp, Concentric.recorderMap(tablet = false))
-        assertEquals(16.dp, Concentric.recorderMap(tablet = true))
         assertEquals(28.dp, Concentric.popover)
         assertEquals(Concentric.popover, Concentric.outer(edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css.BtnSmall.height / 2, Tokens.popPad))
         assertEquals(14.dp, Concentric.cornerButton(tablet = false))

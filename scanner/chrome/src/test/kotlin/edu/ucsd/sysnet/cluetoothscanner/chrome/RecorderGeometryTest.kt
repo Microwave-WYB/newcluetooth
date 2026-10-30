@@ -44,8 +44,8 @@ class RecorderGeometryTest {
         assertEquals(22.dp, p.buttonsInset + p.buttonSize / 2) // concentric: 18 + 4
         assertEquals((p.width - group) / 2, p.groupX)
         assertTrue(p.extrasBelowRow)
-        // its height from its content: row 44, meta 20, map 10 + 132 + 12, and app.js's 2
-        assertEquals(220.dp, p.height)
+        // its height from its content: row 44, meta 20, `--edge` 12 below it, and app.js's 2 (R-5's mini map is removed)
+        assertEquals(78.dp, p.height)
     }
 
     /** R-9: in search state the island sits directly below the search bar. */
@@ -64,7 +64,8 @@ class RecorderGeometryTest {
         assertEquals(c.right, p.right); assertEquals(c.bottom, p.bottom)
         assertEquals(c.y + c.rowTop, p.y + p.rowTop) // the row stays put
         assertEquals(420.dp, p.width); assertEquals(28.dp, p.radius)
-        assertEquals(234.dp, p.height)
+        // meta 14 + 20 above the 56 dp row, and app.js's 2
+        assertEquals(92.dp, p.height)
         assertTrue(!p.extrasBelowRow)
         // a narrow tablet: the panel leaves the floating panel and three edges free
         val narrow = RecorderGeometry.compute(Form.Panel, true, 700.dp, 768.dp, group)

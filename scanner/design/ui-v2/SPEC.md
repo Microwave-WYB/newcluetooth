@@ -225,13 +225,12 @@ Each component is built once. Its size, color and state rules come from these to
     the panel's width (`--t-morph`), and collapsing returns exactly to the capsule layout.
   - On phone the panel widens symmetrically to the full width minus 2 × `--edge`, with a 22 dp radius and
     `--shadow-raised`. Its extra content grows downward below the row:
-    - "N devices · lat, lon ±N m" (13/20 `--t2`, one line);
-    - a 132 dp rounded route mini map.
+    - "N devices · lat, lon ±N m" (13/20 `--t2`, one line).
   - Its height is measured from its content.
   - While it is open, ☰ and search fade out because the panel covers them.
   - A tap outside, or Back, collapses it to the capsule.
-- **R-5 Mini map.** Non-interactive, showing the session route with Start/End (M-8) and no caption. Tapping it
-  collapses the panel, closes any page, and fits the main map to the route.
+- **R-5 (removed) Mini map.** The panel has no mini map. Only one map renderer exists at a time; a second one (a
+  snapshotter) was the suspected cause of native MapLibre crashes on device.
 - **R-6 Pause/Resume.**
   - Pause swaps the icon to play ("Resume"), makes the dot static grey and pauses recording.
   - Resume reverses it.

@@ -4,7 +4,6 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ExportFormat
-import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionScope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionView
@@ -210,8 +209,6 @@ sealed interface MainEvent {
     data object ResumeRecording : MainEvent
     data object StopRecording : MainEvent
     data class SetRecorderPanel(val open: Boolean) : MainEvent
-    /** R-5: the panel collapses, any page closes and the map fits the route. */
-    data object FitRoute : MainEvent
     data class SetLayout(val mode: LayoutMode) : MainEvent
     data object ToggleSidebar : MainEvent
     /** P-4: the locate button. */
@@ -278,8 +275,6 @@ sealed interface MainEffect {
     data object PauseRecording : MainEffect
     data object ResumeRecording : MainEffect
     data object StopRecording : MainEffect
-    /** R-5: fit the main map to the shown view's route. */
-    data object FrameRoute : MainEffect
     /** P-4: the main map follows the user's location. */
     data object Locate : MainEffect
     /** G-14: the sheet stack pops its top sheet. */
@@ -386,7 +381,6 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.ResumeRecording -> s.with(MainEffect.ResumeRecording)
     MainEvent.StopRecording -> s.with(MainEffect.StopRecording)
     is MainEvent.SetRecorderPanel -> withPanel(s, e.open).only()
-    MainEvent.FitRoute -> withPanel(s, false).copy(page = null).with(MainEffect.FrameRoute)
     // G-2 / T-9: a breakpoint crossing re-lays out and keeps the state
     is MainEvent.SetLayout -> s.copy(layout = e.mode).only()
     MainEvent.ToggleSidebar -> s.copy(sidebarOpen = !s.sidebarOpen).only()
@@ -516,7 +510,7 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         is MainEffect.SaveOnboarding -> s.copy(notice = Notice("$SAVE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
         MainEffect.OpenAppSettings, MainEffect.UploadNow -> s.copy(notice = Notice(error.userMessage())).only()
         MainEffect.LoadSessions, MainEffect.StartRecording, MainEffect.PauseRecording, MainEffect.ResumeRecording,
-        MainEffect.StopRecording, MainEffect.FrameRoute, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
+        MainEffect.StopRecording, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
         is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch, is MainEffect.Delete, is MainEffect.UpdateSettings,
         is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation -> s.only()
     }
@@ -623,9 +617,6 @@ fun recorderForm(phase: RecorderState.Phase, panelOpen: Boolean): RecorderUi.For
 
 /** The shown session view: only data read for the current key, so a stale read never shows (V-7). */
 fun shownView(s: MainUiState, data: ViewData?): SessionView? = data?.takeIf { s.scope != null && it.key == s.viewKey }?.view
-
-/** The shown view's route (R-5, the mini-map), empty without a view. */
-fun shownRoute(s: MainUiState, data: ViewData?): List<GeoPoint> = shownView(s, data)?.route.orEmpty()
 
 /**
  * The search page as chrome draws it: the page's query and area, with the latest results of this session view

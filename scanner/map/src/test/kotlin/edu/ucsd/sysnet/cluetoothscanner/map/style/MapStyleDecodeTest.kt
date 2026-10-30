@@ -17,7 +17,7 @@ class MapStyleDecodeTest {
 
     @Test fun `the fallback spec is complete and draws nothing`() {
         val f = MapStyleSpec.Fallback
-        for (theme in MapTheme.entries) assertTrue(f.layers(theme).isEmpty() && f.miniMapLayers(theme).isEmpty())
+        for (theme in MapTheme.entries) assertTrue(f.layers(theme).isEmpty())
         assertTrue(f.selection("00:00:00:00:00:00").isEmpty())
     }
 }

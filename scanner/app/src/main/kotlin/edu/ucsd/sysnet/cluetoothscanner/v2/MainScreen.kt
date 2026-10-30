@@ -59,7 +59,6 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import edu.ucsd.sysnet.cluetoothscanner.map.CluetoothMap
 import edu.ucsd.sysnet.cluetoothscanner.map.LocateControl
 import edu.ucsd.sysnet.cluetoothscanner.map.LocatePlacement
-import edu.ucsd.sysnet.cluetoothscanner.map.RouteMiniMap
 import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetsLayer
 import edu.ucsd.sysnet.cluetoothscanner.sheets.rememberSheetsState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
@@ -96,15 +95,14 @@ fun MainScreen(vm: MainViewModel) {
         val tablet = layout.tablet
         val hasSession = ui.scope != null
         val view = shownView(ui, viewData)
-        val route = shownRoute(ui, viewData)
         val live = view?.live == true
         val form = recorderForm(rec.phase, ui.recorderPanelOpen)
         val recorderUi = RecorderUi(form, rec.phase == RecorderState.Phase.Paused, rememberElapsedMs(rec.activeBeforeMs, rec.runningSinceMs),
-            rec.deviceCount, myLocation?.let { FixSummary(it.at.lat, it.at.lon, it.accuracyM, it.ageMs) }, route)
+            rec.deviceCount, myLocation?.let { FixSummary(it.at.lat, it.at.lon, it.accuracyM, it.ageMs) })
         val recorderActions = remember(vm) {
             RecorderActions({ dispatch(MainEvent.StartRecording) }, { dispatch(MainEvent.SetRecorderPanel(true)) },
                 { dispatch(MainEvent.SetRecorderPanel(false)) }, { dispatch(MainEvent.PauseRecording) }, { dispatch(MainEvent.ResumeRecording) },
-                { dispatch(MainEvent.StopRecording) }, { dispatch(MainEvent.FitRoute) })
+                { dispatch(MainEvent.StopRecording) })
         }
         // lane D's sheets for the shown scope (V-7: a new scope starts them fresh)
         val sheets = ui.scope?.let { scope ->
@@ -128,9 +126,6 @@ fun MainScreen(vm: MainViewModel) {
                 else CoverInsets(top = Tokens.topZone.value.toInt(), bottom = with(density) { ((heightPx - (topOffsetPx ?: heightPx)).coerceAtLeast(0f)).toDp() }.value.toInt(), left = 0, right = 0),
             )
         }
-        val miniMap: @Composable (Modifier) -> Unit = { m ->
-            RouteMiniMap(route, myLocation?.at, m, dark = CluetoothTheme.isDark)
-        }
         // the list is the core's; only its selection follows the scope, so it is rebuilt only when either changes
         val sessionsShown = remember(ui.scope, sessionsList) { shownSessions(ui, sessionsList) }
         val sessions = @Composable { m: Modifier ->
@@ -145,12 +140,12 @@ fun MainScreen(vm: MainViewModel) {
                 mapUi, if (tablet) LocatePlacement.Tablet(recH) else LocatePlacement.Phone(sheetCover),
                 onLocate = { dispatch(MainEvent.Locate) }, onWarning = { dispatch(MainEvent.SetLocationPopover(!ui.locationPopoverOpen)) },
             )
-            if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, recorderInset, bottomCover = sheetCover, miniMap = miniMap)
+            if (form == RecorderUi.Form.Fab) RecorderControl(recorderUi, recorderActions, tablet, recorderInset, bottomCover = sheetCover)
             // the sheet stack (lane D); on tablet ☰ swaps the panel's content for the sessions list (T-6)
             if (sheets != null && !(tablet && ui.sidebarOpen)) SheetsLayer(sheets, tablet)
             if (tablet && ui.sidebarOpen) SessionsPanel { sessions(Modifier) }
             if (form != RecorderUi.Form.Fab) {
-                RecorderControl(recorderUi, recorderActions, tablet, recorderInset, bottomCover = sheetCover, searching = sheets?.searching == true, miniMap = miniMap)
+                RecorderControl(recorderUi, recorderActions, tablet, recorderInset, bottomCover = sheetCover, searching = sheets?.searching == true)
             }
             if (ui.locationPopoverOpen) LocationPopoverLayer(location, tablet, sheetCover, recH, { dispatch(MainEvent.LocationFix(it)) }) {
                 dispatch(MainEvent.SetLocationPopover(false))

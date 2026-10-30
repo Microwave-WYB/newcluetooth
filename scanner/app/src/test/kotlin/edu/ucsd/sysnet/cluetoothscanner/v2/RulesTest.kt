@@ -1,10 +1,7 @@
 package edu.ucsd.sysnet.cluetoothscanner.v2
 
-import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
-import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -40,12 +37,6 @@ class RulesTest {
         assertEquals(LaunchTarget.StartRecording, launchTarget(null, recordOnOpen = true, sessionCount = 0))
         assertEquals(LaunchTarget.AllSessions, launchTarget(null, recordOnOpen = false, sessionCount = 2))
         assertEquals(LaunchTarget.FirstRun, launchTarget(null, recordOnOpen = false, sessionCount = 0))
-    }
-
-    /** R-5: the route's box. */
-    @Test fun routeBox() {
-        assertNull(bboxOf(emptyList()))
-        assertEquals(Bbox(-117.24, 32.87, -117.22, 32.89), bboxOf(listOf(GeoPoint(-117.22, 32.87), GeoPoint(-117.24, 32.89), GeoPoint(-117.23, 32.88))))
     }
 
     /**

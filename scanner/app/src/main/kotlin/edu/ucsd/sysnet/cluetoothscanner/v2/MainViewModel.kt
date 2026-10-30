@@ -264,7 +264,6 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             MainEffect.PauseRecording -> graph.recorder.pause()
             MainEffect.ResumeRecording -> graph.recorder.resume()
             MainEffect.StopRecording -> graph.recorder.stop()
-            MainEffect.FrameRoute -> bboxOf(shownRoute(s, _view.value))?.let { box -> s.ready?.map?.frame(box) }
             MainEffect.Locate -> s.ready?.map?.locate()
             MainEffect.SheetsBack -> s.attachedSheets?.handleBack()
             is MainEffect.SheetsEnterSearch -> s.ready?.let { r -> s.attachedSheets?.enterSearch(effect.query, effect.area, r.map.camera(), effect.picked) }
