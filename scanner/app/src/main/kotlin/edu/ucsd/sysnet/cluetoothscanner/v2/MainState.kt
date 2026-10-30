@@ -624,7 +624,10 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         // without stored settings the launch view still opens (its own facts fall back to the first run)
         MainEffect.LoadSettings -> s.loadingSessions { listOf(it, MainEffect.ReadLaunchFacts) }
         MainEffect.ReadLaunchFacts -> reduce(s, MainEvent.LaunchFactsRead(LaunchFacts(null, recordOnOpen = false, sessionCount = 0)))
-        MainEffect.LoadStorage -> reduce(s, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)))
+        // O-1 item 8: unknown use is not "0 B" silently; the page opens and the notice says why, with Retry
+        MainEffect.LoadStorage -> reduce(s, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0))).let { step ->
+            step.copy(state = step.state.copy(notice = Notice("$STORAGE_FAILED: ${error.userMessage()}", retry = task.effect)))
+        }
         MainEffect.LoadReclaimable -> reduce(s, MainEvent.ReclaimableRead(CleanupResult.Err(CleanupError.Failed(error.message ?: error::class.simpleName.orEmpty()))))
         // a throw fails every cleanup of the run, each with the error's message, as a typed Err would
         is MainEffect.FreeUpSpace -> reduce(s, MainEvent.SpaceFreed(
@@ -665,6 +668,7 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
 }
 
 private const val EXPORT_FAILED = "Export failed"
+private const val STORAGE_FAILED = "Could not read the storage use"
 private const val SAVE_FAILED = "Could not save the settings"
 private const val START_FAILED = "Could not start recording"
 private const val PAUSE_FAILED = "Could not pause the recording"

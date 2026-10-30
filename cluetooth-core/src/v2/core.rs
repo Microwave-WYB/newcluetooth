@@ -1584,9 +1584,25 @@ impl Core {
 
     // ---- §2.8 storage, export, delete, upload ----
 
-    /// [P]
+    /// [W] SPEC O-1 item 8: what the data directory holds. It was a stub answering an error, which the UI showed as
+    /// "Database 0 B · Raw files 0 B".
     pub async fn storage_stats(&self) -> Result<StorageStats, CoreError> {
-        Err(not_yet("storage_stats"))
+        self.job_async(|r| {
+            let pending = r.payloads.pending_uploads();
+            let session_count: i64 = r.store.conn.query_row(
+                "SELECT count(*) FROM sessions WHERE status IN (2, 3) AND device_count > 0",
+                [],
+                |row| row.get(0),
+            )?;
+            Ok(StorageStats {
+                database_bytes: store::db_bytes(&r.db_path()),
+                raw_files_bytes: space::raw_files_bytes(&r.data_dir)?,
+                pending_count: u32::try_from(pending.len()).unwrap_or(u32::MAX),
+                pending_bytes: pending.iter().map(|u| u.size_bytes).sum(),
+                session_count: u32::try_from(session_count).unwrap_or(0),
+            })
+        })
+        .await?
     }
 
     /// [F] Cancellable.

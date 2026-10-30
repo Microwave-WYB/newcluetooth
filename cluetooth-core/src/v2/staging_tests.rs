@@ -542,3 +542,35 @@ fn an_upload_state_read_error_keeps_the_last_states() {
         "the last states stand"
     );
 }
+
+/// O-1 item 8 (owner bug: "Database 0 B · Raw files 0 B" with sessions recorded): the stats count local.db with its
+/// WAL, every pending and archived raw file, the pending uploads and the finished sessions.
+#[test]
+fn storage_stats_count_what_is_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let t0 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let core = open(dir.path(), t0);
+    core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(vec![obs(1, t0 + 10)], t0 + 10)
+        .unwrap();
+    core.stop_recording_at(t0 + 1_000).unwrap();
+    let s = futures_executor::block_on(core.storage_stats()).unwrap();
+    assert!(s.database_bytes > 0, "local.db and its WAL");
+    let raw: u64 = walk(&dir.path().join("pending"))
+        .iter()
+        .chain(walk(&dir.path().join("archive")).iter())
+        .map(|p| std::fs::metadata(p).unwrap().len())
+        .sum();
+    assert!(raw > 0);
+    assert_eq!(s.raw_files_bytes, raw);
+    let pending = core.pending_uploads().unwrap();
+    assert_eq!(s.pending_count as usize, pending.len());
+    assert_eq!(
+        s.pending_bytes,
+        pending.iter().map(|u| u.size_bytes).sum::<u64>()
+    );
+    assert_eq!(s.session_count, 1);
+}

@@ -16,7 +16,6 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionSummary
-import edu.ucsd.sysnet.cluetoothscanner.api.core.StorageStats
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
@@ -335,8 +334,8 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
 
     private suspend fun storageFacts(): StorageFacts {
         val core = ready().core
-        // the real core does not implement storage stats yet (CoreException.Db): show zeros rather than fail
-        val stats = runCatching { core.storage.storageStats() }.getOrNull() ?: StorageStats(0, 0, 0, 0, 0)
+        // a failure is the guarded effect's (a notice with Retry), never "0 B" in silence
+        val stats = core.storage.storageStats()
         val cache = runCatching { graph.mapCache.sizeBytes() }.getOrNull()
         return StorageFacts(stats.databaseBytes, stats.rawFilesBytes, cache, stats.pendingCount)
     }

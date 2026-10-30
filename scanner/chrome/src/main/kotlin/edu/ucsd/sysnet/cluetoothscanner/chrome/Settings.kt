@@ -162,7 +162,7 @@ private fun SettingsRows(ui: SettingsUi, a: SettingsActions, sessionLabel: Strin
     else Strings.pendingSub(ui.uploads.pendingCount, Format.bytes(ui.uploads.pendingBytes))
     ListItem(
         Strings.PendingUploads,
-        sub = if (ui.uploads.failedCount > 0) "$pending · ${Strings.uploadFailed(ui.uploads.failedCount)}" else pending,
+        sub = if (ui.uploads.failedCount > 0) "$pending · ${failedUploads(ui.uploads.failedCount, ui.uploads.lastError)}" else pending,
         trailing = { Button(Strings.UploadNow, a.onUploadNow, kind = ButtonKind.Tonal, small = true, enabled = ui.uploads.pendingCount > 0) },
     )
     // 6–7
@@ -305,3 +305,23 @@ private fun ConfirmCard(
         }
     }
 }
+
+/**
+ * O-1 item 5: the latest failure's reason in a few words ("Denied (403)", "Network error", "Timed out"). :platform
+ * stores it before " — " and the full diagnostic after; an older or other message shows cut short.
+ */
+/**
+ * O-1 item 5: "N uploads failed; retrying · Network error". A denial is not fixed by retrying (the storage rules
+ * refuse it), so it reads "N uploads failed · Denied (403)".
+ */
+internal fun failedUploads(count: Int, lastError: String?): String {
+    val reason = lastError?.let(::shortReason) ?: return Strings.uploadFailed(count)
+    return if (reason.startsWith("Denied")) "${Strings.plural(count, "upload")} failed · $reason"
+    else "${Strings.uploadFailed(count)} · $reason"
+}
+
+internal fun shortReason(lastError: String): String {
+    val reason = lastError.substringBefore(" — ").trim()
+    return if (reason.length <= 40) reason else reason.take(39) + "…"
+}
+

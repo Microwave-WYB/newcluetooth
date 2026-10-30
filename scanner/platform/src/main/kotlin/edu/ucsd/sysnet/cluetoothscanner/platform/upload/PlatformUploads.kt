@@ -91,7 +91,7 @@ class PlatformUploads internal constructor(
 
     private val shown = MutableStateFlow(Shown(UploadStatus(pendingCount = 0, pendingBytes = 0, failedCount = 0, lastError = null)))
     override val status: StateFlow<UploadStatus> =
-        shown.map { it.core.copy(lastError = it.scheduleError ?: it.passProblem ?: it.core.lastError) }
+        shown.map { it.core.copy(lastError = (it.scheduleError ?: it.passProblem ?: it.core.lastError)?.let(::withShownReason)) }
             .stateIn(scope, SharingStarted.Eagerly, shown.value.core)
 
     /** The last Wi-Fi-only setting seen; read by [uploadNow] and [uploadNeeded]. */
