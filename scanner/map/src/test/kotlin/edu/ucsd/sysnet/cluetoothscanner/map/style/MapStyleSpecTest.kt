@@ -38,10 +38,14 @@ class MapStyleSpecTest {
         for (theme in MapTheme.entries) assertEquals(rawLayers(theme.key), spec.styleLayers(theme))
     }
 
-    @Test fun `no heatmap layer, only the types the installer knows`() {
+    @Test fun `only the types the installer knows, and the one heatmap is density, below the devices`() {
         for (theme in MapTheme.entries) {
-            val types = spec.layers(theme).map { it.getValue("type").jsonPrimitive.content }.toSet()
-            assertTrue("$types", types.all { it in setOf("circle", "line", "symbol") })
+            val layers = spec.layers(theme)
+            val types = layers.map { it.getValue("type").jsonPrimitive.content }.toSet()
+            assertTrue("$types", types.all { it in setOf("circle", "line", "symbol", "heatmap") })
+            val ids = layers.map { it.getValue("id").jsonPrimitive.content }
+            assertEquals(listOf("density"), layers.filter { it.getValue("type").jsonPrimitive.content == "heatmap" }.map { it.getValue("id").jsonPrimitive.content })
+            assertTrue(ids.indexOf("density") < ids.indexOf("clusters") && ids.indexOf("density") < ids.indexOf("points"))
         }
     }
 
@@ -122,7 +126,12 @@ class MapStyleSpecTest {
             assertEquals(JsonPrimitive(hex("--blue")), paint("points", "circle-color"))
             assertEquals(JsonPrimitive(5), paint("points", "circle-radius"))
             assertEquals(JsonPrimitive(hex("--blue")), paint("clusters", "circle-color"))
-            assertEquals(JsonPrimitive(hex("--map-density")), paint("density", "circle-color"))
+            // M-5: the native heatmap, the same in both themes: weight 1 per device (a cell's count), radius 24,
+            // opacity 0.6 fading out from zoom 16 to 18
+            assertEquals(JsonPrimitive("heatmap"), layers.getValue("density").getValue("type"))
+            assertEquals(JsonPrimitive(24), paint("density", "heatmap-radius"))
+            assertEquals(Json.parseToJsonElement("""["coalesce",["get","point_count"],1]"""), paint("density", "heatmap-weight"))
+            assertEquals(Json.parseToJsonElement("""["interpolate",["linear"],["zoom"],16,0.6,18,0]"""), paint("density", "heatmap-opacity"))
             assertEquals(JsonPrimitive(hex("--map-route")), paint("route", "line-color"))
         }
     }

@@ -10,6 +10,7 @@ import kotlinx.serialization.json.doubleOrNull
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.HeatmapLayer
 import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LayoutPropertyValue
 import org.maplibre.android.style.layers.LineLayer
@@ -22,7 +23,9 @@ import org.maplibre.android.style.sources.GeoJsonSource
 /**
  * Adds map-style.json's sources and layers to a MapLibre style unchanged (M-2): every paint and layout value and
  * filter is handed to the native style parser as the same JSON it would read from a style file. Only the layer
- * types map-style.js uses exist here; there is no HeatmapLayer (it crashed on an Adreno 640).
+ * types map-style.js uses exist here: circle, line, symbol and M-5's heatmap. (v3's "HeatmapLayer crashed on an
+ * Adreno 640", ff18bb2, was never isolated and came from an app with several map renderers; v2 has one, #97, and
+ * the heatmap rendered on the Note10 without a crash.)
  */
 object StyleInstaller {
 
@@ -61,6 +64,7 @@ object StyleInstaller {
         val source = (json["source"] as? JsonPrimitive)?.content ?: return null
         val layer = when ((json["type"] as? JsonPrimitive)?.content) {
             "circle" -> CircleLayer(id, source)
+            "heatmap" -> HeatmapLayer(id, source)
             "line" -> LineLayer(id, source)
             "symbol" -> SymbolLayer(id, source)
             else -> return null
@@ -79,7 +83,8 @@ object StyleInstaller {
             is CircleLayer -> layer.setFilter(e)
             is SymbolLayer -> layer.setFilter(e)
             is LineLayer -> layer.setFilter(e)
-            // map-style.js only has circle, line and symbol layers; no other layer type is ever built here
+            is HeatmapLayer -> layer.setFilter(e)
+            // only circle, line, symbol and heatmap layers are ever built here
             else -> Unit
         }
     }

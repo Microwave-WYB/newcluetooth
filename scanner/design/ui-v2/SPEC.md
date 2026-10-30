@@ -508,7 +508,12 @@ Each component is built once. Its size, color and state rules come from these to
   - A `--blue` circle with a 2 dp white stroke and the white count (`point_count_abbreviated`, 12 sp).
   - Radius steps by count: 13, then 16 from 10, 20 from 50, and 24 from 200.
   - Tapping a cluster eases to its expansion zoom + 0.2.
-- **M-5 Density.** A wash of `--map-density` circles, radius 16, opacity 0.035. It is always on.
+- **M-5 Heatmap.** A native MapLibre heatmap layer on the `density` source, below the clusters and points. It is
+  always on.
+  - Weight 1 per device (a cell's device count in Cells mode), radius 24 dp, opacity 0.6.
+  - Color ramp blue → cyan → white, the same in light and dark.
+  - It fades out between zoom 16 and 18.
+  - If it proves unstable on a device, it is removed rather than imitated with circles.
 - **M-6 Selection.**
   - The selected device's sightings show as radius-6 circles colored by RSSI band, with a white stroke.
   - Its own point gets an 8 dp `--t1` marker.

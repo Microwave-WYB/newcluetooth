@@ -56,9 +56,8 @@
     "light": {
       "route": "#0064d4",
       "routeOpacity": 0.35,
-      "density": "#0064d4",
-      "densityOpacity": 0.035,
-      "densityRadius": 16,
+      "densityOpacity": 0.6,
+      "densityRadius": 24,
       "point": "#0064d4",
       "stroke": "#ffffff",
       "clusterText": "#ffffff",
@@ -76,9 +75,8 @@
     "dark": {
       "route": "#3b9bff",
       "routeOpacity": 0.35,
-      "density": "#3b9bff",
-      "densityOpacity": 0.035,
-      "densityRadius": 16,
+      "densityOpacity": 0.6,
+      "densityRadius": 24,
       "point": "#3b9bff",
       "stroke": "#ffffff",
       "clusterText": "#ffffff",
@@ -112,12 +110,49 @@
       },
       {
         "id": "density",
-        "type": "circle",
+        "type": "heatmap",
         "source": "density",
         "paint": {
-          "circle-radius": 16,
-          "circle-color": "#0064d4",
-          "circle-opacity": 0.035
+          "heatmap-weight": [
+            "coalesce",
+            [
+              "get",
+              "point_count"
+            ],
+            1
+          ],
+          "heatmap-radius": 24,
+          "heatmap-intensity": 1,
+          "heatmap-color": [
+            "interpolate",
+            [
+              "linear"
+            ],
+            [
+              "heatmap-density"
+            ],
+            0,
+            "rgba(0,100,212,0)",
+            0.25,
+            "rgba(0,100,212,0.7)",
+            0.6,
+            "rgba(34,211,238,0.9)",
+            1,
+            "rgba(255,255,255,1)"
+          ],
+          "heatmap-opacity": [
+            "interpolate",
+            [
+              "linear"
+            ],
+            [
+              "zoom"
+            ],
+            16,
+            0.6,
+            18,
+            0
+          ]
         }
       },
       {
@@ -348,12 +383,49 @@
       },
       {
         "id": "density",
-        "type": "circle",
+        "type": "heatmap",
         "source": "density",
         "paint": {
-          "circle-radius": 16,
-          "circle-color": "#3b9bff",
-          "circle-opacity": 0.035
+          "heatmap-weight": [
+            "coalesce",
+            [
+              "get",
+              "point_count"
+            ],
+            1
+          ],
+          "heatmap-radius": 24,
+          "heatmap-intensity": 1,
+          "heatmap-color": [
+            "interpolate",
+            [
+              "linear"
+            ],
+            [
+              "heatmap-density"
+            ],
+            0,
+            "rgba(0,100,212,0)",
+            0.25,
+            "rgba(0,100,212,0.7)",
+            0.6,
+            "rgba(34,211,238,0.9)",
+            1,
+            "rgba(255,255,255,1)"
+          ],
+          "heatmap-opacity": [
+            "interpolate",
+            [
+              "linear"
+            ],
+            [
+              "zoom"
+            ],
+            16,
+            0.6,
+            18,
+            0
+          ]
         }
       },
       {
