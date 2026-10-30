@@ -78,8 +78,11 @@ sealed interface SheetsLink {
 /** The recorder as the screen mirrors it (V-3, R-4): the panel exists only while a recording is active. */
 sealed interface RecorderMirror {
     data object Idle : RecorderMirror
-    /** [pausedForStorage]: R-10's pause (`RecorderState.pause` is StorageFull), which the storage-full dialog follows. */
-    data class Active(val panelOpen: Boolean, val pausedForStorage: Boolean = false) : RecorderMirror
+    /**
+     * [pausedForStorage]: R-10's pause (`RecorderState.pause` is StorageFull), which the storage-full dialog follows.
+     * [pausedForFailure]: #79's pause (StorageFailed), which its notice follows.
+     */
+    data class Active(val panelOpen: Boolean, val pausedForStorage: Boolean = false, val pausedForFailure: Boolean = false) : RecorderMirror
 }
 
 /** O-2: the onboarding page and the steps it was opened with. */
@@ -175,8 +178,16 @@ data class MainUiState(
     val attachedSheets: SheetsState? get() = (sheets as? SheetsLink.Attached)?.sheets
 }
 
-/** A failure the user must see: the error's own words, and Retry when [retry] can run it again. */
-data class Notice(val message: String, val retry: MainEffect? = null)
+/**
+ * A failure the user must see: the error's own words, and Retry when [retry] can run it again ([retryLabel] names
+ * that action when it isn't "Try again"). [untilResumed]: it is about a paused recording (#79's failure pause, or a
+ * Resume that was refused); Retry leaves it up, and it closes only when the recording is no longer paused.
+ */
+data class Notice(val message: String, val retry: MainEffect? = null, val retryLabel: String? = null, val untilResumed: Boolean = false)
+
+/** #79: the recording paused because storing kept failing; Resume makes the core try again. */
+fun storageFailedNotice(message: String) =
+    Notice(Strings.storageFailedPaused(message), retry = MainEffect.ResumeRecording, retryLabel = Strings.Resume, untilResumed = true)
 
 /** The words a failure shows: a platform call's typed error, else the throwable's message. */
 fun Throwable.userMessage(): String = (this as? PlatformFailure)?.error?.message ?: message ?: this::class.simpleName.orEmpty()
@@ -243,6 +254,8 @@ sealed interface MainEvent {
     // ---- R-10 storage full ----
     /** `CoreEvent.StorageFull { freeBytes }`: the core stopped writing (and the recorder paused, B). */
     data class StorageFull(val free: Bytes) : MainEvent
+    /** `CoreEvent.StorageFailed { message }` (#79): storing kept failing for 60 s; the core stopped writing and paused. */
+    data class StorageFailed(val message: String) : MainEvent
     /** What each cleanup frees, or null when the core could not say. */
     /** The free space and what each cleanup frees, or why they couldn't be read. */
     data class ReclaimableRead(val result: CleanupResult<Reclaim>) : MainEvent
@@ -358,8 +371,19 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
         val idle = e.phase == RecorderState.Phase.Idle
         val storagePause = e.pause as? RecorderState.PauseReason.StorageFull
         val wasStoragePause = (s.recorder as? RecorderMirror.Active)?.pausedForStorage == true
-        val next = if (idle) RecorderMirror.Idle else RecorderMirror.Active(s.recorderPanelOpen, storagePause != null)
-        val mirrored = s.copy(recorder = next)
+        val failurePause = e.pause as? RecorderState.PauseReason.StorageFailed
+        val wasFailurePause = (s.recorder as? RecorderMirror.Active)?.pausedForFailure == true
+        val next = if (idle) RecorderMirror.Idle else RecorderMirror.Active(s.recorderPanelOpen, storagePause != null, failurePause != null)
+        // #79: the failure pause shows its notice; a paused recording's notice goes only when the recording is no
+        // longer paused (Resume accepted, here or from the notification, or Stop); another notice that came in stays
+        val mirrored = s.copy(
+            recorder = next,
+            notice = when {
+                failurePause != null && !wasFailurePause -> storageFailedNotice(failurePause.message)
+                e.pause == null && s.notice?.untilResumed == true -> null
+                else -> s.notice
+            },
+        )
         val base = when {
             // R-10: the storage pause ended (a Resume the core accepted, from the app or the notification, or a Stop)
             wasStoragePause && storagePause == null -> Step(mirrored.copy(storageFull = null))
@@ -452,6 +476,8 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.EnableBluetooth -> s.with(MainEffect.EnableBluetooth)
     MainEvent.OpenAppSettings -> s.with(MainEffect.OpenAppSettings)
     MainEvent.UploadNow -> s.with(MainEffect.UploadNow)
+    // #79: shown at once; the recorder's own pause (lane B) follows and keeps it until the pause ends
+    is MainEvent.StorageFailed -> s.copy(notice = storageFailedNotice(e.message)).only()
     is MainEvent.StorageFull -> s.storageFull?.let { s.copy(storageFull = it.copy(free = e.free)).only() }
         ?: s.copy(storageFull = StorageFullState(e.free, ReclaimRead.Reading, emptySet(), CleanupStep.Choosing(null))).with(MainEffect.LoadReclaimable)
     is MainEvent.ReclaimableRead -> s.copy(
@@ -480,14 +506,20 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.FinishOnboarding -> s.onboarding?.let { s.with(MainEffect.SaveOnboarding(it.ui.userId, it.ui.autoRecord)) } ?: s.only()
     MainEvent.OnboardingSaved -> s.copy(onboarding = null).with(MainEffect.LoadSessions, MainEffect.ReadLaunchFacts)
     MainEvent.DismissNotice -> s.copy(notice = null).only()
-    MainEvent.RetryNotice -> when (val retry = s.notice?.retry) {
-        null -> s.copy(notice = null).only()
-        // the same export again, with its spinner, showing the scope and format it exports
-        is MainEffect.Export -> s.copy(
-            notice = null,
-            storage = s.storage?.copy(exporting = true, exportScope = retry.scope, exportFormat = retry.format),
-        ).with(retry)
-        else -> s.copy(notice = null).with(retry)
+    MainEvent.RetryNotice -> {
+        val notice = s.notice
+        val retry = notice?.retry
+        when {
+            retry == null -> s.copy(notice = null).only()
+            // a paused recording's Resume: the notice stays until the pause really ends, or says why the Resume failed
+            notice?.untilResumed == true -> s.with(retry)
+            // the same export again, with its spinner, showing the scope and format it exports
+            retry is MainEffect.Export -> s.copy(
+                notice = null,
+                storage = s.storage?.copy(exporting = true, exportScope = retry.scope, exportFormat = retry.format),
+            ).with(retry)
+            else -> s.copy(notice = null).with(retry)
+        }
     }
 }
 
@@ -518,9 +550,19 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         // the onboarding stays open; the notice retries the save
         is MainEffect.SaveOnboarding -> s.copy(notice = Notice("$SAVE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
         MainEffect.OpenAppSettings, MainEffect.UploadNow -> s.copy(notice = Notice(error.userMessage())).only()
-        MainEffect.LoadSessions, MainEffect.StartRecording, MainEffect.PauseRecording, MainEffect.ResumeRecording,
-        MainEffect.StopRecording, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
-        is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch, is MainEffect.Delete, is MainEffect.UpdateSettings,
+        // the recorder refused: say why, and offer the same action again
+        MainEffect.StartRecording -> s.copy(notice = Notice("$START_FAILED: ${error.userMessage()}", retry = task.effect)).only()
+        MainEffect.PauseRecording -> s.copy(notice = Notice("$PAUSE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
+        MainEffect.StopRecording -> s.copy(notice = Notice("$STOP_FAILED: ${error.userMessage()}", retry = task.effect)).only()
+        // the recording stays paused: the notice says why and stays, with Resume, until the pause really ends
+        MainEffect.ResumeRecording -> s.copy(
+            notice = Notice("$RESUME_FAILED: ${error.userMessage()}", retry = task.effect, retryLabel = Strings.Resume, untilResumed = true),
+        ).only()
+        // the user asked for these too: say why they didn't happen, and offer them again
+        is MainEffect.Delete -> s.copy(notice = Notice("$DELETE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
+        is MainEffect.UpdateSettings -> s.copy(notice = Notice("$SAVE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
+        MainEffect.LoadSessions, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
+        is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch,
         is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation -> s.only()
     }
     // the user asked for it and nothing happened: say why
@@ -531,6 +573,11 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
 
 private const val EXPORT_FAILED = "Export failed"
 private const val SAVE_FAILED = "Could not save the settings"
+private const val START_FAILED = "Could not start recording"
+private const val PAUSE_FAILED = "Could not pause the recording"
+private const val RESUME_FAILED = "Could not resume the recording"
+private const val STOP_FAILED = "Could not stop the recording"
+private const val DELETE_FAILED = "Could not delete local data"
 
 /** R-4: the panel opens and closes only while a recording is active. */
 private fun withPanel(s: MainUiState, open: Boolean): MainUiState = when (s.recorder) {

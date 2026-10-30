@@ -119,7 +119,7 @@ class AppGraph(private val app: Application) {
             // R-10: pause on the core's CoreEvent.StorageFull
             storageFull = storageCleanup.storageFull.map { it.n },
             // #79: storing kept failing for 60 s (not for space): the same pause, with the core's reason
-            storageFailed = flow { emitAll(core.ready().queries.events) }.filterIsInstance<CoreEvent.StorageFailed>().map { it.message },
+            storageFailed = storageCleanup.storageFailed,
         )
     }
     val mapCache: MapCacheInfo by lazy { MapLibreCacheInfo(app) }

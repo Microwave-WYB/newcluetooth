@@ -44,6 +44,8 @@ data class Reclaim(val free: Bytes, val uploadedRaw: Bytes, val localDatabase: B
 interface StorageCleanup {
     /** `CoreEvent.StorageFull { freeBytes }`: the core stopped writing. */
     val storageFull: Flow<Bytes>
+    /** `CoreEvent.StorageFailed { message }`: storing kept failing for 60 s (not for space); the core stopped writing. */
+    val storageFailed: Flow<String>
     suspend fun reclaimable(): CleanupResult<Reclaim>
     /** Raw files that have already uploaded; never the ones that have not. Ok carries what it freed. */
     suspend fun deleteUploadedRaw(): CleanupResult<Bytes>

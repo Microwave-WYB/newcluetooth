@@ -187,6 +187,7 @@ class MainStorageFullTest {
         val calls = mutableListOf<Cleanup>()
         val port = object : StorageCleanup {
             override val storageFull: Flow<Bytes> = emptyFlow()
+            override val storageFailed: Flow<String> = emptyFlow()
             override suspend fun reclaimable(): CleanupResult<Reclaim> = CleanupResult.Ok(reclaim)
             override suspend fun deleteUploadedRaw(): CleanupResult<Bytes> = CleanupResult.Err(busy).also { calls += Cleanup.UploadedRaw }
             override suspend fun clearLocalDatabase(): CleanupResult<Bytes> = CleanupResult.Ok(Bytes(40)).also { calls += Cleanup.LocalDatabase }
@@ -266,5 +267,136 @@ class MainStoragePauseTest {
         fake.storageFull(150_000_000)
         val paused = rec.follow().on(MainEvent.SetRecorderPanel(true), MainEvent.SetRecorderPanel(false))
         assertEquals(RecorderMirror.Active(panelOpen = false, pausedForStorage = true), paused.recorder)
+    }
+}
+
+/**
+ * #79: storing kept failing (not for space), so the core stopped writing and the recording paused. It shows as a
+ * paused recording with the failure's words and Resume, on the R-10 notice path; the events come from
+ * [FakeRecorder.storageFailed] as the runner derives them.
+ */
+class MainStorageFailedTest {
+    private val fake = edu.ucsd.sysnet.cluetoothscanner.platform.fake.FakeRecorder(onStart = { "a" }, onStop = { "a" }, nowMs = { 0L })
+    private val failure = "local database failed: disk I/O error"
+
+    private fun MainUiState.follow(): MainUiState = fake.state.value.let { on(MainEvent.RecorderChanged(it.phase, it.pause)) }
+
+    private suspend fun recording(): MainUiState {
+        fake.start()
+        return MainUiState(scope = sessionA).follow()
+    }
+
+    @Test fun theFailurePauseShowsItsWordsAndResume() = runTest {
+        val rec = recording()
+        fake.storageFailed(failure)
+        val paused = rec.follow()
+        val n = paused.notice ?: error("the notice shows")
+        assertEquals("Recording paused: saving keeps failing ($failure)", n.message)
+        assertEquals(MainEffect.ResumeRecording, n.retry)
+        assertEquals("Resume", n.retryLabel)
+        assertEquals(RecorderMirror.Active(panelOpen = false, pausedForFailure = true), paused.recorder)
+        // Resume on the notice asks the recorder to resume, which makes the core try again; the notice stays up
+        // until the pause really ends (the recorder's next state), so a refused Resume never leaves nothing on screen
+        val resume = reduce(paused, MainEvent.RetryNotice)
+        assertEquals(paused.notice, resume.state.notice)
+        assertEquals(listOf(MainEffect.ResumeRecording), resume.effects)
+        // and the storage-full dialog is not involved
+        assertNull(paused.storageFull)
+    }
+
+    @Test fun aResumeFromTheNotificationOrAStopClosesIt() = runTest {
+        val rec = recording()
+        fake.storageFailed(failure)
+        val paused = rec.follow()
+        fake.resume()
+        assertNull(paused.follow().notice)
+        fake.storageFailed(failure)
+        val again = paused.follow().follow()
+        assertEquals(true, again.notice?.untilResumed)
+        fake.stop()
+        assertNull(again.follow().notice)
+    }
+
+    @Test fun theCoresEventShowsItAndThePauseKeepsIt() = runTest {
+        val rec = recording().on(MainEvent.StorageFailed(failure))
+        assertEquals(storageFailedNotice(failure), rec.notice)
+        fake.storageFailed(failure)
+        val paused = rec.follow()
+        assertEquals(storageFailedNotice(failure), paused.notice)
+        fake.resume()
+        assertNull(paused.follow().notice)
+    }
+
+    @Test fun anotherNoticeThatCameMeanwhileStays() = runTest {
+        val rec = recording()
+        fake.storageFailed(failure)
+        val other = Notice("Export failed: disk full")
+        val paused = rec.follow().copy(notice = other)
+        fake.resume()
+        assertEquals(other, paused.follow().notice)
+    }
+
+    @Test fun aUserPauseShowsNoNotice() = runTest {
+        val rec = recording()
+        fake.pause()
+        assertNull(rec.follow().notice)
+    }
+}
+
+/**
+ * A refused recorder action is never silent (AGENTS.md: no log-only Err): start, pause, resume and stop each turn
+ * their Err into a notice with the platform's words and the same action again. A refused Resume keeps the paused
+ * recording's notice up, now saying why, until the pause really ends.
+ */
+class MainRecorderRefusedTest {
+    private val fake = edu.ucsd.sysnet.cluetoothscanner.platform.fake.FakeRecorder(onStart = { "a" }, onStop = { "a" }, nowMs = { 0L })
+    private fun MainUiState.follow(): MainUiState = fake.state.value.let { on(MainEvent.RecorderChanged(it.phase, it.pause)) }
+    private fun refused(effect: MainEffect, error: edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError) =
+        MainEvent.Failed(MainTask.Effect(effect), PlatformFailure(error))
+
+    @Test fun aRefusedResumeSaysWhyAndKeepsResume() = runTest {
+        fake.start()
+        fake.storageFailed("disk I/O error")
+        val paused = MainUiState(scope = sessionA).follow()
+        // Resume on the notice: it stays up while the recorder answers
+        val asked = paused.on(MainEvent.RetryNotice)
+        assertEquals(paused.notice, asked.notice)
+        // the core refuses: the notice now says why, still with Resume, still until resumed
+        val refused = asked.on(refused(MainEffect.ResumeRecording, edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError.Core("staging still fails")))
+        val n = refused.notice ?: error("the notice shows")
+        assertEquals("Could not resume the recording: staging still fails", n.message)
+        assertEquals(MainEffect.ResumeRecording, n.retry)
+        assertEquals("Resume", n.retryLabel)
+        assertEquals(true, n.untilResumed)
+        // the recorder's state hasn't changed, so nothing takes it away
+        assertEquals(n, refused.follow().notice)
+        // the next Resume is accepted: the pause ends and the notice goes
+        fake.resume()
+        assertNull(refused.follow().notice)
+    }
+
+    @Test fun aRefusedResumeAfterStorageFullAlsoShows() = runTest {
+        fake.start()
+        fake.storageFull(150_000_000)
+        val paused = MainUiState(scope = sessionA).follow()
+        val refused = paused.on(MainEvent.StorageFullResume, refused(MainEffect.ResumeRecording, edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError.Core("storage is full")))
+        assertEquals("Could not resume the recording: storage is full", refused.notice?.message)
+        assertEquals(true, refused.notice?.untilResumed)
+    }
+
+    @Test fun refusedStartPauseAndStopEachSayWhyAndRetry() {
+        val err = edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError.MissingGrants(listOf("android.permission.BLUETOOTH_SCAN"))
+        val started = MainUiState().on(refused(MainEffect.StartRecording, err))
+        assertEquals("Could not start recording: ${err.message}", started.notice?.message)
+        assertEquals(MainEffect.StartRecording, started.notice?.retry)
+        val retry = reduce(started, MainEvent.RetryNotice)
+        assertNull(retry.state.notice)
+        assertEquals(listOf(MainEffect.StartRecording), retry.effects)
+        val busy = edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError.Busy
+        assertEquals(Notice("Could not pause the recording: ${busy.message}", retry = MainEffect.PauseRecording),
+            MainUiState().on(refused(MainEffect.PauseRecording, busy)).notice)
+        val notRecording = edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError.NotRecording
+        assertEquals(Notice("Could not stop the recording: ${notRecording.message}", retry = MainEffect.StopRecording),
+            MainUiState().on(refused(MainEffect.StopRecording, notRecording)).notice)
     }
 }

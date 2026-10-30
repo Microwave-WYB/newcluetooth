@@ -182,6 +182,8 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
             // R-10: the core stopped writing for lack of space
             launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFull.collect { dispatch(MainEvent.StorageFull(it)) } } }
+            // #79: storing kept failing; the recording paused
+            launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFailed.collect { dispatch(MainEvent.StorageFailed(it)) } } }
             launch { viewWork(q) }
         }
     }
@@ -236,14 +238,11 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
             }
             MainEffect.LoadSessions -> sessionReads.trySend(Unit)
             MainEffect.ReadLaunchFacts -> dispatch(MainEvent.LaunchFactsRead(launchFacts()))
-            // a refused start is in the recorder's state (its error), as before
-            MainEffect.StartRecording -> when (val started = graph.recorder.start()) {
-                is PlatformResult.Ok -> dispatch(MainEvent.RecordingStarted(started.value))
-                is PlatformResult.Err -> Unit
-            }
-            MainEffect.PauseRecording -> graph.recorder.pause()
-            MainEffect.ResumeRecording -> graph.recorder.resume()
-            MainEffect.StopRecording -> graph.recorder.stop()
+            // a refused start, pause, resume or stop is the notice's (Failed), never only a log line
+            MainEffect.StartRecording -> graph.recorder.start().orFail(effect)?.let { dispatch(MainEvent.RecordingStarted(it)) }
+            MainEffect.PauseRecording -> graph.recorder.pause().orFail(effect)
+            MainEffect.ResumeRecording -> graph.recorder.resume().orFail(effect)
+            MainEffect.StopRecording -> graph.recorder.stop().orFail(effect)
             MainEffect.Locate -> s.ready?.map?.locate()
             MainEffect.SheetsBack -> s.attachedSheets?.handleBack()
             is MainEffect.SheetsEnterSearch -> s.ready?.let { r -> s.attachedSheets?.enterSearch(effect.query, effect.area, r.map.camera(), effect.picked) }

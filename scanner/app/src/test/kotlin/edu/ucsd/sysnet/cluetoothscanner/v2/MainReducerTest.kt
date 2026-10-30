@@ -346,8 +346,14 @@ class MainFailureTest {
         val s = MainUiState(scope = sessionA, searchQuery = "tile").on(MainEvent.OpenSearch)
         listOf(MainTask.View(s.viewKey), MainTask.Sessions, MainTask.CoreEvents, MainTask.Platform,
             MainTask.Effect(MainEffect.SheetsBack),
-            MainTask.Effect(MainEffect.Delete(Scope.All, false)), MainTask.Effect(MainEffect.StartRecording),
         ).forEach { assertEquals(Step(s), failed(s, it)) }
+        // what the user asked for is not one of them: a refused recorder action, a delete or a settings write says why
+        // and offers it again (MainRecorderRefusedTest)
+        val delete = MainEffect.Delete(Scope.All, false)
+        assertEquals(MainEffect.StartRecording, failed(s, MainTask.Effect(MainEffect.StartRecording)).state.notice?.retry)
+        assertEquals(Notice("Could not delete local data: boom", retry = delete), failed(s, MainTask.Effect(delete)).state.notice)
+        val update = MainEffect.UpdateSettings { it }
+        assertEquals(Notice("Could not save the settings: boom", retry = update), failed(s, MainTask.Effect(update)).state.notice)
         s.searchKey?.let { assertEquals(Step(s), failed(s, MainTask.Search(it))) }
     }
 }

@@ -10,13 +10,17 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 
 /**
- * R-10's [StorageCleanup] on the core (#71): `CoreEvent.StorageFull` and `CoreStorage.reclaimable()`,
+ * R-10's [StorageCleanup] on the core (#71, #79): `CoreEvent.StorageFull`, `CoreEvent.StorageFailed`, and `CoreStorage.reclaimable()`,
  * `deleteUploadedRaw()` and `clearLocalDatabase()`, with each `CoreResult.Err` kept as a typed [CleanupError].
  * [core] suspends until the core is open (§1.2.2), so nothing here runs before it.
  */
 internal class CoreStorageCleanup(private val core: suspend () -> CoreHandle) : StorageCleanup {
     override val storageFull: Flow<Bytes> = flow {
         emitAll(core().queries.events.filterIsInstance<CoreEvent.StorageFull>().map { Bytes(it.freeBytes) })
+    }
+
+    override val storageFailed: Flow<String> = flow {
+        emitAll(core().queries.events.filterIsInstance<CoreEvent.StorageFailed>().map { it.message })
     }
 
     override suspend fun reclaimable(): CleanupResult<Reclaim> =

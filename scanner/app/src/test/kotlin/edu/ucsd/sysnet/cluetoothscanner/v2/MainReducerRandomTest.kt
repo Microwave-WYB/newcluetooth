@@ -26,7 +26,8 @@ class MainReducerRandomTest {
 
     private val effects = listOf(MainEffect.LoadSettings, MainEffect.LoadSessions, MainEffect.ReadLaunchFacts, MainEffect.LoadStorage,
         MainEffect.Export(Scope.All, ExportFormat.Csv, false), MainEffect.SaveOnboarding("ab1", true), MainEffect.Delete(Scope.All, true),
-        MainEffect.StartRecording, MainEffect.SheetsBack, MainEffect.UploadNow)
+        MainEffect.StartRecording, MainEffect.PauseRecording, MainEffect.ResumeRecording, MainEffect.StopRecording,
+        MainEffect.SheetsBack, MainEffect.UploadNow)
 
     /** A reclaimable read: the sizes, or a typed failure. */
     private fun Random.randomRead(): CleanupResult<Reclaim> =
@@ -41,7 +42,8 @@ class MainReducerRandomTest {
             // RecorderState.pause is non-null exactly while paused
             val pause = if (phase != Phase.Paused) null
             else listOf(edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.User,
-                edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFull(nextLong(0, 300_000_000))).random(this)
+                edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFull(nextLong(0, 300_000_000)),
+                edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFailed("disk I/O error")).random(this)
             MainEvent.RecorderChanged(phase, pause)
         }
         6 -> MainEvent.RecordingStarted(listOf("a", "b").random(this))
@@ -75,7 +77,8 @@ class MainReducerRandomTest {
             IllegalStateException("random failure"),
         )
         40 -> MainEvent.RetryLink
-        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate, MainEvent.DismissNotice, MainEvent.RetryNotice).random(this)
+        41 -> listOf(MainEvent.UploadNow, MainEvent.OpenAppSettings, MainEvent.Locate, MainEvent.DismissNotice, MainEvent.RetryNotice,
+            MainEvent.StorageFailed("disk I/O error")).random(this)
         42 -> MainEvent.StorageFull(Bytes(nextLong(0, 400_000_000)))
         43 -> MainEvent.ReclaimableRead(randomRead())
         44, 45 -> MainEvent.ChooseCleanup(Cleanup.entries.random(this), nextBoolean())
@@ -168,6 +171,23 @@ class MainReducerRandomTest {
                     check("settings shows a failure as freed", (n.storage?.cleanupFreed == null) == e.outcome.freed.isEmpty())
                     check("settings hides the failure", (n.storage?.cleanupFailure == null) == e.outcome.failed.isEmpty())
                 }
+                // #79: the failure pause's notice shows while it lasts; a paused recording's notice never outlives the pause
+                if (e is MainEvent.RecorderChanged) {
+                    val failure = e.pause is edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.PauseReason.StorageFailed
+                    val wasFailure = (s.recorder as? RecorderMirror.Active)?.pausedForFailure == true
+                    (n.recorder as? RecorderMirror.Active)?.let { check("failure pause mirror", it.pausedForFailure == failure) }
+                    if (failure && !wasFailure) check("failure pause without its notice", n.notice?.untilResumed == true)
+                    if (e.pause == null) check("a paused recording's notice outlived the pause", n.notice?.untilResumed != true)
+                }
+                // a refused recorder action is never silent: Failed for it always leaves a notice offering it again
+                if (e is MainEvent.Failed) {
+                    val fx = (e.task as? MainTask.Effect)?.effect
+                    if (fx == MainEffect.StartRecording || fx == MainEffect.PauseRecording || fx == MainEffect.ResumeRecording || fx == MainEffect.StopRecording) {
+                        check("a refused $fx left no notice", n.notice?.retry == fx)
+                    }
+                }
+                // Retry on a paused recording's notice leaves it up until the pause ends
+                if (e is MainEvent.RetryNotice && s.notice?.untilResumed == true) check("retry dropped a paused recording's notice", n.notice == s.notice)
                 // R-10: a failed read is always on screen (dialog and Settings), and never with sizes
                 val read = (e as? MainEvent.ReclaimableRead)?.result ?: (e as? MainEvent.SpaceFreed)?.after
                 if (read is CleanupResult.Err) {

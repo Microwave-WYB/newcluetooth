@@ -55,8 +55,17 @@ class CoreStorageCleanupTest {
         assertEquals(CleanupResult.Ok(Bytes(0)), port.deleteUploadedRaw())
     }
 
+    /** #79's event: `CoreEvent.StorageFailed`'s message is the port's storageFailed. */
+    @Test fun theCoresStorageFailedIsThePortsEvent() = runTest {
+        val spy = Spy(FakeCore(backgroundScope, simulate = false), kotlinx.coroutines.flow.flowOf(edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent.StorageFailed("disk I/O error", 3)))
+        assertEquals("disk I/O error", CoreStorageCleanup { CoreHandle.of(spy) }.storageFailed.first())
+    }
+
     /** The fake core for everything else; the three R-10 calls answer distinct values and are recorded. */
-    private class Spy(fake: FakeCore) : CoreQueries by fake, CoreStorage by fake, CoreIngest by fake {
+    private class Spy(
+        fake: FakeCore,
+        override val events: kotlinx.coroutines.flow.Flow<edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent> = fake.events,
+    ) : CoreQueries by fake, CoreStorage by fake, CoreIngest by fake {
         val calls = mutableListOf<String>()
         override suspend fun deleteUploadedRaw(): CoreResult<Long> = CoreResult.Ok(11L).also { calls += "deleteUploadedRaw" }
         override suspend fun clearLocalDatabase(): CoreResult<Long> = CoreResult.Ok(22L).also { calls += "clearLocalDatabase" }
