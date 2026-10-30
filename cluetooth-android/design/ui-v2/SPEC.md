@@ -382,7 +382,8 @@ Each component is built once. Its size, color and state rules come from these to
   no slide); the sheet height doesn't change.
 - **D-1b Remembered view.** The Discover view (categories or list) is remembered: it is saved when the user switches
   and restored on every session view and after an app restart. Categories is the default only on first launch.
-  Search's forced list view (Q-5) doesn't change the saved choice.
+  Search's forced list view (Q-5) doesn't change the saved choice. It is UI state, not a setting: there is nothing
+  for it on the Settings page.
 - **D-2 Categories view (default on first launch).** CategorySections built from the session:
   - Each identified product appears once, under its own category.
   - "Unidentified devices" comes last as a single card.
