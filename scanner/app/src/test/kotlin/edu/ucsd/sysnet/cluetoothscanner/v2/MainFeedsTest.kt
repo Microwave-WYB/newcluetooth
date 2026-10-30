@@ -92,7 +92,7 @@ class MainFeedsTest {
         val landed = failed.on(MainEvent.SessionsRead(1, list(1)))
         assertEquals(SessionsData(1, list(1)), landed.sessionsData)
         assertEquals(list(1).all, shownSessions(landed)?.all)
-        // over an older list: 1 is shown, 2 and 3 are asked, 3 fails, 2 lands
+        // over an older list: 1 is shown, 3 and 4 are asked, 4 fails, 3 lands
         val shown = landed.on(MainEvent.CoreSessionsChanged, MainEvent.CoreDataInvalidated)
         assertEquals(4, shown.sessionsAsked)
         val later = shown.on(MainEvent.Failed(MainTask.Effect(MainEffect.LoadSessions(4)), boom), MainEvent.SessionsRead(3, list(3)))
