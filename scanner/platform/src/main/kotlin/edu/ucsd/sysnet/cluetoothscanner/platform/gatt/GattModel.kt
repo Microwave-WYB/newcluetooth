@@ -1,5 +1,6 @@
 package edu.ucsd.sysnet.cluetoothscanner.platform.gatt
 
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.GattRunner
 import java.util.UUID
 
 /** Stages of one manual discovery, in order (docs/payload-schema-v3.md, `gatt/v1`). */
@@ -83,8 +84,11 @@ object GattStatus {
     /** A read never answered and blocks every later read (Android allows one outstanding request). */
     const val READ_QUEUE_STALLED = -3
 
-    /** The engine itself threw; the discovery is stored as failed rather than lost. */
-    const val INTERNAL_ERROR = -4
+    /**
+     * The engine itself threw; the discovery is stored as failed rather than lost. The runner's code, so it never
+     * reads as [GattRunner.GATT_UNAVAILABLE] (−4).
+     */
+    const val INTERNAL_ERROR = GattRunner.GATT_INTERNAL_ERROR
 
     /** Recorded for a discovery that was in flight when the process died. */
     const val PROCESS_DEATH = -2

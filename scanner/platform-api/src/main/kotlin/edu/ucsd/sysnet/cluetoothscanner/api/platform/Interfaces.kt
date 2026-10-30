@@ -57,6 +57,12 @@ interface GattRunner {
 
         /** `GattFailure.Other` status of a failed Connecting step when `core.gattTarget(key)` is null. */
         const val GATT_NO_TARGET = -5
+
+        /**
+         * `GattFailure.Other` status when the GATT engine itself failed (a link call threw mid-discovery). The
+         * discovery is stored as failed with this status in gatt/v1; it never means Bluetooth is off.
+         */
+        const val GATT_INTERNAL_ERROR = -6
     }
 }
 

@@ -87,16 +87,21 @@ internal fun resultView(result: GattDiscoveryResult, key: DeviceKey): GattView {
     return GattView(result.request.id, key, result.startedAtMs, ok, steps, if (ok) services(result) else emptyList())
 }
 
-/** The §2.7 failure table. */
+/**
+ * The §2.7 failure table. A real status (Android's 133, 62, 19, …, or an engine code such as
+ * [GattStatus.INTERNAL_ERROR]) is carried as [GattFailure.Other], so the UI can name it; [GattFailure.ConnectionFailed]
+ * and [GattFailure.DisconnectedUnexpectedly] remain only when no status is known.
+ */
 internal fun failure(result: GattDiscoveryResult): GattFailure {
     if (result.outcome == GattOutcome.CANCELLED) return GattFailure.Cancelled
     val error = result.error
-    val status = error?.status ?: result.disconnect?.status ?: GattStatus.ERROR
+    val status = (error?.status ?: result.disconnect?.status)?.takeIf { it != GattStatus.SUCCESS }
     return when {
         result.disconnect?.initiator == DisconnectInitiator.TIMEOUT || status == GattStatus.TIMED_OUT -> GattFailure.TimedOut
+        status != null -> GattFailure.Other(status)
         error?.stage == GattStage.CONNECT -> GattFailure.ConnectionFailed
         result.disconnect?.initiator == DisconnectInitiator.REMOTE -> GattFailure.DisconnectedUnexpectedly
-        else -> GattFailure.Other(status)
+        else -> GattFailure.Other(GattStatus.ERROR)
     }
 }
 
