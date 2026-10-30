@@ -236,8 +236,11 @@ Each component is built once. Its size, color and state rules come from these to
     device count and no coordinates.
 - **R-4a Discovery rate.** A line chart of how fast new devices are found during this recording.
   - x: the recording's elapsed time from its start to now (paused time left out; the line breaks across a pause).
-  - y: new devices per minute, i.e. devices first scanned in each 30 s bin × 2, lightly smoothed. Baseline 0, no
-    grid, no axis labels except the current value at the line's end: "N new/min" (12 `--t2`, tabular).
+  - y: new devices per minute over a trailing 30 s window: the devices first scanned in the last 30 s of recording
+    × 2 (in the first 30 s, scaled by the time recorded, at least 10 s). The core keeps first-scanned counts in 5 s
+    bins; the line has a point per bin and its end follows the live deltas, so it reacts within seconds. No centered
+    smoothing: a burst must never be smeared into the time after it. Baseline 0, no grid, no axis labels except the
+    current value at the line's end: "N new/min" (12 `--t2`, tabular).
   - About 72 dp tall, inset by the panel padding, line in `--blue`, a soft fill under it in `--blue` at low opacity.
   - Standing in one place, the line falls towards 0 as everything nearby has been found; walking somewhere new
     raises it.
@@ -500,6 +503,11 @@ Each component is built once. Its size, color and state rules come from these to
   8. Leaving or popping the sheet cancels a running discovery.
 - **D-14 Map.** Opening a device selects it (M-6). From a list it also eases the camera to the device, at zoom ≥ 18.2,
   keeping it clear of the sheet. From a map tap, the camera stays put.
+- **D-15 Selectable text.** Every piece of text in the device sheet can be selected and copied: the name, the
+  product name, the MAC, the dBm value, the Details values, every Raw data cell, the GATT step details and reasons,
+  and each service's and characteristic's name, UUID, properties and value. A long press starts a selection with the
+  system copy toolbar. Buttons, tabs and section labels are not selectable. Selecting never moves the sheet; a drag
+  that starts outside a selection handle still scrolls or drags as before (S-13).
 
 ## M. Map
 
@@ -523,8 +531,12 @@ Each component is built once. Its size, color and state rules come from these to
   - Tapping a cluster eases to its expansion zoom + 0.2.
 - **M-5 Heatmap.** A native MapLibre heatmap layer on the `density` source, below the clusters and points. It is
   always on.
-  - Weight 1 per device (a cell's device count in Cells mode), radius 24 dp, opacity 0.6.
-  - Color ramp blue → cyan → white, the same in light and dark.
+  - Weight 1 per device (a cell's device count in Cells mode), radius 56 dp, opacity 0.6; intensity about 0.15 at
+    zoom 12 rising to 0.35 at zoom 16, so the gradient reaches well outside a cluster bubble.
+  - Color ramp transparent → blue → cyan → yellow → red, the same in light and dark. It never ends in white or any
+    color close to the light base map, so the densest spot reads as the hottest, not as a hole.
+  - Intensity is scaled so a stationary session (tens of devices on one spot) does not saturate: the center of such a
+    spot is yellow to red, and its edge fades through cyan and blue.
   - It fades out between zoom 16 and 18.
   - If it proves unstable on a device, it is removed rather than imitated with circles.
 - **M-6 Selection.**
@@ -641,7 +653,8 @@ Each component is built once. Its size, color and state rules come from these to
 ## O. Pages
 
 - **O-1 Settings.**
-  - Opened from the sidebar. The page slides in from the right (`--t-page`) and has a `--bg` top strip
+  - Opened from the sidebar. On phone the page fades in over the screen and fades out on Back (`--t-page`, `--ease`),
+    with no slide; on tablet it opens as before. It has a `--bg` top strip
     (`--top-zone` tall) holding a back FloatButton and "Settings" (17/650).
   - Rows, in order:
     1. User ID (value on the right);

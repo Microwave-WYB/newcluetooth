@@ -118,8 +118,8 @@ class RecorderScreenTest {
             labels += compose.onNodeWithTag("discoveryChart").fetchSemanticsNode().config.getOrNull(SemanticsProperties.ContentDescription)?.single()
             compose.onRoot().captureRoboImage("src/test/screenshots/recorder/$size-${if (dark) "dark" else "light"}-chart-${c.first}.png")
         }
-        // the one label is the current value; none before the first bin completes
-        assertEquals(listOf(null, "29 new/min", "0 new/min", "15 new/min", "0 new/min"), labels)
+        // the one label is the current value, the filling bin included (0 just after the start)
+        assertEquals(listOf("0 new/min", "25 new/min", "0 new/min", "17 new/min", "0 new/min"), labels)
     }
 
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi") @Test fun phoneChartLight() = chartShots(false, "412x915", false)
