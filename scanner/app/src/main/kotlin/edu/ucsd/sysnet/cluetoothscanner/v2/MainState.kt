@@ -23,6 +23,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.RecorderUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SearchPageState
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.chrome.DiscoveryBins
+import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageSizes
 import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.onboardingSteps
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
@@ -527,13 +528,8 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     is MainEvent.UpdateSettings -> s.with(MainEffect.UpdateSettings(e.transform))
     // O-1: a re-read keeps the chosen scopes and format; it ends a running export and any open confirmation
     is MainEvent.StorageLoaded -> {
-        val shown = s.scope ?: Scope.All
-        val prev = s.storage
         val f = e.facts
-        s.copy(storage = StorageUi(f.databaseBytes, f.rawFilesBytes, f.mapCacheBytes, f.pendingCount,
-            prev?.exportScope ?: shown, prev?.exportFormat, false, null, prev?.deleteScope ?: shown,
-            reclaimable = prev?.reclaimable, cleaning = prev?.cleaning ?: false, cleanupFreed = prev?.cleanupFreed,
-            cleanupFailure = prev?.cleanupFailure, reclaimFailure = prev?.reclaimFailure)).only()
+        s.copy(storage = storageRead(s, StorageSizes.Known(f.databaseBytes, f.rawFilesBytes, f.pendingCount), f.mapCacheBytes)).only()
     }
     is MainEvent.EditStorage -> s.copy(storage = s.storage?.let(e.transform)).only()
     // O-1 item 10: prepare the scope's export, then hand it to the share sheet or Downloads
@@ -545,7 +541,12 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.ExportFinished -> s.copy(storage = s.storage?.copy(exporting = false)).only()
     // O-1 item 11, §2.8: the second step only with pending files; the default keeps them until uploaded
     MainEvent.DeleteConfirmed -> s.storage?.let { st ->
-        if (st.pendingCount > 0) s.copy(storage = st.copy(deleteConfirm = DeleteConfirm.LoseUnuploaded)).only()
+        // unknown sizes: un-uploaded files may exist, so the second step still asks
+        val maybePending = when (val z = st.sizes) {
+            is StorageSizes.Known -> z.pendingCount > 0
+            StorageSizes.Loading, is StorageSizes.Unknown -> true
+        }
+        if (maybePending) s.copy(storage = st.copy(deleteConfirm = DeleteConfirm.LoseUnuploaded)).only()
         else reduce(s, MainEvent.Delete(includeUnuploaded = false))
     } ?: s.only()
     is MainEvent.Delete -> s.storage?.let { st ->
@@ -624,7 +625,11 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         // without stored settings the launch view still opens (its own facts fall back to the first run)
         MainEffect.LoadSettings -> s.loadingSessions { listOf(it, MainEffect.ReadLaunchFacts) }
         MainEffect.ReadLaunchFacts -> reduce(s, MainEvent.LaunchFactsRead(LaunchFacts(null, recordOnOpen = false, sessionCount = 0)))
-        MainEffect.LoadStorage -> reduce(s, MainEvent.StorageLoaded(StorageFacts(0, 0, null, 0)))
+        // O-1 item 8: unknown sizes are Unknown ("—", never 0 B); the page opens and the notice says why, with Retry
+        MainEffect.LoadStorage -> s.copy(
+            storage = storageRead(s, StorageSizes.Unknown(error.userMessage()), s.storage?.mapCacheBytes),
+            notice = Notice("$STORAGE_FAILED: ${error.userMessage()}", retry = task.effect),
+        ).only()
         MainEffect.LoadReclaimable -> reduce(s, MainEvent.ReclaimableRead(CleanupResult.Err(CleanupError.Failed(error.message ?: error::class.simpleName.orEmpty()))))
         // a throw fails every cleanup of the run, each with the error's message, as a typed Err would
         is MainEffect.FreeUpSpace -> reduce(s, MainEvent.SpaceFreed(
@@ -665,6 +670,7 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
 }
 
 private const val EXPORT_FAILED = "Export failed"
+private const val STORAGE_FAILED = "Could not read the storage use"
 private const val SAVE_FAILED = "Could not save the settings"
 private const val START_FAILED = "Could not start recording"
 private const val PAUSE_FAILED = "Could not pause the recording"
@@ -713,6 +719,17 @@ private fun withRead(d: StorageFullState, r: CleanupResult<Reclaim>): StorageFul
 }
 
 /** Settings › Storage after a read: the sizes, or no sizes and the read's failure. */
+/** O-1: a storage read (its sizes, known or not) keeps the chosen scopes and format; it ends a running export and any
+ * open confirmation. */
+private fun storageRead(s: MainUiState, sizes: StorageSizes, mapCacheBytes: Long?): StorageUi {
+    val shown = s.scope ?: Scope.All
+    val prev = s.storage
+    return StorageUi(sizes, mapCacheBytes,
+        prev?.exportScope ?: shown, prev?.exportFormat, false, null, prev?.deleteScope ?: shown,
+        reclaimable = prev?.reclaimable, cleaning = prev?.cleaning ?: false, cleanupFreed = prev?.cleanupFreed,
+        cleanupFailure = prev?.cleanupFailure, reclaimFailure = prev?.reclaimFailure)
+}
+
 private fun withRead(st: StorageUi, r: CleanupResult<Reclaim>): StorageUi = when (r) {
     is CleanupResult.Ok -> st.copy(reclaimable = reclaimable(r.value), reclaimFailure = null)
     is CleanupResult.Err -> st.copy(reclaimable = null, reclaimFailure = reason(r.error))

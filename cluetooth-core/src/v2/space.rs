@@ -23,6 +23,21 @@ pub(crate) fn uploaded_raw_bytes(root: &Path) -> Result<u64, CoreError> {
     Ok(total)
 }
 
+/// O-1 item 8 "Raw files": every regular file under `pending/` (not uploaded yet) and `archive/` (uploaded).
+pub(crate) fn raw_files_bytes(root: &Path) -> Result<u64, CoreError> {
+    let mut total = 0;
+    for area in [
+        crate::payload_identity::PENDING_ROOT,
+        crate::payload_identity::ARCHIVE_ROOT,
+    ] {
+        walk(&root.join(area), &mut |_, len| {
+            total += len;
+            Ok(())
+        })?;
+    }
+    Ok(total)
+}
+
 /// Deletes the uploaded raw files (`archive/`) and their emptied directories; returns the bytes freed.
 /// `pending/` (not yet uploaded) is never touched, nor are the upload markers that keep a file from uploading twice.
 pub(crate) fn delete_uploaded_raw(root: &Path) -> Result<u64, CoreError> {

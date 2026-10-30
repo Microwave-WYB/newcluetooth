@@ -247,12 +247,15 @@ pub(crate) struct Store {
 /// The cache entries one commit learned: sha256 → payload id, and payload facts.
 type Learned = (HashMap<[u8; 32], i64>, HashMap<i64, PayloadInfo>);
 
-/// `local.db` plus its WAL, in bytes (0 for a missing file).
+/// `local.db` plus its `-wal` and `-shm`, in bytes (0 for a missing file).
 pub(crate) fn db_bytes(db_path: &Path) -> u64 {
     let len = |p: &Path| std::fs::metadata(p).map_or(0, |m| m.len());
-    let mut wal = db_path.as_os_str().to_owned();
-    wal.push("-wal");
-    len(db_path) + len(Path::new(&wal))
+    let side = |suffix: &str| {
+        let mut p = db_path.as_os_str().to_owned();
+        p.push(suffix);
+        len(Path::new(&p))
+    };
+    len(db_path) + side("-wal") + side("-shm")
 }
 
 /// Bound of the in-memory sha256 → payload id map (§2.4: an LRU of 50k hashes, then the DB).

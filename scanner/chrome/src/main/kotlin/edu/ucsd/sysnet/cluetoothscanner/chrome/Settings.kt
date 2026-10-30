@@ -51,12 +51,18 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 /** docs/v2-api.md §5.4. */
 data class SettingsUi(val settings: Settings, val uploads: UploadStatus, val storage: StorageUi)
 
+/** O-1 item 8: what the core says it stores. Sizes not known show "—", never 0. */
+sealed interface StorageSizes {
+    data object Loading : StorageSizes
+    data class Known(val databaseBytes: Long, val rawFilesBytes: Long, val pendingCount: Int) : StorageSizes
+    /** The read failed ([reason]); the notice says so, and Delete still warns about un-uploaded files. */
+    data class Unknown(val reason: String) : StorageSizes
+}
+
 /** O-1 items 8–11; [mapCacheBytes] null until :map reports it. */
 data class StorageUi(
-    val databaseBytes: Long,
-    val rawFilesBytes: Long,
+    val sizes: StorageSizes,
     val mapCacheBytes: Long?,
-    val pendingCount: Int,
     val exportScope: Scope,
     val exportFormat: ExportFormat?,
     val exporting: Boolean,
@@ -172,7 +178,7 @@ private fun SettingsRows(ui: SettingsUi, a: SettingsActions, sessionLabel: Strin
     else Strings.pendingSub(ui.uploads.pendingCount, Format.bytes(ui.uploads.pendingBytes))
     ListItem(
         Strings.PendingUploads,
-        sub = if (ui.uploads.failedCount > 0) "$pending · ${Strings.uploadFailed(ui.uploads.failedCount)}" else pending,
+        sub = if (ui.uploads.failedCount > 0) "$pending · ${failedUploads(ui.uploads.failedCount, ui.uploads.lastError)}" else pending,
         trailing = { Button(Strings.UploadNow, a.onUploadNow, kind = ButtonKind.Tonal, small = true, enabled = ui.uploads.pendingCount > 0) },
     )
     // 6–7
@@ -180,11 +186,15 @@ private fun SettingsRows(ui: SettingsUi, a: SettingsActions, sessionLabel: Strin
     SwitchRow(Strings.HideUnnamedApple, Strings.HideUnnamedAppleSub, s.hideUnnamedApple) { v -> a.onSettings { it.copy(hideUnnamedApple = v) } }
     // 8–11
     SectionLabel(Strings.Storage)
-    val total = st.databaseBytes + st.rawFilesBytes + (st.mapCacheBytes ?: 0)
+    val known = st.sizes as? StorageSizes.Known
     ListItem(
         Strings.StorageUsed,
-        sub = Strings.storageBreakdown(Format.bytes(st.databaseBytes), Format.bytes(st.rawFilesBytes), st.mapCacheBytes?.let(Format::bytes)),
-        end = Format.bytes(total),
+        sub = Strings.storageBreakdown(
+            known?.let { Format.bytes(it.databaseBytes) } ?: UNKNOWN_SIZE,
+            known?.let { Format.bytes(it.rawFilesBytes) } ?: UNKNOWN_SIZE,
+            st.mapCacheBytes?.let(Format::bytes),
+        ),
+        end = known?.let { Format.bytes(it.databaseBytes + it.rawFilesBytes + (st.mapCacheBytes ?: 0)) } ?: UNKNOWN_SIZE,
     )
     ExportBlock(st, a, sessionLabel, sessionScope)
     DeleteBlock(st, a, sessionLabel, sessionScope)
@@ -247,7 +257,11 @@ private fun DeleteBlock(st: StorageUi, a: SettingsActions, sessionLabel: String?
             secondary = Strings.Cancel to a.onDeleteCancel, primary = Strings.Delete to a.onDeleteConfirm,
         )
         DeleteConfirm.LoseUnuploaded -> ConfirmCard(
-            Strings.deleteLoseTitle(st.pendingCount), Strings.DeleteLoseBody,
+            when (val z = st.sizes) {
+                is StorageSizes.Known -> Strings.deleteLoseTitle(z.pendingCount)
+                StorageSizes.Loading, is StorageSizes.Unknown -> Strings.DeleteLoseUnknownTitle
+            },
+            Strings.DeleteLoseBody,
             // §2.8: keeping un-uploaded data is the primary choice; losing it is the secondary one
             secondary = Strings.DeleteNow to { a.onDelete(true) }, primary = Strings.KeepUntilUploaded to { a.onDelete(false) },
         )
@@ -315,3 +329,25 @@ private fun ConfirmCard(
         }
     }
 }
+
+/**
+ * O-1 item 5: the latest failure's reason in a few words ("Denied (403)", "Network error", "Timed out"). :platform
+ * stores it before " — " and the full diagnostic after; an older or other message shows cut short.
+ */
+/**
+ * O-1 item 5: "N uploads failed; retrying · last: Denied (403)". The upload queue retries every failed upload, GATT
+ * denials too, so the count reads "retrying"; the reason is the last failure's, whatever its kind, and says so.
+ */
+internal fun failedUploads(count: Int, lastError: String?): String {
+    val reason = lastError?.let(::shortReason) ?: return Strings.uploadFailed(count)
+    return "${Strings.uploadFailed(count)} · last: $reason"
+}
+
+/** O-1 item 8: a size the core could not report. */
+internal const val UNKNOWN_SIZE = "—"
+
+internal fun shortReason(lastError: String): String {
+    val reason = lastError.substringBefore(" — ").trim()
+    return if (reason.length <= 40) reason else reason.take(39) + "…"
+}
+
