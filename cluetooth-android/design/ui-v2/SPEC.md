@@ -85,7 +85,6 @@ expanded (G-2).
 - **G-13a Inner corners.** An element inside a rounded container's corner region has the same inset on its top and
   sides, and its radius is the container radius minus that inset. Examples:
   - tablet panel rows: 30 − 8 = 22;
-  - the recorder mini map: panel radius − 12 (phone 22 − 12 = 10, tablet 28 − 12 = 16);
   - the location popover: its radius is 28, concentric with its pill button (16 + 12).
 
   The recorder panel radius is concentric with its Pause/Stop buttons: 22 on phone (18 + 4) and 28 on tablet
