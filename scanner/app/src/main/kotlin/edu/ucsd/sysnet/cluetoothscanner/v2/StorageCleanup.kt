@@ -15,7 +15,7 @@ val STORAGE_FLOOR = Bytes(200_000_000)
 
 /** Why a storage call failed, as :app tells the cases apart (lane A's `CoreException`s map onto these). */
 sealed interface CleanupError {
-    /** The core does not have the call yet (the placeholder). */
+    /** The core does not offer the call (a build or test without it). */
     data object Unavailable : CleanupError
     /** The core failed or refused; [message] is its own. */
     data class Failed(val message: String) : CleanupError
@@ -37,9 +37,9 @@ data class CleanupOutcome(val freed: Map<Cleanup, Bytes>, val failed: Map<Cleanu
 data class Reclaim(val free: Bytes, val uploadedRaw: Bytes, val localDatabase: Bytes)
 
 /**
- * R-10, lane A's storage API under the names it is adding to :core-api: `CoreEvent.StorageFull { freeBytes }`,
- * `reclaimable()`, `deleteUploadedRaw()` and `clearLocalDatabase()` as typed results. :app codes against this; until
- * they land, [PlatformPlaceholders] provides it, and then the core does (one file).
+ * R-10, the core's storage API as the screen uses it: `CoreEvent.StorageFull { freeBytes }`, `reclaimable()`,
+ * `deleteUploadedRaw()` and `clearLocalDatabase()` as typed results. [CoreStorageCleanup] is the core's; tests pass
+ * their own.
  */
 interface StorageCleanup {
     /** `CoreEvent.StorageFull { freeBytes }`: the core stopped writing. */
