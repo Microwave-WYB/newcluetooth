@@ -1753,8 +1753,6 @@ mod tests {
         }
     }
 
-    /// §2.6 coalescing: latest values per key (a change never drops an earlier name), appends concatenated with
-    /// later changes folded in, routes concatenated, one seq (the newer).
     /// #112 review: coalescing keeps the discovery bins of both deltas (the later total wins for the same start) and
     /// the later runs; dropping either side's bins fails here.
     #[test]
@@ -1794,6 +1792,8 @@ mod tests {
         );
     }
 
+    /// §2.6 coalescing: latest values per key (a change never drops an earlier name), appends concatenated with
+    /// later changes folded in, routes concatenated, one seq (the newer).
     #[test]
     fn coalescing_keeps_latest_values_and_concatenates_appends() {
         let row = DeviceRow {

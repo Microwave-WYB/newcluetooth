@@ -290,12 +290,37 @@ class FakeCoreTest {
         assertEquals(listOf(DiscoveryBin(t0, 1)), r.bins)
         c.stopRecording()
         val stopped = (c.discoveryRate(id) as CoreResult.Ok).value
-        assertEquals(DiscoveryRun(t0 + 120_000, t0 + 120_000), stopped.runs.last())
+        assertEquals("a stop right after the resume adds no run, as in the core", listOf(DiscoveryRun(t0, t0 + 60_000)), stopped.runs)
         assertEquals(1, stopped.bins.sumOf { it.newDevices })
         val r1 = (c.discoveryRate("r1") as CoreResult.Ok).value
         assertEquals(1, r1.runs.size)
         assertTrue(r1.bins.all { it.newDevices > 0 })
         assertEquals(DiscoveryRate.Empty, (c.discoveryRate("nope") as CoreResult.Ok).value)
+    }
+
+    /** R-4a, as in the core: a bin that empties (the display filter hides its only device) goes out as 0 in a delta. */
+    @Test
+    fun anEmptiedDiscoveryBinIsSentAsZero() = runTest {
+        val c = FakeCore(backgroundScope, { FakeCore.DEMO_NOW_MS + testScheduler.currentTime }, simulate = false)
+        val t0 = FakeCore.DEMO_NOW_MS
+        val deltas = mutableListOf<LiveDelta>()
+        val job = launch { c.live.collect { deltas += it } }
+        c.setDisplayFilter(DisplayFilter(hideUnnamedApple = false))
+        c.startRecording(FakeCore.DEMO_ENVIRONMENT)
+        // an unnamed Apple device (company field 76, no name) in bin t0, a named one in bin t0 + 30 s
+        c.ingestScans(listOf(ScanObservationInput("C0:FF:EE:00:00:0A", -60, t0, 0, byteArrayOf(2, 1, 6, 4, 0xFF.toByte(), 0x4C, 0, 0x10),
+            null, null, true, true, 1, 0, null, null, null, 0, 0)))
+        advanceTimeBy(40_000)
+        c.ingestScans(listOf(obs(-60)))
+        advanceTimeBy(1_500)
+        runCurrent()
+        val bins = { deltas.mapNotNull { it.discovery }.flatMap { it.bins } }
+        assertTrue("${bins()}", DiscoveryBin(t0, 1) in bins() && DiscoveryBin(t0 + 30_000, 1) in bins())
+        c.setDisplayFilter(DisplayFilter(hideUnnamedApple = true))
+        advanceTimeBy(1_500)
+        runCurrent()
+        assertEquals("the emptied bin goes out as 0", DiscoveryBin(t0, 0), bins().last { it.startMs == t0 })
+        job.cancel()
     }
 
     /** Q-1/Q-2: blank is no search; results keep device_order; the area limits them. */

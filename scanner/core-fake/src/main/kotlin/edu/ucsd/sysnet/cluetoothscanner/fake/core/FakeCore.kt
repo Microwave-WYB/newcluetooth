@@ -188,9 +188,11 @@ class FakeCore(
         val sentBins = HashMap<Long, Int>()
         var sentRuns: List<DiscoveryRun> = emptyList()
 
+        /** Ends the open run; one that never ran (resumed and paused or stopped at once) goes, as in the core. */
         fun closeRun(now: Long) {
             val last = runs.lastOrNull() ?: return
-            if (last.endMs == null) runs[runs.size - 1] = last.copy(endMs = now)
+            if (last.endMs != null) return
+            if (now > last.startMs) runs[runs.size - 1] = last.copy(endMs = now) else runs.removeAt(runs.size - 1)
         }
         /** SPEC R-10: paused by [simulateStorageFull]. */
         var pausedForStorage = false
