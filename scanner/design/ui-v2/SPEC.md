@@ -499,7 +499,6 @@ Each component is built once. Its size, color and state rules come from these to
   - Start and End are not drawn when the session barely moved: every route point lies within 50 m of the first one.
     The test uses distance from the first point, not path length, so GPS jitter while standing still doesn't count
     as movement. This keeps a stationary recording's Start/End from covering the device cluster at the same spot.
-    The mini map (R-5) follows the same rule.
 - **M-9 Location.** With no session, the user's location is a radius-8 `--blue` dot with a 3 dp white stroke, at zoom
   16.
 - **M-10 Framing.** Showing a session fits its route and points:
