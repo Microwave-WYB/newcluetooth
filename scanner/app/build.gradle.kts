@@ -281,7 +281,6 @@ dependencies {
     implementation(project(":platform-api"))
     implementation(project(":platform"))
     implementation(project(":core-bridge")) // only v2/CoreBinding.kt names it; it packages libcluetooth_core.so
-    implementation(project(":platform-fake")) // only v2/PlatformPlaceholders.kt may use it (until #53 and the GATT/upload/export pieces)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.datastore.preferences) // DataStoreSettings exposes DataStore in its constructor; :platform has it as implementation
 
@@ -336,6 +335,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(project(":core-fake")) // CoreOpenerTest's opened core
+    testImplementation(project(":platform-fake")) // the reducer tests' recorder; v2 main code uses only :platform
     // JVM stand-in for Android's SQLite in the local-data tests
     testImplementation(libs.sqlite.jdbc)
     androidTestImplementation(libs.androidx.junit)
