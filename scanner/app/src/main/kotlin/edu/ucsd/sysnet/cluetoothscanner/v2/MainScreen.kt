@@ -61,6 +61,7 @@ import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
 import edu.ucsd.sysnet.cluetoothscanner.map.CluetoothMap
 import edu.ucsd.sysnet.cluetoothscanner.map.LocateControl
 import edu.ucsd.sysnet.cluetoothscanner.map.LocatePlacement
+import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetsEvent
 import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetsLayer
 import edu.ucsd.sysnet.cluetoothscanner.sheets.rememberSheetsState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
@@ -113,7 +114,12 @@ fun MainScreen(vm: MainViewModel) {
         val sheetsLive = rememberViewLive(ui.scope, view?.live)
         val sheets = ui.scope?.let { scope ->
             rememberSheetsState(scope, sheetsLive, view?.routesFaint ?: (scope.sessions == SessionScope.All), r.core.queries,
-                vm.graph.gattRunner, r.map, reducedMotion = CluetoothTheme.motion.reduced)
+                vm.graph.gattRunner, r.map, reducedMotion = CluetoothTheme.motion.reduced, view = ui.discoverView.view) { event ->
+                // D-1b: the user's view switch is remembered
+                when (event) {
+                    is SheetsEvent.ViewChosen -> dispatch(MainEvent.DiscoverViewChosen(event.view))
+                }
+            }
         }
         DisposableEffect(sheets) {
             sheets?.let { dispatch(MainEvent.SheetsAttached(it)) }

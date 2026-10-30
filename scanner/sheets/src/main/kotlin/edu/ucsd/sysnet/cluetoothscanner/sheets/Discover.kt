@@ -16,6 +16,12 @@ import edu.ucsd.sysnet.cluetoothscanner.ui.contract.viewportCamera
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 
+/** What the sheets tell :app. */
+sealed interface SheetsEvent {
+    /** D-1b: the user switched the Discover view; :app remembers it (UI state, not a setting). */
+    data class ViewChosen(val view: DiscoverView) : SheetsEvent
+}
+
 /** The Discover sheet's views (D-2, D-3) and segments (D-1); §5.4 `SheetContentState.Discover`. */
 enum class DiscoverView { Categories, List }
 enum class Segment { Nearby, All, ThisArea }
@@ -181,7 +187,10 @@ internal sealed interface DiscoverEvent {
     class LiveAppended(val keys: LongArray) : DiscoverEvent
     /** :app read the view: live or not. Live → frozen is R-7's Stop; only the live-only parts change. */
     data class LiveRead(val live: Boolean) : DiscoverEvent
+    /** D-1a: the user's view switch (D-1b: remembered). */
     data object ViewToggled : DiscoverEvent
+    /** D-1b: the remembered view, from :app (a new session view, or the store read after a restart). */
+    data class ViewRestored(val view: DiscoverView) : DiscoverEvent
     data class SegmentSelected(val next: Segment) : DiscoverEvent
     data class FilterSet(val filter: DeviceFilter) : DiscoverEvent
     data class CameraIdle(val byUser: Boolean, val viewport: Bbox, val zoom: Double) : DiscoverEvent
@@ -221,6 +230,8 @@ internal sealed interface DiscoverEffect {
     data object RaiseRoot : Immediate
     /** Q-5, Q-7: the stack goes back to the root. */
     data object ResetStack : Immediate
+    /** D-1b: the user chose [view]; :app remembers it. */
+    data class ViewChosen(val view: DiscoverView) : Immediate
 }
 
 internal data class DiscoverStep(val state: DiscoverState, val effects: List<DiscoverEffect> = emptyList())
@@ -284,10 +295,23 @@ internal fun reduceDiscover(state: DiscoverState, event: DiscoverEvent): Discove
             }
         }
         is DiscoverEvent.LiveRead -> liveRead(state, event.live)
-        DiscoverEvent.ViewToggled -> DiscoverStep(
-            state.copy(view = if (state.view == DiscoverView.Categories) DiscoverView.List else DiscoverView.Categories),
-            listOf(DiscoverEffect.RaiseRoot), // D-1a keeps the height; S-12 raises a Collapsed root
-        )
+        // D-1a keeps the height; S-12 raises a Collapsed root; D-1b: the user's choice is remembered. Search shows
+        // only its list (Q-5), with no switch, so a toggle there changes nothing
+        DiscoverEvent.ViewToggled ->
+            if (state.searching != null) DiscoverStep(state)
+            else {
+                val next = if (state.view == DiscoverView.Categories) DiscoverView.List else DiscoverView.Categories
+                DiscoverStep(state.copy(view = next), listOf(DiscoverEffect.RaiseRoot, DiscoverEffect.ViewChosen(next)))
+            }
+        // D-1b: during search it is the view search returns to (Q-7), never the forced list; nothing is remembered
+        is DiscoverEvent.ViewRestored -> {
+            val s = state.searching
+            when {
+                s != null -> if (s.back.view == event.view) DiscoverStep(state) else DiscoverStep(state.copy(searching = s.copy(back = s.back.copy(view = event.view))))
+                state.view == event.view -> DiscoverStep(state)
+                else -> DiscoverStep(state.copy(view = event.view))
+            }
+        }
         is DiscoverEvent.SegmentSelected -> when {
             event.next !in segmentsFor(state.live) -> DiscoverStep(state) // D-1: not offered in this view
             event.next == state.segment.segment -> DiscoverStep(state, listOf(DiscoverEffect.RaiseRoot))
@@ -419,8 +443,16 @@ private fun searchAnswered(state: DiscoverState, ready: DiscoverPhase.Ready, eve
  * acts on the current state. Every query goes through [attempt]: a failure comes back as a typed event, never a
  * throw. Live appends while the first sort loads are kept by [DiscoverPhase.Loading].
  */
-class DiscoverModel(private val queries: DiscoverQueries, live: Boolean?, private val stack: SheetStackController) {
-    private var state by mutableStateOf(DiscoverState(Liveness.of(live)))
+class DiscoverModel(
+    private val queries: DiscoverQueries,
+    live: Boolean?,
+    private val stack: SheetStackController,
+    /** D-1b: the remembered view this session view opens on. */
+    view: DiscoverView = DiscoverView.Categories,
+    /** What the sheets tell :app (D-1b: the user's view switch). */
+    private val onEvent: (SheetsEvent) -> Unit = {},
+) {
+    private var state by mutableStateOf(DiscoverState(Liveness.of(live), view = view))
 
     /** The view is the live recording now (V-2): not before the view is read, never after Stop (R-7). */
     val live: Boolean get() = state.live
@@ -468,6 +500,9 @@ class DiscoverModel(private val queries: DiscoverQueries, live: Boolean?, privat
 
     /** D-1a: a view switch keeps the height; S-12: from Collapsed it also raises the root to Half. */
     fun toggleView() = sendNow(DiscoverEvent.ViewToggled)
+
+    /** D-1b: :app's remembered view (a store read that lands after the sheets exist); never re-remembered. */
+    fun restoreView(view: DiscoverView) = sendNow(DiscoverEvent.ViewRestored(view))
 
     /** D-1; a segment not offered in this view is ignored. */
     suspend fun selectSegment(next: Segment) = send(DiscoverEvent.SegmentSelected(next))
@@ -586,6 +621,7 @@ class DiscoverModel(private val queries: DiscoverQueries, live: Boolean?, privat
         when (effect) {
             DiscoverEffect.RaiseRoot -> stack.onRootHeaderControl()
             DiscoverEffect.ResetStack -> stack.reset()
+            is DiscoverEffect.ViewChosen -> onEvent(SheetsEvent.ViewChosen(effect.view))
         }
     }
 

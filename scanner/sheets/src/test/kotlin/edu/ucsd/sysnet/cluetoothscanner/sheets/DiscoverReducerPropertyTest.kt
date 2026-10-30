@@ -143,7 +143,7 @@ class DiscoverReducerPropertyTest {
                             is RowsQuery.Devices -> world.keys(q.filter)
                         },
                     )
-                    is DiscoverEffect.RestoreRoot, DiscoverEffect.RaiseRoot, DiscoverEffect.ResetStack -> Unit // the stack's
+                    is DiscoverEffect.RestoreRoot, DiscoverEffect.RaiseRoot, DiscoverEffect.ResetStack, is DiscoverEffect.ViewChosen -> Unit // the stack's and :app's
                 }
             }
 

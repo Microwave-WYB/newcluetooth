@@ -74,6 +74,8 @@ class AppGraph(private val app: Application) {
 
     /** O-1 / V-6 (#53): DataStore `cluetooth_settings`, migrated once from v3's prefs; V-6 awaits [DataStoreSettings.loaded]. */
     val settings: DataStoreSettings by lazy { DataStoreSettings(app, scope, appVersion) }
+    /** D-1b: UI state the app remembers (the Discover view), its own DataStore file; not a setting. */
+    val uiState: UiStateStore by lazy { DataStoreUiState.of(app, scope) }
     /** O-2 (#53): the grants; the Activity refreshes it on resume and after a request. */
     val permissions: AndroidPermissions by lazy { AndroidPermissions(app) }
     /** O-1 "Pending uploads" (§1.6, §4.5): WorkManager and the v3 Firebase transport over the core's pending list. */

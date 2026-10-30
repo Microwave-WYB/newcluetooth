@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CategoryCount
@@ -57,6 +58,10 @@ class SheetsState internal constructor(
     internal val coroutines: CoroutineScope,
     internal val nowMs: () -> Long,
     internal val metrics: SheetMetrics,
+    /** D-1b: the remembered Discover view this session view opens on. */
+    view: DiscoverView = DiscoverView.Categories,
+    /** What the sheets tell :app (D-1b: the user's view switch). */
+    onEvent: (SheetsEvent) -> Unit = {},
 ) {
     /**
      * Launches [block] on the sheets' scope with its failure handled: the core and GATT calls already come back as
@@ -88,7 +93,7 @@ class SheetsState internal constructor(
         ),
     )
     /** The Discover sheet's list, segment, filter, area and search state (G-9, D-1..D-4, Q-5..Q-7). */
-    val discover = DiscoverModel(core.forScope(scope), live, stack)
+    val discover = DiscoverModel(core.forScope(scope), live, stack, view, onEvent)
     internal val rows = RowStore(core, scope, coroutines)
 
     /** The view is the live recording (V-2): Nearby, the chart. It ends at Stop (R-7) and never comes back. */
@@ -364,13 +369,19 @@ fun rememberSheetsState(
     map: MapRequests?,
     nowMs: () -> Long = System::currentTimeMillis,
     reducedMotion: Boolean = false,
+    /** D-1b: the remembered Discover view; a new session view opens on it, and a later value (the store read) restores it. */
+    view: DiscoverView = DiscoverView.Categories,
+    /** What the sheets tell :app (D-1b: [SheetsEvent.ViewChosen] when the user switches the view). */
+    onEvent: (SheetsEvent) -> Unit = {},
 ): SheetsState {
     val coroutines = rememberCoroutineScope()
+    val events by rememberUpdatedState(onEvent)
     val state = remember(scope) {
-        SheetsState(scope, live, routesFaint, core, gatt, map, coroutines, nowMs, SheetMetrics(reducedMotion = reducedMotion))
+        SheetsState(scope, live, routesFaint, core, gatt, map, coroutines, nowMs, SheetMetrics(reducedMotion = reducedMotion), view) { events(it) }
     }
     LaunchedEffect(state) { state.start() }
     LaunchedEffect(state, live) { state.setLive(live) }
+    LaunchedEffect(state, view) { state.discover.restoreView(view) }
     return state
 }
 
