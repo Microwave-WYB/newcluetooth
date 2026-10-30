@@ -82,7 +82,7 @@ object GattStatus {
     const val TIMED_OUT = -1
 
     /** A read never answered and blocks every later read (Android allows one outstanding request). */
-    const val READ_QUEUE_STALLED = -3
+    const val READ_QUEUE_STALLED = GattRunner.GATT_READ_QUEUE_STALLED
 
     /**
      * The engine itself threw; the discovery is stored as failed rather than lost. The runner's code, so it never
@@ -91,7 +91,7 @@ object GattStatus {
     const val INTERNAL_ERROR = GattRunner.GATT_INTERNAL_ERROR
 
     /** Recorded for a discovery that was in flight when the process died. */
-    const val PROCESS_DEATH = -2
+    const val PROCESS_DEATH = GattRunner.GATT_PROCESS_DEATH
 
     fun name(status: Int): String = when (status) {
         SUCCESS -> "GATT_SUCCESS"

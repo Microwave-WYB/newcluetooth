@@ -123,10 +123,11 @@ class GattViewsTest {
         assertEquals(GattFailure.Other(GattRunner.GATT_INTERNAL_ERROR), failure(crashed))
         val codes = listOf(GattRunner.GATT_UNAVAILABLE, GattRunner.GATT_NO_TARGET, GattRunner.GATT_INTERNAL_ERROR)
         assertEquals("the runner codes are distinct", codes.size, codes.toSet().size)
-        assertTrue(
-            "and none is an engine status",
-            codes.none { it in listOf(GattStatus.TIMED_OUT, GattStatus.PROCESS_DEATH, GattStatus.READ_QUEUE_STALLED) },
-        )
+        assertTrue("and none is the engine's timeout marker", GattStatus.TIMED_OUT !in codes)
+        // The engine's stored codes are the runner's named ones, so :sheets maps them by name (#105).
+        assertEquals(GattRunner.GATT_PROCESS_DEATH, GattStatus.PROCESS_DEATH)
+        assertEquals(GattRunner.GATT_READ_QUEUE_STALLED, GattStatus.READ_QUEUE_STALLED)
+        assertEquals(GattRunner.GATT_INTERNAL_ERROR, GattStatus.INTERNAL_ERROR)
     }
 
     @Test
