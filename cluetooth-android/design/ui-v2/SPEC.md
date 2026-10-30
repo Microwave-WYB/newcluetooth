@@ -590,6 +590,8 @@ Each component is built once. Its size, color and state rules come from these to
   - The current session is pinned at the top of the sidebar and selected.
 - **V-3 After Stop.** The UI stays on the session that just ended, now frozen: no live values, no sparklines, no
   chart, [This area | All]. It stays there until the app restarts or a new recording starts.
+  - Even if the session scanned no devices, it still shows its route, with Start/End per M-8, and the map fits it
+    (M-10). The sidebar keeps hiding empty sessions (L-*); only the view of the session the user is on keeps its route.
 - **V-4 History session.** Frozen, like V-3. The FAB is available.
 - **V-5 All sessions.** The union of all local data, frozen: every device at its strongest point, every route faint
   (M-8). It behaves like a history session.
