@@ -49,7 +49,6 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import edu.ucsd.sysnet.cluetoothscanner.api.core.AdvFormat
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceDetail
-import edu.ucsd.sysnet.cluetoothscanner.api.core.GattFailure
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStep
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepKind
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepState
@@ -79,6 +78,8 @@ internal object DeviceTags {
     const val CANCEL = "gatt-cancel"
     const val TRY_AGAIN = "gatt-try-again"
     const val NOTE = "gatt-note"
+    const val REASON = "gatt-reason"
+    const val CODE = "gatt-code"
     fun rawLen(header: Boolean) = if (header) "raw-len-head" else "raw-len"
     fun step(kind: GattStepKind) = "gatt-step-${kind.name}"
 }
@@ -136,7 +137,7 @@ private fun DeviceBody(state: SheetsState, entry: SheetEntry, content: DeviceCon
             SwapContent(content.tab, { it.ordinal }) { t ->
                 when (t) {
                     DeviceTab.Advertising -> Advertising(d)
-                    DeviceTab.Gatt -> GattTab(gatt)
+                    DeviceTab.Gatt -> GattTab(gatt, GattDeviceFacts(d.connectable, state.rows[d.key]?.lastSeenMs ?: d.lastSeenMs, state.nowMs()))
                 }
             }
         }
@@ -307,7 +308,7 @@ private fun GattNote(modifier: Modifier = Modifier) {
 
 /** D-13: the note and buttons, the steps, Try again, the services. */
 @Composable
-internal fun GattTab(gatt: GattController) {
+internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceFacts.Unknown) {
     val c = CluetoothTheme.colors
     val pad = Css.GattFlow.padding
     Column(Modifier.fillMaxWidth().padding(horizontal = pad.left, vertical = pad.top)) {
@@ -335,14 +336,14 @@ internal fun GattTab(gatt: GattController) {
                     )
                 }
             }
-            is GattUi.Running -> Steps(s.view)
+            is GattUi.Running -> Steps(s.view, device)
             is GattUi.Failed -> {
-                Steps(s.view)
+                Steps(s.view, device)
                 GattNote(Modifier.padding(top = Css.GattNote.margin.bottom)) // D-13.1: with any button
                 Button(Strings.TryAgain, onClick = gatt::onTryAgain, kind = ButtonKind.Tonal, modifier = Modifier.testTag(DeviceTags.TRY_AGAIN))
             }
             is GattUi.Done -> {
-                Steps(s.view)
+                Steps(s.view, device)
                 Services(s.view)
             }
         }
@@ -350,14 +351,14 @@ internal fun GattTab(gatt: GattController) {
 }
 
 @Composable
-private fun Steps(view: GattView) {
+private fun Steps(view: GattView, device: GattDeviceFacts) {
     Column {
-        for (step in view.steps) StepRow(step)
+        for (step in view.steps) StepRow(step, device)
     }
 }
 
 @Composable
-private fun StepRow(step: GattStep) {
+private fun StepRow(step: GattStep, device: GattDeviceFacts) {
     val c = CluetoothTheme.colors
     val failed = step.state == GattStepState.Failed
     Row(
@@ -369,6 +370,14 @@ private fun StepRow(step: GattStep) {
         val style = CluetoothTheme.type.body.copy(fontSize = Css.Gstep.fontSize.sp)
         Text(step.label(), Modifier.weight(1f), style = style)
         Text(step.detail(), style = CluetoothTheme.type.sub.tabular().copy(fontSize = Css.Gdetail.fontSize.sp), color = if (failed) c.rssiWeak else c.t2)
+    }
+    // D-13.5: under the failed step, why in plain English, then the code (small) for bug reports
+    if (failed) {
+        val problem = gattProblem(step.failure, device)
+        Column(Modifier.padding(start = Css.Gmark.width + Css.Gstep.gap, bottom = Css.Gstep.gap)) {
+            Text(problem.reason(), Modifier.testTag(DeviceTags.REASON), style = CluetoothTheme.type.sub, color = c.t1)
+            problem.codeText()?.let { Text(it, Modifier.testTag(DeviceTags.CODE), style = CluetoothTheme.type.small.tabular(), color = c.t3) }
+        }
     }
 }
 
@@ -401,16 +410,9 @@ private fun GattStep.label() = when (kind) {
     GattStepKind.Disconnected -> Strings.Disconnected
 }
 
-/** D-13.4/5: "0.8 s", "N services", "m/n", or the failure reason. */
+/** D-13.4/5: "0.8 s", "N services", "m/n", or "Failed". */
 private fun GattStep.detail(): String {
-    if (state == GattStepState.Failed) return when (val f = failure) {
-        GattFailure.TimedOut -> Strings.TimedOut
-        GattFailure.DisconnectedUnexpectedly -> Strings.DisconnectedUnexpectedly
-        GattFailure.ConnectionFailed -> Strings.ConnectionFailed
-        GattFailure.Cancelled -> Strings.Cancelled
-        is GattFailure.Other -> Strings.gattFailedStatus(f.status)
-        null -> Strings.Failed
-    }
+    if (state == GattStepState.Failed) return Strings.Failed // the reason is the line under the step
     return when (kind) {
         GattStepKind.Connecting -> if (state == GattStepState.Done) durationMs?.let { String.format(Locale.US, "%.1f s", it / 1000.0) } ?: "" else ""
         GattStepKind.DiscoveringServices -> if (state == GattStepState.Done) services?.let(Strings::services) ?: "" else ""
