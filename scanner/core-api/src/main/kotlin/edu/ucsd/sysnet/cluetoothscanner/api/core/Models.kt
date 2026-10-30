@@ -198,7 +198,29 @@ data class LiveDelta(
     val routeAppended: List<GeoPoint>, val fix: FixSummary?,
     /** The focused key. */
     val chart: LiveChart?,
+    /** R-4a: the changed or new bins (totals that replace the bin with the same start) and the runs now. */
+    val discovery: DiscoveryUpdate? = null,
 )
+
+/** SPEC R-4a: one 30 s bin of a run and the devices first scanned in it. */
+data class DiscoveryBin(val startMs: Long, val newDevices: Int)
+
+/** A running interval of the recording (wall clock); the open one has [endMs] null. */
+data class DiscoveryRun(val startMs: Long, val endMs: Long?)
+
+/**
+ * SPEC R-4a: a session's discovery rate at [seq] (§2.6 snapshot protocol: ignore deltas with `seq` ≤ it). Bins are
+ * counted per run from the run's own start and are sparse (a missing bin is 0); paused time lies between [runs].
+ */
+data class DiscoveryRate(val seq: Long, val binMs: Long, val bins: List<DiscoveryBin>, val runs: List<DiscoveryRun>) {
+    companion object {
+        const val BIN_MS = 30_000L
+        val Empty = DiscoveryRate(0, BIN_MS, emptyList(), emptyList())
+    }
+}
+
+/** The discovery rate's part of a [LiveDelta]. */
+data class DiscoveryUpdate(val bins: List<DiscoveryBin>, val runs: List<DiscoveryRun>)
 
 /** [name], [page] and [best] are non-null only when they changed. */
 data class DeviceLive(val key: DeviceKey, val rssi: Int?, val inRange: Boolean, val spark: ByteArray,

@@ -20,6 +20,10 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKeys
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceLive
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceRow
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryBin
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRate
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRun
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryUpdate
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DisplayFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
@@ -159,7 +163,11 @@ class FakeCore(
         var sentBest: GeoPoint? = null
         var sent = false
 
+        /** R-4a: the first sighting in this recording. */
+        var firstHeardMs: Long? = null
+
         fun hear(rssi: Int, atMs: Long, position: GeoPoint?) {
+            if (firstHeardMs == null) firstHeardMs = atMs
             this.rssi = rssi
             maxRssi = maxOf(maxRssi ?: Int.MIN_VALUE, rssi)
             lastHeardMs = atMs
@@ -175,6 +183,15 @@ class FakeCore(
 
     private class Live(val id: String, val startedMs: Long, val simOriginMs: Long) {
         var phase = RecordingPhase.Recording
+        /** R-4a: the running intervals; the last is open while recording. */
+        val runs = mutableListOf(DiscoveryRun(startedMs, null))
+        val sentBins = HashMap<Long, Int>()
+        var sentRuns: List<DiscoveryRun> = emptyList()
+
+        fun closeRun(now: Long) {
+            val last = runs.lastOrNull() ?: return
+            if (last.endMs == null) runs[runs.size - 1] = last.copy(endMs = now)
+        }
         /** SPEC R-10: paused by [simulateStorageFull]. */
         var pausedForStorage = false
         var activeBeforeMs = 0L
@@ -209,6 +226,8 @@ class FakeCore(
 
     private class Upload(val upload: PendingUpload, val sessionId: String?, var failed: Boolean = false)
     private val uploads = mutableListOf<Upload>()
+    /** R-4a: the runs and first sightings of the recordings stopped here. */
+    private val finishedDiscovery = HashMap<String, Pair<List<DiscoveryRun>, List<Long>>>()
     private var lastUploadError: String? = null
     private val tempRoot: File by lazy { Files.createTempDirectory("cluetooth-core-fake").toFile() }
 
@@ -419,6 +438,42 @@ class FakeCore(
         }
         val count = s.points.keys.count { shown(devs.getValue(it)) }
         return SessionSummary(s.id, s.status, s.startedMs, s.endedMs, s.activeMs, s.distanceM, count, upload)
+    }
+
+    /**
+     * R-4a, the core's rule: devices counted in the 30 s bin of their first sighting, per run from the run's own
+     * start; sparse; devices the display filter hides are not counted. A data.js session has one run, and its
+     * points' last-seen times stand in for first sightings.
+     */
+    override suspend fun discoveryRate(sessionId: String): CoreResult<DiscoveryRate> = CoreResult.Ok(query {
+        val l = rec
+        val finished = finishedDiscovery[sessionId]
+        val stored = sessions.firstOrNull { it.id == sessionId }
+        when {
+            l != null && l.id == sessionId ->
+                DiscoveryRate(l.seq, DiscoveryRate.BIN_MS, discoveryBins(l.runs, liveFirstSeen(l)), l.runs.toList())
+            finished != null -> DiscoveryRate(0, DiscoveryRate.BIN_MS, discoveryBins(finished.first, finished.second), finished.first)
+            stored != null -> {
+                val runs = listOf(DiscoveryRun(stored.startedMs, stored.endedMs))
+                val firstSeen = stored.points.values.filter { p -> devs[p.key]?.let(::shown) ?: true }.map { it.lastSeenMs }
+                DiscoveryRate(0, DiscoveryRate.BIN_MS, discoveryBins(runs, firstSeen), runs)
+            }
+            else -> DiscoveryRate.Empty
+        }
+    })
+
+    private fun liveFirstSeen(l: Live): List<Long> =
+        l.devices.values.filter { it.rssi != null && shown(it.dev) }.map { it.firstHeardMs ?: it.lastHeardMs }
+
+    private fun discoveryBins(runs: List<DiscoveryRun>, firstSeen: List<Long>): List<DiscoveryBin> {
+        val counts = sortedMapOf<Long, Int>()
+        for (t in firstSeen) {
+            val run = runs.lastOrNull { it.startMs <= t } ?: runs.firstOrNull() ?: continue
+            val clamped = run.endMs?.let { minOf(t, it - 1) } ?: t
+            val start = run.startMs + maxOf(0L, clamped - run.startMs) / DiscoveryRate.BIN_MS * DiscoveryRate.BIN_MS
+            counts[start] = (counts[start] ?: 0) + 1
+        }
+        return counts.map { (start, n) -> DiscoveryBin(start, n) }
     }
 
     override suspend fun allSessionsSummary(): AllSessionsSummary = query { now ->
@@ -686,14 +741,24 @@ class FakeCore(
         val cards = liveCards(l, now)
         val products = cards.values.filter { l.sentCards[it.id] != it }
         val routeAppended = l.route.subList(l.sentRoute, l.route.size).toList()
+        val bins = discoveryBins(l.runs, liveFirstSeen(l))
+        // as in the core: changed totals, and 0 for a bin sent before and missing now (bins are sparse)
+        val nowBins = bins.associate { it.startMs to it.newDevices }
+        val freshBins = (bins.filter { l.sentBins[it.startMs] != it.newDevices } +
+            l.sentBins.filter { (start, n) -> n > 0 && start !in nowBins }.map { (start, _) -> DiscoveryBin(start, 0) })
+            .sortedBy { it.startMs }
+        val discovery = if (freshBins.isEmpty() && l.runs == l.sentRuns) null else DiscoveryUpdate(freshBins, l.runs.toList())
         // the focused device's chart (D-10) rides on every delta, as in the core
-        if (!force && focus == null && changed.isEmpty() && appended.isEmpty() && products.isEmpty() &&
-            routeAppended.isEmpty()) return null
+        if (!force && focus == null && discovery == null && changed.isEmpty() && appended.isEmpty() &&
+            products.isEmpty() && routeAppended.isEmpty()) return null
+        l.sentBins.clear()
+        l.sentBins.putAll(nowBins)
+        l.sentRuns = l.runs.toList()
         markSent(l, now)
         l.seq++
         val fix = l.position?.let { FixSummary(it.lat, it.lon, l.positionAccuracy, now - l.positionMs) }
         return LiveDelta(l.id, l.seq, now, recordingState(l, now), changed, appended, products, routeAppended, fix,
-            focus?.let { chart(it, now) })
+            focus?.let { chart(it, now) }, discovery)
     }
 
     private fun tick(now: Long): LiveDelta? {
@@ -742,6 +807,7 @@ class FakeCore(
             l.activeBeforeMs += now - (l.runningSinceMs ?: now)
             l.runningSinceMs = null
             l.phase = RecordingPhase.Paused
+            l.closeRun(now)
             buildDelta(l, now, force = true) to recordingState(l, now)
         }
         liveJob?.cancel()
@@ -758,6 +824,7 @@ class FakeCore(
             val now = now()
             l.phase = RecordingPhase.Recording
             l.runningSinceMs = now
+            l.runs += DiscoveryRun(now, null)
             recordingState(l, now)
         }
         startSimulator()
@@ -769,6 +836,8 @@ class FakeCore(
             val l = rec ?: throw CoreException.NotRecording()
             val now = now()
             val s = currentAsSess(l, now)
+            l.closeRun(now)
+            finishedDiscovery[l.id] = l.runs.toList() to liveFirstSeen(l)
             sessions.add(0, Sess(s.id, s.startedMs, now, s.activeMs, s.distanceM, s.route, s.points, SessionStatus.Completed))
             val payload = uuid7(now)
             uploads += Upload(PendingUpload(payload, "pending/scans/v3/2026-10-29/${l.id}/$payload.parquet",
@@ -1005,6 +1074,7 @@ class FakeCore(
             l.activeBeforeMs += now - (l.runningSinceMs ?: now)
             l.runningSinceMs = null
             l.phase = RecordingPhase.Paused
+            l.closeRun(now)
             l.pausedForStorage = true
             buildDelta(l, now, force = true) to recordingState(l, now)
         }

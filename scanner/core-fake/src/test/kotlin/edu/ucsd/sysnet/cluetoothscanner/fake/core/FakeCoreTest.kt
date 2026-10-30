@@ -5,6 +5,9 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryBin
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRate
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DiscoveryRun
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DisplayFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ExportFormat
 import edu.ucsd.sysnet.cluetoothscanner.api.core.GattFailure
@@ -268,6 +271,31 @@ class FakeCoreTest {
         assertEquals(listOf("r1"), c.sessionView(Scope(SessionScope.Sessions(listOf("r4", "r1")))).sessionIds)
         assertTrue(c.sessionView(Scope(SessionScope.Sessions(listOf("r4")), SessionFilter())).sessionIds.isEmpty())
         assertFalse("r4" in c.sessions().map { it.id })
+    }
+
+    /** R-4a: bins per run from the run's own start, sparse; a pause ends a run; a stored session has one run. */
+    @Test
+    fun discoveryRateFollowsTheRuns() = runTest {
+        val c = FakeCore(backgroundScope, { FakeCore.DEMO_NOW_MS + testScheduler.currentTime }, simulate = false)
+        val t0 = FakeCore.DEMO_NOW_MS
+        val id = c.startRecording(FakeCore.DEMO_ENVIRONMENT)
+        c.ingestScans(listOf(obs(-60)))
+        advanceTimeBy(60_000)
+        c.pauseRecording()
+        advanceTimeBy(60_000)
+        c.resumeRecording()
+        val r = (c.discoveryRate(id) as CoreResult.Ok).value
+        assertEquals(DiscoveryRate.BIN_MS, r.binMs)
+        assertEquals(listOf(DiscoveryRun(t0, t0 + 60_000), DiscoveryRun(t0 + 120_000, null)), r.runs)
+        assertEquals(listOf(DiscoveryBin(t0, 1)), r.bins)
+        c.stopRecording()
+        val stopped = (c.discoveryRate(id) as CoreResult.Ok).value
+        assertEquals(DiscoveryRun(t0 + 120_000, t0 + 120_000), stopped.runs.last())
+        assertEquals(1, stopped.bins.sumOf { it.newDevices })
+        val r1 = (c.discoveryRate("r1") as CoreResult.Ok).value
+        assertEquals(1, r1.runs.size)
+        assertTrue(r1.bins.all { it.newDevices > 0 })
+        assertEquals(DiscoveryRate.Empty, (c.discoveryRate("nope") as CoreResult.Ok).value)
     }
 
     /** Q-1/Q-2: blank is no search; results keep device_order; the area limits them. */

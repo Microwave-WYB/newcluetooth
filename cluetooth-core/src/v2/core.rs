@@ -200,6 +200,22 @@ fn coalesce(mut a: LiveDelta, b: LiveDelta) -> LiveDelta {
         route_appended: a.route_appended,
         fix: b.fix.or(a.fix),
         chart: b.chart.or(a.chart),
+        discovery: match (a.discovery, b.discovery) {
+            (Some(mut a), Some(b)) => {
+                // later totals replace earlier ones of the same bin; the runs are the latest
+                for bin in b.bins {
+                    match a.bins.iter_mut().find(|x| x.start_ms == bin.start_ms) {
+                        Some(x) => *x = bin,
+                        None => a.bins.push(bin),
+                    }
+                }
+                Some(DiscoveryUpdate {
+                    bins: a.bins,
+                    runs: b.runs,
+                })
+            }
+            (a, b) => b.or(a),
+        },
     }
 }
 
@@ -1417,6 +1433,19 @@ impl Core {
         self.job(move |r| r.current_session(now))?
     }
 
+    /// [P] SPEC R-4a: the session's discovery rate at the live `seq` (0 when not live), from `local.db`.
+    pub async fn discovery_rate(&self, session_id: String) -> Result<DiscoveryRate, CoreError> {
+        self.read(move |c, ctx| {
+            let seq = ctx
+                .live
+                .as_ref()
+                .filter(|l| l.uuid == session_id)
+                .map_or(0, |l| l.seq);
+            super::discovery::rate(c, &session_id, seq, ctx.hide_unnamed_apple)
+        })
+        .await
+    }
+
     /// [P] Counters.
     pub async fn all_sessions_summary(&self) -> Result<AllSessionsSummary, CoreError> {
         self.read(query::all_sessions_summary).await
@@ -1708,6 +1737,7 @@ mod tests {
             }],
             fix: None,
             chart: None,
+            discovery: None,
         }
     }
 
@@ -1725,6 +1755,45 @@ mod tests {
 
     /// §2.6 coalescing: latest values per key (a change never drops an earlier name), appends concatenated with
     /// later changes folded in, routes concatenated, one seq (the newer).
+    /// #112 review: coalescing keeps the discovery bins of both deltas (the later total wins for the same start) and
+    /// the later runs; dropping either side's bins fails here.
+    #[test]
+    fn coalescing_merges_the_discovery_bins() {
+        let bin = |start_ms, new_devices| DiscoveryBin {
+            start_ms,
+            new_devices,
+        };
+        let run = |start_ms, end_ms| DiscoveryRun { start_ms, end_ms };
+        let with = |seq, bins, runs| LiveDelta {
+            discovery: Some(DiscoveryUpdate { bins, runs }),
+            ..delta(seq, vec![], vec![])
+        };
+        let a = with(1, vec![bin(0, 1), bin(30_000, 1)], vec![run(0, None)]);
+        let b = with(
+            2,
+            vec![bin(30_000, 0), bin(60_000, 2)],
+            vec![run(0, Some(70_000))],
+        );
+        let merged = coalesce(a.clone(), b.clone()).discovery.unwrap();
+        let mut bins = merged.bins.clone();
+        bins.sort_by_key(|b| b.start_ms);
+        assert_eq!(
+            bins,
+            vec![bin(0, 1), bin(30_000, 0), bin(60_000, 2)],
+            "the earlier bin 0, the later totals for 30 000 and 60 000"
+        );
+        assert_eq!(merged.runs, vec![run(0, Some(70_000))], "the later runs");
+        // one side without a discovery part keeps the other's
+        assert_eq!(
+            coalesce(a.clone(), delta(2, vec![], vec![])).discovery,
+            a.discovery
+        );
+        assert_eq!(
+            coalesce(delta(1, vec![], vec![]), b.clone()).discovery,
+            b.discovery
+        );
+    }
+
     #[test]
     fn coalescing_keeps_latest_values_and_concatenates_appends() {
         let row = DeviceRow {

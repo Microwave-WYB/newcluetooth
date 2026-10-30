@@ -19,6 +19,7 @@ mod adv;
 mod catalog;
 mod core;
 mod db;
+mod discovery;
 mod error;
 mod gatt_view;
 mod keys;

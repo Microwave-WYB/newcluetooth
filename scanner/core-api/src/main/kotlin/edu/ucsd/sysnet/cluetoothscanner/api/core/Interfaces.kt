@@ -15,6 +15,11 @@ interface CoreQueries {
     suspend fun sessions(): List<SessionSummary>
     suspend fun currentSession(): SessionSummary?
     suspend fun allSessionsSummary(): AllSessionsSummary
+    /**
+     * SPEC R-4a: the session's discovery rate, from the stored first sightings (an unknown session is empty). The
+     * default answers empty, for test doubles; the bridge and the fake implement it.
+     */
+    suspend fun discoveryRate(sessionId: String): CoreResult<DiscoveryRate> = CoreResult.Ok(DiscoveryRate.Empty)
     suspend fun sessionView(scope: Scope): SessionView
     suspend fun routes(scope: Scope, viewport: Bbox?, zoom: Double): String
     suspend fun deviceOrder(scope: Scope): DeviceKeys

@@ -29,6 +29,9 @@ pub(crate) struct LiveState {
     pub seq: u64,
     sent: HashMap<i64, Sent>,
     cards: HashMap<String, ProductCard>,
+    /// R-4a: the bin totals and runs last sent.
+    sent_bins: HashMap<i64, u32>,
+    sent_runs: Vec<DiscoveryRun>,
     /// The latest RSSI heard per device ("live: current", §2.5), committed or not.
     pub current: Arc<HashMap<i64, i16>>,
     /// D-10: each device's last minute of RSSI, committed or not. The writer owns it; the reader gets snapshots.
@@ -209,7 +212,14 @@ pub(crate) fn delta(
             lat: p.lat,
         })
         .collect();
+    let discovery = match super::discovery::of_session(conn, session, hide_unnamed_apple)? {
+        Some((runs, bins)) => {
+            super::discovery::update(&mut live.sent_bins, &mut live.sent_runs, runs, bins)
+        }
+        None => None,
+    };
     if !force
+        && discovery.is_none()
         && chart.is_none()
         && changed.is_empty()
         && appended.is_empty()
@@ -235,5 +245,6 @@ pub(crate) fn delta(
             age_ms: now - at,
         }),
         chart,
+        discovery,
     }))
 }

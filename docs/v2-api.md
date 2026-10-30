@@ -530,6 +530,7 @@ impl Core {
     pub async fn sessions(&self) -> Result<Vec<SessionSummary>, CoreError>;            // [P] finished, newest first, no empty
     pub fn current_session(&self) -> Option<SessionSummary>;                           // [N]
     pub async fn all_sessions_summary(&self) -> Result<AllSessionsSummary, CoreError>; // [P] counters
+    pub async fn discovery_rate(&self, session_id: String) -> Result<DiscoveryRate, CoreError>; // [P] R-4a (§2.5.1)
     pub async fn session_view(&self, scope: Scope) -> Result<SessionView, CoreError>;  // [P] getRecording minus points
     pub async fn routes(&self, scope: Scope, viewport: Option<Bbox>, zoom: f64) -> Result<String, CoreError>;
         // [V Routes] GeoJSON LineStrings for "route", simplified for zoom; multi-session: routes meeting the viewport
@@ -661,6 +662,32 @@ The chart (D-10):
 The core returns numbers, ids, raw names, page titles and vocabulary labels. UI wording lives in `:designsystem`
 (G-8).
 
+### 2.5.1 Discovery rate (SPEC R-4a)
+
+```rust
+#[derive(uniffi::Record)] pub struct DiscoveryBin { pub start_ms: i64, pub new_devices: u32 }
+#[derive(uniffi::Record)] pub struct DiscoveryRun { pub start_ms: i64, pub end_ms: Option<i64> }   // None: open
+#[derive(uniffi::Record)]
+pub struct DiscoveryRate { pub seq: u64, pub bin_ms: u32 /* 30 000 */, pub bins: Vec<DiscoveryBin>, pub runs: Vec<DiscoveryRun> }
+#[derive(uniffi::Record)] pub struct DiscoveryUpdate { pub bins: Vec<DiscoveryBin>, pub runs: Vec<DiscoveryRun> }
+```
+
+- **Runs.** `runs` are the recording's running intervals in wall-clock ms: from the start to the first pause, from
+  each resume to the next pause, and so on. The open run (recording now) has `end_ms = None`. Paused time lies
+  between runs, so the chart leaves it out and breaks the line at each pause. A stop while paused adds no run.
+- **Bins.** A device counts once, in the 30 s bin of its first sighting in the session (`session_devices.first_seen_ms`).
+  - Bins are per run, starting at that run's own start (`start_ms = run.start_ms + k × 30 000`).
+  - A first sighting outside every run counts in the run before it.
+  - Bins are sparse: a missing bin is 0.
+  - Devices the display filter hides are not counted, as in the session's device count.
+- **Snapshot.** Everything comes from `local.db`, so a restart rebuilds the same bins. An interrupted session's last
+  run ends where it was interrupted. `seq` is the live `seq` while the session is live (§2.6 snapshot protocol),
+  else 0. An unknown session has no runs and no bins.
+- **Deltas.** While live, `LiveDelta.discovery` carries the bins that changed or are new, each a total that replaces
+  the bin with the same start, plus the runs now. A bin that was sent and is now missing goes out as a total of 0:
+  the display filter turned on, or a late first sighting moved its device to an earlier bin. It is `None` when
+  nothing changed. The empty snapshot plus every delta always equals a fresh read.
+
 ### 2.6 Live deltas
 
 ```rust
@@ -673,6 +700,7 @@ pub struct LiveDelta {
     pub products: Vec<ProductCard>,        // changed or new cards; a new id is appended by the UI
     pub route_appended: Vec<GeoPoint>, pub fix: Option<FixSummary>,
     pub chart: Option<LiveChart>,          // the focused key
+    pub discovery: Option<DiscoveryUpdate>, // R-4a: changed/new bin totals and the runs now (§2.5.1)
 }
 #[derive(uniffi::Record)]
 pub struct DeviceLive {
@@ -1532,6 +1560,7 @@ interface CoreQueries {                 // the UI's data interface; suspend = ca
     val live: Flow<LiveDelta>; val events: Flow<CoreEvent>
     suspend fun sessions(): List<SessionSummary>; suspend fun currentSession(): SessionSummary?
     suspend fun allSessionsSummary(): AllSessionsSummary
+    suspend fun discoveryRate(sessionId: String): CoreResult<DiscoveryRate>  // R-4a; LiveDelta.discovery: DiscoveryUpdate?
     suspend fun sessionView(scope: Scope): SessionView
     suspend fun routes(scope: Scope, viewport: Bbox?, zoom: Double): String
     suspend fun deviceOrder(scope: Scope): DeviceKeys
