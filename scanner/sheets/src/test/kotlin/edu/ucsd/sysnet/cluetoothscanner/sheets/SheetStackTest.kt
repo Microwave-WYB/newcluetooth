@@ -33,7 +33,9 @@ class SheetStackTest {
     }
 
     /** Animations take their duration in virtual time: the start value at once, the end after the delay. */
+    private val targets = mutableListOf<Float>()
     private val stepAnimator = OffsetAnimator { from, to, ms, onValue ->
+        targets += to
         onValue(from)
         delay(ms.toLong())
         onValue(to)
@@ -174,7 +176,8 @@ class SheetStackTest {
             assertEquals(at, s.offsetOf(root), 0f)
             advanceUntilIdle()
             assertEquals(s.geometry(root).collapsed, s.offsetOf(root), 0f) // its saved height
-            assertEquals(s.geometry(p).dismissed, p.liveOffset!!, 0f)
+            assertTrue(s.geometry(p).dismissed in targets) // it slid all the way out
+            assertNull(p.liveOffset) // and, gone, left no offset behind
             assertEquals(listOf(root), s.rendered)
             assertEquals(ScrollSnapshot(7, 30), root.scroll)
             assertEquals(listOf(cameraA), log.restored)

@@ -6,10 +6,12 @@ import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetHeight.Half
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
@@ -122,5 +124,80 @@ class HeightsAnimateTest {
         s.endDrag(root)
         runCurrent()
         assertTrue(rec.calls.isNotEmpty()) // the snap after release animates
+    }
+
+    /** Moves halfway at half the duration, so a sheet can be caught mid-animation; logs each write by call. */
+    private class Stepped {
+        val writes = mutableListOf<Pair<Int, Float>>()
+        var started = 0
+        val animator = OffsetAnimator { from, to, ms, onValue ->
+            val call = ++started
+            val write = { v: Float -> writes += call to v; onValue(v) }
+            write(from)
+            delay(ms / 2L)
+            write((from + to) / 2)
+            delay(ms - ms / 2L)
+            write(to)
+        }
+    }
+
+    private val pageMs = SheetMetrics().pageMs
+
+    @Test
+    fun `S-16a a device replacing a device still sliding in starts where the old one is, then eases to its height`() = runTest {
+        val rec = Stepped()
+        val s = SheetStackController(this, rec.animator, SheetMetrics(), rootHeight = Half).also { it.setScreen(915f, 1f, 0f) }
+        advanceUntilIdle()
+        val old = s.openDevice(1)
+        runCurrent()
+        advanceTimeBy(pageMs / 2L + 1)
+        val mid = s.offsetOf(old)
+        val target = s.geometry(old).offsetOf(old.height)
+        assertTrue("caught mid-slide: $mid vs $target", abs(mid - target) > 0.5f && abs(mid - s.geometry(old).dismissed) > 0.5f)
+        val new = s.openDevice(2)
+        assertEquals("the new sheet shows where the old one was", mid, s.offsetOf(new), 0.5f)
+        runCurrent()
+        assertEquals(mid, s.offsetOf(new), 0.5f)
+        advanceUntilIdle()
+        assertEquals(s.geometry(new).offsetOf(new.height), s.offsetOf(new), 0.5f)
+    }
+
+    @Test
+    fun `S-16a a new animation of a sheet cancels the running one, so two never move it`() = runTest {
+        val rec = Stepped()
+        val s = SheetStackController(this, rec.animator, SheetMetrics(), rootHeight = Collapsed).also { it.setScreen(915f, 1f, 0f) }
+        advanceUntilIdle()
+        val root = s.root
+        s.setHeight(root, Full)
+        runCurrent()
+        advanceTimeBy(pageMs / 4L)
+        val first = rec.started
+        s.setHeight(root, Half)
+        runCurrent()
+        assertTrue("the second change animates", rec.started > first)
+        val after = rec.writes.size
+        advanceUntilIdle()
+        val late = rec.writes.drop(after).filter { it.first == first }
+        assertTrue("the first animation still wrote $late", late.isEmpty())
+        assertEquals(s.geometry(root).offsetOf(Half), s.offsetOf(root), 0.5f)
+    }
+
+    @Test
+    fun `S-16a a closed sheet leaves no offset behind`() = runTest {
+        val rec = Recorder()
+        val s = stack(rec, rootHeight = Half)
+        advanceUntilIdle()
+        // popped by X: it slides out and ends at the bottom
+        val p = s.push(product)
+        advanceUntilIdle()
+        s.pop(PopReason.Close)
+        advanceUntilIdle()
+        assertNull(s.liveOf(p.id))
+        // a device replaced while it slides in
+        val d = s.openDevice(1)
+        runCurrent()
+        s.openDevice(2)
+        advanceUntilIdle()
+        assertNull(s.liveOf(d.id))
     }
 }
