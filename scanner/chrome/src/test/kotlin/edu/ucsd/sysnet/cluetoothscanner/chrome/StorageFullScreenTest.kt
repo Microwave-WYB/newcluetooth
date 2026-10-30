@@ -84,7 +84,7 @@ class StorageFullScreenTest {
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
     @Test fun settingsOffersBothCleanups() {
         val settings = Settings("wyb01", recordOnOpen = true, wifiOnlyUpload = false, scanCodedPhy = true, hideUnnamedApple = true, appVersion = "0.1.0")
-        val storage = StorageUi(12_000_000, 340_000_000, null, 0, Scope.All, null, false, null,
+        val storage = StorageUi(StorageSizes.Known(12_000_000, 340_000_000, 0), null, Scope.All, null, false, null,
             reclaimable = Reclaimable(300_000_000, 40_000_000), cleanupConfirm = Cleanup.LocalDatabase, cleanupFreed = null)
         val a = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
             onCleanupRequest = { calls += "request:$it" }, onCleanupConfirm = { calls += "confirm" }, onCleanupCancel = { calls += "cancel" })
@@ -122,7 +122,7 @@ class StorageFullScreenTest {
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
     @Test fun settingsShowsAFailedCleanup() {
         val settings = Settings("wyb01", recordOnOpen = true, wifiOnlyUpload = false, scanCodedPhy = true, hideUnnamedApple = true, appVersion = "0.1.0")
-        val storage = StorageUi(12_000_000, 340_000_000, null, 0, Scope.All, null, false, null,
+        val storage = StorageUi(StorageSizes.Known(12_000_000, 340_000_000, 0), null, Scope.All, null, false, null,
             reclaimable = Reclaimable(300_000_000, 40_000_000), cleanupFailure = CleanupFailure(Cleanup.UploadedRaw, "the archive is busy"))
         val a = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
         compose.setContent {
@@ -143,7 +143,7 @@ class StorageFullScreenTest {
     @Config(sdk = [35], qualifiers = "w412dp-h915dp-420dpi")
     @Test fun settingsShowsAFailedRead() {
         val settings = Settings("wyb01", recordOnOpen = true, wifiOnlyUpload = false, scanCodedPhy = true, hideUnnamedApple = true, appVersion = "0.1.0")
-        val storage = StorageUi(12_000_000, 340_000_000, null, 0, Scope.All, null, false, null, reclaimFailure = "not available in this version")
+        val storage = StorageUi(StorageSizes.Known(12_000_000, 340_000_000, 0), null, Scope.All, null, false, null, reclaimFailure = "not available in this version")
         val a = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
         compose.setContent {
             CluetoothTheme(reducedMotion = true) { SettingsPage(true, SettingsUi(settings, UploadStatus(0, 0, 0, null), storage), a, sessionLabel = null, sessionScope = null) }

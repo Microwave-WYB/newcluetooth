@@ -78,7 +78,7 @@ class PagesScreenTest {
     private val settings = Settings("wyb01", recordOnOpen = true, wifiOnlyUpload = false, scanCodedPhy = true, hideUnnamedApple = true, appVersion = "0.1.0 (debug)")
     private val uploads = UploadStatus(3, 4_200_000, 0, null)
     private fun storage(confirm: DeleteConfirm? = null, format: ExportFormat? = null) =
-        StorageUi(12_000_000, 340_000_000, 48_000_000, 3, Scope.session("r1"), format, false, confirm)
+        StorageUi(StorageSizes.Known(12_000_000, 340_000_000, 3), 48_000_000, Scope.session("r1"), format, false, confirm)
 
     private fun settingsShot(name: String, dark: Boolean) {
         var st by mutableStateOf(storage())
@@ -89,7 +89,7 @@ class PagesScreenTest {
             onExportFormat = { st = st.copy(exportFormat = it) }, onShare = {}, onSaveToDownloads = {},
             onDeleteScope = { st = st.copy(deleteScope = it) },
             onDeleteRequest = { st = st.copy(deleteConfirm = DeleteConfirm.Confirm) },
-            onDeleteConfirm = { st = st.copy(deleteConfirm = if (st.pendingCount > 0) DeleteConfirm.LoseUnuploaded else null) },
+            onDeleteConfirm = { st = st.copy(deleteConfirm = if (((st.sizes as? StorageSizes.Known)?.pendingCount ?: 1) > 0) DeleteConfirm.LoseUnuploaded else null) },
             onDelete = { deletes += it; st = st.copy(deleteConfirm = null) }, onDeleteCancel = { st = st.copy(deleteConfirm = null) },
         )
         compose.setContent {

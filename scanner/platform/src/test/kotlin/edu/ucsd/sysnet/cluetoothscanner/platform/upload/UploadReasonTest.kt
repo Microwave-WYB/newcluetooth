@@ -13,6 +13,8 @@ class UploadReasonTest {
         assertEquals("Denied (${StorageException.ERROR_NOT_AUTHENTICATED})", uploadReason(StorageException.ERROR_NOT_AUTHENTICATED, -1, network = false))
         assertEquals("Timed out", uploadReason(StorageException.ERROR_RETRY_LIMIT_EXCEEDED, -1, network = false))
         assertEquals("Rate limited (429)", uploadReason(StorageException.ERROR_UNKNOWN, 429, network = false))
+        assertEquals("Storage quota exceeded", uploadReason(StorageException.ERROR_QUOTA_EXCEEDED, 429, network = false))
+        assertEquals("Storage quota exceeded", uploadReason(StorageException.ERROR_QUOTA_EXCEEDED, -1, network = false))
         assertEquals("Server error (503)", uploadReason(StorageException.ERROR_UNKNOWN, 503, network = false))
         assertEquals("Network error", uploadReason(StorageException.ERROR_UNKNOWN, -1, network = true))
         assertEquals("Network error", uploadReason(StorageException.ERROR_UNKNOWN, 0, network = false))

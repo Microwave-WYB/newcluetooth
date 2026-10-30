@@ -85,7 +85,9 @@ internal fun uploadReason(code: Int, http: Int, network: Boolean): String = when
     http == 401 || http == 403 || code == StorageException.ERROR_NOT_AUTHORIZED || code == StorageException.ERROR_NOT_AUTHENTICATED ->
         "Denied (${if (http > 0) http else code})"
     http == 408 || code == StorageException.ERROR_RETRY_LIMIT_EXCEEDED -> "Timed out"
-    http == 429 || code == StorageException.ERROR_QUOTA_EXCEEDED -> "Rate limited${if (http > 0) " ($http)" else ""}"
+    // the bucket's quota is full: not a rate limit, and retrying doesn't fix it
+    code == StorageException.ERROR_QUOTA_EXCEEDED -> "Storage quota exceeded"
+    http == 429 -> "Rate limited (429)"
     code == StorageException.ERROR_CANCELED -> "Cancelled"
     code == StorageException.ERROR_BUCKET_NOT_FOUND || code == StorageException.ERROR_PROJECT_NOT_FOUND -> "Bucket not found"
     code == StorageException.ERROR_INVALID_CHECKSUM -> "Checksum mismatch"

@@ -15,9 +15,9 @@ class ShortReasonTest {
     }
 
     @Test
-    fun aDenialIsNotRetrying() {
-        assertEquals("1 upload failed · Denied (403)", failedUploads(1, "Denied (403) — StorageException code=-13021 http=403: x"))
-        assertEquals("2 uploads failed; retrying · Network error", failedUploads(2, "Network error — java.io.IOException"))
+    fun theReasonIsTheLastFailures() {
+        assertEquals("1 upload failed; retrying · last: Denied (403)", failedUploads(1, "Denied (403) — StorageException code=-13021 http=403: x"))
+        assertEquals("2 uploads failed; retrying · last: Network error", failedUploads(2, "Network error — java.io.IOException"))
         assertEquals("2 uploads failed; retrying", failedUploads(2, null))
     }
 }

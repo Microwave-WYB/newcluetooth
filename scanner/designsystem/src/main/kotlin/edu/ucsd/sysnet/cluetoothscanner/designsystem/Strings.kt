@@ -201,6 +201,8 @@ object Strings {
     fun deleteConfirmTitle(scope: String) = "Delete $scope?"
     const val DeleteConfirmBody = "This removes the recordings from this phone. Data that has not uploaded yet stays until it has uploaded."
     fun deleteLoseTitle(pending: Int) = "${plural(pending, "file")} not uploaded yet"
+    /** O-1 item 11 when the storage read failed: the pending count is unknown, so the warning still shows. */
+    const val DeleteLoseUnknownTitle = "Some files may not be uploaded yet"
     const val DeleteLoseBody = "They will upload first and then be deleted. Delete them now instead, and they are lost for good."
     const val KeepUntilUploaded = "Keep until uploaded"
     const val DeleteNow = "Delete now"

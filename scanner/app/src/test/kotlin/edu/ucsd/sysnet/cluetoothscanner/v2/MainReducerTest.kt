@@ -11,6 +11,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState.Phase
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
 import edu.ucsd.sysnet.cluetoothscanner.chrome.DeleteConfirm
+import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageSizes
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 import org.junit.Assert.assertEquals
@@ -305,7 +306,11 @@ class MainFailureTest {
         val first = failed(MainUiState(scope = sessionA), MainTask.Effect(MainEffect.ReadLaunchFacts)).state
         assertNull(first.scope)
         // no storage stats: the section shows zeros
-        assertEquals(0L, failed(MainUiState(), MainTask.Effect(MainEffect.LoadStorage)).state.storage?.databaseBytes)
+        // #131 review: a failed read is Unknown ("—"), never zeros, and Delete still warns about un-uploaded files
+        val unknown = failed(MainUiState(), MainTask.Effect(MainEffect.LoadStorage)).state
+        assertTrue(unknown.storage?.sizes is StorageSizes.Unknown)
+        assertEquals(MainEffect.LoadStorage, unknown.notice?.retry)
+        assertEquals(DeleteConfirm.LoseUnuploaded, unknown.on(MainEvent.DeleteConfirmed).storage?.deleteConfirm)
     }
 
     @Test fun aFailedExportStopsExportingAndSaysSo() {

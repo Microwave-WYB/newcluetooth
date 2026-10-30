@@ -543,8 +543,8 @@ fn an_upload_state_read_error_keeps_the_last_states() {
     );
 }
 
-/// O-1 item 8 (owner bug: "Database 0 B · Raw files 0 B" with sessions recorded): the stats count local.db with its
-/// WAL, every pending and archived raw file, the pending uploads and the finished sessions.
+/// O-1 item 8 (owner bug: "Database 0 B · Raw files 0 B" with sessions recorded): the stats are exactly local.db +
+/// its -wal + its -shm, and every pending and archived raw file, so leaving any of them out fails here.
 #[test]
 fn storage_stats_count_what_is_stored() {
     let dir = tempfile::tempdir().unwrap();
@@ -553,24 +553,50 @@ fn storage_stats_count_what_is_stored() {
         .unwrap()
         .as_millis() as i64;
     let core = open(dir.path(), t0);
+    // one session uploaded (its payload moves to archive/), one still pending
     core.start_recording_at(env(), t0).unwrap();
     core.ingest_scans_at(vec![obs(1, t0 + 10)], t0 + 10)
         .unwrap();
     core.stop_recording_at(t0 + 1_000).unwrap();
+    let first = core.pending_uploads().unwrap().remove(0);
+    core.prepare_upload(first.payload_id.clone()).unwrap();
+    core.mark_upload_succeeded(first.payload_id).unwrap();
+    core.start_recording_at(env(), t0 + 2_000).unwrap();
+    core.ingest_scans_at(vec![obs(2, t0 + 2_010)], t0 + 2_010)
+        .unwrap();
+    core.stop_recording_at(t0 + 3_000).unwrap();
+
     let s = futures_executor::block_on(core.storage_stats()).unwrap();
-    assert!(s.database_bytes > 0, "local.db and its WAL");
-    let raw: u64 = walk(&dir.path().join("pending"))
-        .iter()
-        .chain(walk(&dir.path().join("archive")).iter())
-        .map(|p| std::fs::metadata(p).unwrap().len())
-        .sum();
-    assert!(raw > 0);
-    assert_eq!(s.raw_files_bytes, raw);
-    let pending = core.pending_uploads().unwrap();
-    assert_eq!(s.pending_count as usize, pending.len());
-    assert_eq!(
-        s.pending_bytes,
-        pending.iter().map(|u| u.size_bytes).sum::<u64>()
+    let len = |name: &str| std::fs::metadata(dir.path().join(name)).map_or(0, |m| m.len());
+    let (db, wal, shm) = (len("local.db"), len("local.db-wal"), len("local.db-shm"));
+    assert!(
+        db > 0 && wal > 0 && shm > 0,
+        "all three files exist: {db} {wal} {shm}"
     );
-    assert_eq!(s.session_count, 1);
+    assert_eq!(
+        s.database_bytes,
+        db + wal + shm,
+        "exactly local.db + -wal + -shm"
+    );
+    let size = |area: &str| -> u64 {
+        walk(&dir.path().join(area))
+            .iter()
+            .map(|p| std::fs::metadata(p).unwrap().len())
+            .sum()
+    };
+    let (pending_files, archived) = (size("pending"), size("archive"));
+    assert!(
+        pending_files > 0 && archived > 0,
+        "{pending_files} {archived}"
+    );
+    assert_eq!(
+        s.raw_files_bytes,
+        pending_files + archived,
+        "exactly pending/ + archive/"
+    );
+    let pending = core.pending_uploads().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(s.pending_count, 1);
+    assert_eq!(s.pending_bytes, pending[0].size_bytes);
+    assert_eq!(s.session_count, 2);
 }

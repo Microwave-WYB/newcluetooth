@@ -35,6 +35,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsPage
 import edu.ucsd.sysnet.cluetoothscanner.chrome.SettingsUi
+import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageSizes
 import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeActions
 import edu.ucsd.sysnet.cluetoothscanner.chrome.TopChromeState
@@ -103,7 +104,7 @@ private fun SearchDemo() {
 @Composable
 private fun SettingsDemo() {
     var s by remember { mutableStateOf(Settings("wyb01", true, false, true, true, "0.1.0 (gallery)")) }
-    var st by remember { mutableStateOf(StorageUi(12_000_000, 340_000_000, 48_000_000, 3, Scope.All, null, false, null)) }
+    var st by remember { mutableStateOf(StorageUi(StorageSizes.Known(12_000_000, 340_000_000, 3), 48_000_000, Scope.All, null, false, null)) }
     SettingsPage(
         true, SettingsUi(s, UploadStatus(3, 4_200_000, 0, null), st),
         SettingsActions(
