@@ -166,7 +166,7 @@ class MapReducerFuzzTest {
             }
 
             // 4a. the point sources only ever take the payload of the newest points request
-            for (source in listOf(Source.Devices, Source.Cells, Source.Density)) {
+            for (source in listOf(Source.Devices, Source.Cells)) {
                 val now = after.sources[source]
                 if (now is SourceData.Stored && now != before.sources[source]) {
                     assertTrue("$source took $now from $event", event is MapEvent.PointsLoaded && event.payload == now.id)

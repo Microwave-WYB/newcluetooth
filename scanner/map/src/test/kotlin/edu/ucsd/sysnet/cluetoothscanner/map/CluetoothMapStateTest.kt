@@ -185,12 +185,12 @@ class CluetoothMapStateTest {
         assertEquals(MapGeometry.fit(bbox, r.surface.viewport, MapGeometry.framePadding(CoverInsets(0, 600, 0, 0))), cam)
     }
 
-    @Test fun `M-3 M-5 points fill devices and density, Cells fill cells`() = runTest {
+    @Test fun `M-3 points fill devices, Cells fill cells, and there is no density source`() = runTest {
         val r = rig()
         r.state.show(Scope.session(SESSION), DeviceFilter(), routesFaint = false)
         runCurrent()
         assertTrue(r.surface.sources.getValue("devices").contains("AA:BB:CC:00:00:04"))
-        assertEquals(r.surface.sources["devices"], r.surface.sources["density"])
+        assertFalse("density" in r.surface.sources)
         assertEquals(GeoJson.EMPTY, r.surface.sources["cells"])
 
         val many = rig(FakeQueries(devices, cellsAbove = 2))
@@ -198,7 +198,7 @@ class CluetoothMapStateTest {
         runCurrent()
         assertEquals(GeoJson.EMPTY, many.surface.sources["devices"])
         assertEquals(FakeQueries.CELLS_JSON, many.surface.sources["cells"])
-        assertEquals(FakeQueries.CELLS_JSON, many.surface.sources["density"])
+        assertFalse("density" in many.surface.sources)
     }
 
     @Test fun `Q-5 filter query reaches map_points and only the matches are drawn`() = runTest {

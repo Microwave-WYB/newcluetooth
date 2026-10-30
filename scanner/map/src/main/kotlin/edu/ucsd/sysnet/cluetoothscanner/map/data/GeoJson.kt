@@ -4,7 +4,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GeoPoint
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Sighting
 import kotlinx.serialization.json.JsonObject
 
-/** GeoJSON strings for the sources the map fills itself; devices, density and cells come from MapData (§2.5). */
+/** GeoJSON strings for the sources the map fills itself; devices and cells come from MapData (§2.5). */
 object GeoJson {
     const val EMPTY = """{"type":"FeatureCollection","features":[]}"""
 
