@@ -45,7 +45,7 @@ class CluetoothCoreSmokeTest {
                         isConnectable = true,
                         lat = 32.8801,
                         lon = -117.234,
-                        accuracy = 4.25,
+                        accuracy = 4.25f,
                     ),
                 ),
             )
