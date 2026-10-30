@@ -54,17 +54,16 @@ fun bandColor(band: RssiBand): Color = when (band) {
 }
 
 /**
- * C-5 DeviceRow: three columns, at least 64 dp, 8 × 16 dp padding, radius 12 (22 in the tablet panel, G-13a).
- * Left the name (one line, or "No name" in `--t3`) over the MAC (13/20 `--t2`, tabular); the 56 × 22 sparkline
- * ([spark] null for history and All sessions); the RSSI number, 34 dp, right-aligned, weight 500, with "−". The
- * sparkline and number take the band color. [stale] rows use `--dim`; pressed and [selected] rows are `--fill2`.
+ * C-5 DeviceRow: two columns, at least 64 dp, 8 × 16 dp padding, radius 12 (22 in the tablet panel, G-13a).
+ * Left the name (one line, or "No name" in `--t3`) over the MAC (13/20 `--t2`, tabular); right the RSSI number,
+ * 34 dp, right-aligned, weight 500, with "−", in the band color (G-4). Rows have no sparkline: the RSSI chart is only
+ * in the device sheet (D-10). [stale] rows use `--dim`; pressed and [selected] rows are `--fill2`.
  */
 @Composable
 fun DeviceRow(
     name: String?,
     mac: String,
     rssi: Int?,
-    spark: ByteArray?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     stale: Boolean = false,
@@ -94,7 +93,6 @@ fun DeviceRow(
             Text(name ?: Strings.NoName, color = if (name == null) c.t3 else c.t1, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(mac, style = t.sub.tabular(), color = c.t2, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (spark != null) Sparkline(spark, band) else Spacer(Modifier.width(Dp(0f)))
         Text(
             rssi?.let { Format.signed(it) } ?: "",
             Modifier.width(Css.RowRssi.width),
@@ -107,43 +105,8 @@ fun DeviceRow(
     }
 }
 
-/** RSSI samples as `core-api` sends them: one byte per bucket, −RSSI clamped to 30..100, 0 a gap (§2.5). */
+/** RSSI samples as `core-api` sends them (the device chart, D-10): one byte per bucket, −RSSI clamped to 30..100, 0 a gap (§2.5). */
 fun sparkRssi(b: Byte): Int? = (b.toInt() and 0xff).takeIf { it != 0 }?.let { -it }
-
-/**
- * C-6 geometry, as `app.js` `sparkline`: x = k · w / (n − 1), y = 1 + (−30 − r) / 70 · (h − 2) with r clamped to
- * −100 … −30, in the units of [w] × [h]. Each run of samples between gaps is one polyline.
- */
-fun sparklineSegments(samples: ByteArray, w: Float, h: Float, unit: Float = 1f): List<List<Offset>> {
-    val n = samples.size
-    if (n < 2) return emptyList()
-    val out = mutableListOf<MutableList<Offset>>()
-    var pen = false
-    for (k in 0 until n) {
-        val r = sparkRssi(samples[k])
-        if (r == null) { pen = false; continue }
-        val p = Offset(k * (w / (n - 1)), unit + ((-30f - r.coerceIn(-100, -30)) / 70f) * (h - 2 * unit))
-        if (pen) out.last() += p else out += mutableListOf(p)
-        pen = true
-    }
-    return out
-}
-
-/**
- * C-6 Sparkline: the last minute as 30 samples, y from −30 (top) to −100 (bottom), a 1.5 dp stroke in the band
- * color; gaps break the line ([sparklineSegments]).
- */
-@Composable
-fun Sparkline(samples: ByteArray, color: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier.size(Css.Spark.width, Css.Spark.height)) {
-        val path = Path()
-        for (seg in sparklineSegments(samples, size.width, size.height, density)) {
-            path.moveTo(seg[0].x, seg[0].y)
-            for (p in seg.drop(1)) path.lineTo(p.x, p.y)
-        }
-        drawPath(path, color, style = Stroke(Css.Spark_Path.strokeWidth * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
-    }
-}
 
 /**
  * C-12 ListItem: at least 56 dp, 8 × 16 dp padding, radius 12, a 12 dp gap: the title, an optional sub line

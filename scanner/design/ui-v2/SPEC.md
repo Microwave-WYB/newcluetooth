@@ -121,15 +121,13 @@ Each component is built once. Its size, color and state rules come from these to
   - Switching: the thumb slides to the new option (`--t-std`). The content below moves 28 dp (`--swap-x`) in the
     direction of the change while fading (shared-axis X, `--t-std`); the sheet height doesn't change.
 - **C-5 DeviceRow.**
-  - A grid of three columns at least 64 dp tall, with 8 dp × `--gutter` (16 dp) padding and a 12 dp item radius.
+  - A grid of two columns at least 64 dp tall, with 8 dp × `--gutter` (16 dp) padding and a 12 dp item radius.
   - Left: the name, one line ellipsized, or "No name" in `--t3`. Below it the MAC in 13/20 `--t2` tabular.
-  - Middle: the sparkline, 56 × 22 dp. Last column: the RSSI number, 34 dp wide, right-aligned, weight 500, with
-    "−" as the minus sign.
-  - The sparkline and the number take the band color (G-4).
+  - Right: the RSSI number, 34 dp wide, right-aligned, weight 500, with "−" as the minus sign, in the band color
+    (G-4). Rows have no sparkline; the RSSI chart is only in the device sheet (D-10).
   - Stale rows use opacity `--dim` (0.42). Pressed and selected rows are `--fill2`.
-  - Rows from history and All sessions have no sparkline, and their RSSI is the strongest seen.
-- **C-6 Sparkline.** The last minute as 30 samples. y covers −30 to −100 (clamped), with a 1.5 dp stroke in the band
-  color. Gaps (missing samples) break the line.
+  - Rows from history and All sessions show the strongest RSSI seen.
+- **C-6 (removed) Sparkline.** Rows don't draw RSSI history.
 - **C-7 ProductCard.**
   - 148 dp wide, 12 dp padding with an 8 dp gap and `--fill2`, with no shadow. The radius `--card-r` is concentric
     with the sheet: container radius − the card's inset from the sheet edge (phone 34 − 16 = 18; tablet
@@ -237,6 +235,9 @@ Each component is built once. Its size, color and state rules come from these to
 - **R-7 Stop.**
   - Stop morphs the control back to the FAB at the bottom-right. There is no snackbar.
   - The UI stays on the session that just ended, now frozen (V-3).
+  - Stop does nothing to the sheets: the stack, each sheet's height (or the tablet panel's state), the open tab,
+    scroll positions, filters and the current order all stay as they were. Only live-only parts change (the chart
+    stop, Nearby becomes unavailable as in D-1, the list stops appending).
 - **R-8 Deliberate asymmetry.** Starting sits at the thumb (bottom-right) and stopping needs a reach to the top (phone).
   This is intended; do not add a stop control near the bottom.
 - **R-9 Search state (phone).** The island sits centered directly below the search bar (top = `--edge` + 44 + 8 dp)
@@ -409,7 +410,7 @@ Each component is built once. Its size, color and state rules come from these to
   4. "Seen at N places · last X" in 13/20 `--t2`.
   5. For an identified product, "Open in Wiki ↗" in `--blue`. It opens `https://wirelesswiki.org/p/<id>` in the
      external browser.
-  6. A "Devices" section with the product's DeviceRows. They are sorted once by RSSI, have sparklines only while live,
+  6. A "Devices" section with the product's DeviceRows. They are sorted once by RSSI, update in place only while live,
      and are filtered by This area. Tapping a row pushes a device sheet.
 - **D-8 Map.** Only the product's devices, each at its strongest point, framed when the sheet opens.
 
@@ -576,9 +577,9 @@ Each component is built once. Its size, color and state rules come from these to
 
 - **V-1 Scanning only while recording.** There is no live mode outside a recording.
 - **V-2 Recording (the current session).**
-  - Live data: sparklines, Nearby/All, the chart, values updating in place, new devices appended.
+  - Live data: Nearby/All, the device chart, values updating in place, new devices appended.
   - The current session is pinned at the top of the sidebar and selected.
-- **V-3 After Stop.** The UI stays on the session that just ended, now frozen: no live values, no sparklines, no
+- **V-3 After Stop.** The UI stays on the session that just ended, now frozen: no live values, no
   chart, [This area | All]. It stays there until the app restarts or a new recording starts.
 - **V-4 History session.** Frozen, like V-3. The FAB is available.
 - **V-5 All sessions.** The union of all local data, frozen: every device at its strongest point, every route faint

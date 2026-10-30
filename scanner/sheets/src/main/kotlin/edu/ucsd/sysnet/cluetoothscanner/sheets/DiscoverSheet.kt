@@ -186,7 +186,6 @@ private fun Row(state: SheetsState, row: DeviceRow, tablet: Boolean, onClick: ()
         name = row.name,
         mac = row.addr,
         rssi = row.rssi,
-        spark = if (state.live) row.spark else null, // C-5: no sparkline for history and All sessions
         onClick = onClick,
         stale = !row.inRange,
         radius = if (tablet) Concentric.panelRow else Css.Row.borderRadius,
