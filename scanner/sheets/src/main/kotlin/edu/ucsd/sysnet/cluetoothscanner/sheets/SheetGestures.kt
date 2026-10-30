@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.ScrollableDefaults
 import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.ScrollState
 import androidx.compose.runtime.Composable
@@ -101,6 +102,19 @@ internal fun Modifier.sheetGestures(controller: SheetStackController, entry: She
             }
             val release = controller.endDrag(entry)
             if (release?.tap == true && region == DragRegion.Header && !upConsumedByChild) controller.tapHeader(entry)
+        }
+    }
+
+/**
+ * D-15: on selectable text a long press starts a selection, and the gesture is the selection's from then on: the sheet
+ * gives it up, so selecting never moves it. Only a pending gesture can be given up; a drag that already moves the
+ * sheet consumed its moves, which cancels the long press. Nothing is consumed here.
+ */
+internal fun Modifier.sheetSelectable(controller: SheetStackController, entry: SheetEntry): Modifier =
+    pointerInput(controller, entry) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            if (awaitLongPressOrCancellation(down.id) != null) controller.dragYield(entry)
         }
     }
 
