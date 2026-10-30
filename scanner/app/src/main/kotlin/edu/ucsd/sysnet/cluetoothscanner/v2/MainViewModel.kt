@@ -237,6 +237,13 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
                 dispatch(MainEvent.SettingsLoaded(loaded, graph.permissions.state.value))
             }
             MainEffect.LoadSessions -> sessionReads.trySend(Unit)
+            // D-1b: a failed read is Failed(effect), and the reducer keeps Categories with no notice
+            MainEffect.LoadUiState -> graph.uiState.discoverView().orFail(effect)?.let { dispatch(MainEvent.UiStateRead(it)) }
+            is MainEffect.SaveDiscoverView -> when (val saved = graph.uiState.saveDiscoverView(effect.view)) {
+                is UiStateResult.Ok -> Unit
+                // deliberate exception to the no-log-only rule (owner's OK): the remembered view is pure UI state
+                is UiStateResult.Err -> Log.w(TAG, "D-1b: the Discover view was not remembered: ${saved.message}")
+            }
             MainEffect.ReadLaunchFacts -> dispatch(MainEvent.LaunchFactsRead(launchFacts()))
             // a refused start, pause, resume or stop is the notice's (Failed), never only a log line
             MainEffect.StartRecording -> graph.recorder.start().orFail(effect)?.let { dispatch(MainEvent.RecordingStarted(it)) }
@@ -285,6 +292,14 @@ class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(ap
     }
 
     /** A platform call's typed failure takes the path a thrown one took: [MainEvent.Failed] for its effect. */
+    private fun <T> UiStateResult<T>.orFail(effect: MainEffect): T? = when (this) {
+        is UiStateResult.Ok -> value
+        is UiStateResult.Err -> {
+            fail(MainTask.Effect(effect), UiStateFailure(message))
+            null
+        }
+    }
+
     private fun <T> PlatformResult<T>.orFail(effect: MainEffect): T? = when (this) {
         is PlatformResult.Ok -> value
         is PlatformResult.Err -> {
@@ -370,3 +385,6 @@ fun SessionSummary.label(): String = Format.time(startedMs)
  * ([MainEvent.Failed]); a value, never thrown.
  */
 class PlatformFailure(val error: PlatformError) : Exception(error.message)
+
+/** D-1b: a UI-state read or write that failed ([UiStateResult.Err]), carried to the reducer as [MainEvent.Failed]. */
+class UiStateFailure(message: String) : Exception(message)

@@ -26,6 +26,7 @@ import edu.ucsd.sysnet.cluetoothscanner.chrome.StorageUi
 import edu.ucsd.sysnet.cluetoothscanner.chrome.onboardingSteps
 import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
 import edu.ucsd.sysnet.cluetoothscanner.map.CluetoothMapState
+import edu.ucsd.sysnet.cluetoothscanner.sheets.DiscoverView
 import edu.ucsd.sysnet.cluetoothscanner.sheets.SheetsState
 import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
 
@@ -162,6 +163,8 @@ data class MainUiState(
     val storageFull: StorageFullState? = null,
     /** A failure the user must see, shown as a banner until dismissed or retried; null when there is none. */
     val notice: Notice? = null,
+    /** D-1b: the remembered Discover view (UI state, not a setting); every new session view opens on it. */
+    val discoverView: DiscoverView = DiscoverView.Categories,
 ) {
     val viewKey: ViewKey get() = ViewKey(scope, epoch)
     val searchPage: Page.SearchPage? get() = page as? Page.SearchPage
@@ -212,6 +215,10 @@ sealed interface MainEvent {
     data class CameraIdle(val camera: MapCamera) : MainEvent
     data class SheetsAttached(val sheets: SheetsState) : MainEvent
     data class SheetsDetached(val sheets: SheetsState) : MainEvent
+    /** D-1b: the user switched the Discover view (the sheets' [edu.ucsd.sysnet.cluetoothscanner.sheets.SheetsEvent.ViewChosen]). */
+    data class DiscoverViewChosen(val view: DiscoverView) : MainEvent
+    /** D-1b: the remembered view, read from the UI-state store at launch. */
+    data class UiStateRead(val discoverView: DiscoverView) : MainEvent
 
     // ---- intents ----
     data class SelectScope(val scope: Scope?) : MainEvent
@@ -315,6 +322,10 @@ sealed interface MainEffect {
     data object LoadReclaimable : MainEffect
     /** R-10: run the chosen cleanups, then read the free space → [MainEvent.SpaceFreed]. */
     data class FreeUpSpace(val cleanups: Set<Cleanup>) : MainEffect
+    /** D-1b: read the UI-state store → [MainEvent.UiStateRead]; a failure keeps Categories (logged). */
+    data object LoadUiState : MainEffect
+    /** D-1b: remember the Discover view; a failure is logged only (UI state, no notice). */
+    data class SaveDiscoverView(val view: DiscoverView) : MainEffect
 }
 
 /** One transition: the next state and the effects to run, in order. */
@@ -334,7 +345,7 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
             if (c.attempt != e.attempt) s.only()
             else {
                 val linked = s.copy(core = CoreLink.Linked(e.ready, e.attempt), launched = true)
-                if (s.launched) linked.only() else linked.with(MainEffect.LoadSettings)
+                if (s.launched) linked.only() else linked.with(MainEffect.LoadSettings, MainEffect.LoadUiState)
             }
         is CoreLink.Linked, is CoreLink.Failed -> s.only()
     }
@@ -436,6 +447,10 @@ fun reduce(s: MainUiState, e: MainEvent): Step = when (e) {
     MainEvent.ExitSearch -> s.copy(searchQuery = null).with(MainEffect.SheetsExitSearch)
     is MainEvent.CameraIdle -> s.copy(camera = e.camera).only()
     is MainEvent.SheetsAttached -> s.copy(sheets = SheetsLink.Attached(e.sheets)).only()
+    // D-1b: the user's switch is remembered (search's forced list never comes here: the sheets don't emit it)
+    is MainEvent.DiscoverViewChosen ->
+        if (e.view == s.discoverView) s.only() else s.copy(discoverView = e.view).with(MainEffect.SaveDiscoverView(e.view))
+    is MainEvent.UiStateRead -> s.copy(discoverView = e.discoverView).only()
     // only the sheets that are attached detach (a new scope's sheets may have attached first)
     is MainEvent.SheetsDetached -> (if (s.attachedSheets === e.sheets) s.copy(sheets = SheetsLink.None) else s).only()
     is MainEvent.UpdateSettings -> s.with(MainEffect.UpdateSettings(e.transform))
@@ -564,6 +579,9 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         MainEffect.LoadSessions, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
         is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch,
         is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation -> s.only()
+        // D-1b: UI state, so no notice: a failed read keeps Categories (the runner logged it); a failed write never
+        // comes here (the runner only logs it, a deliberate exception), and the choice holds for this run
+        MainEffect.LoadUiState, is MainEffect.SaveDiscoverView -> s.only()
     }
     // the user asked for it and nothing happened: say why
     MainTask.Launch -> s.copy(notice = Notice(error.userMessage())).only()

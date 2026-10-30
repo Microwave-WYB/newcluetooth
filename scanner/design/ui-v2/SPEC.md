@@ -363,7 +363,10 @@ Each component is built once. Its size, color and state rules come from these to
     is active it takes the selected style and shows a count badge. It is shown in both views.
 - **D-1a View switch transition.** Toggling categories ⇄ list crossfades the content and the chip row (`--t-fast`,
   no slide); the sheet height doesn't change.
-- **D-2 Categories view (default).** CategorySections built from the session:
+- **D-1b Remembered view.** The Discover view (categories or list) is remembered: it is saved when the user switches
+  and restored on every session view and after an app restart. Categories is the default only on first launch.
+  Search's forced list view (Q-5) doesn't change the saved choice.
+- **D-2 Categories view (default on first launch).** CategorySections built from the session:
   - Each identified product appears once, under its own category.
   - "Unidentified devices" comes last as a single card.
   - Nearby keeps only products with a non-stale device. All keeps every product the session saw.
