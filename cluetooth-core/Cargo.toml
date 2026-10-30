@@ -36,6 +36,7 @@ uniffi = { version = "=0.32.0", default-features = false }
 uuid = { version = "=1.22.0", default-features = false, features = ["std"] }
 x25519-dalek = { version = "=2.0.1", default-features = false }
 rusqlite = { version = "=0.41.1", features = ["bundled", "array", "functions", "window"] }
+futures-channel = { version = "=0.3.33", default-features = false, features = ["std"] }
 
 [profile.release]
 # Remove static symbols/debug sections while retaining the dynamic UniFFI exports.
@@ -43,4 +44,5 @@ rusqlite = { version = "=0.41.1", features = ["bundled", "array", "functions", "
 strip = "symbols"
 
 [dev-dependencies]
+futures-executor = "=0.3.33"
 regex-syntax = { version = "=0.8.11", default-features = false, features = ["std", "unicode"] }

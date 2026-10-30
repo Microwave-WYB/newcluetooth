@@ -11,6 +11,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreIngest
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreRecordingState
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreStorage
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceDetail
@@ -37,6 +38,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.PreparedExport
 import edu.ucsd.sysnet.cluetoothscanner.api.core.PreparedUpload
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ProductCard
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ProductDetail
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Reclaimable
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanEnvironment
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
@@ -109,6 +111,10 @@ class FakeCore(
         const val HISTORY_SESSION = "r1"
         const val MAX_ROWS_PER_CALL = 200
         const val POINTS_CAP = 10_000
+        /** SPEC R-10: the core's free-space floor. */
+        const val STORAGE_FLOOR_BYTES = 200_000_000L
+        /** The fake's local.db share of one finished session. */
+        const val FAKE_SESSION_DB_BYTES = 180_000L
 
         fun demoClock(): () -> Long {
             val origin = System.currentTimeMillis()
@@ -170,6 +176,8 @@ class FakeCore(
 
     private class Live(val id: String, val startedMs: Long, val simOriginMs: Long) {
         var phase = RecordingPhase.Recording
+        /** SPEC R-10: paused by [simulateStorageFull]. */
+        var pausedForStorage = false
         var activeBeforeMs = 0L
         var runningSinceMs: Long? = startedMs
         val devices = LinkedHashMap<Long, LiveDev>()
@@ -212,6 +220,9 @@ class FakeCore(
 
     /** Test hooks. */
     var backpressure = false
+    /** SPEC R-10: the simulated free space and uploaded raw files (see [simulateStorageFull]). */
+    var freeBytes = 32_000_000_000L
+    var uploadedRawBytes = 12_000_000L
     var queryDelayMs = 0L
     val ingested = mutableListOf<ScanObservationInput>()
     val locationFixes = mutableListOf<LocationFix>()
@@ -591,7 +602,7 @@ class FakeCore(
         CoreRecordingState(RecordingPhase.Idle, null, null, 0, null, 0, 0.0)
     } else {
         CoreRecordingState(l.phase, l.id, l.startedMs, l.activeBeforeMs, l.runningSinceMs,
-            l.devices.values.count { it.rssi != null && shown(it.dev) }, l.distanceM)
+            l.devices.values.count { it.rssi != null && shown(it.dev) }, l.distanceM, l.pausedForStorage)
     }
 
     private fun seed(l: Live) {
@@ -750,6 +761,8 @@ class FakeCore(
         val state = synchronized(lock) {
             val l = rec ?: throw CoreException.NotRecording()
             if (l.phase == RecordingPhase.Recording) return
+            if (l.pausedForStorage && freeBytes < STORAGE_FLOOR_BYTES) throw CoreException.StorageFull(freeBytes)
+            l.pausedForStorage = false
             val now = now()
             l.phase = RecordingPhase.Recording
             l.runningSinceMs = now
@@ -794,6 +807,7 @@ class FakeCore(
         if (batch.size > 64) throw CoreException.InputBatchTooLarge("${batch.size} rows > 64")
         if (batch.any { it.raw.size > 1650 }) throw CoreException.InputBatchTooLarge("raw > 1650 bytes")
         if (backpressure) throw CoreException.Backpressure()
+        if (rec?.pausedForStorage == true) throw CoreException.StorageFull(freeBytes)
         val l = rec
         if (l == null || l.phase != RecordingPhase.Recording) return@synchronized IngestAck(0, 0, batch.size)
         var rejected = 0
@@ -961,6 +975,51 @@ class FakeCore(
             emit(CoreEvent.DataInvalidated("delete"))
         }
         return outcome
+    }
+
+    override suspend fun reclaimable(): CoreResult<Reclaimable> =
+        CoreResult.Ok(query { Reclaimable(freeBytes, uploadedRawBytes, FAKE_SESSION_DB_BYTES * sessions.size) })
+
+    override suspend fun deleteUploadedRaw(): CoreResult<Long> = CoreResult.Ok(query {
+        val freed = uploadedRawBytes
+        uploadedRawBytes = 0
+        freeBytes += freed
+        freed
+    })
+
+    /** Every finished session goes; the current recording and the pending uploads stay. */
+    override suspend fun clearLocalDatabase(): CoreResult<Long> {
+        val freed = query {
+            val freed = FAKE_SESSION_DB_BYTES * sessions.size
+            sessions.clear()
+            freeBytes += freed
+            freed
+        }
+        emit(CoreEvent.SessionsChanged)
+        emit(CoreEvent.DataInvalidated("local database cleared"))
+        return CoreResult.Ok(freed)
+    }
+
+    /**
+     * SPEC R-10 for previews and tests: the free space drops to [free] and a recording pauses for storage, as the
+     * real core does below its 200 MB floor.
+     */
+    fun simulateStorageFull(free: Long = 150_000_000L) {
+        val (delta, state) = synchronized(lock) {
+            freeBytes = free
+            val l = rec ?: return
+            if (l.phase != RecordingPhase.Recording) return
+            val now = now()
+            l.activeBeforeMs += now - (l.runningSinceMs ?: now)
+            l.runningSinceMs = null
+            l.phase = RecordingPhase.Paused
+            l.pausedForStorage = true
+            buildDelta(l, now, force = true) to recordingState(l, now)
+        }
+        liveJob?.cancel()
+        scope.launch { delta?.let { liveFlow.emit(it) } }
+        emit(CoreEvent.RecordingChanged(state))
+        emit(CoreEvent.StorageFull(free, 0))
     }
 
     /** Stops the simulator (tests and gallery teardown). */

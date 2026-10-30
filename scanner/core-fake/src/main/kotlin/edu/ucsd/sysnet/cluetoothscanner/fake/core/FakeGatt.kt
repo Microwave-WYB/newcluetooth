@@ -84,7 +84,7 @@ object FakeGatt {
         val steps = if (failure == null) all
         else all.take(failedAt) + all[failedAt].copy(state = GattStepState.Failed, failure = failure)
         return GattView(id, DeviceKeyCodec.key(addr), started, outcome == "complete", steps,
-            if (outcome == "failed") emptyList() else services) to outcome
+            if (outcome == "complete") services else emptyList()) to outcome  // D-13.6
     }
 
     /** Display-only value text (§2.7): Battery Level as "N %", printable UTF-8 as text, else hex. */

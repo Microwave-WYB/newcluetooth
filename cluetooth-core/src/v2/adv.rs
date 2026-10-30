@@ -16,16 +16,23 @@ pub(crate) struct Split {
 /// `ble_adv_split`: stops at a zero length or a truncated field instead of repairing.
 pub(crate) fn split(raw: &[u8]) -> Split {
     let mut structures = Vec::new();
-    let mut offset = 0usize;
-    while offset < raw.len() {
-        let len = raw[offset] as usize;
-        if len == 0 || offset + len >= raw.len() {
-            break;
+    let mut rest = raw;
+    // [len, type, data (len - 1 bytes)]; stop at a zero length or a field that does not fit
+    while let [len, after @ ..] = rest {
+        let len = usize::from(*len);
+        match (len, after.split_first()) {
+            (1.., Some((ad_type, tail))) if after.len() >= len => {
+                match tail.split_at_checked(len - 1) {
+                    Some((data, next)) => {
+                        structures.push((*ad_type, data.to_vec()));
+                        rest = next;
+                    }
+                    None => break,
+                }
+            }
+            _ => break,
         }
-        structures.push((raw[offset + 1], raw[offset + 2..offset + 1 + len].to_vec()));
-        offset += len + 1;
     }
-    let rest = &raw[offset..];
     let (zero_padding, tail) = if rest.is_empty() {
         (0, None)
     } else if rest.iter().all(|&b| b == 0) {
@@ -61,7 +68,7 @@ pub(crate) fn local_name(ad_type: u8, data: &[u8]) -> Option<String> {
         return None;
     }
     let end = data.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
-    std::str::from_utf8(&data[..end])
+    std::str::from_utf8(data.get(..end)?)
         .ok()
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
@@ -69,57 +76,46 @@ pub(crate) fn local_name(ad_type: u8, data: &[u8]) -> Option<String> {
 
 /// `ad_structures.company_id`: type 0xFF with at least 2 bytes, little-endian.
 pub(crate) fn company_id(ad_type: u8, data: &[u8]) -> Option<u16> {
-    (ad_type == 0xFF && data.len() >= 2).then(|| u16::from_le_bytes([data[0], data[1]]))
+    match (ad_type, data) {
+        (0xFF, [a, b, ..]) => Some(u16::from_le_bytes([*a, *b])),
+        _ => None,
+    }
 }
 
-fn uuid128_le(bytes: &[u8]) -> String {
-    let h: Vec<String> = bytes.iter().rev().map(|b| format!("{b:02x}")).collect();
-    let h = h.concat();
-    format!(
+/// 16 little-endian bytes as the hyphenated big-endian UUID; `None` unless exactly 16 bytes.
+fn uuid128_le(bytes: &[u8]) -> Option<String> {
+    let b: [u8; 16] = bytes.try_into().ok()?;
+    let v = u128::from_le_bytes(b);
+    let h = format!("{v:032x}");
+    Some(format!(
         "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+        h.get(0..8)?,
+        h.get(8..12)?,
+        h.get(12..16)?,
+        h.get(16..20)?,
+        h.get(20..32)?
+    ))
 }
 
-fn uuid16_le(bytes: &[u8]) -> String {
-    format!("{:04x}", u16::from_le_bytes([bytes[0], bytes[1]]))
+fn uuid16_le(bytes: &[u8]) -> Option<String> {
+    let b: [u8; 2] = bytes.get(..2)?.try_into().ok()?;
+    Some(format!("{:04x}", u16::from_le_bytes(b)))
 }
 
-fn uuid32_le(bytes: &[u8]) -> String {
-    format!(
-        "{:08x}",
-        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-    )
+fn uuid32_le(bytes: &[u8]) -> Option<String> {
+    let b: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+    Some(format!("{:08x}", u32::from_le_bytes(b)))
 }
 
 /// The UUIDs one structure lists, in the research notation (lowercase), unsorted.
 fn structure_uuid_list(ad_type: u8, data: &[u8]) -> Option<Vec<String>> {
     match ad_type {
-        0x02 | 0x03 => Some(data.chunks_exact(2).map(uuid16_le).collect()),
-        0x04 | 0x05 => Some(data.chunks_exact(4).map(uuid32_le).collect()),
-        0x06 | 0x07 => Some(data.chunks_exact(16).map(uuid128_le).collect()),
-        0x16 => Some(
-            (data.len() >= 2)
-                .then(|| uuid16_le(data))
-                .into_iter()
-                .collect(),
-        ),
-        0x20 => Some(
-            (data.len() >= 4)
-                .then(|| uuid32_le(data))
-                .into_iter()
-                .collect(),
-        ),
-        0x21 => Some(
-            (data.len() >= 16)
-                .then(|| uuid128_le(&data[..16]))
-                .into_iter()
-                .collect(),
-        ),
+        0x02 | 0x03 => Some(data.chunks_exact(2).filter_map(uuid16_le).collect()),
+        0x04 | 0x05 => Some(data.chunks_exact(4).filter_map(uuid32_le).collect()),
+        0x06 | 0x07 => Some(data.chunks_exact(16).filter_map(uuid128_le).collect()),
+        0x16 => Some(uuid16_le(data).into_iter().collect()),
+        0x20 => Some(uuid32_le(data).into_iter().collect()),
+        0x21 => Some(data.get(..16).and_then(uuid128_le).into_iter().collect()),
         _ => None,
     }
 }

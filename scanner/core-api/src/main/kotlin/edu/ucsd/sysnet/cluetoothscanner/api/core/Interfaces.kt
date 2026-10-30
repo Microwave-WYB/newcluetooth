@@ -45,6 +45,17 @@ interface CoreStorage {
     suspend fun acknowledgeExport(id: String)
     /** [includeUnuploaded] is true only after the explicit second confirmation (§2.8). */
     suspend fun deleteLocalData(scope: Scope, includeUnuploaded: Boolean): DeleteOutcome
+
+    /** SPEC R-10: the free space now and the bytes each action below would free (the dialog's numbers). */
+    suspend fun reclaimable(): CoreResult<Reclaimable>
+    /** SPEC R-10 "Delete uploaded raw files": only files that already uploaded; returns the bytes freed. */
+    suspend fun deleteUploadedRaw(): CoreResult<Long>
+    /**
+     * SPEC R-10 "Clear local database": the stored history of every session except the current one; raw files not
+     * yet uploaded are kept and still upload. Returns the bytes freed. Run it after [deleteUploadedRaw] when both
+     * are chosen: the database needs some free room to shrink.
+     */
+    suspend fun clearLocalDatabase(): CoreResult<Long>
 }
 
 /**
@@ -52,7 +63,11 @@ interface CoreStorage {
  * not at all ([N]); call them off the main thread. Failures throw [CoreException].
  */
 interface CoreIngest {
-    /** Throws [CoreException.Backpressure] when the queue stays full for 1 s; keep the batch and retry. */
+    /**
+     * Throws [CoreException.Backpressure] while commits keep failing and the pending buffer is full: keep the batch
+     * and retry. Throws [CoreException.StorageFull] while the recording is paused for storage (R-10): the batch
+     * cannot be stored; drop and count it.
+     */
     fun ingestScans(batch: List<ScanObservationInput>): IngestAck
     fun ingestLocation(fix: LocationFix)
     fun clearLocation()
@@ -63,6 +78,7 @@ interface CoreIngest {
     /** Returns the new session id. */
     fun startRecording(env: ScanEnvironment): String
     fun pauseRecording()
+    /** After a storage-full pause (R-10), throws [CoreException.StorageFull] while free space is below the floor. */
     fun resumeRecording()
     /** Returns the finished session id. */
     fun stopRecording(): String
@@ -78,7 +94,7 @@ interface CoreIngest {
 }
 
 /**
- * §2.9 `CoreError`. `Cancelled` and `Superseded` never surface: they become `CancellationException`.
+ * §2.9 `CoreError`. `Cancelled` never surfaces: it becomes `CancellationException`.
  */
 sealed class CoreException(message: String) : Exception(message) {
     class InvalidPayload(val detail: String) : CoreException("invalid payload: $detail")
@@ -95,7 +111,11 @@ sealed class CoreException(message: String) : Exception(message) {
         CoreException("local.db schema $found is newer than the supported $supported")
     class InvalidBundle(val detail: String) : CoreException("invalid wiki bundle: $detail")
     class Backpressure : CoreException("the ingest queue is full")
+    /** SPEC R-10: the data volume is (almost) out of space; writing stopped and the recording paused. */
+    class StorageFull(val freeBytes: Long) : CoreException("storage is full ($freeBytes bytes free)")
     class NotRecording : CoreException("no recording is active")
     class AlreadyRecording : CoreException("a recording is already active")
     class Closed : CoreException("the core is closed")
+    /** A fault inside the core or its bindings (a Rust panic UniFFI caught, or a binding error). */
+    class Internal(val detail: String) : CoreException("core fault: $detail")
 }

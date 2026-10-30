@@ -145,6 +145,12 @@ impl From<rusqlite::Error> for CoreError {
         {
             return CoreError::Cancelled;
         }
+        if let rusqlite::Error::SqliteFailure(e, _) = &error
+            && e.code == rusqlite::ErrorCode::DiskFull
+        {
+            // the writer measures the free space when it handles the failure
+            return CoreError::StorageFull { free_bytes: 0 };
+        }
         db_error(error)
     }
 }
@@ -275,8 +281,11 @@ pub(crate) fn open_reader(path: &Path) -> Result<Connection, CoreError> {
 
 impl CoreError {
     pub(crate) fn from_io(error: std::io::Error) -> Self {
-        CoreError::Io {
-            detail: error.to_string(),
+        match error.kind() {
+            std::io::ErrorKind::StorageFull => CoreError::StorageFull { free_bytes: 0 },
+            _ => CoreError::Io {
+                detail: error.to_string(),
+            },
         }
     }
 }

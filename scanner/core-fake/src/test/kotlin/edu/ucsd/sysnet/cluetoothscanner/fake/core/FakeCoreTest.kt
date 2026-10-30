@@ -2,6 +2,7 @@ package edu.ucsd.sysnet.cluetoothscanner.fake.core
 
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DisplayFilter
@@ -12,6 +13,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepState
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Identification
 import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveDelta
 import edu.ucsd.sysnet.cluetoothscanner.api.core.MapMode
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Reclaimable
 import edu.ucsd.sysnet.cluetoothscanner.api.core.RecordingPhase
 import edu.ucsd.sysnet.cluetoothscanner.api.core.ScanObservationInput
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
@@ -381,6 +383,27 @@ class FakeCoreTest {
         c.backpressure = true
         try { c.ingestScans(listOf(obs)); fail() } catch (_: CoreException.Backpressure) {}
         try { c.startRecording(FakeCore.DEMO_ENVIRONMENT); fail() } catch (_: CoreException.AlreadyRecording) {}
+    }
+
+    /** SPEC R-10: storage full pauses and refuses ingest; cleanup frees space, keeps pending uploads, then resume. */
+    @Test
+    fun storageFullPausesAndCleanupResumes() = runTest {
+        val c = core(FakeDemo.Recording)
+        c.simulateStorageFull(100_000_000L)
+        val state = c.recordingState()
+        assertEquals(RecordingPhase.Paused, state.phase)
+        assertTrue(state.pausedForStorage)
+        try { c.resumeRecording(); fail() } catch (e: CoreException.StorageFull) { assertEquals(100_000_000L, e.freeBytes) }
+        val r = (c.reclaimable() as CoreResult.Ok).value
+        assertEquals(Reclaimable(100_000_000L, 12_000_000L, r.localDatabaseBytes), r)
+        assertEquals(CoreResult.Ok(12_000_000L), c.deleteUploadedRaw())
+        assertEquals(CoreResult.Ok(r.localDatabaseBytes), c.clearLocalDatabase())
+        assertTrue(c.sessions().isEmpty())
+        assertEquals(3, c.uploadStatus().pendingCount)
+        c.freeBytes = 500_000_000L
+        c.resumeRecording()
+        assertEquals(RecordingPhase.Recording, c.recordingState().phase)
+        assertFalse(c.recordingState().pausedForStorage)
     }
 
     /** O-1 item 11: delete refuses while recording, keeps un-uploaded data by default. */

@@ -4,6 +4,7 @@ import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreAssets
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreConfig
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
 import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreException
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.DisplayFilter
 import edu.ucsd.sysnet.cluetoothscanner.api.core.LocationFix
@@ -202,5 +203,28 @@ class CoreBridgeTest {
         assertEquals("78 %", view.services.single().characteristics.single().valueText)
         assertEquals(view, core.deviceGatt(jbl))
         try { core.ingestGatt("{}"); fail() } catch (_: CoreException.InvalidPayload) {}
+    }
+
+    /** AGENTS.md crash rules: every binding failure is typed; a Rust panic (InternalException) is Internal. */
+    /** SPEC R-10 through the bindings: typed results (this shared fixture has no uploaded raw files). */
+    @Test
+    fun storageFullCallsReturnResults() = runBlocking {
+        val r = core.reclaimable()
+        assertTrue("$r", r is CoreResult.Ok && r.value.localDatabaseBytes >= 0 && r.value.uploadedRawBytes == 0L)
+        assertEquals(CoreResult.Ok(0L), core.deleteUploadedRaw())
+        val full = bindingFailure(edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.StorageFull(5uL))
+        assertEquals(5L, (full as? CoreException.StorageFull)?.freeBytes)
+        val failed = result<Unit> { throw GInternalException("x") }
+        assertTrue("$failed", failed is CoreResult.Err && failed.error is CoreException.Internal)
+    }
+
+    @Test
+    fun bindingFailuresAreTyped() {
+        assertTrue(bindingFailure(GInternalException("boom")) is CoreException.Internal)
+        assertTrue(bindingFailure(edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.NotRecording()) is CoreException.NotRecording)
+        assertTrue(bindingFailure(edu.ucsd.sysnet.cluetoothscanner.core.generated.CoreErrorV2.Cancelled()) is kotlin.coroutines.cancellation.CancellationException)
+        assertTrue(bindingFailure(IllegalStateException("x")) is CoreException.Internal)
+        val c = kotlin.coroutines.cancellation.CancellationException("scope")
+        assertTrue(bindingFailure(c) === c)
     }
 }

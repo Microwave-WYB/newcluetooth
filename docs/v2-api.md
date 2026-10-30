@@ -139,10 +139,10 @@ There is **one process** (owner decision). The recording must survive the UI goi
 |---|---|---|
 | main | Android | Compose, MapLibre, scan callbacks (posted off immediately) |
 | `scan-batcher` | B: `Dispatchers.IO.limitedParallelism(1)` | batches ≤ 64 observations / 250 ms and calls `ingest_scans` |
-| `ct-writer` | A: Rust `std::thread` | the only DB and Parquet writer: drains the ingest queue, keeps the live state, appends staging and commits every `durability_interval_ms`, ticks the live snapshot every 1 s |
-| `ct-notify` | A | calls `CoreListener.on_live` / `on_event`; coalesces while Kotlin is busy |
-| `ct-read-1`, `ct-read-2` | A | slow, cancellable queries (§2.5 kind V), each on its own read connection |
-| `ct-read-fast` | A | point queries on a reserved read connection, so paging never waits behind a slow query |
+| `ct-writer` | A: Rust `std::thread` | the only DB and Parquet writer: owns the store, the pending buffers and the live state; drains its inbox (ingest, recording, GATT, ticks); appends staging and commits every `durability_interval_ms` |
+| `ct-tick` | A | sends the writer the commit tick every `durability_interval_ms`, so a recording commits (and flips staleness) even when no scans arrive |
+| `ct-notify` | A | owns the listener; calls `CoreListener.on_live` / `on_event`; coalesces while Kotlin is busy |
+| `ct-read` | A | the one reader: owns the read connection and the latest immutable snapshot from the writer, and runs every query ([P] and [V]) in arrival order |
 | caller coroutines | UI on `Dispatchers.IO` | await async exports; cancelling the coroutine cancels the query |
 | WorkManager worker | B | `prepare_upload` → Firebase `putFile` → `mark_upload_*` |
 | GATT runner | B: one coroutine + binder callbacks | at most one discovery at a time |
@@ -151,9 +151,13 @@ Rules:
 
 - No core call runs on the main thread.
 - Ingest calls only enqueue.
-- Queries never take the writer's lock. They read SQLite in WAL mode or the immutable live snapshot (`Arc`).
-- Upload, export and delete take a file lock that is separate from the writer, so encryption never stalls ingest.
-  Lane A splits today's single `Mutex<CoreInner>`.
+- No locks (AGENTS.md): each thread owns its state, and threads talk through queues, with a one-shot reply when a
+  caller needs an answer.
+- Queries never wait for the writer. The reader reads SQLite in WAL mode with the immutable snapshot the writer
+  sends it (display filter, live session, current RSSI); a call that changes what reads see (the display filter,
+  start, stop, ingest) returns only after the writer has queued its snapshot, so a later query sees it.
+- One reader is enough until measurements show queueing latency; only then does it become a pool.
+- Upload, export and delete run off the writer, so encryption never stalls ingest.
 
 ### 1.4 Data flow
 
@@ -179,7 +183,7 @@ The data directory is `filesDir/cluetooth-core/`, the same as v3, so the in-plac
 |---|---|---|
 | `pending/scans/v3/…/<uuid>.parquet` (`v2/` for older) | sealed plaintext payloads awaiting upload | until upload succeeds, then moved to `archive/` |
 | `pending/gatt/v1/…/<uuid>.json` | plaintext gatt/v1 awaiting upload | same |
-| `archive/sessions/<session>/scans/…`, `archive/gatt/v1/…` | uploaded plaintext | **kept permanently**; removed only by Delete local data |
+| `archive/sessions/<session>/scans/…`, `archive/gatt/v1/…` | uploaded plaintext | kept; removed only by Delete local data or "Delete uploaded raw files" (§2.4.1) |
 | `upload-cache/<object path>.encrypted` | ciphertext | transient (§1.6) |
 | `upload-state/`, `active-payload/`, `export-temp/` | as v3 | as v3 |
 | `sessions/*.json` | pre-v2 session metadata | kept; these sessions are not imported into the DB |
@@ -239,22 +243,23 @@ Notation is proc-macro pseudocode. The tag after each call gives its threading m
 |---|---|---|
 | **[N]** | Non-blocking: memory or an enqueue | any background thread |
 | **[W]** | Applied by the writer; returns when applied (≤ 1 tick) | `Dispatchers.IO` |
-| **[P]** | Point query: `async`, on `ct-read-fast`; cheap (≤ 20 ms), never superseded | `suspend` |
-| **[V]** | Viewport or filter query: `async`, on `ct-read-1/2`; **cancellable**; superseded per kind (below) | `suspend` |
+| **[P]** | Point query: `async`, on `ct-read`; cheap (≤ 20 ms); cancellable | `suspend` |
+| **[V]** | Viewport or filter query: `async`, on `ct-read`; **cancellable** (below) | `suspend` |
 | **[F]** | File I/O under the file lock (upload, export, delete); `async` and cancellable where marked | `suspend` / worker |
 
-**Cancellation.** Every [P], [V] and [F] query is an `async` UniFFI export. The query runs on a core read thread,
-and the future awaits it through a oneshot channel, so no async runtime is needed.
+**Cancellation.** Every [P], [V] and [F] query is an `async` UniFFI export. The query is a job in `ct-read`'s
+queue, and the future awaits its one-shot reply, so no async runtime is needed. Cancellation is the caller
+dropping the future:
 
-- **Cancel on drop.** If the Kotlin coroutine is cancelled, the generated binding cancels the Rust future, and
-  dropping the future runs a guard that calls the connection's `InterruptHandle::interrupt()` (`sqlite3_interrupt`).
-  The query stops at its next VM step and returns `CoreError::Cancelled`.
-- **Latest wins.** For each [V] kind, the core keeps only the latest request. A new request of the same kind
-  interrupts the running one, which returns `CoreError::Superseded`. The kinds are `MapPoints`, `Routes`,
-  `AreaProducts` (products with an area or filter), `AreaKeys` (`device_keys` and `category_counts`) and `Search`.
-  The callers that drive them (the camera and search) only ever want the newest result.
-- **Kotlin side.** `:core-bridge` maps `Cancelled` and `Superseded` to `CancellationException`, and its callers use
-  `mapLatest`/`collectLatest`.
+- **Not started:** the reader skips the job when its reply has been dropped.
+- **In flight:** dropping the future calls the read connection's `InterruptHandle::interrupt()`
+  (`sqlite3_interrupt`); the query stops at its next VM step with `CoreError::Cancelled`. An interrupt that lands on
+  the next query instead (the cancelled one had just finished) is harmless: a query whose caller still waits runs
+  again.
+- **There is no `Superseded`** and no per-kind latest-wins in the core. Callers that only want the newest result
+  (the camera, search) use `mapLatest`/`collectLatest`: cancelling the previous coroutine drops its future, which
+  cancels its query as above.
+- **Kotlin side.** `:core-bridge` maps `Cancelled` to `CancellationException`.
 - **Test fallback.** Lane A's DoD includes a test that cancellation reaches SQLite. If UniFFI's Kotlin cancel path
   does not drop the future, an explicit `CancelToken` object (`fn cancel(&self)`) is added as a trailing parameter.
   That is an additive change.
@@ -380,6 +385,7 @@ pub struct RecordingState {
     pub phase: RecordingPhase, pub session_id: Option<String>, pub started_ms: Option<i64>,
     pub active_before_ms: i64, pub running_since_ms: Option<i64>,  // elapsed = before + (now − since); UI ticks locally
     pub device_count: u32, pub distance_m: f64,                   // shown devices (display filter applied)
+    pub paused_for_storage: bool,                                 // SPEC R-10 pause (§2.4.1)
 }
 
 #[uniffi::export(with_foreign)]
@@ -403,7 +409,8 @@ impl Core {
 
     pub fn start_recording(&self, env: ScanEnvironment) -> Result<String, CoreError>;  // [W] new UUIDv7
     pub fn pause_recording(&self) -> Result<(), CoreError>;          // [W] append + commit; ingest ignored while paused
-    pub fn resume_recording(&self) -> Result<(), CoreError>;         // [W] same session
+    pub fn resume_recording(&self) -> Result<(), CoreError>;         // [W] same session; after a storage-full
+                                                                     //     pause Err(StorageFull) below the floor
     pub fn stop_recording(&self) -> Result<String, CoreError>;       // [W] append + commit, seal, simplify route,
                                                                      //     finalize counts; returns the session id
     pub fn configure_scan(&self, env: ScanEnvironment) -> Result<(), CoreError>; // [W] footer change mid-session
@@ -423,8 +430,9 @@ recorded in `session_pauses`.
 
 impl Core {
     pub fn ingest_scans(&self, batch: Vec<ScanObservationInput>) -> Result<IngestAck, CoreError>;
-    // [N] validates (v3 rules: ≤ 64 rows, ≤ 1 MiB, raw ≤ 1650 B) and enqueues; blocks ≤ 1 s when the queue
-    //     (256 batches) is full, then Err(Backpressure): the caller keeps the batch and retries
+    // [W] validates (v3 rules: ≤ 64 rows, ≤ 1 MiB, raw ≤ 1650 B) and buffers until the next commit.
+    //     Err(Backpressure) while commits keep failing and the buffer is at its cap: keep the batch and retry.
+    //     Err(StorageFull) while paused for storage (§2.4.1): the batch cannot be stored; drop and count it.
     pub fn ingest_location(&self, fix: LocationFix);                 // [N] fix ring + route (≤ 100 m accuracy, ≥ 5 m or 30 s)
     pub fn clear_location(&self);                                    // [N]
     pub fn new_gatt_discovery_id(&self) -> Result<String, CoreError>;          // [N]
@@ -460,6 +468,40 @@ The writer, per observation and then per interval:
    Parquet.
 
 Frozen views of a scope that includes the current session lag ≤ 5 s. The live view always reads memory.
+
+**Bounded buffer.** The pending buffer is capped at 20,000 rows or 16 MiB (the v3 input estimate). A batch that
+would pass the cap commits at once. A commit that fails for another reason keeps its batch (StorageWarning) and
+backs off: the next interval commit waits the interval, doubled per failure, at most 60 s. While commits fail and
+the buffer is at its cap, `ingest_scans` returns `Backpressure`, so memory stays below the cap plus one batch.
+
+#### 2.4.1 Storage full (SPEC R-10)
+
+```rust
+#[derive(uniffi::Record)] pub struct Reclaimable { pub free_bytes: u64, pub uploaded_raw_bytes: u64, pub local_database_bytes: u64 }
+
+impl Core {
+    pub async fn reclaimable(&self) -> Result<Reclaimable, CoreError>;     // [W] free space and what each action frees
+                                                                           //     (the database figure is an estimate)
+    pub async fn delete_uploaded_raw(&self) -> Result<u64, CoreError>;     // [W] archive/ only; bytes freed
+    pub async fn clear_local_database(&self) -> Result<u64, CoreError>;    // [W] every session but the current one;
+                                                                           //     files kept; vacuums; bytes freed
+}
+```
+
+- **Stop writing.** Every commit tick reads the data volume's free space (`statvfs`). Below 200 MB, or when a
+  commit fails with `SQLITE_FULL`/`ENOSPC`, the writer stops writing: the pending rows are dropped and counted, the
+  recording pauses (`paused_for_storage`), the session stays open, and `CoreEvent::StorageFull { free_bytes,
+  dropped_scans }` is emitted. Everything committed before stays. A stop whose commit fails for lack of space still
+  finishes the session at its committed data.
+- **While paused for storage** `ingest_scans` returns `Err(StorageFull)`.
+- **Resume** is the UI's call. It returns `Err(StorageFull)` while free space is still below the floor; above it,
+  recording continues in the same session. A user pause is not a storage pause: its resume needs no free space.
+- **Delete uploaded raw files** removes the regular files under `archive/` (uploaded plaintext). `pending/` and the
+  upload markers are never touched.
+- **Clear local database** deletes every session except the current one with its rows, the GATT discoveries outside
+  it and the payloads nothing references any more, recomputes the devices, then `VACUUM`s. No file is touched, so
+  un-uploaded raw files still upload. When both actions are chosen, run Delete uploaded raw files first: the vacuum
+  needs some free room.
 
 ### 2.5 Queries (SPEC B)
 
@@ -613,6 +655,7 @@ pub enum CoreEvent {
     DataInvalidated { reason: String },    // display filter, re-match done, delete: re-query the open scope
     UploadNeeded,                          // a payload or GATT file was sealed
     StorageWarning { message: String },    // also covers persistence failures
+    StorageFull { free_bytes: u64, dropped_scans: u64 },  // SPEC R-10: writing stopped, recording paused (§2.4.1)
 }
 ```
 
@@ -748,7 +791,8 @@ pub enum CoreError {
     SchemaTooNew { found: u32, supported: u32 },    // an older build opened a newer local.db
     InvalidBundle { detail: String },               // wiki bundle schema/vocabulary violation
     Backpressure, NotRecording, AlreadyRecording, Closed,
-    Cancelled, Superseded,                          // §2 cancellation; Kotlin maps both to CancellationException
+    StorageFull { free_bytes: u64 },                // SPEC R-10 (§2.4.1)
+    Cancelled,                                      // §2 cancellation; Kotlin maps it to CancellationException
 }
 ```
 
@@ -802,7 +846,7 @@ The file is `filesDir/cluetooth-core/local.db`, opened with `rusqlite` (features
 available.
 
 The DB runs with `PRAGMA journal_mode=WAL; synchronous=NORMAL; foreign_keys=ON; temp_store=MEMORY`. It has one
-writer connection and three read connections (§1.3).
+writer connection (`ct-writer`) and one read connection (`ct-read`, §1.3).
 
 ### 3.1 Alignment with the research DB
 
@@ -1145,7 +1189,7 @@ reference host**: CachyOS on `cachyos`, 16 cores, 29 GB RAM, NVMe, release build
 | `device_keys(All, filter)` | index-only `devices_order` with `page_id IN …` | 600 k entries | 500 ms |
 | `device_keys(All, area)` | R*Tree + sort | k | 50 ms at 10 k |
 | `device_rows(200)`, `device`, `device_sightings` | PK and index lookups | small | 5–10 ms |
-| `search(All, q)` | `devices_named` + addr scan in Rust | 600 k | 300 ms (debounced 150 ms, superseded); with area ≤ 30 ms |
+| `search(All, q)` | `devices_named` + addr scan in Rust | 600 k | 300 ms (debounced 150 ms; a newer search cancels the older); with area ≤ 30 ms |
 | one session (any query) | `session_devices` (≤ 20 k rows) and its R*Tree | ≤ 20 k | ≤ 30 ms |
 | union `U(:ids)`, any query | window scan of the sessions' `session_devices` + `session_device_payloads` | Σ rows | ≈ 4 µs × Σ rows: 10 sessions (≈ 5 k devices, 8 k payload rows) ≈ 50 ms; 100 sessions ≈ 0.5 s; a year (≈ 350 k rows) ≈ 2–3 s **per query**. The UI does not build these in v2.0; multi-select must add a cache, which is not an API change. |
 
@@ -1440,6 +1484,10 @@ interface CoreStorage {
     suspend fun prepareExport(scope: Scope, format: ExportFormat): PreparedExport
     suspend fun acknowledgeExport(id: String)
     suspend fun deleteLocalData(scope: Scope, includeUnuploaded: Boolean): DeleteOutcome
+    // SPEC R-10 (§2.4.1), typed results (AGENTS.md): CoreResult<T> = Ok(value) | Err(CoreException)
+    suspend fun reclaimable(): CoreResult<Reclaimable>
+    suspend fun deleteUploadedRaw(): CoreResult<Long>
+    suspend fun clearLocalDatabase(): CoreResult<Long>
 }
 interface CoreIngest { /* platform only: ingestScans, ingestLocation, clearLocation, newGattDiscoveryId, gattTarget,
     ingestGatt, start/pause/resume/stopRecording, configureScan, recordingState, setDisplayFilter, uploads */ }
@@ -1698,8 +1746,8 @@ contracts. "I" is integration.
     - the three export formats: ParquetRaw byte-identical, CSV round-trip equal to the Parquet values, and the
       snapshot schema equal to the research-aligned DDL;
     - delete with and without un-uploaded data;
-    - cancellation: a cancelled coroutine interrupts SQLite within 50 ms, and a superseded [V] query returns
-      `Superseded`;
+    - cancellation: a cancelled coroutine interrupts SQLite within 50 ms, and a dropped query that has not
+      started never runs;
     - the bundle exporter (Node tests): vocabulary violations fail, vulnerability links resolve, decoders are
       bundled verbatim.
   - The bench `cargo run --release --example bench_queries` on a synthetic 3-year DB meets ⅕ of the §3.7 budgets on
@@ -1815,7 +1863,7 @@ contracts. "I" is integration.
 - **Provides:** `CluetoothMap(state, events: MapEvents)`, the `MapRequests` implementation, `RouteMiniMap` and
   `MapCacheInfo`.
 - **GeoJSON updates:**
-  - devices and density from `MapData` on idle, scope or filter change (superseded queries are dropped);
+  - devices and density from `MapData` on idle, scope or filter change (a newer query cancels the older through `collectLatest`);
   - live `best` changes at most every 5 s;
   - sightings on selection.
 - **Consumes:** `CoreQueries` (`:core-fake`), `LocationStatusSource` (`FakeLocationStatus`) and `:designsystem`.

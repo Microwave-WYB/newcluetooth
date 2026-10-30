@@ -222,7 +222,7 @@ impl Catalog {
     }
 
     pub fn page(&self, id: &str) -> Option<&Page> {
-        self.index.get(id).map(|&i| &self.pages[i])
+        self.index.get(id).and_then(|&i| self.pages.get(i))
     }
 
     /// Bundle order of a page (the initial card order, §2.5).

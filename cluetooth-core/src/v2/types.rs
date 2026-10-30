@@ -174,6 +174,8 @@ pub struct RecordingState {
     /// Shown devices (display filter applied).
     pub device_count: u32,
     pub distance_m: f64,
+    /// SPEC R-10: paused because storage is full; resume needs free space above the floor.
+    pub paused_for_storage: bool,
 }
 
 // ---- §2.4 Ingest ----
@@ -481,6 +483,21 @@ pub enum CoreEvent {
     StorageWarning {
         message: String,
     },
+    /// SPEC R-10: writing stopped and the recording paused; `dropped_scans` buffered rows could not be stored.
+    StorageFull {
+        free_bytes: u64,
+        dropped_scans: u64,
+    },
+}
+
+/// SPEC R-10: the space each storage-full action would free, and the free space now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct Reclaimable {
+    pub free_bytes: u64,
+    /// `delete_uploaded_raw`: uploaded raw files (`archive/`).
+    pub uploaded_raw_bytes: u64,
+    /// `clear_local_database`: an estimate; the call returns what it actually freed.
+    pub local_database_bytes: u64,
 }
 
 // ---- §2.7 GATT view ----

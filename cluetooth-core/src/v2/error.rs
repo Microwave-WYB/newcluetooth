@@ -30,6 +30,9 @@ pub enum CoreError {
     InvalidBundle { detail: String },
     #[error("the ingest queue is full")]
     Backpressure,
+    /// SPEC R-10: the data volume is (almost) out of space; writing stopped and the recording paused.
+    #[error("storage is full ({free_bytes} bytes free)")]
+    StorageFull { free_bytes: u64 },
     #[error("no recording is active")]
     NotRecording,
     #[error("a recording is already active")]
@@ -39,9 +42,6 @@ pub enum CoreError {
     /// The caller dropped the query; Kotlin maps it to `CancellationException`.
     #[error("the query was cancelled")]
     Cancelled,
-    /// A newer query of the same kind replaced it; Kotlin maps it to `CancellationException`.
-    #[error("the query was superseded")]
-    Superseded,
 }
 
 impl From<crate::CoreError> for CoreError {

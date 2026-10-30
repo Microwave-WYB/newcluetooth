@@ -3,7 +3,7 @@
 /// `AA:BB:CC:DD:EE:FF` (case-insensitive) → `0xAABBCCDDEEFF`; `None` unless it is exactly that form.
 pub(crate) fn key_of(addr: &str) -> Option<i64> {
     let bytes = addr.as_bytes();
-    if bytes.len() != 17 || (0..5).any(|i| bytes[i * 3 + 2] != b':') {
+    if bytes.len() != 17 || (0..5).any(|i| bytes.get(i * 3 + 2) != Some(&b':')) {
         return None;
     }
     let hex: String = addr.split(':').collect();

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use serde_json::Value as Json;
 
 use super::core::Core;
+use super::error::CoreError;
 use super::keys::{addr_of, key_of};
 use super::types::*;
 use crate::{LocationFix, ScanEnvironment, ScanObservationInput};
@@ -202,14 +203,7 @@ pub(crate) fn world() -> World {
 }
 
 fn block<F: std::future::Future>(f: F) -> F::Output {
-    // The [P]/[V] futures of this slice complete on the first poll.
-    let waker = std::task::Waker::noop();
-    let mut cx = std::task::Context::from_waker(waker);
-    let mut f = std::pin::pin!(f);
-    match f.as_mut().poll(&mut cx) {
-        std::task::Poll::Ready(v) => v,
-        std::task::Poll::Pending => panic!("query future did not complete"),
-    }
+    futures_executor::block_on(f)
 }
 
 fn keys(k: &DeviceKeys) -> Vec<i64> {
@@ -569,9 +563,11 @@ fn display_filter_matches_the_fake() {
     let hidden = w.devices.values().filter(|d| !shown(d)).count();
     assert!(hidden > 0);
     let shown_n = keys(&block(w.core.device_order(ALL)).unwrap()).len();
-    w.core.set_display_filter(DisplayFilter {
-        hide_unnamed_apple: false,
-    });
+    w.core
+        .set_display_filter(DisplayFilter {
+            hide_unnamed_apple: false,
+        })
+        .unwrap();
     let all_n = keys(&block(w.core.device_order(ALL)).unwrap()).len();
     assert_eq!(all_n, shown_n + hidden);
     assert_eq!(
@@ -611,7 +607,7 @@ fn device_detail_matches_the_fake() {
 fn every_payload_round_trips() {
     let w = world();
     let raws: BTreeSet<Vec<u8>> = w.devices.values().map(|d| d.raw.clone()).collect();
-    w.core.with_writer_conn(|conn| {
+    w.core.with_writer_conn(move |conn| {
         let ids: Vec<i64> = conn
             .prepare("SELECT id FROM payloads")
             .unwrap()
@@ -698,7 +694,7 @@ fn live_deltas_per_commit() {
     )
     .unwrap();
     let c = Arc::new(Collect::default());
-    core.set_listener(Some(c.clone()));
+    core.set_listener(Some(c.clone())).unwrap();
     let id = core.start_recording_at(env(), t0).unwrap();
     let live = Scope {
         sessions: SessionScope::Sessions {
@@ -885,7 +881,7 @@ fn gatt_target_comes_from_the_latest_sighting() {
         .iter()
         .find(|(_, d)| d.name.as_deref() == Some("JBL Flip 6"))
         .unwrap();
-    let t = block(w.core.gatt_target(*key)).unwrap();
+    let t = block(w.core.gatt_target(*key)).unwrap().unwrap();
     assert_eq!(t.addr, addr_of(*key));
     assert_eq!(t.addr_type.as_deref(), Some("random"));
     assert_eq!(t.name.as_deref(), Some("JBL Flip 6"));
@@ -901,7 +897,11 @@ fn gatt_target_comes_from_the_latest_sighting() {
     );
     assert!(t.trigger_rssi.is_some());
     assert!(t.session_id.is_none());
-    assert!(block(w.core.gatt_target(0x0102_0304_0506)).is_none());
+    assert!(
+        block(w.core.gatt_target(0x0102_0304_0506))
+            .unwrap()
+            .is_none()
+    );
     // a device seen only in the current recording's uncommitted batch
     let id = w.core.start_recording_at(env(), 1_800_000_000_000).unwrap();
     let raw = vec![2, 1, 6, 4, 9, b'N', b'e', b'w'];
@@ -928,7 +928,7 @@ fn gatt_target_comes_from_the_latest_sighting() {
             1_800_000_000_100,
         )
         .unwrap();
-    let t = block(w.core.gatt_target(0xC0FFEE000009)).unwrap();
+    let t = block(w.core.gatt_target(0xC0FFEE000009)).unwrap().unwrap();
     assert_eq!(t.addr, "C0:FF:EE:00:00:09");
     assert_eq!(t.addr_type.as_deref(), Some("public"));
     assert_eq!(t.name.as_deref(), Some("New"));
@@ -1000,7 +1000,7 @@ fn ingest_gatt_stores_the_run_and_the_device_opens_on_it() {
         "{found:?}"
     );
     // rows
-    w.core.with_writer_conn(|c| {
+    w.core.with_writer_conn(move |c| {
         let (n, linked): (i64, Option<i64>) = c
             .query_row(
                 "SELECT count(*), max(session_id) FROM gatt_discoveries",
@@ -1069,7 +1069,10 @@ fn gatt_partial_stops_at_the_failed_step() {
         v.steps[2].failure,
         Some(GattFailure::DisconnectedUnexpectedly)
     );
-    assert_eq!(v.services.len(), 2);
+    assert!(
+        v.services.is_empty(),
+        "D-13.6: services show only after a complete run"
+    );
 }
 
 fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -1085,4 +1088,727 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         }
     }
     out
+}
+
+/// A failed commit loses nothing and misattributes nothing: the batch and route go back to pending, and the
+/// payload ids the rolled-back transaction handed out are forgotten, so the retry re-inserts the payload instead
+/// of pointing its rows at whichever payload SQLite gives the freed id to next.
+#[test]
+fn failed_commit_is_retried_without_loss_or_misattribution() {
+    let dir = tempfile::tempdir().unwrap();
+    let t0 = 1_761_000_000_000i64;
+    let core = Core::open_at(
+        config(dir.path()),
+        CoreAssets {
+            wiki_bundle_json: resource("fake-bundle.json"),
+            sig_numbers_tsv: String::new(),
+        },
+        t0,
+    )
+    .unwrap();
+    let c = Arc::new(Collect::default());
+    core.set_listener(Some(c.clone())).unwrap();
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_location_at(LocationFix {
+        lat: 32.88,
+        lon: -117.234,
+        accuracy_meters: 5.0,
+        observed_at_ms: t0 + 1_000,
+        elapsed_realtime_nanos: 1_000_000_000,
+    });
+    core.ingest_scans_at(
+        vec![obs(
+            "AA:00:00:00:00:01",
+            -70,
+            t0 + 1_000,
+            1_000_000_000,
+            "Alpha",
+        )],
+        t0 + 1_000,
+    )
+    .unwrap();
+    // the commit at +5 s fails after writing everything
+    core.fail_next_commit();
+    let ack = core
+        .ingest_scans_at(
+            vec![obs(
+                "AA:00:00:00:00:01",
+                -60,
+                t0 + 5_000,
+                5_000_000_000,
+                "Alpha",
+            )],
+            t0 + 5_000,
+        )
+        .unwrap();
+    assert_eq!(ack.accepted, 1, "a failed commit still accepts the batch");
+    for _ in 0..200 {
+        if c.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, CoreEvent::StorageWarning { .. }))
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        c.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, CoreEvent::StorageWarning { .. }))
+    );
+    core.with_writer_conn(move |conn| {
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM payloads", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "the failed transaction rolled back");
+    });
+    // a new payload arrives before the retry: it must not take over Alpha's freed id
+    core.ingest_scans_at(
+        vec![obs(
+            "AA:00:00:00:00:02",
+            -50,
+            t0 + 10_000,
+            10_000_000_000,
+            "Bravo",
+        )],
+        t0 + 10_000,
+    )
+    .unwrap();
+    core.stop_recording_at(t0 + 11_000).unwrap();
+    core.with_writer_conn(move |conn| {
+        let rows: Vec<(i64, i64, i64)> = conn
+            .prepare(
+                "SELECT addr, payload_id, sightings FROM sighting_minutes ORDER BY addr, minute",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let mut by_addr: HashMap<i64, i64> = HashMap::new();
+        for (addr, payload, sightings) in &rows {
+            let raw = super::store::payload_raw(conn, *payload).unwrap();
+            let name = if *addr == 0xAA0000000001 {
+                "Alpha"
+            } else {
+                "Bravo"
+            };
+            assert!(
+                raw.ends_with(name.as_bytes()),
+                "{addr:x} points at a payload of the other device"
+            );
+            *by_addr.entry(*addr).or_default() += sightings;
+        }
+        assert_eq!(
+            by_addr[&0xAA0000000001], 2,
+            "both sightings of the failed batch were kept"
+        );
+        assert_eq!(by_addr[&0xAA0000000002], 1);
+        let route: i64 = conn
+            .query_row("SELECT count(*) FROM route_points", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(route, 1, "the route point of the failed commit was kept");
+        let names: Vec<Option<String>> = conn
+            .prepare("SELECT name FROM session_devices ORDER BY addr")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(names, vec![Some("Alpha".into()), Some("Bravo".into())]);
+    });
+    let rows = block(core.device_rows(
+        Scope {
+            sessions: SessionScope::Sessions { ids: vec![id] },
+            filter: None,
+        },
+        vec![0xAA0000000001, 0xAA0000000002],
+    ))
+    .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.rssi).collect::<Vec<_>>(),
+        vec![Some(-60), Some(-50)]
+    );
+}
+
+fn fresh_core(t0: i64) -> (Arc<Core>, tempfile::TempDir, Arc<Collect>) {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open_at(
+        config(dir.path()),
+        CoreAssets {
+            wiki_bundle_json: resource("fake-bundle.json"),
+            sig_numbers_tsv: String::new(),
+        },
+        t0,
+    )
+    .unwrap();
+    let c = Arc::new(Collect::default());
+    core.set_listener(Some(c.clone())).unwrap();
+    (core, dir, c)
+}
+
+fn fix_at(at: i64, nanos: u64) -> LocationFix {
+    LocationFix {
+        lat: 32.88,
+        lon: -117.234,
+        accuracy_meters: 5.0,
+        observed_at_ms: at,
+        elapsed_realtime_nanos: nanos,
+    }
+}
+
+/// Actor ordering: a fix told before a batch is applied first (the batch gets it); the 5 s tick commits without
+/// scans, persists the route, and flips staleness; queries sent after a reply see the writer's state.
+#[test]
+fn writer_messages_apply_in_order_and_the_tick_commits_without_scans() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    let live = Scope {
+        sessions: SessionScope::Sessions { ids: vec![id] },
+        filter: None,
+    };
+    core.ingest_location_at(fix_at(t0 + 1_000, 1_000_000_000)); // no reply: queued before the scans
+    core.ingest_scans_at(
+        vec![obs(
+            "AA:00:00:00:00:01",
+            -60,
+            t0 + 1_000,
+            1_000_000_000,
+            "A",
+        )],
+        t0 + 1_000,
+    )
+    .unwrap();
+    assert_eq!(core.pending_len(), 1, "no commit before the interval");
+    assert!(keys(&block(core.device_order(live.clone())).unwrap()).is_empty());
+    // no more scans: the tick commits at +6 s
+    core.tick_at(t0 + 4_999);
+    assert_eq!(core.pending_len(), 1);
+    core.tick_at(t0 + 6_000);
+    assert_eq!(core.pending_len(), 0);
+    let rows = block(core.device_rows(live.clone(), vec![0xAA0000000001])).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0].best.is_some(),
+        "the fix told first reached the sighting"
+    );
+    let d = wait_for(&c, 1);
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].route_appended.len(), 1, "the tick persisted the route");
+    // still no scans: the next ticks flip the device out of range
+    core.tick_at(t0 + 11_000);
+    core.tick_at(t0 + 26_000);
+    let d = wait_for(&c, 2);
+    assert!(
+        d.iter()
+            .flat_map(|d| &d.changed)
+            .any(|x| x.key == 0xAA0000000001 && !x.in_range)
+    );
+    assert!(d.windows(2).all(|w| w[0].seq < w[1].seq));
+    // paused: the tick commits nothing and emits no delta
+    core.pause_recording_at(t0 + 27_000).unwrap();
+    let n = wait_for(&c, 3).len();
+    core.tick_at(t0 + 99_000);
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert_eq!(c.deltas.lock().unwrap().len(), n);
+}
+
+/// §2 cancellation: dropping a running query interrupts SQLite; a dropped query that has not started never runs;
+/// a query hit by an interrupt meant for another one runs again.
+#[test]
+fn dropping_a_query_cancels_it() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (core, _dir, _c) = fresh_core(1_761_000_000_000);
+    let endless =
+        "WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r) SELECT count(*) FROM r";
+    let started = Arc::new(AtomicUsize::new(0));
+    let s = started.clone();
+    let running = core.read(move |c, _| {
+        s.fetch_add(1, Ordering::SeqCst);
+        Ok(c.query_row(endless, [], |r| r.get::<_, i64>(0))?)
+    });
+    let ran = Arc::new(AtomicUsize::new(0));
+    let r = ran.clone();
+    let queued = core.read(move |_, _| {
+        r.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    });
+    for _ in 0..200 {
+        if started.load(Ordering::SeqCst) > 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    drop(queued); // not started yet: skipped
+    let t = std::time::Instant::now();
+    drop(running); // in flight: interrupted
+    let after = block(core.device_order(ALL)).unwrap();
+    assert!(keys(&after).is_empty());
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(2),
+        "the endless query was interrupted"
+    );
+    assert_eq!(
+        ran.load(Ordering::SeqCst),
+        0,
+        "a dropped query that had not started never ran"
+    );
+    // an interrupt that reaches a live query (meant for one that just ended) makes it run again
+    let calls = Arc::new(AtomicUsize::new(0));
+    let k = calls.clone();
+    let v = block(core.read(move |_, _| {
+        if k.fetch_add(1, Ordering::SeqCst) == 0 {
+            Err(super::CoreError::Cancelled)
+        } else {
+            Ok(42)
+        }
+    }))
+    .unwrap();
+    assert_eq!(v, 42);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+/// A failed tick commit, pause or stop keeps everything and the recording goes on; the next attempt stores it.
+#[test]
+fn failed_tick_pause_and_stop_commits_are_retried() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(
+        vec![obs("AA:00:00:00:00:01", -60, t0 + 1_000, 1, "A")],
+        t0 + 1_000,
+    )
+    .unwrap();
+    core.fail_next_commit();
+    core.tick_at(t0 + 6_000);
+    assert_eq!(core.pending_len(), 1, "the failed tick kept the batch");
+    core.fail_next_commit();
+    assert!(core.pause_recording_at(t0 + 7_000).is_err());
+    assert_eq!(
+        core.recording_state().unwrap().phase,
+        RecordingPhase::Recording
+    );
+    core.fail_next_commit();
+    assert!(core.stop_recording_at(t0 + 8_000).is_err());
+    assert_eq!(
+        core.recording_state().unwrap().session_id.as_deref(),
+        Some(id.as_str())
+    );
+    assert_eq!(core.pending_len(), 1);
+    assert_eq!(core.stop_recording_at(t0 + 9_000).unwrap(), id);
+    let n: i64 = core.with_writer_conn(|c| {
+        c.query_row("SELECT sum(sightings) FROM sighting_minutes", [], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    });
+    assert_eq!(n, 1);
+    for _ in 0..200 {
+        if c.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, CoreEvent::StorageWarning { .. }))
+            .count()
+            >= 3
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let warnings = c
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| matches!(e, CoreEvent::StorageWarning { .. }))
+        .count();
+    assert_eq!(warnings, 3);
+}
+
+/// A fixed-seed interleaving of ingest, fixes, ticks, injected commit failures, start/pause/resume/stop and
+/// queries. Invariants: every accepted observation is stored exactly once, in its session, under its own
+/// payload; queries never fail; delta seqs grow within a session; nothing stays pending after the last stop.
+#[test]
+fn randomized_interleavings_keep_the_invariants() {
+    for seed in [1u64, 7, 42, 2026] {
+        randomized(seed);
+    }
+}
+
+fn randomized(seed: u64) {
+    let mut state = seed;
+    let mut rnd = move |n: u64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) % n
+    };
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    // six devices, two advertisement variants each
+    let names = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"];
+    let mut now = t0;
+    let mut nanos = 0u64;
+    let mut session: Option<String> = None;
+    let mut paused = false;
+    // (session, addr, raw) -> accepted count
+    let mut expected: HashMap<(String, i64, Vec<u8>), i64> = HashMap::new();
+    for _ in 0..400 {
+        now += 1 + rnd(3_000) as i64;
+        nanos += 1_000_000 + rnd(3_000_000_000);
+        match rnd(100) {
+            0..=44 => {
+                let d = rnd(6) as usize;
+                let name = format!("{}{}", names[d], if rnd(2) == 0 { "" } else { "-2" });
+                let addr = format!("AA:00:00:00:00:0{}", d + 1);
+                let o = obs(&addr, -40 - rnd(50) as i16, now, nanos, &name);
+                let raw = o.raw.clone();
+                let ack = core.ingest_scans_at(vec![o], now).unwrap();
+                if ack.accepted == 1 {
+                    let s = session.clone().expect("accepted only while recording");
+                    *expected
+                        .entry((s, 0xAA00_0000_0000 + d as i64 + 1, raw))
+                        .or_default() += 1;
+                } else {
+                    assert!(session.is_none() || paused);
+                }
+            }
+            45..=54 => core.ingest_location_at(fix_at(now, nanos)),
+            55..=69 => core.tick_at(now),
+            70..=74 => core.fail_next_commit(),
+            75..=79 => {
+                if session.is_none() {
+                    session = Some(core.start_recording_at(env(), now).unwrap());
+                    paused = false;
+                }
+            }
+            80..=84 => match core.pause_recording_at(now) {
+                Ok(()) => paused = session.is_some(),
+                Err(_) => assert!(
+                    session.is_some() || core.recording_state().unwrap().session_id.is_none()
+                ),
+            },
+            85..=87 => {
+                if core.resume_recording_at(now).is_ok() {
+                    paused = false;
+                }
+            }
+            88..=91 => {
+                if core.stop_recording_at(now).is_ok() {
+                    session = None;
+                    paused = false;
+                }
+            }
+            _ => {
+                let scope = match &session {
+                    Some(s) => Scope {
+                        sessions: SessionScope::Sessions {
+                            ids: vec![s.clone()],
+                        },
+                        filter: None,
+                    },
+                    None => ALL,
+                };
+                let order = keys(&block(core.device_order(scope.clone())).unwrap());
+                block(core.device_rows(scope.clone(), order)).unwrap();
+                block(core.category_counts(scope, DeviceFilter::default())).unwrap();
+            }
+        }
+    }
+    if session.is_some() {
+        // an injected failure fails one commit only, so the second stop finishes
+        let stopped = (0..3).any(|_| {
+            now += 1_000;
+            core.stop_recording_at(now).is_ok()
+        });
+        assert!(stopped, "seed {seed}: the last stop never finished");
+    }
+    assert_eq!(core.pending_len(), 0);
+    let stored: HashMap<(String, i64, Vec<u8>), i64> = core.with_writer_conn(|conn| {
+        let rows: Vec<(String, i64, i64, i64)> = conn
+            .prepare(
+                "SELECT s.uuid, m.addr, m.payload_id, m.sightings FROM sighting_minutes m
+                 JOIN sessions s ON s.id = m.session_id",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let mut out = HashMap::new();
+        for (s, addr, payload, n) in rows {
+            let raw = super::store::payload_raw(conn, payload).unwrap();
+            *out.entry((s, addr, raw)).or_default() += n;
+        }
+        out
+    });
+    assert_eq!(
+        stored, expected,
+        "seed {seed}: every accepted observation exactly once under its own payload"
+    );
+    let deltas = wait_for(&c, 0);
+    let mut last: HashMap<String, u64> = HashMap::new();
+    for d in deltas {
+        let prev = last.insert(d.session_id.clone(), d.seq).unwrap_or(0);
+        assert!(d.seq > prev, "seed {seed}: seq {} after {prev}", d.seq);
+    }
+}
+
+/// Waits until an event matching `f` arrived; returns every event so far.
+fn wait_event(c: &Collect, f: impl Fn(&CoreEvent) -> bool) -> Vec<CoreEvent> {
+    for _ in 0..200 {
+        if c.events.lock().unwrap().iter().any(&f) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    c.events.lock().unwrap().clone()
+}
+
+fn stored_sightings(core: &Core) -> i64 {
+    core.with_writer_conn(|c| {
+        c.query_row(
+            "SELECT coalesce(sum(sightings), 0) FROM sighting_minutes",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    })
+}
+
+fn batch(n: usize, at: i64) -> Vec<ScanObservationInput> {
+    (0..n)
+        .map(|i| {
+            obs(
+                &format!("AA:00:00:00:{:02X}:{:02X}", i / 256, i % 256),
+                -60,
+                at,
+                1,
+                "A",
+            )
+        })
+        .collect()
+}
+
+/// SPEC R-10: a commit that always fails for lack of space stops writing and pauses; memory stays bounded and
+/// ingest gets a typed error; after space comes back, resume records again and nothing committed was lost.
+#[test]
+fn a_full_disk_pauses_drops_and_resumes() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    let id = core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(batch(10, t0 + 1_000), t0 + 1_000)
+        .unwrap();
+    core.tick_at(t0 + 5_000);
+    assert_eq!(stored_sightings(&core), 10);
+    core.fail_commits(Some(CoreError::StorageFull { free_bytes: 0 }));
+    core.ingest_scans_at(batch(7, t0 + 6_000), t0 + 6_000)
+        .unwrap();
+    core.tick_at(t0 + 10_000);
+    let state = core.recording_state().unwrap();
+    assert_eq!(state.phase, RecordingPhase::Paused);
+    assert!(state.paused_for_storage);
+    assert_eq!(
+        state.session_id.as_deref(),
+        Some(id.as_str()),
+        "the session stays open"
+    );
+    assert_eq!(
+        core.pending_len(),
+        0,
+        "the rows that could not be stored are dropped"
+    );
+    let events = wait_event(&c, |e| matches!(e, CoreEvent::StorageFull { .. }));
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            CoreEvent::StorageFull {
+                dropped_scans: 7,
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+    // while paused for storage every batch is refused, typed, and nothing is buffered
+    for i in 0..50 {
+        let at = t0 + 11_000 + i;
+        assert!(matches!(
+            core.ingest_scans_at(batch(64, at), at),
+            Err(CoreError::StorageFull { .. })
+        ));
+    }
+    assert_eq!(core.pending_len(), 0);
+    // resume needs the free space back above the floor
+    assert!(matches!(
+        core.resume_recording_free_at(t0 + 20_000, Some(1_000)),
+        Err(CoreError::StorageFull { free_bytes: 1_000 })
+    ));
+    assert!(core.recording_state().unwrap().paused_for_storage);
+    core.fail_commits(None);
+    core.resume_recording_free_at(t0 + 21_000, Some(10_000_000_000))
+        .unwrap();
+    let state = core.recording_state().unwrap();
+    assert_eq!(state.phase, RecordingPhase::Recording);
+    assert!(!state.paused_for_storage);
+    core.ingest_scans_at(batch(3, t0 + 22_000), t0 + 22_000)
+        .unwrap();
+    assert_eq!(core.stop_recording_at(t0 + 23_000).unwrap(), id);
+    assert_eq!(
+        stored_sightings(&core),
+        13,
+        "the first 10 and the 3 after resume"
+    );
+}
+
+/// SPEC R-10: below the 200 MB floor the tick stops writing and pauses, without a commit.
+#[test]
+fn the_free_space_floor_pauses_without_writing() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    core.start_recording_at(env(), t0).unwrap();
+    core.ingest_scans_at(batch(4, t0 + 1_000), t0 + 1_000)
+        .unwrap();
+    core.tick_free_at(t0 + 5_000, Some(199_999_999));
+    assert!(core.recording_state().unwrap().paused_for_storage);
+    assert_eq!(stored_sightings(&core), 0);
+    let events = wait_event(&c, |e| matches!(e, CoreEvent::StorageFull { .. }));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        CoreEvent::StorageFull {
+            free_bytes: 199_999_999,
+            dropped_scans: 4
+        }
+    )));
+    // a user pause is not a storage pause: its resume needs no free space
+    core.resume_recording_free_at(t0 + 6_000, Some(300_000_000))
+        .unwrap();
+    core.pause_recording_at(t0 + 7_000).unwrap();
+    assert!(!core.recording_state().unwrap().paused_for_storage);
+    core.resume_recording_free_at(t0 + 8_000, Some(1)).unwrap();
+}
+
+/// #71: commits that keep failing (not for space) back off and the pending buffer stays capped; past the cap
+/// ingest is refused with Backpressure, and the retained rows commit once storage works again.
+#[test]
+fn repeated_commit_failures_keep_pending_bounded() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, _dir, c) = fresh_core(t0);
+    core.start_recording_at(env(), t0).unwrap();
+    core.fail_commits(Some(CoreError::Db {
+        detail: "disk I/O error".into(),
+    }));
+    let cap = super::machine::PENDING_CAP.rows as usize;
+    let mut accepted = 0usize;
+    let mut refused = 0usize;
+    for i in 0..(cap / 64 + 20) as i64 {
+        let at = t0 + 5_000 + i;
+        match core.ingest_scans_at(batch(64, at), at) {
+            Ok(ack) => accepted += ack.accepted as usize,
+            Err(CoreError::Backpressure) => refused += 1,
+            Err(e) => panic!("{e}"),
+        }
+        assert!(core.pending_len() <= cap + 64, "pending stays capped");
+    }
+    assert!(refused > 0, "ingest is refused past the cap");
+    assert_eq!(core.pending_len(), accepted);
+    // backoff: an attempt failed at t0 + 5 s, so ticks before the retry time do not run the transaction again
+    let warnings = |c: &Collect| {
+        c.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, CoreEvent::StorageWarning { .. }))
+            .count()
+    };
+    let before = warnings(&c);
+    core.tick_at(t0 + 9_000);
+    assert_eq!(warnings(&c), before);
+    core.fail_commits(None);
+    core.tick_at(t0 + 60_000);
+    assert_eq!(core.pending_len(), 0);
+    assert_eq!(stored_sightings(&core), accepted as i64);
+}
+
+fn write_file(path: &std::path::Path, len: usize) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, vec![7u8; len]).unwrap();
+}
+
+/// SPEC R-10 cleanup: both actions free space, report it beforehand, and never touch files not yet uploaded.
+#[test]
+fn cleanup_frees_space_and_keeps_unuploaded_files() {
+    let t0 = 1_761_000_000_000i64;
+    let (core, dir, _c) = fresh_core(t0);
+    let root = dir.path();
+    let pending = [
+        root.join("pending/scans/v3/2025/10/20/a.parquet"),
+        root.join("pending/gatt/v1/2025/10/20/b.json"),
+    ];
+    for p in &pending {
+        write_file(p, 1_000);
+    }
+    write_file(
+        &root.join("archive/sessions/s/scans/v3/2025/10/20/c.parquet"),
+        30_000,
+    );
+    write_file(&root.join("archive/gatt/v1/2025/10/20/d.json"), 2_000);
+    // an old session with many devices, then the current one
+    let old = core.start_recording_at(env(), t0).unwrap();
+    for i in 0..40 {
+        let at = t0 + 1_000 + i;
+        let mut b = batch(64, at);
+        for (j, o) in b.iter_mut().enumerate() {
+            o.addr = format!("BB:00:00:00:{:02X}:{:02X}", i, j);
+            o.raw.extend((i as u16 * 64 + j as u16).to_be_bytes());
+        }
+        core.ingest_scans_at(b, at).unwrap();
+    }
+    core.stop_recording_at(t0 + 10_000).unwrap();
+    let current = core.start_recording_at(env(), t0 + 20_000).unwrap();
+    core.ingest_scans_at(batch(5, t0 + 21_000), t0 + 21_000)
+        .unwrap();
+    core.tick_at(t0 + 26_000);
+
+    let r = block(core.reclaimable()).unwrap();
+    assert_eq!(r.uploaded_raw_bytes, 32_000);
+    assert!(r.local_database_bytes > 0);
+    assert_eq!(block(core.delete_uploaded_raw()).unwrap(), 32_000);
+    assert!(!root.join("archive/gatt/v1/2025/10/20/d.json").exists());
+    assert_eq!(block(core.reclaimable()).unwrap().uploaded_raw_bytes, 0);
+
+    let freed = block(core.clear_local_database()).unwrap();
+    assert!(freed > 0, "the vacuum shrank local.db");
+    for p in &pending {
+        assert!(p.exists(), "{} survives", p.display());
+    }
+    let ids: Vec<String> = core.with_writer_conn(|c| {
+        c.prepare("SELECT uuid FROM sessions")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    });
+    assert_eq!(ids, vec![current.clone()]);
+    assert!(!ids.contains(&old));
+    assert!(block(core.sessions()).unwrap().is_empty());
+    assert_eq!(stored_sightings(&core), 5, "the current session is kept");
+    // the recording goes on: new payloads after the cache reset commit under their own ids
+    let mut o = obs("CC:00:00:00:00:01", -50, t0 + 27_000, 2, "New");
+    o.raw.push(1);
+    core.ingest_scans_at(vec![o], t0 + 27_000).unwrap();
+    assert_eq!(core.stop_recording_at(t0 + 28_000).unwrap(), current);
+    assert_eq!(stored_sightings(&core), 6);
+    core.with_writer_conn(|c| {
+        let n: i64 = c
+            .query_row("SELECT count(*) FROM payloads", [], |r| r.get(0))
+            .unwrap();
+        assert!(n <= 2, "orphan payloads are gone ({n})");
+    });
 }
