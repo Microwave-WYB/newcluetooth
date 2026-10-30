@@ -66,9 +66,4 @@ class DiscoveryRatesTest {
         val err = CoreResult.Err(CoreException.Db("locked"))
         assertEquals(listOf(err), Script(err).feed("s").toList())
     }
-
-    /** The stand-in until lane A's call lands: an empty rate, which draws an empty chart. */
-    @Test fun theStandInIsEmpty() = runTest {
-        assertEquals(listOf(CoreResult.Ok(DiscoveryBins.Empty)), NoDiscoveryRates.feed("s").take(1).toList())
-    }
 }

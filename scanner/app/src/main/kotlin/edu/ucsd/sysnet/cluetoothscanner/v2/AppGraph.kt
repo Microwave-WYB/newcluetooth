@@ -105,8 +105,8 @@ class AppGraph(private val app: Application) {
     }
     /** R-10: the core's storage-full event and cleanups (#71). */
     val storageCleanup: StorageCleanup by lazy { CoreStorageCleanup { core.ready() } }
-    /** R-4a: the recorder panel's discovery rate; a stand-in until lane A's `CoreQueries.discoveryRate` lands. */
-    val discoveryRates: DiscoveryRates = NoDiscoveryRates
+    /** R-4a: the recorder panel's discovery rate on the core (#112). */
+    val discoveryRates: DiscoveryRates by lazy { CoreDiscoveryRates { core.ready() } }
 
     private val locationClient by lazy { LocationClient(app, ingest, scope, LocationClient.processStarted(scope)) }
     val location: LocationStatusSource get() = locationClient
