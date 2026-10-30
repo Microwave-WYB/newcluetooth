@@ -62,6 +62,8 @@ sealed interface MainTask {
     data object Sessions : MainTask
     /** The core's event subscription (§2.6). */
     data object CoreEvents : MainTask
+    /** R-4a: the recorder panel's discovery rate, its snapshot and its deltas. */
+    data object DiscoveryRate : MainTask
     /** A call into the map or the sheets from a map callback or the cover. */
     data object Platform : MainTask
     /** An Activity launch the user asked for (a permission request, enable Bluetooth, the location settings). */
@@ -326,6 +328,8 @@ sealed interface MainEffect {
     data object LoadUiState : MainEffect
     /** D-1b: remember the Discover view; a failure is logged only (UI state, no notice). */
     data class SaveDiscoverView(val view: DiscoverView) : MainEffect
+    /** R-4a: read the recording's discovery rate again (its notice's Retry). */
+    data object ReloadDiscoveryRate : MainEffect
 }
 
 /**
@@ -595,7 +599,7 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
         // the user asked for these too: say why they didn't happen, and offer them again
         is MainEffect.Delete -> s.copy(notice = Notice("$DELETE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
         is MainEffect.UpdateSettings -> s.copy(notice = Notice("$SAVE_FAILED: ${error.userMessage()}", retry = task.effect)).only()
-        MainEffect.LoadSessions, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
+        MainEffect.LoadSessions, MainEffect.ReloadDiscoveryRate, MainEffect.Locate, MainEffect.SheetsBack, is MainEffect.SheetsEnterSearch,
         is MainEffect.SheetsSearchThisArea, MainEffect.SheetsExitSearch,
         is MainEffect.RequestPermissions, MainEffect.EnableBluetooth, MainEffect.TurnOnLocation -> s.only()
         // D-1b: UI state, so no notice: a failed read keeps Categories (the runner logged it); a failed write never
@@ -604,6 +608,8 @@ private fun failed(s: MainUiState, task: MainTask, error: Throwable): Step = whe
     }
     // the user asked for it and nothing happened: say why
     MainTask.Launch -> s.copy(notice = Notice(error.userMessage())).only()
+    // R-4a: the panel's chart has no data; say why, and offer to read it again
+    MainTask.DiscoveryRate -> s.copy(notice = Notice("$RATE_FAILED: ${error.userMessage()}", retry = MainEffect.ReloadDiscoveryRate)).only()
     // the keyed work keeps its last data, which the selectors show only for its own key
     is MainTask.View, is MainTask.Search, MainTask.Sessions, MainTask.CoreEvents, MainTask.Platform -> s.only()
 }
@@ -615,6 +621,7 @@ private const val PAUSE_FAILED = "Could not pause the recording"
 private const val RESUME_FAILED = "Could not resume the recording"
 private const val STOP_FAILED = "Could not stop the recording"
 private const val DELETE_FAILED = "Could not delete local data"
+private const val RATE_FAILED = "Could not read the discovery rate"
 
 /** R-4: the panel opens and closes only while a recording is active. */
 private fun withPanel(s: MainUiState, open: Boolean): MainUiState = when (s.recorder) {

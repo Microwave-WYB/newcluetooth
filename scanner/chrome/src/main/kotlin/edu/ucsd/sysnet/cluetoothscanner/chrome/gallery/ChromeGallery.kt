@@ -11,13 +11,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import edu.ucsd.sysnet.cluetoothscanner.api.core.AllSessionsSummary
-import edu.ucsd.sysnet.cluetoothscanner.api.core.FixSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionStatus
 import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionSummary
 import edu.ucsd.sysnet.cluetoothscanner.api.core.UploadState
 import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
 import edu.ucsd.sysnet.cluetoothscanner.chrome.DayGroup
+import edu.ucsd.sysnet.cluetoothscanner.chrome.DiscoveryBins
 import edu.ucsd.sysnet.cluetoothscanner.chrome.LocationPopover
 import edu.ucsd.sysnet.cluetoothscanner.chrome.MenuButton
 import edu.ucsd.sysnet.cluetoothscanner.chrome.RecorderActions
@@ -54,8 +54,14 @@ private val noRecorder = RecorderActions({}, {}, {}, {}, {}, {})
 
 /** A recorder form as the prototype's static gallery cell draws it: `.recorder.static`, the non-island variant. */
 @Composable
-private fun StaticRecorder(form: RecorderUi.Form, paused: Boolean, boxWidth: Dp) {
-    val ui = RecorderUi(form, paused, (12 * 60 + 34) * 1000L, 26, FixSummary(32.88012, -117.23421, 8.0, 0))
+private fun StaticRecorder(
+    form: RecorderUi.Form,
+    paused: Boolean,
+    boxWidth: Dp,
+    discovery: DiscoveryBins = DiscoverySamples.rising,
+    elapsedMs: Long = DiscoverySamples.ELAPSED_MS,
+) {
+    val ui = RecorderUi(form, paused, elapsedMs, discovery)
     val groupW = rememberRecorderGroupWidth(ui.elapsedMs)
     val g0 = RecorderGeometry.compute(form, true, boxWidth, Tokens.fab, groupW)
     val w = if (form == RecorderUi.Form.Panel) boxWidth - Tokens.edge * 2 else g0.width
@@ -96,6 +102,10 @@ fun chromeCells(): List<GalleryCell> {
     cells += GalleryCell(recorderSection, "capsule", 240.dp) { StaticRecorder(RecorderUi.Form.Capsule, false, 216.dp) }
     cells += GalleryCell(recorderSection, "capsule, paused", 280.dp) { StaticRecorder(RecorderUi.Form.Capsule, true, 256.dp) }
     cells += GalleryCell(recorderSection, "panel", 412.dp) { StaticRecorder(RecorderUi.Form.Panel, false, 388.dp) }
+    // R-4a: the discovery-rate chart's other cases (the prototype has no cells for them)
+    cells += GalleryCell(recorderSection, "panel, just started", 412.dp) { StaticRecorder(RecorderUi.Form.Panel, false, 388.dp, DiscoverySamples.empty, DiscoverySamples.EMPTY_ELAPSED_MS) }
+    cells += GalleryCell(recorderSection, "panel, standing still", 412.dp) { StaticRecorder(RecorderUi.Form.Panel, false, 388.dp, DiscoverySamples.stationary) }
+    cells += GalleryCell(recorderSection, "panel, after a pause", 412.dp) { StaticRecorder(RecorderUi.Form.Panel, false, 388.dp, DiscoverySamples.pauseGap) }
     val day = DayGroup(
         "Today · Oct 28",
         listOf(
