@@ -1341,7 +1341,9 @@ data class RecorderState(
 
 `Recorder` is an in-process singleton, with no binding and no AIDL. `RecordingService` observes it:
 
-- it updates the notification at most every 5 s ("Recording · 12:34 · 26 devices");
+- it updates the notification at most every 5 s ("Recording · 12:34 · 26 devices"), always ending on the latest
+  state (a held-back update shows when the window opens); while recording, Android ticks the elapsed time itself
+  (a chronometer from `runningSinceMs − activeBeforeMs`), and the device count follows the core's live deltas;
 - the actions are Pause/Resume and Stop, and tapping the notification opens the app.
 
 After a process restart, `Recorder` reads `core.recordingState()`.
