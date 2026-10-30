@@ -213,6 +213,7 @@ fun MainScreen(vm: MainViewModel) {
                     onCleanupConfirm = { dispatch(MainEvent.CleanupConfirmed) }, onCleanupCancel = { dispatch(MainEvent.CleanupCancelled) },
                 ),
                 sessionLabel = label, sessionScope = if (label != null) shown else null, statusInset = status, bottomInset = nav,
+                tablet = tablet,
             )
         }
 
