@@ -6,13 +6,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
@@ -205,8 +205,8 @@ class DiscoverHeaderUiTest {
         show()
         compose.runOnIdle { sheets.selectSegment(Segment.ThisArea) }
         compose.waitForIdle()
-        val label = compose.onNodeWithTag(DiscoverTags.FILTER).fetchSemanticsNode().config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }
-        assertEquals(listOf(Strings.filterActive(1)), label)
+        compose.onNodeWithContentDescription(Strings.filterActive(1)).assertExists() // the filter button, with its badge
+        compose.onNodeWithContentDescription(Strings.Filter).assertDoesNotExist()
     }
 
     @Test
