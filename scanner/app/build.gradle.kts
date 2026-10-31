@@ -133,11 +133,8 @@ android {
         compose = true
         buildConfig = true
     }
-    sourceSets {
-        getByName("main") {
-            java.srcDir(layout.buildDirectory.dir("generated/source/uniffi"))
-        }
-    }
+    // The UniFFI bindings (v3 and v2, one package) are :core-bridge's alone: :app compiles against them through
+    // `implementation(project(":core-bridge"))`. A second copy here was dexed twice and broke :app:mergeDexRelease.
 
     lint {
         abortOnError = true
@@ -199,25 +196,11 @@ if (hostCheckFlag == null) {
     }
 }
 
-val cluetoothCoreDirectory = rootProject.layout.projectDirectory.dir("../cluetooth-core")
-val cluetoothCoreInputs = fileTree(cluetoothCoreDirectory) {
-    include("Cargo.toml", "Cargo.lock", "uniffi.toml")
-    include("src/**/*.rs")
-}
-
-val generateCluetoothCoreBindings by tasks.registering(Exec::class) {
+// Kept as an alias so `:app:generateCluetoothCoreBindings` and the tasks below still work; :core-bridge generates.
+val generateCluetoothCoreBindings by tasks.registering {
     group = "rust"
-    description = "Build the host Rust library and generate pinned UniFFI Kotlin bindings"
-    workingDir(cluetoothCoreDirectory)
-    commandLine(
-        "bash",
-        "scripts/generate-kotlin-bindings.sh",
-        layout.buildDirectory.dir("generated/source/uniffi").get().asFile.absolutePath,
-    )
-    inputs.files(cluetoothCoreInputs)
-    inputs.file(rootProject.layout.projectDirectory.file("../mise.toml"))
-    inputs.file(cluetoothCoreDirectory.file("scripts/generate-kotlin-bindings.sh"))
-    outputs.dir(layout.buildDirectory.dir("generated/source/uniffi"))
+    description = "Alias of :core-bridge:generateCluetoothCoreBindings (the one copy of the UniFFI bindings)"
+    dependsOn(":core-bridge:generateCluetoothCoreBindings")
 }
 
 // v2: libcluetooth_core.so (v3 and v2 bindings in one library) is built and packaged by :core-bridge. This name
