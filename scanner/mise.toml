@@ -90,6 +90,15 @@ run = "./gradlew --no-daemon --max-workers=2 :platform-api:testDebugUnitTest :pl
 description = "Lane E's :map: JVM tests and lint (instrumented tests run on the cluetooth-test AVD, see map/README)"
 run = "./gradlew --no-daemon --max-workers=2 :map:testDebugUnitTest :map:lintDebug"
 
+[tasks.release-dex-check]
+description = "Release-only breakage: merge the release dex (no signing, no native build), so a class compiled into two modules fails here and not at build-release"
+depends = ["sdk-check"]
+run = [
+  # the UniFFI bindings have one owner: a second module compiling them dexes them twice (1.0.0's mergeDexRelease)
+  'hits=$(grep -ln "generated/source/uniffi" */build.gradle.kts | grep -v "^core-bridge/" || true); [ -z "$hits" ] || { echo "only :core-bridge may compile the UniFFI bindings: $hits" >&2; exit 1; }',
+  "./gradlew --no-daemon --max-workers=2 :app:mergeDexRelease -x :app:buildCluetoothCoreAndroid -x :core-bridge:buildCluetoothCoreAndroid",
+]
+
 [tasks.ui-contract-test]
 description = "U0 :ui-contract JVM tests (OrderedKeys, G-9)"
 run = "./gradlew --no-daemon --max-workers=2 :ui-contract:test"
@@ -127,6 +136,7 @@ run = [
   "mise run //scanner:designsystem-check",
   "mise run //scanner:chrome-check",
   "mise run //scanner:lint",
+  "mise run //scanner:release-dex-check",
 ]
 
 [tasks.build]
