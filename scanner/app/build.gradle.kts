@@ -78,8 +78,8 @@ android {
         applicationId = "edu.ucsd.sysnet.cluetoothscanner"
         minSdk = 24
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.2.0"
+        versionCode = 14
+        versionName = "1.0.0"
         buildConfigField("boolean", "V2_UPLOADER_ENABLED", v2UploaderEnabled.toString())
         buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
         manifestPlaceholders["CLUETOOTH_MAPS_API_KEY"] = mapsApiKey
