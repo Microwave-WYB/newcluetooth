@@ -1,0 +1,586 @@
+package edu.ucsd.sysnet.cluetoothscanner.sheets
+
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.key
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.LocalContentColor
+import androidx.compose.foundation.text.selection.DisableSelection
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import edu.ucsd.sysnet.cluetoothscanner.api.core.AdvFormat
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceDetail
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStep
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepKind
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GattStepState
+import edu.ucsd.sysnet.cluetoothscanner.api.core.GattView
+import edu.ucsd.sysnet.cluetoothscanner.api.core.LiveChart
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.CluetoothTheme
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.Strings
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.EmptyText
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Button
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.ButtonKind
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Segmented
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.SwapContent
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.Text
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.bandColor
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.components.sparkRssi
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.sp
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tabular
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Css
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.tokens.Tokens
+import java.util.Locale
+
+internal object DeviceTags {
+    const val TABS = "device-tabs"
+    const val CHART = "device-chart"
+    const val DISCOVER = "gatt-discover"
+    const val CANCEL = "gatt-cancel"
+    const val TRY_AGAIN = "gatt-try-again"
+    const val LAST = "gatt-last"
+    const val NOTE = "gatt-note"
+    const val HEAD_RSSI = "device-head-rssi"
+    const val REASON = "gatt-reason"
+    const val CODE = "gatt-code"
+    fun rawLen(header: Boolean) = if (header) "raw-len-head" else "raw-len"
+    fun step(kind: GattStepKind) = "gatt-step-${kind.name}"
+}
+
+
+/** The device sheet (D-9..D-13). */
+@Composable
+internal fun DeviceSheet(state: SheetsState, entry: SheetEntry, key: Long) {
+    // the content is a state machine: the effects only send events, each reduced into the current content
+    val sheet = rememberSheetMachine(::DeviceContent, ::reduceDevice)
+    val content = sheet.state
+    val gatt = remember(entry.id) { state.gattFor(entry, key) }
+    LaunchedEffect(key) {
+        sheet.dispatch(DeviceEvent.DetailLoaded(state.load(SheetQuery.Device(key))))
+        // D-13.7, into the GATT tab's own state machine; a failed read shows the tab as never read
+        when (val last = state.load(SheetQuery.LastGatt(key))) {
+            is Outcome.Ok -> gatt.showLast(last.value)
+            is Outcome.Failed -> Unit
+        }
+    }
+    if (state.live) {
+        LaunchedEffect(key) { // D-10: the chart rides on the deltas of the focused key
+            sheet.dispatch(DeviceEvent.ChartLoaded(state.load(SheetQuery.Chart(key))))
+            state.chartUpdates(key).collect { sheet.dispatch(DeviceEvent.ChartDelta(it)) }
+        }
+    }
+    val row = state.rows[key]
+    val detail = content.detail
+    // D-15: every selectable text in this sheet carries its sheetSelectable
+    val selectable = remember(state.stack, entry) { Modifier.sheetSelectable(state.stack, entry) }
+    CompositionLocalProvider(LocalSheetSelectable provides selectable) {
+        SheetFrame(state.stack, entry, state.metrics, header = {
+            PushedHeader(state) { detail.valueOrNull()?.let { DeviceHead(it, row?.rssi ?: it.rssi) } }
+        }) {
+            when (detail) {
+                Loaded.Pending -> LoadPending()
+                Loaded.Missing -> LoadMissing(LoadTexts.DeviceMissing)
+                is Loaded.Failed -> LoadFailed(detail.message)
+                is Loaded.Found -> DeviceBody(state, entry, content, detail.value, row?.rssi ?: detail.value.rssi, gatt) { sheet.dispatch(DeviceEvent.TabSelected(it)) }
+            }
+        }
+    }
+}
+
+/**
+ * D-15: the modifier on each selectable text (and only there): in a sheet, its [sheetSelectable], so a long press on
+ * the text gives the gesture to the selection while one on a label, a button or padding leaves it to the sheet.
+ */
+internal val LocalSheetSelectable = staticCompositionLocalOf<Modifier> { Modifier }
+
+@Composable
+private fun Modifier.selectableText(): Modifier = then(LocalSheetSelectable.current)
+
+/** D-15: one token: a MAC, a UUID, hex, a number (no whitespace). */
+internal fun isToken(text: String): Boolean = text.isNotEmpty() && text.none { it.isWhitespace() }
+
+/**
+ * D-15: a token's first selection (a long press picks one word of it) is the whole token; the handles can narrow it
+ * after that. Its text never changes (read-only).
+ */
+internal fun wholeToken(old: TextFieldValue, new: TextFieldValue): TextFieldValue =
+    if (old.selection.collapsed && !new.selection.collapsed) new.copy(selection = TextRange(0, new.text.length)) else new
+
+/**
+ * D-15: a selectable value. The system selects by words, and its word rules split a token at digits and punctuation
+ * (a long press on a MAC picked "38:"), so a token ([isToken]) is a read-only field whose long press selects all of it
+ * ([wholeToken]), with the system copy toolbar; it then takes no part in a selection across texts. Any other value is
+ * plain selectable text. [singleLine]: one line (a token scrolls instead of being cut off).
+ */
+@Composable
+internal fun ValueText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = CluetoothTheme.type.body,
+    color: Color = Color.Unspecified,
+    textAlign: TextAlign? = null,
+    singleLine: Boolean = false,
+) {
+    if (!isToken(text)) {
+        Text(
+            text, modifier.selectableText(), style = style, color = color, textAlign = textAlign,
+            maxLines = if (singleLine) 1 else Int.MAX_VALUE, overflow = if (singleLine) TextOverflow.Ellipsis else TextOverflow.Clip,
+        )
+        return
+    }
+    val c = color.takeOrElse { LocalContentColor.current.takeOrElse { CluetoothTheme.colors.t1 } }
+    // a field is at least 10 characters wide, and a long press past the text places a cursor instead of selecting:
+    // the slot ([modifier]) holds the field as wide as its text (at most the slot, where a long token wraps), aligned
+    // as the text is
+    val measurer = rememberTextMeasurer()
+    val textWidth = with(LocalDensity.current) { measurer.measure(text, style, softWrap = false).size.width.toDp() } + CURSOR_ROOM
+    val end = (textAlign ?: style.textAlign) == TextAlign.End
+    // the field's selection is a small state machine (a new value starts a new one)
+    Box(modifier, contentAlignment = if (end) Alignment.TopEnd else Alignment.TopStart) { key(text) {
+        val field = rememberSheetMachine({ TextFieldValue(text) }, ::wholeToken)
+        BasicTextField(
+            value = field.state,
+            onValueChange = field::dispatch,
+            modifier = Modifier.widthIn(max = textWidth).selectableText(),
+            readOnly = true,
+            singleLine = singleLine,
+            textStyle = style.copy(color = c, textAlign = textAlign ?: style.textAlign),
+            cursorBrush = SolidColor(Color.Transparent),
+        )
+    } }
+}
+
+@Composable
+private fun DeviceBody(state: SheetsState, entry: SheetEntry, content: DeviceContent, d: DeviceDetail, rssi: Int?, gatt: GattController, onTab: (DeviceTab) -> Unit) {
+    val list = rememberSheetListState(entry)
+    LazyColumn(state = list) {
+        item {
+            val chart = content.chart
+            if (state.live && chart is ChartState.Live) {
+                Box(Modifier.padding(start = Css.ChartWrap.padding.left, top = Css.ChartWrap.padding.top, end = Css.ChartWrap.padding.right)) {
+                    RssiChart(chart.chart, rssi)
+                }
+            }
+            Segmented(
+                listOf(Strings.Advertising, Strings.Gatt),
+                content.tab.ordinal,
+                onSelect = { onTab(DeviceTab.entries[it]) }, // D-11: the height stays (S-16)
+                modifier = Modifier.fillMaxWidth().padding(
+                    start = Css.DevTabs.padding.left, top = Css.DevTabs.padding.top,
+                    end = Css.DevTabs.padding.right, bottom = Css.DevTabs.padding.bottom,
+                ).testTag(DeviceTags.TABS),
+            )
+            SwapContent(content.tab, { it.ordinal }) { t ->
+                when (t) {
+                    DeviceTab.Advertising -> Advertising(d)
+                    DeviceTab.Gatt -> GattTab(gatt, GattDeviceFacts(d.connectable, state.rows[d.key]?.lastSeenMs ?: d.lastSeenMs, state.nowMs()))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * D-9: the name (or "No name"), the product link, the MAC and "−56 dBm" in the band color. D-15: all of it selectable.
+ */
+@Composable
+internal fun DeviceHead(d: DeviceDetail, rssi: Int?) {
+    val c = CluetoothTheme.colors
+    val t = CluetoothTheme.type
+    // `.dev-head`: the name on its 24 dp line from the header's top, the wiki link, the MAC line, 12 dp under them;
+    // D-15: all of it selectable
+    SelectionContainer { Column(Modifier.padding(start = Css.DevHead.padding.left, bottom = Css.DevHead.padding.bottom)) {
+        Text(d.name ?: Strings.NoName, Modifier.selectableText(), style = t.title, color = if (d.name == null) c.t3 else c.t1)
+        val page = d.page
+        val url = d.wikiUrl
+        if (page != null && url != null) WikiLink(page.title, url, Modifier.selectableText())
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // the RSSI is never clipped ("−127 dBm" at a large font scale): the MAC gives way first
+            ValueText(d.addr, Modifier.weight(1f, fill = false), style = t.sub.tabular(), color = c.t2, singleLine = true)
+            if (rssi != null) {
+                Text(
+                    Format.dbm(rssi),
+                    Modifier.selectableText().padding(start = Css.DevRssi.marginLeft).testTag(DeviceTags.HEAD_RSSI),
+                    maxLines = 1,
+                    softWrap = false,
+                    style = t.sub.tabular().copy(fontWeight = FontWeight(Css.DevRssi.fontWeight.toInt())),
+                    color = bandColor(rssi),
+                )
+            }
+        }
+    } }
+}
+
+/** D-10: the last minute, y −100..−30, ticks at −65 and −80, the end marker at the current reading. */
+@Composable
+private fun RssiChart(chart: LiveChart, rssi: Int?) {
+    val c = CluetoothTheme.colors
+    val measurer = rememberTextMeasurer()
+    val label = CluetoothTheme.type.small.copy(fontSize = Css.Chart_Text.fontSize.sp, color = c.t3)
+    val band = rssi?.let { bandColor(it) } ?: c.t3
+    Canvas(Modifier.fillMaxWidth().height(Css.Chart.height).testTag(DeviceTags.CHART)) {
+        val u = density
+        val plot = size.height - CHART_AXIS * u
+        val x0 = CHART_LEFT * u
+        val y = { r: Int -> CHART_PAD * u + ((-30f - r.coerceIn(-100, -30)) / 70f) * (plot - 2 * CHART_PAD * u) }
+        val n = chart.samples.size
+        val xs = { k: Int -> x0 + k * (size.width - x0 - CHART_RIGHT * u) / (n - 1).coerceAtLeast(1) }
+        for (tick in intArrayOf(-65, -80)) {
+            drawLine(c.div, Offset(x0, y(tick)), Offset(size.width, y(tick)), u, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3 * u, 3 * u)))
+            drawText(measurer, Format.signed(tick), Offset(0f, y(tick) - label.fontSize.toPx() / 2 - u), label)
+        }
+        val path = Path()
+        var pen = false
+        var last = -1
+        chart.samples.forEachIndexed { k, b ->
+            val r = sparkRssi(b)
+            if (r == null) { pen = false; return@forEachIndexed }
+            if (pen) path.lineTo(xs(k), y(r)) else path.moveTo(xs(k), y(r))
+            pen = true
+            last = k
+        }
+        drawPath(path, c.t2, style = Stroke(Css.Chart_Line.strokeWidth * u))
+        if (last >= 0 && rssi != null) drawCircle(band, CHART_MARKER * u, Offset(xs(last), y(rssi)))
+        drawText(measurer, Strings.ChartMinusOneMin, Offset(x0, size.height - label.fontSize.toPx() - 2 * u), label)
+        val now = measurer.measure(Strings.ChartNow, label)
+        drawText(now, topLeft = Offset(size.width - now.size.width, size.height - label.fontSize.toPx() - 2 * u))
+    }
+}
+
+/** D-12: the Details list and the raw Len / Type / Data table. */
+@Composable
+internal fun Advertising(d: DeviceDetail) {
+    SelectionContainer { Column { // D-15: the Details values and every Raw data cell selectable; the labels not
+        SheetSect(Strings.Details)
+        val kv = buildList {
+            d.connectable?.let { add(Strings.Connectable to if (it) Strings.Yes else Strings.No) }
+            when (d.format) {
+                AdvFormat.Legacy -> add(Strings.FormatKey to Strings.Legacy)
+                AdvFormat.Extended -> add(Strings.FormatKey to Strings.Extended)
+                AdvFormat.Unknown -> Unit
+            }
+            d.companyName?.let { add(Strings.Company to it) }
+            d.serviceUuid?.let { add(Strings.Service to it) }
+            d.txPower?.let { add(Strings.TxPower to Format.dbm(it)) }
+        }
+        Column(Modifier.padding(horizontal = Css.Kv.padding.left)) {
+            for ((k, v) in kv) {
+                Row(Modifier.fillMaxWidth().padding(vertical = Css.Kv_Div.padding.top), horizontalArrangement = Arrangement.spacedBy(Css.Kv_Div.gap)) {
+                    val style = CluetoothTheme.type.body.copy(fontSize = Css.Kv_Div.fontSize.sp, lineHeight = Css.Kv_Div.lineHeight.sp)
+                    DisableSelection { Text(k, style = style, color = CluetoothTheme.colors.t2) }
+                    ValueText(v, Modifier.weight(1f), style = style.tabular().copy(fontWeight = FontWeight(Css.Kv_Dd.fontWeight.toInt())), textAlign = TextAlign.End)
+                }
+            }
+        }
+        SheetSect(Strings.RawData)
+        RawTable(d)
+    } }
+}
+
+@Composable
+private fun SheetSect(text: String) = DisableSelection {
+    Text(
+        text,
+        Modifier.fillMaxWidth().padding(
+            start = Css.SheetSect.padding.left, top = Css.SheetSect.padding.top,
+            end = Css.SheetSect.padding.right, bottom = Css.SheetSect.padding.bottom,
+        ),
+        style = CluetoothTheme.type.small,
+        color = CluetoothTheme.colors.t3,
+    )
+}
+
+@Composable
+internal fun RawTable(d: DeviceDetail) {
+    val c = CluetoothTheme.colors
+    val shape = RoundedCornerShape(Css.Raw.borderRadius)
+    val style = CluetoothTheme.type.sub.copy(fontSize = Css.Raw.fontSize.sp, lineHeight = Css.Raw.lineHeight.sp)
+    val head = style.copy(fontWeight = FontWeight(Css.Raw_Th.fontWeight.toInt()))
+    // D-12: Len and Type are 44 and 56 dp, or wider when their header or a value (in this font and size) needs it, as
+    // a table column grows to fit an unbreakable word; every row uses the same widths, so the columns line up
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val pad = Css.Raw_Td.padding.left * 2
+    fun widest(min: androidx.compose.ui.unit.Dp, header: String, values: List<String>) = with(density) {
+        val texts = listOf(head to header) + values.map { style.tabular() to it }
+        maxOf(min, texts.maxOf { (st, text) -> measurer.measure(text, st, softWrap = false).size.width }.toDp() + pad)
+    }
+    val lenW = widest(Css.Raw_ColLen.width, Strings.Len, d.structures.map { it.len.toString() })
+    val typeW = widest(Css.Raw_ColType.width, Strings.Type, d.structures.map { Format.adType(it.adType) })
+    Column(
+        Modifier
+            .padding(horizontal = Css.Raw.margin.left)
+            .fillMaxWidth()
+            .clip(shape)
+            .border(Css.Raw.borderLengths[0], c.div, shape),
+    ) {
+        DisableSelection { RawRow(Strings.Len, Strings.Type, Strings.Data, head, header = true, lenW, typeW) } // the column labels
+        for (s in d.structures) {
+            RawRow(s.len.toString(), Format.adType(s.adType), Format.hex(s.data), style, header = false, lenW, typeW)
+        }
+        d.tail?.let { RawRow("", "", Format.hex(it), style, header = false, lenW, typeW) }
+    }
+}
+
+@Composable
+private fun RawRow(len: String, type: String, data: String, style: androidx.compose.ui.text.TextStyle, header: Boolean, lenW: Dp, typeW: Dp) {
+    val c = CluetoothTheme.colors
+    val pad = Css.Raw_Td.padding
+    Column {
+        if (!header) Box(Modifier.fillMaxWidth().height(Css.Raw_Td.borderTopLengths[0]).background(c.div))
+        Row(Modifier.fillMaxWidth().background(if (header) c.fill2 else c.panel)) {
+            val lenCell = Modifier.width(lenW).padding(horizontal = pad.left, vertical = pad.top).testTag(DeviceTags.rawLen(header))
+            val typeCell = Modifier.width(typeW).padding(horizontal = pad.left, vertical = pad.top)
+            if (header) {
+                Text(len, lenCell, style = style.tabular(), maxLines = 1, softWrap = false)
+                Text(type, typeCell, style = style.tabular(), maxLines = 1, softWrap = false)
+            } else {
+                ValueText(len, lenCell, style = style.tabular(), singleLine = true)
+                ValueText(type, typeCell, style = style.tabular(), singleLine = true)
+            }
+            // G-3: the raw data column is the one place with the code font; it breaks anywhere: the hex is one word,
+            // which breaks greedily at the edge (D-15: no inserted break characters, so a copy is the exact hex)
+            val dataStyle = (if (header) style else CluetoothTheme.type.code.copy(fontSize = style.fontSize, lineHeight = style.lineHeight))
+                .copy(lineBreak = LineBreak.Simple)
+            val dataCell = Modifier.weight(1f).padding(horizontal = pad.left, vertical = pad.top)
+            if (header) Text(data, dataCell, style = dataStyle, color = c.t1) else ValueText(data, dataCell, style = dataStyle, color = c.t2)
+        }
+    }
+}
+
+/** D-13.1: "Only connect to devices you own…", above the button area whenever a button is present. */
+@Composable
+private fun GattNote(modifier: Modifier = Modifier) = DisableSelection {
+    Text(
+        Strings.GattNote,
+        modifier.padding(bottom = Css.GattNote.margin.bottom).testTag(DeviceTags.NOTE),
+        style = CluetoothTheme.type.sub,
+        color = CluetoothTheme.colors.t2,
+    )
+}
+
+/** D-13: the note and buttons, the steps, Try again, the services. */
+@Composable
+internal fun GattTab(gatt: GattController, device: GattDeviceFacts = GattDeviceFacts.Unknown) {
+    val c = CluetoothTheme.colors
+    val pad = Css.GattFlow.padding
+    // D-15: the step details and reasons and every service and characteristic text selectable; the labels and buttons not
+    SelectionContainer { Column(Modifier.fillMaxWidth().padding(horizontal = pad.left, vertical = pad.top)) {
+        val last = gatt.last
+        when (val s = gatt.state) {
+            // D-13.2/3 and D-13.7: the button row ("Discover GATT", or a tonal "Discover again" above a last result)
+            // and the prompt it turns into; a last result stays below both
+            GattUi.Idle, GattUi.Confirm, is GattUi.Done -> {
+                GattNote()
+                val confirm = s == GattUi.Confirm
+                // D-13.3: the row turns into Cancel | I am authorized in place: Cancel grows from zero width to
+                // half the row and fades in, with the gap opening to 8 dp; nothing else moves.
+                val m = CluetoothTheme.motion
+                val grow by animateFloatAsState(if (confirm) 1f else 0f, m.std(), label = "cancelGrow")
+                val gap by animateDpAsState(if (confirm) Css.GattFlowConfirm_GattCtl.gap else Css.GattCtl.gap, m.std(), label = "gap")
+                DisableSelection { Row(Modifier.fillMaxWidth()) {
+                    if (grow > 0f) {
+                        Button(
+                            Strings.Cancel, onClick = gatt::onCancelPrompt, kind = ButtonKind.Tonal, enabled = confirm,
+                            modifier = Modifier.weight(grow).alpha(grow).testTag(DeviceTags.CANCEL),
+                        )
+                        Spacer(Modifier.width(gap))
+                    }
+                    val again = !confirm && last != null
+                    Button(
+                        when {
+                            confirm -> Strings.IAmAuthorized
+                            again -> Strings.DiscoverAgain
+                            else -> Strings.DiscoverGatt
+                        },
+                        onClick = if (confirm) gatt::onAuthorized else gatt::onDiscover,
+                        kind = if (again) ButtonKind.Tonal else ButtonKind.Primary,
+                        modifier = Modifier.weight(1f).testTag(DeviceTags.DISCOVER),
+                    )
+                } }
+                last?.let { LastResult(it, device) }
+            }
+            // D-13.7: the new run's steps replace the last result's; its services stay below until a success
+            is GattUi.Running -> {
+                Steps(s.view, device)
+                last?.let { Services(it) }
+            }
+            is GattUi.Failed -> {
+                Steps(s.view, device)
+                GattNote(Modifier.padding(top = Css.GattNote.margin.bottom)) // D-13.1: with any button
+                DisableSelection { Button(Strings.TryAgain, onClick = gatt::onTryAgain, kind = ButtonKind.Tonal, modifier = Modifier.testTag(DeviceTags.TRY_AGAIN)) }
+                last?.let { LastResult(it, device) } // D-13.7: the last result stays below a failure
+            }
+        }
+    } }
+}
+
+@Composable
+private fun Steps(view: GattView, device: GattDeviceFacts) {
+    Column {
+        for (step in view.steps) StepRow(step, device)
+    }
+}
+
+@Composable
+private fun StepRow(step: GattStep, device: GattDeviceFacts) {
+    val c = CluetoothTheme.colors
+    val failed = step.state == GattStepState.Failed
+    Row(
+        Modifier.fillMaxWidth().defaultMinSize(minHeight = Css.Gstep.minHeight).testTag(DeviceTags.step(step.kind)),
+        horizontalArrangement = Arrangement.spacedBy(Css.Gstep.gap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StepMark(step.state)
+        val style = CluetoothTheme.type.body.copy(fontSize = Css.Gstep.fontSize.sp)
+        DisableSelection { Text(step.label(), Modifier.weight(1f), style = style) }
+        Text(step.detail(), Modifier.selectableText(), style = CluetoothTheme.type.sub.tabular().copy(fontSize = Css.Gdetail.fontSize.sp), color = if (failed) c.rssiWeak else c.t2)
+    }
+    // D-13.5: under the failed step, why in plain English, then the code (small) for bug reports
+    if (failed) {
+        val problem = gattProblem(step.failure, device)
+        Column(Modifier.padding(start = Css.Gmark.width + Css.Gstep.gap, bottom = Css.Gstep.gap)) {
+            Text(problem.reason(), Modifier.selectableText().testTag(DeviceTags.REASON), style = CluetoothTheme.type.sub, color = c.t1)
+            problem.codeText()?.let { ValueText(it, Modifier.testTag(DeviceTags.CODE), style = CluetoothTheme.type.small.tabular(), color = c.t3) }
+        }
+    }
+}
+
+@Composable
+private fun StepMark(state: GattStepState) {
+    val c = CluetoothTheme.colors
+    val m = CluetoothTheme.motion
+    Box(Modifier.size(Css.Gmark.width), contentAlignment = Alignment.Center) {
+        when (state) {
+            GattStepState.Running -> {
+                val angle = if (m.reduced) 0f else rememberInfiniteTransition(label = "spin").animateFloat(
+                    0f, 360f, infiniteRepeatable(tween(m.spinMs, easing = LinearEasing), RepeatMode.Restart), label = "spin",
+                ).value
+                Canvas(Modifier.size(Css.Gmark.width).rotate(angle)) { // 2 dp `--div` ring with a `--blue` top
+                    val w = 2 * density
+                    drawCircle(c.div, (size.minDimension - w) / 2, style = Stroke(w))
+                    drawArc(c.blue, -135f, 90f, false, Offset(w / 2, w / 2), size.copy(size.width - w, size.height - w), style = Stroke(w))
+                }
+            }
+            GattStepState.Done -> Box(Modifier.size(Css.Gmark.width).clip(CircleShape).background(c.rssiStrong))
+            GattStepState.Failed -> Box(Modifier.size(Css.Gmark.width).clip(CircleShape).background(c.rssiWeak))
+        }
+    }
+}
+
+private fun GattStep.label() = when (kind) {
+    GattStepKind.Connecting -> Strings.Connecting
+    GattStepKind.DiscoveringServices -> Strings.DiscoveringServices
+    GattStepKind.ReadingCharacteristics -> Strings.ReadingCharacteristics
+    GattStepKind.Disconnected -> Strings.Disconnected
+}
+
+/** D-13.4/5: "0.8 s", "N services", "m/n", or "Failed". */
+private fun GattStep.detail(): String {
+    if (state == GattStepState.Failed) return Strings.Failed // the reason is the line under the step
+    return when (kind) {
+        GattStepKind.Connecting -> if (state == GattStepState.Done) durationMs?.let { String.format(Locale.US, "%.1f s", it / 1000.0) } ?: "" else ""
+        GattStepKind.DiscoveringServices -> if (state == GattStepState.Done) services?.let(Strings::services) ?: "" else ""
+        GattStepKind.ReadingCharacteristics -> {
+            val n = readable ?: return ""
+            Strings.ofCount(if (state == GattStepState.Done) n else read ?: 0, n)
+        }
+        GattStepKind.Disconnected -> ""
+    }
+}
+
+/** D-13.6: the services, then their characteristics (name, UUID · properties, value). */
+/** D-13.6/7: a result: its steps, then its services. */
+@Composable
+private fun LastResult(view: GattView, device: GattDeviceFacts) {
+    Column(Modifier.testTag(DeviceTags.LAST)) {
+        Steps(view, device)
+        Services(view)
+    }
+}
+
+@Composable
+private fun Services(view: GattView) {
+    val c = CluetoothTheme.colors
+    val t = CluetoothTheme.type
+    Column(Modifier.padding(top = Css.GattSvc.padding.top)) {
+        for (s in view.services) {
+            Column(Modifier.padding(vertical = Css.GattSvc.padding.top)) {
+                ValueText(s.name ?: s.uuid, style = t.body.copy(fontWeight = FontWeight(Css.GattSvc_B.fontWeight.toInt())))
+                ValueText(s.uuid, style = t.sub, color = c.t2)
+                for (ch in s.characteristics) {
+                    val style = t.body.copy(fontSize = Css.GattChar.fontSize.sp, lineHeight = Css.GattChar.lineHeight.sp)
+                    Column(Modifier.padding(start = Css.GattChar.padding.left, top = Css.GattChar.padding.top, bottom = Css.GattChar.padding.bottom)) {
+                        ValueText(ch.name ?: ch.uuid, style = style)
+                        Text(listOf(ch.uuid, ch.properties.joinToString(", ")).joinToString(" · "), Modifier.selectableText(), style = style, color = c.t2)
+                        ch.valueText?.let { ValueText(it, style = style, color = c.t2) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private const val CHART_LEFT = 30f   // the prototype chart's x0 (the tick labels' column)
+private const val CHART_RIGHT = 6f
+private const val CHART_PAD = 4f
+private const val CHART_AXIS = 20f   // 96 − 76: the plot is 76 of the 96 dp
+private const val CHART_MARKER = 4.5f
+
+private inline fun Color.takeOrElse(block: () -> Color): Color = if (this != Color.Unspecified) this else block()
+
+/** Room for the (hidden) cursor, so a token field never scrolls its own text. */
+private val CURSOR_ROOM = 2.dp

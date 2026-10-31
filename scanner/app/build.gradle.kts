@@ -1,0 +1,333 @@
+import com.google.gms.googleservices.GoogleServicesTask
+import groovy.json.JsonSlurper
+import javax.xml.parsers.DocumentBuilderFactory
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
+    id("com.google.gms.google-services") apply false
+}
+
+// Host checks compile/test real app code (and compile its instrumented tests) without creating Firebase resources or an APK.
+val hostCheckFlag = providers.gradleProperty("cluetoothHostChecks").orNull
+if (hostCheckFlag != null) {
+    val allowed = setOf(":app:testDebugUnitTest", ":app:lintDebug", ":app:compileDebugAndroidTestKotlin")
+    val requested = gradle.startParameter.taskNames
+    if (hostCheckFlag != "true" || requested.isEmpty() || requested.any { it !in allowed }) {
+        throw GradleException(
+            "cluetoothHostChecks requires literal true and only explicit " +
+                ":app:testDebugUnitTest, :app:lintDebug or :app:compileDebugAndroidTestKotlin selectors"
+        )
+    }
+} else {
+    apply(plugin = "com.google.gms.google-services")
+}
+
+// Opt in to more ABIs (e.g. emulators) with -PcluetoothAbis=arm64-v8a,x86_64 or CLUETOOTH_ABIS.
+// Every requested ABI must be built and packaged; the build fails otherwise.
+val supportedCluetoothAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+val cluetoothCoreAbis = (
+    providers.gradleProperty("cluetoothAbis")
+        .orElse(providers.environmentVariable("CLUETOOTH_ABIS"))
+        .orElse("arm64-v8a").get()
+    ).split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct().also { abis ->
+        val unsupported = abis.filterNot { it in supportedCluetoothAbis }
+        if (abis.isEmpty() || unsupported.isNotEmpty()) {
+            throw GradleException(
+                "cluetoothAbis must be a non-empty subset of $supportedCluetoothAbis; unsupported: $unsupported"
+            )
+        }
+    }
+val v2UploaderEnabled = true
+val mapsApiKey = providers.gradleProperty("CLUETOOTH_MAPS_API_KEY")
+    .orElse(providers.environmentVariable("CLUETOOTH_MAPS_API_KEY"))
+    .orNull.orEmpty()
+
+val releaseSigningNames = mapOf(
+    "storeFile" to "CLUETOOTH_RELEASE_STORE_FILE",
+    "storePassword" to "CLUETOOTH_RELEASE_STORE_PASSWORD",
+    "keyAlias" to "CLUETOOTH_RELEASE_KEY_ALIAS",
+    "keyPassword" to "CLUETOOTH_RELEASE_KEY_PASSWORD",
+)
+val releaseSigningProperties = releaseSigningNames.mapValues { (_, name) ->
+    providers.gradleProperty(name).orElse(providers.environmentVariable(name)).orNull
+}
+val hasAnyReleaseSigning = releaseSigningProperties.values.any { it != null }
+val hasReleaseSigning = releaseSigningProperties.values.all { !it.isNullOrBlank() }
+if (hasAnyReleaseSigning && !hasReleaseSigning) {
+    val missingNames = releaseSigningProperties
+        .filterValues { it.isNullOrBlank() }
+        .keys
+        .map { requireNotNull(releaseSigningNames[it]) }
+        .sorted()
+        .joinToString()
+    throw GradleException(
+        "Release signing is partially configured. Provide all four CLUETOOTH_RELEASE_* " +
+            "values or none for an unsigned local release. Missing: $missingNames"
+    )
+}
+
+android {
+    namespace = "edu.ucsd.sysnet.cluetoothscanner"
+    compileSdk = 35
+    ndkVersion = "27.2.12479018"
+
+    defaultConfig {
+        applicationId = "edu.ucsd.sysnet.cluetoothscanner"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 14
+        versionName = "1.0.0"
+        buildConfigField("boolean", "V2_UPLOADER_ENABLED", v2UploaderEnabled.toString())
+        buildConfigField("boolean", "MAPS_CONFIGURED", mapsApiKey.isNotBlank().toString())
+        manifestPlaceholders["CLUETOOTH_MAPS_API_KEY"] = mapsApiKey
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include(*cluetoothCoreAbis.toTypedArray())
+            isUniversalApk = false
+        }
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseSigningProperties["storeFile"]))
+                storePassword = releaseSigningProperties["storePassword"]
+                keyAlias = releaseSigningProperties["keyAlias"]
+                keyPassword = releaseSigningProperties["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.findByName("release")
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
+    }
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+    // The UniFFI bindings (v3 and v2, one package) are :core-bridge's alone: :app compiles against them through
+    // `implementation(project(":core-bridge"))`. A second copy here was dexed twice and broke :app:mergeDexRelease.
+
+    lint {
+        abortOnError = true
+    }
+
+    // The screenshot plugin refuses to apply unless this is set first, so it is applied below.
+    experimentalProperties["android.experimental.enableScreenshotTest"] = true
+}
+apply(plugin = "com.android.compose.screenshot")
+
+// Process only Firebase metadata: no app compilation, native build, APK or network calls.
+if (hostCheckFlag == null) {
+    tasks.register("verifyFirebaseConfigs") {
+        group = "verification"
+        description = "Verify genuine debug/test-bucket and release/production Firebase resources"
+        dependsOn("processDebugGoogleServices", "processReleaseGoogleServices")
+        doLast {
+            for (variant in listOf("Debug", "Release")) {
+                val debug = variant == "Debug"
+                val packageName = "edu.ucsd.sysnet.cluetoothscanner" + if (debug) ".debug" else ""
+                val expected = mapOf(
+                    "google_app_id" to if (debug) "1:952828187654:android:24c3c17e0c06adbeb81f87"
+                        else "1:952828187654:android:9a76ce60006c562cb81f87",
+                    "google_storage_bucket" to if (debug) "cluetooth-1da02-debug"
+                        else "cluetooth-1da02.firebasestorage.app",
+                    "project_id" to "cluetooth-1da02",
+                    "gcm_defaultSenderId" to "952828187654",
+                )
+                val processing = tasks.named<GoogleServicesTask>("process${variant}GoogleServices").get()
+                val configFile = file(if (debug) "src/debug/google-services.json" else "google-services.json")
+                check(processing.applicationId.get() == packageName) { "$variant application ID mismatch" }
+                check(processing.googleServicesJsonFiles.get().first { it.isFile } == configFile) {
+                    "$variant selected an unexpected Firebase config"
+                }
+                val config = JsonSlurper().parse(configFile) as Map<*, *>
+                val projectInfo = config["project_info"] as Map<*, *>
+                val clientInfo = (config["client"] as List<*>).map {
+                    (it as Map<*, *>)["client_info"] as Map<*, *>
+                }.single { (it["android_client_info"] as Map<*, *>)["package_name"] == packageName }
+                check(mapOf(
+                    "google_app_id" to clientInfo["mobilesdk_app_id"],
+                    "google_storage_bucket" to projectInfo["storage_bucket"],
+                    "project_id" to projectInfo["project_id"],
+                    "gcm_defaultSenderId" to projectInfo["project_number"],
+                ) == expected) { "$variant Firebase config differs from the registered identity/bucket" }
+                val xml = processing.outputDirectory.file("values/values.xml").get().asFile
+                val strings = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                    .parse(xml).getElementsByTagName("string")
+                val generated = (0 until strings.length).associate {
+                    val node = strings.item(it)
+                    node.attributes.getNamedItem("name").nodeValue to node.textContent
+                }
+                expected.forEach { (name, value) ->
+                    check(generated[name] == value) { "$variant generated $name mismatch" }
+                }
+                logger.lifecycle("$variant Firebase verified: $packageName, ${expected["google_app_id"]}, ${expected["google_storage_bucket"]}")
+            }
+        }
+    }
+}
+
+// Kept as an alias so `:app:generateCluetoothCoreBindings` and the tasks below still work; :core-bridge generates.
+val generateCluetoothCoreBindings by tasks.registering {
+    group = "rust"
+    description = "Alias of :core-bridge:generateCluetoothCoreBindings (the one copy of the UniFFI bindings)"
+    dependsOn(":core-bridge:generateCluetoothCoreBindings")
+}
+
+// v2: libcluetooth_core.so (v3 and v2 bindings in one library) is built and packaged by :core-bridge. This name
+// stays as an alias so the host check tasks' `-x :app:buildCluetoothCoreAndroid` keeps working.
+val buildCluetoothCoreAndroid by tasks.registering {
+    group = "rust"
+    description = "Alias of :core-bridge:buildCluetoothCoreAndroid (the one libcluetooth_core.so)"
+    dependsOn(":core-bridge:buildCluetoothCoreAndroid")
+}
+
+// Releases since 0.0.5 only upload through the Rust v2 Parquet path; the legacy
+// JSONL producer is no longer accepted by the sync pipeline for new versions.
+if (!v2UploaderEnabled) {
+    throw GradleException("Android releases require the Rust v2 uploader")
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    dependsOn(generateCluetoothCoreBindings)
+}
+
+val prepareCluetoothCoreAndroid by tasks.registering {
+    group = "rust"
+    description = "Generate UniFFI bindings and the requested API-24 Android native libraries"
+    dependsOn(generateCluetoothCoreBindings, buildCluetoothCoreAndroid)
+}
+
+val assembleCluetoothCoreDebug by tasks.registering {
+    group = "verification"
+    description = "Build the requested-ABI-split debug app and instrumentation APKs from clean inputs"
+    dependsOn("assembleDebug", "assembleDebugAndroidTest")
+}
+
+val connectedCluetoothCoreSmokeTest by tasks.registering {
+    group = "verification"
+    description = "Opt-in device smoke; app startup can schedule Firebase uploads"
+    dependsOn("connectedDebugAndroidTest")
+}
+
+// The preview-test API is built with Kotlin 2.2; keep its stdlib at the project's Kotlin.
+configurations.matching { it.name.contains("screenshotTest", ignoreCase = true) }.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.jetbrains.kotlin" && requested.name.startsWith("kotlin-stdlib")) {
+            useVersion(libs.versions.kotlin.get())
+        }
+    }
+}
+
+// Rendering 58 phone-size previews in one JVM exhausts the default test heap.
+tasks.withType<Test>().configureEach {
+    if (name.contains("ScreenshotTest")) maxHeapSize = "4g"
+}
+
+dependencies {
+    // v2 (integration step 1, docs/v2-api.md §6.7.1). The core is bound in one place, v2/CoreBinding.kt.
+    implementation(project(":core-api"))
+    implementation(project(":ui-contract"))
+    implementation(project(":designsystem"))
+    implementation(project(":chrome"))
+    implementation(project(":sheets"))
+    implementation(project(":map"))
+    implementation(project(":platform-api"))
+    implementation(project(":platform"))
+    implementation(project(":core-bridge")) // only v2/CoreBinding.kt names it; it packages libcluetooth_core.so
+    implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.datastore.preferences) // DataStoreSettings exposes DataStore in its constructor; :platform has it as implementation
+
+
+    implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
+    implementation("com.google.firebase:firebase-storage")
+    implementation("com.google.firebase:firebase-installations")
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.fragment)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.material3)
+    implementation("androidx.compose.material:material-icons-extended")
+
+    // Work Manager
+    implementation(libs.androidx.work.runtime.ktx)
+
+    // Location Services
+    implementation(libs.play.services.location)
+    implementation(libs.play.services.maps)
+    implementation(libs.maps.compose)
+    implementation(libs.maplibre.android)
+
+    // Serialization
+    implementation(libs.kotlinx.serialization.json)
+
+    // Coroutines
+    implementation(libs.kotlinx.coroutines.android)
+
+    // ViewModel
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    // Permissions (using compose built-in for now)
+    // implementation(libs.accompanist.permissions)
+
+    // Compression - using AAR format for Android
+    implementation("com.github.luben:zstd-jni:1.5.5-5@aar")
+    testImplementation("com.github.luben:zstd-jni:1.5.5-5")
+
+    // Encryption with libsodium
+    implementation("com.goterl:lazysodium-android:5.1.0@aar")
+    implementation("net.java.dev.jna:jna:5.17.0@aar")
+
+    // Navigation
+    implementation(libs.androidx.navigation.compose)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":core-fake")) // CoreOpenerTest's opened core
+    testImplementation(project(":platform-fake")) // the reducer tests' recorder; v2 main code uses only :platform
+    // JVM stand-in for Android's SQLite in the local-data tests
+    testImplementation(libs.sqlite.jdbc)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.ui.test.junit4)
+    debugImplementation(libs.androidx.ui.tooling)
+    screenshotTestImplementation(libs.androidx.ui.tooling)
+    screenshotTestImplementation("com.android.tools.screenshot:screenshot-validation-api:0.0.1-alpha12")
+    debugImplementation(libs.androidx.ui.test.manifest)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+}

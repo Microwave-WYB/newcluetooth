@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ExportShare: only the core's export ZIPs (filesDir/cluetooth-core/export-temp/) are shareable. -->
+<paths>
+    <files-path name="exports" path="cluetooth-core/export-temp/" />
+</paths>

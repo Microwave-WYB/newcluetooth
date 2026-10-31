@@ -1,0 +1,3 @@
+# crash-guard allowlist (crash_guard.py): one justified exception per line, `<path relative to scanner/>:<line>  <reason>`.
+# An entry covers every hit on its line; an entry whose line has no hit fails the check.
+# The seed entries are the hits on feat/v2 at 6506e81; each owning lane removes its own in its refactor.

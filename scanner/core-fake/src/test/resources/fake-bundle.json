@@ -1,0 +1,610 @@
+{
+ "schema": 2,
+ "version": "2026-10-28+fake0001",
+ "wiki_commit": "fake",
+ "rules_version": "fake-rules-1",
+ "decoder_interface_version": 1,
+ "vocabularies": {
+  "categories": [
+   {
+    "id": "asset-tracker",
+    "title": "Asset tracker",
+    "description": ""
+   },
+   {
+    "id": "positioning-beacon",
+    "title": "Positioning beacon",
+    "description": ""
+   },
+   {
+    "id": "fleet-telematics",
+    "title": "Fleet telematics",
+    "description": ""
+   },
+   {
+    "id": "vehicle-equipment",
+    "title": "Vehicle equipment",
+    "description": ""
+   },
+   {
+    "id": "wearable",
+    "title": "Wearable",
+    "description": ""
+   },
+   {
+    "id": "audio-device",
+    "title": "Audio device",
+    "description": ""
+   },
+   {
+    "id": "telephony",
+    "title": "Telephony",
+    "description": ""
+   },
+   {
+    "id": "camera",
+    "title": "Camera",
+    "description": ""
+   },
+   {
+    "id": "security-and-access",
+    "title": "Security and access",
+    "description": ""
+   },
+   {
+    "id": "lighting-control",
+    "title": "Lighting control",
+    "description": ""
+   },
+   {
+    "id": "smart-appliance",
+    "title": "Smart appliance",
+    "description": ""
+   },
+   {
+    "id": "personal-care",
+    "title": "Personal care",
+    "description": ""
+   },
+   {
+    "id": "medical-device",
+    "title": "Medical device",
+    "description": ""
+   },
+   {
+    "id": "reader-terminal",
+    "title": "Reader or terminal",
+    "description": ""
+   },
+   {
+    "id": "printer",
+    "title": "Printer",
+    "description": ""
+   },
+   {
+    "id": "power-energy",
+    "title": "Power and energy",
+    "description": ""
+   },
+   {
+    "id": "environmental-monitor",
+    "title": "Environmental monitor",
+    "description": ""
+   },
+   {
+    "id": "display",
+    "title": "Display",
+    "description": ""
+   },
+   {
+    "id": "input-peripheral",
+    "title": "Input peripheral",
+    "description": ""
+   },
+   {
+    "id": "sports-equipment",
+    "title": "Sports equipment",
+    "description": ""
+   },
+   {
+    "id": "traffic-control",
+    "title": "Traffic control",
+    "description": ""
+   }
+  ],
+  "contexts": [
+   {
+    "id": "home",
+    "title": "Home",
+    "description": ""
+   },
+   {
+    "id": "commercial",
+    "title": "Commercial",
+    "description": ""
+   },
+   {
+    "id": "healthcare",
+    "title": "Healthcare",
+    "description": ""
+   },
+   {
+    "id": "fleet-logistics",
+    "title": "Fleet and logistics",
+    "description": ""
+   },
+   {
+    "id": "outdoor-marine",
+    "title": "Outdoor and marine",
+    "description": ""
+   },
+   {
+    "id": "industrial",
+    "title": "Industrial",
+    "description": ""
+   }
+  ],
+  "traits": [
+   {
+    "id": "phone-advertiser",
+    "title": "Phone advertiser",
+    "description": ""
+   },
+   {
+    "id": "identifier-in-name",
+    "title": "Identifier in the local name",
+    "description": ""
+   },
+   {
+    "id": "location-in-advertisement",
+    "title": "Location in the advertisement",
+    "description": ""
+   },
+   {
+    "id": "no-local-name",
+    "title": "No local name",
+    "description": ""
+   },
+   {
+    "id": "static-address",
+    "title": "Static address",
+    "description": ""
+   },
+   {
+    "id": "rotating-address",
+    "title": "Rotating address",
+    "description": ""
+   },
+   {
+    "id": "encrypted-payload",
+    "title": "Encrypted payload",
+    "description": ""
+   },
+   {
+    "id": "non-connectable",
+    "title": "Non-connectable",
+    "description": ""
+   },
+   {
+    "id": "identifier-misuse",
+    "title": "Assigned number misused",
+    "description": ""
+   }
+  ]
+ },
+ "pages": [
+  {
+   "id": "device--govee-h-model-code-names",
+   "kind": "device",
+   "entity": null,
+   "title": "Govee lighting and sensors",
+   "one_line": "Govee and ihoment strip lights, bulbs and thermo-hygrometers.",
+   "categories": [
+    "lighting-control"
+   ],
+   "contexts": [],
+   "traits": [
+    "identifier-in-name"
+   ],
+   "rule": {
+    "uuid": {
+     "in": [
+      "EC88"
+     ],
+     "ad": [
+      2,
+      3,
+      22
+     ]
+    }
+   },
+   "decoder": {
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "source": "// fake decoder for govee"
+   },
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "govee"
+  },
+  {
+   "id": "device--apple-airpods-proximity-pairing",
+   "kind": "device",
+   "entity": null,
+   "title": "Apple AirPods and Beats (Proximity Pairing)",
+   "one_line": "Apple and Beats earbuds and headphones announcing their case and battery state.",
+   "categories": [
+    "audio-device"
+   ],
+   "contexts": [],
+   "traits": [
+    "rotating-address"
+   ],
+   "rule": {
+    "all": [
+     {
+      "company": [
+       76
+      ]
+     },
+     {
+      "name": {
+       "regex": ".+"
+      }
+     }
+    ]
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "airpods"
+  },
+  {
+   "id": "device--jbl-flip-charge-speakers",
+   "kind": "device",
+   "entity": null,
+   "title": "JBL Flip and Charge speakers",
+   "one_line": "Harman JBL portable speakers advertising their model and pairing state.",
+   "categories": [
+    "audio-device"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "company": [
+     87
+    ]
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "jbl"
+  },
+  {
+   "id": "device--bose-le-audio-names",
+   "kind": "device",
+   "entity": null,
+   "title": "Bose QuietComfort headphones",
+   "one_line": "Bose headphones advertising the Bose app service.",
+   "categories": [
+    "audio-device"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "company": [
+     158
+    ]
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "bose"
+  },
+  {
+   "id": "device--philips-hue-bluetooth",
+   "kind": "device",
+   "entity": null,
+   "title": "Philips Hue Bluetooth lights",
+   "one_line": "Hue bulbs and lamps that pair over Bluetooth without a bridge.",
+   "categories": [
+    "lighting-control"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "uuid": {
+     "in": [
+      "FE0F"
+     ],
+     "ad": [
+      2,
+      3,
+      22
+     ]
+    }
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "hue"
+  },
+  {
+   "id": "platform--xiaomi-mibeacon",
+   "kind": "platform",
+   "entity": null,
+   "title": "Xiaomi Mi Home BLE sensors (MiBeacon)",
+   "one_line": "Xiaomi thermometers and sensors sending MiBeacon service data.",
+   "categories": [
+    "environmental-monitor"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "uuid": {
+     "in": [
+      "FE95"
+     ],
+     "ad": [
+      2,
+      3,
+      22
+     ]
+    }
+   },
+   "decoder": {
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "source": "// fake decoder for xiaomi"
+   },
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "xiaomi"
+  },
+  {
+   "id": "device--switchbot-meter",
+   "kind": "device",
+   "entity": null,
+   "title": "SwitchBot Meter and Hub sensors",
+   "one_line": "SwitchBot meters advertising temperature and humidity.",
+   "categories": [
+    "environmental-monitor"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "company": [
+     2409
+    ]
+   },
+   "decoder": {
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "source": "// fake decoder for switchbot"
+   },
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "switchbot"
+  },
+  {
+   "id": "device--tile-feed",
+   "kind": "device",
+   "entity": null,
+   "title": "Tile trackers",
+   "one_line": "Tile Mate, Slim and Pro item trackers.",
+   "categories": [
+    "asset-tracker"
+   ],
+   "contexts": [],
+   "traits": [
+    "no-local-name",
+    "rotating-address"
+   ],
+   "rule": {
+    "uuid": {
+     "in": [
+      "FEED"
+     ],
+     "ad": [
+      2,
+      3,
+      22
+     ]
+    }
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "tile"
+  },
+  {
+   "id": "device--samsung-galaxy-smarttag",
+   "kind": "device",
+   "entity": null,
+   "title": "Samsung Galaxy SmartTag and SmartTag2 offline finding beacons",
+   "one_line": "Samsung trackers broadcasting for SmartThings Find.",
+   "categories": [
+    "asset-tracker"
+   ],
+   "contexts": [],
+   "traits": [
+    "no-local-name",
+    "rotating-address",
+    "encrypted-payload"
+   ],
+   "rule": {
+    "uuid": {
+     "in": [
+      "FD5A"
+     ],
+     "ad": [
+      2,
+      3,
+      22
+     ]
+    }
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "smarttag"
+  },
+  {
+   "id": "device--fitbit-pixel-watch",
+   "kind": "device",
+   "entity": null,
+   "title": "Fitbit and Google Pixel Watch wearables",
+   "one_line": "Fitbit trackers and Pixel Watch advertising for phone sync.",
+   "categories": [
+    "wearable"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "uuid": {
+     "in": [
+      "FEAA"
+     ],
+     "ad": [
+      2,
+      3,
+      22
+     ]
+    }
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "fitbit"
+  },
+  {
+   "id": "device--tesla-phone-key",
+   "kind": "device",
+   "entity": null,
+   "title": "Tesla vehicle phone key",
+   "one_line": "Tesla cars advertising for phone-as-key.",
+   "categories": [
+    "vehicle-equipment"
+   ],
+   "contexts": [],
+   "traits": [
+    "phone-advertiser",
+    "identifier-in-name"
+   ],
+   "rule": {
+    "name": {
+     "regex": "S[0-9a-f]{16}C"
+    }
+   },
+   "decoder": null,
+   "vulnerabilities": [
+    "vulnerability--demo-phone-key-relay"
+   ],
+   "icon": null,
+   "fake_product": "tesla"
+  },
+  {
+   "id": "device--inkbird-ibs-th",
+   "kind": "device",
+   "entity": null,
+   "title": "Inkbird IBS-TH temperature and humidity sensors",
+   "one_line": "Inkbird sensors with readings in the manufacturer data.",
+   "categories": [
+    "environmental-monitor"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "uuid": {
+     "in": [
+      "FFF0"
+     ],
+     "ad": [
+      2,
+      3,
+      22
+     ]
+    }
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "inkbird"
+  },
+  {
+   "id": "device--nanoleaf-essentials",
+   "kind": "device",
+   "entity": null,
+   "title": "Nanoleaf Essentials",
+   "one_line": "Nanoleaf bulbs and strips commissioning over Bluetooth.",
+   "categories": [
+    "lighting-control"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "company": [
+     2059
+    ]
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "nanoleaf"
+  },
+  {
+   "id": "device--dexcom-g7",
+   "kind": "device",
+   "entity": null,
+   "title": "Dexcom G7 continuous glucose monitor",
+   "one_line": "Dexcom sensors advertising to their paired phone.",
+   "categories": [
+    "medical-device"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "company": [
+     208
+    ]
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "dexcom"
+  },
+  {
+   "id": "device--oura-ring",
+   "kind": "device",
+   "entity": null,
+   "title": "Oura Ring",
+   "one_line": "Oura smart rings advertising for sync.",
+   "categories": [
+    "wearable"
+   ],
+   "contexts": [],
+   "traits": [],
+   "rule": {
+    "company": [
+     1797
+    ]
+   },
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null,
+   "fake_product": "ouraring"
+  },
+  {
+   "id": "vulnerability--demo-phone-key-relay",
+   "kind": "vulnerability",
+   "entity": null,
+   "title": "Phone-key relay (demo)",
+   "one_line": "A made-up vulnerability page.",
+   "categories": [],
+   "contexts": [],
+   "traits": [],
+   "rule": null,
+   "decoder": null,
+   "vulnerabilities": [],
+   "icon": null
+  }
+ ],
+ "_comment": "Test bundle (schema 2) for :core-fake and the Rust parity tests: the data.js products as pages, with rules that reproduce data.js's product assignment. fake_product is test-only."
+}

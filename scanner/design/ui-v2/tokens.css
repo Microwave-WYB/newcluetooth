@@ -1,0 +1,223 @@
+/*
+ * Cluetooth UI v2 design tokens. The ONLY place that holds a color, size, radius, shadow or timing.
+ * components.css and app.js read nothing but these variables (app.js reads them through
+ * getComputedStyle for the map layers). Colors, text levels and shadows are the Wireless Wiki's
+ * (wiki-site/src/styles/global.css); the rest is Cluetooth's own.
+ */
+:root {
+  color-scheme: light;
+
+  /* ---- Color: surfaces and text (wiki) ---- */
+  --bg: #fcfcfc;
+  --fill1: #fff;
+  --fill2: #f3f4f5;
+  --seg: #fff;
+  --field: #fff;
+  --panel: #fff;
+  --t1: #111112;
+  --t2: #00040996;
+  --t3: #0007115e;
+  --div: #0000001a;
+  --blue: #0064d4;
+  --orange: #c65323;
+  --warn: var(--orange);   /* the location warning */
+  --on-blue: #fff;
+  --scrim: rgba(0, 0, 0, 0.32); /* behind the device sheet; solid, no blur */
+  --dim-strip: rgba(0, 0, 0, 0.16); /* the map strip beside the open sidebar */
+
+  /* ---- Color: Cluetooth ---- */
+  --rssi-strong: #1c8a4c;   /* >= -65 dBm */
+  --rssi-fair: #b26b00;     /* -65 .. -80 dBm */
+  --rssi-weak: #c4372f;     /* < -80 dBm */
+  --rec: #e5342b;           /* record FAB, blinking dot */
+  --rec-red: var(--rec);    /* the Stop icon button's fill: the FAB red */
+  --on-rec: #fff;           /* the FAB's dot */
+  --map-route: #0064d4;     /* the route line (drawn at --map-route-opacity) */
+  --map-start: #1c8a4c;
+  --map-end: #111112;
+  --map-route-opacity: 0.35;
+  --map-routes-opacity: 0.18;  /* All sessions: every route, fainter */
+
+  /* ---- Selection ----
+   * Scan filter chips: solid dark selected chip (light in dark mode, since --t1 flips). Set
+   * --chip-on-bg to var(--blue) to make it blue.
+   * Segmented controls (Nearby/All, Advertising/GATT): the wiki's white thumb on a --fill2 track. */
+  --chip-bg: var(--fill2);
+  --chip-fg: var(--t2);
+  --chip-on-bg: var(--t1);
+  --chip-on-fg: var(--bg);
+  --seg-bg: var(--fill2);
+  --seg-fg: var(--t2);
+  --seg-on-bg: var(--seg);
+  --seg-on-fg: var(--t1);
+  --seg-on-shadow: var(--shadow-thumb);
+
+  /* ---- Shadows ----
+   * --shadow-float:  round float buttons, the recorder (FAB and capsule), the area toggle
+   * --shadow-raised: the recorder's expanded panel
+   * --shadow-sheet:  the device sheet and the map sheet
+   * --shadow-thumb:  the segmented control's selected thumb (lighter than --shadow-float)
+   * --shp: the wiki's side-panel shadow, not used by the app
+   */
+  --shp: 0 4px 24px rgba(0, 0, 0, 0.07);
+  --shadow-float: 0 2px 16px rgba(0, 0, 0, 0.06);
+  --shadow-raised: 0 6px 32px rgba(0, 0, 0, 0.08);
+  --shadow-sheet: 0 -6px 32px rgba(0, 0, 0, 0.08);
+  --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  /* ---- Type (wiki) ---- */
+  --font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-code: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  --body-size: 15px;   --body-line: 24px;
+  --title-size: 17px;  --title-weight: 650;
+  --head-size: 24px;   --head-line: 30px;   /* product page heading */
+  --sub-size: 13px;    --sub-line: 20px;    /* MAC, status lines */
+  --small-size: 12.5px; --small-line: 18px; /* section labels, chart axis */
+  --code-size: 13px;
+  --weight-medium: 500;
+  --weight-semi: 600;
+
+  /* ---- Sizes ---- */
+  --frame-w: 412px;
+  --frame-h: 915px;
+  --frame-tablet-w: 1024px;     /* ?layout=tablet review frame */
+  --frame-tablet-h: 768px;
+  --bp-medium: 600px;           /* Material window size classes: compact < 600 dp <= medium < 840 dp <= expanded */
+  --bp-expanded: 840px;
+  --panel-w: 400px;             /* tablet: the floating left panel */
+  --panel-inset: 8px;           /* tablet: the inset of the panel header's buttons (☰, search, the X) */
+  --panel-row: calc(var(--rb) + 2 * var(--panel-inset)); /* tablet: its top row (☰, search) */
+  --drawer-tablet-w: 360px;     /* tablet: the sessions drawer */
+  --recorder-tablet-w: 420px;   /* tablet: the recorder's expanded panel */
+  --edge: 12px;            /* float controls' inset from the frame */
+  --gutter: 16px;          /* list text inset */
+  --rb: 44px;              /* round float button */
+  --rb-icon: 20px;
+  --icon: 17px;
+  --fab: 56px;
+  --fab-dot: 18px;
+  --icon-btn: 40px;         /* round icon button: also its touch target */
+  --icon-btn-glyph: 16px;
+  --gmark: 12px;            /* a GATT step's status mark */
+  --sheet-fade-h: 24px;      /* the fade under a sheet's header while its content is scrolled */
+  --drag-slop: 8px;         /* a pointer moving less is a tap; more, vertically, drags the sheet */
+  --chip-h: 34px;
+  --chip-pad: 14px;
+  --count-badge: 16px;    /* the Filter button's count */
+  --check-size: 20px;     /* the Filter sheet's checkbox */
+  --check-r: 6px;
+  --row-h: 64px;
+  --spark-w: 56px;
+  --spark-h: 22px;
+  --rssi-w: 34px;
+  --recorder-capsule-w: 184px;  /* fallback; the capsule's width is measured from its row */
+  --recorder-panel-h: 232px;    /* fallback; the panel's height is measured from its content */
+  --recorder-map-h: 132px;
+  --recorder-pad: 18px;         /* the capsule's left inset, before the dot */
+  --island-h: var(--rb);        /* the recording island: as tall as the float buttons beside it */
+  --island-ib: 36px;            /* its Pause and Stop buttons (hit area stays --rb) */
+  --island-pad: 14px;           /* its left inset, before the dot */
+  --rec-dot: 8px;
+  --side-w: 82cqw;          /* the left sidebar; the map strip beside it stays visible */
+  --sheet-peek: 92px;
+  --sheet-expanded-h: calc(100% - var(--top-zone)); /* the expanded device sheet stops below the top float-button row */
+  --discover-sheet-half: 67cqh;  /* the Discover sheet's Half snap */
+  --discover-sheet-full: calc(100% - var(--top-zone)); /* its Full snap: below the top float-button row */
+  --handle-w: 36px;
+  --handle-h: 4px;
+  --card-w: 148px;
+  --card-icon: 36px;
+  --hero-h: 200px;
+  --hero-icon: 88px;
+  --btn-h: 40px;
+  --switch-w: 46px;
+  --switch-h: 28px;
+  --switch-knob: 22px;
+  --search-h: 42px;
+  --search-size: 14px;
+  --chart-h: 96px;
+  --top-zone: calc(var(--edge) + var(--rb) + var(--edge)); /* the float row a sheet never covers */
+  --list-top: calc(var(--edge) + var(--rb) + 8px + var(--chip-h) + 8px);
+
+  /* top fade: content scrolling up under the float controls fades into --bg (solid gradient, no blur) */
+  --status-safe: env(safe-area-inset-top, 0px);
+  /* phone: the gesture bar. Sheets run under it to the screen's bottom edge (square bottom corners); their
+     content and the collapsed peek stay above it. 0 on tablet (the panel floats). */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --fade-solid: calc(var(--status-safe) + var(--edge));
+  --fade-h: calc(var(--list-top) + 28px);          /* Scan: menu, search, Discover and chips */
+  --fade-h-short: calc(var(--top-zone) + 16px);    /* Discover, product page: one row of buttons */
+
+  /* ---- Radii (wiki) ---- */
+  --r-item: 12px;
+  --r-pop: 20px;
+  --r-pill: 999px;
+  --r-sheet: 20px;
+  /* concentric corners: a sheet's top corner arc is centered on its corner buttons, which sit in the column of the
+     search float button (--rb at --edge). On tablet the panel is concentric with its header buttons (--panel-inset). */
+  --sheet-radius: calc(var(--edge) + var(--rb) / 2);
+  --sheet-header-h: var(--icon-btn); /* a sheet header row: the view switch, the X, the segmented control, titles */
+  --handle-zone: 14px;          /* phone: the drag handle's own zone at the top of every sheet (the header row sits below it) */
+  --panel-partial-h: max(calc((100cqh - var(--top-zone) - var(--edge)) * 0.45), 300px); /* tablet panel, Partial: 45% of the column, at least header + ~3 rows */
+  --panel-fade-h: 48px;         /* tablet Partial: the fade over the cut-off content */
+  --panel-more-w: 120px;        /* tablet Partial: the expand chevron's tap target (height --rb) */
+  --panel-pad: var(--panel-inset); /* inset of content inside a rounded container's corner region (top and sides alike) */
+  --pop-pad: 12px;              /* popover padding (all sides) */
+  --rec-panel-r: 22px;          /* phone recorder panel: concentric with its 36 px buttons at a 4 px inset (18 + 4) */
+  --rec-gap-phone: 6px;         /* gap between Pause and Stop (phone island) */
+  --rec-gap-tablet: 8px;        /* tablet capsule */
+  --rec-panel-r-tablet: 28px;   /* tablet: 40 px buttons at an 8 px inset (20 + 8) */
+  --pop-r: 28px;                /* location popover: concentric with its 32 px pill button at --pop-pad (16 + 12) */
+  --panel-radius: calc(var(--panel-inset) + var(--rb) / 2);
+
+  /* ---- Focus ---- */
+  --focus-w: 2px;
+  --focus-color: var(--blue);
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --t-fast: 0.18s;
+  --t-std: 0.24s;
+  --t-page: 0.32s;
+  --t-morph: 0.36s;
+  --t-blink: 1s;
+  --swap-x: 28px;           /* shared axis X: how far content slides when a segmented switch changes */
+  --t-fade: 0.2s;           /* the search page fading in and the field expanding */
+  --t-spin: 0.8s;           /* the GATT step spinner */
+  --dim: 0.42;             /* stale rows, faded map points */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #181819;
+    --fill1: #28292b;
+    --fill2: #2c2d2f;
+    --seg: #4a4c4f;
+    --field: #3a3c3f;
+    --panel: #202122;
+    --t1: #f5f5f6;
+    --t2: #ffffffa6;
+    --t3: #ffffff66;
+    --div: #ffffff1f;
+    --blue: #3b9bff;
+    --orange: #ff8a4c;
+    --on-blue: #fff;
+    --scrim: rgba(0, 0, 0, 0.5);
+    --dim-strip: rgba(0, 0, 0, 0.35);
+
+    --rssi-strong: #4cc27f;
+    --rssi-fair: #f0b03a;
+    --rssi-weak: #ff6b62;
+    --rec: #ff453a;
+    --map-route: #3b9bff;
+    --map-start: #4cc27f;
+    --map-end: #f5f5f6;
+
+    --shp: 0 4px 24px rgba(0, 0, 0, 0.35);
+    --shadow-float: 0 2px 16px rgba(0, 0, 0, 0.24);
+    --shadow-raised: 0 6px 32px rgba(0, 0, 0, 0.3);
+    --shadow-sheet: 0 -6px 32px rgba(0, 0, 0, 0.3);
+    --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+}

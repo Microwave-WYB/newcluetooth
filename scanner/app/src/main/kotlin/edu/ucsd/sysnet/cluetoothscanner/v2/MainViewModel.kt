@@ -1,0 +1,400 @@
+package edu.ucsd.sysnet.cluetoothscanner.v2
+
+import android.app.Application
+import android.util.Log
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import edu.ucsd.sysnet.cluetoothscanner.api.core.AllSessionsSummary
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Bbox
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreEvent
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreQueries
+import edu.ucsd.sysnet.cluetoothscanner.api.core.CoreResult
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeleteOutcome
+import edu.ucsd.sysnet.cluetoothscanner.api.core.DeviceKey
+import edu.ucsd.sysnet.cluetoothscanner.api.core.Scope
+import edu.ucsd.sysnet.cluetoothscanner.api.core.SessionSummary
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.LocationStatus
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.Permissions
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformError
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.PlatformResult
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.RecorderState
+import edu.ucsd.sysnet.cluetoothscanner.api.platform.Settings
+import edu.ucsd.sysnet.cluetoothscanner.chrome.OnboardingPermission
+import edu.ucsd.sysnet.cluetoothscanner.chrome.SessionsListState
+import edu.ucsd.sysnet.cluetoothscanner.designsystem.Format
+import edu.ucsd.sysnet.cluetoothscanner.map.CluetoothMapState
+import edu.ucsd.sysnet.cluetoothscanner.map.style.MapAssets
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.CoverInsets
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.MapEvents
+import edu.ucsd.sysnet.cluetoothscanner.ui.contract.OrderedKeys
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.launch
+
+/**
+ * Runs [block]; anything it throws (except cancellation, which belongs to the caller's scope) goes to [failed] with
+ * [task] and yields null. The runner runs every effect, every piece of keyed work and every platform call through
+ * this, so a failure always ends as a typed [MainEvent.Failed] and never reaches the main thread.
+ */
+internal inline fun <T> guarded(task: MainTask, failed: (MainTask, Throwable) -> Unit, block: () -> T): T? =
+    try {
+        block()
+    } catch (c: CancellationException) {
+        throw c
+    } catch (t: Throwable) {
+        failed(task, t)
+        null
+    }
+
+/**
+ * §6.7.1, the runner of the main screen's logic ([reduce] in MainState.kt): one queue of [MainEvent]s with a
+ * single consumer that reduces each event and executes the [MainEffect]s it returns; results come back as events,
+ * failures as [MainEvent.Failed] (see [guarded]). The link, the session view and the search page work in scopes
+ * keyed by the state ([MainUiState.linkAttempt], [ViewKey], [SearchKey]). Each data holder has a single writer: the
+ * view job, the search job and the sessions queue. The recording itself lives in the [AppGraph]; this only reads
+ * it and asks it to change (§1.2.1).
+ */
+class MainViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(app) {
+    /**
+     * Every coroutine of this ViewModel runs here. [guarded] catches first; what still escapes is the screen's own
+     * failure ([MainTask.Unhandled] → CoreLink.Failed), never the core's ([CoreState] means only the open).
+     */
+    private val vmScope = CoroutineScope(viewModelScope.coroutineContext + CoroutineExceptionHandler { _, e -> fail(MainTask.Unhandled, e) })
+
+    private val _ui = MutableStateFlow(MainUiState())
+    val ui: StateFlow<MainUiState> = _ui.asStateFlow()
+
+    val recorder: StateFlow<RecorderState> get() = graph.recorder.state
+
+    val settings: StateFlow<Settings> get() = graph.settings.settings
+    val location: StateFlow<LocationStatus> get() = graph.location.status
+
+    /** §1.2.2: Opening holds the splash; Failed shows the error and a retry. */
+    val coreState: StateFlow<CoreState> get() = graph.core.state
+    fun retryCore() = graph.core.retry()
+
+    /** What the Activity must launch: a permission request or a system dialog (they need an Activity). */
+    sealed interface ActivityRequest {
+        class Permissions(val names: Array<String>) : ActivityRequest
+        data object EnableBluetooth : ActivityRequest
+        data object TurnOnLocation : ActivityRequest
+    }
+
+    private val _requests = MutableSharedFlow<ActivityRequest>(extraBufferCapacity = 4)
+    val requests: SharedFlow<ActivityRequest> = _requests
+
+    private val events = Channel<MainEvent>(Channel.UNLIMITED)
+
+    /** Every intent and result goes through here; on the main thread the consumer reduces it before this returns. */
+    fun dispatch(e: MainEvent) {
+        events.trySend(e)
+    }
+
+    /** The one failure path: log, then the logic decides ([MainEvent.Failed]). */
+    private fun fail(task: MainTask, error: Throwable) {
+        Log.w(TAG, "$task failed", error)
+        dispatch(MainEvent.Failed(task, error))
+    }
+
+    private inline fun <T> guard(task: MainTask, block: () -> T): T? = guarded(task, ::fail, block)
+
+    init {
+        vmScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            for (e in events) {
+                val step = reduce(_ui.value, e)
+                _ui.value = step.state
+                step.effects.forEach(::execute)
+            }
+        }
+        vmScope.launch { linkWork() }
+        vmScope.launch { linkedWork() }
+    }
+
+    private suspend fun ready(): Ready = ui.mapNotNull { it.ready }.first()
+
+    // ---- the work keyed by the state ----
+
+    /**
+     * §1.2.2: each attempt awaits the core and builds the map state in the attempt's own scope → CoreLinked, or
+     * Failed(Link). The scope lives while the attempt is Waiting or Linked, so a failed screen's map state ends with
+     * it and Retry builds a fresh one.
+     */
+    private suspend fun linkWork() = ui.map { it.linkAttempt }.distinctUntilChanged().collectLatest { attempt ->
+        if (attempt == null) return@collectLatest
+        guard(MainTask.Link) {
+            coroutineScope {
+                val core = graph.core.ready()
+                val map = CluetoothMapState(core.queries, graph.location, MapAssets.style(getApplication<Application>()), this)
+                dispatch(MainEvent.CoreLinked(Ready(core, map), attempt))
+                awaitCancellation()
+            }
+        }
+    }
+
+    /** What runs while the screen is linked: the core's events, the sessions queue, the platform state, the view. */
+    private suspend fun linkedWork() = ui.map { it.ready }.distinctUntilChanged().collectLatest { ready ->
+        val q = ready?.core?.queries ?: return@collectLatest
+        coroutineScope {
+            // §2.6: subscribe before querying
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                guard(MainTask.CoreEvents) {
+                    q.events.collect {
+                        when (it) {
+                            is CoreEvent.SessionsChanged -> dispatch(MainEvent.CoreSessionsChanged)
+                            is CoreEvent.DataInvalidated -> dispatch(MainEvent.CoreDataInvalidated)
+                            else -> Unit
+                        }
+                    }
+                }
+            }
+            launch {
+                graph.recorder.state.map { MainEvent.RecorderChanged(it.phase, it.pause, it.sessionId) }.distinctUntilChanged()
+                    .collect(::dispatch)
+            }
+            launch { graph.permissions.state.collect { dispatch(MainEvent.PermissionsChanged(it)) } }
+            // R-10: the core stopped writing for lack of space
+            launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFull.collect { dispatch(MainEvent.StorageFull(it)) } } }
+            // #79: storing kept failing; the recording paused
+            launch { guard(MainTask.CoreEvents) { graph.storageCleanup.storageFailed.collect { dispatch(MainEvent.StorageFailed(it)) } } }
+            launch { viewWork(q) }
+            launch { discoveryWork() }
+        }
+    }
+
+    /**
+     * R-4a: the read of the recording's rate the state asks for ([MainUiState.discoveryKey]): its snapshot, then once
+     * per delta, each as [MainEvent.DiscoveryRead] with its key; an Err is [MainTask.DiscoveryRate]'s with its key.
+     */
+    private suspend fun discoveryWork() = ui.map { it.discoveryKey }.distinctUntilChanged().collectLatest { key ->
+        if (key == null) return@collectLatest
+        guard(MainTask.DiscoveryRate(key)) {
+            graph.discoveryRates.feed(key.sessionId).collect { r ->
+                when (r) {
+                    is CoreResult.Ok -> dispatch(MainEvent.DiscoveryRead(key, r.value))
+                    is CoreResult.Err -> fail(MainTask.DiscoveryRate(key), r.error)
+                }
+            }
+        }
+    }
+
+    /** V-2 / V-7: the shown scope's view, read once per key; the search page's work lives inside it. */
+    private suspend fun viewWork(q: CoreQueries) = ui.map { it.viewKey }.distinctUntilChanged().collectLatest { key ->
+        val scope = key.scope
+        if (scope == null) return@collectLatest
+        coroutineScope {
+            launch { searchWork(q, key) }
+            guard(MainTask.View(key)) { dispatch(MainEvent.ViewRead(ViewData(key, q.sessionView(scope)))) }
+        }
+    }
+
+    /**
+     * Q-1 / Q-2 through the core. The core returns the hits in the session's fixed order (G-9), so only the shown
+     * ones are kept, in a fresh value per result that is never changed once published.
+     */
+    private suspend fun searchWork(q: CoreQueries, view: ViewKey) =
+        ui.map { it.searchKey }.distinctUntilChanged().collectLatest { key ->
+            val scope = view.scope
+            if (key == null || key.view != view || scope == null) return@collectLatest
+            guard(MainTask.Search(key)) {
+                val hits = q.search(scope, key.query, key.area)
+                val results = if (hits == null) SearchResults(key, null, emptyList()) else {
+                    val keys = hits.keys.copyOf(minOf(hits.keys.size, MAX_ROWS))
+                    SearchResults(key, OrderedKeys(keys), q.deviceRows(scope, keys))
+                }
+                dispatch(MainEvent.SearchRead(results))
+            }
+        }
+
+    private suspend fun readSessions(q: CoreQueries): SessionsListState {
+        val current = q.currentSession()
+        // the summary is optional for the list: an unreadable one shows as empty
+        val all = runCatching { q.allSessionsSummary() }.getOrElse { AllSessionsSummary(0, 0, null) }
+        return SessionsListState.build(current, all, q.sessions(), _ui.value.scope, System.currentTimeMillis())
+    }
+
+    // ---- effects ----
+
+    /** Every effect runs in its own coroutine, through [guard]: it ends in its result event or in Failed(effect). */
+    private fun execute(effect: MainEffect) {
+        vmScope.launch { guard(MainTask.Effect(effect)) { run(effect) } }
+    }
+
+    private suspend fun run(effect: MainEffect) {
+        val s = _ui.value
+        when (effect) {
+            MainEffect.LoadSettings -> {
+                val loaded = graph.settings.loaded() // V-6 decides on the stored settings, not the defaults
+                dispatch(MainEvent.SettingsLoaded(loaded, graph.permissions.state.value))
+            }
+            is MainEffect.LoadSessions -> dispatch(MainEvent.SessionsRead(effect.request, readSessions(ready().core.queries)))
+            // D-1b: a failed read is Failed(effect), and the reducer keeps Categories with no notice
+            MainEffect.LoadUiState -> graph.uiState.discoverView().orFail(effect)?.let { dispatch(MainEvent.UiStateRead(it)) }
+            is MainEffect.SaveDiscoverView -> when (val saved = graph.uiState.saveDiscoverView(effect.view)) {
+                is UiStateResult.Ok -> Unit
+                // deliberate exception to the no-log-only rule (owner's OK): the remembered view is pure UI state
+                is UiStateResult.Err -> Log.w(TAG, "D-1b: the Discover view was not remembered: ${saved.message}")
+            }
+            MainEffect.ReloadDiscoveryRate -> dispatch(MainEvent.RereadDiscovery)
+            MainEffect.ReadLaunchFacts -> dispatch(MainEvent.LaunchFactsRead(launchFacts()))
+            // a refused start, pause, resume or stop is the notice's (Failed), never only a log line
+            MainEffect.StartRecording -> graph.recorder.start().orFail(effect)?.let { dispatch(MainEvent.RecordingStarted(it)) }
+            MainEffect.PauseRecording -> graph.recorder.pause().orFail(effect)
+            MainEffect.ResumeRecording -> graph.recorder.resume().orFail(effect)
+            MainEffect.StopRecording -> graph.recorder.stop().orFail(effect)
+            MainEffect.Locate -> s.ready?.map?.locate()
+            MainEffect.SheetsBack -> s.attachedSheets?.handleBack()
+            is MainEffect.SheetsEnterSearch -> s.ready?.let { r -> s.attachedSheets?.enterSearch(effect.query, effect.area, r.map.camera(), effect.picked) }
+            is MainEffect.SheetsSearchThisArea -> s.attachedSheets?.searchThisArea(effect.camera.viewport, effect.camera.zoom)
+            MainEffect.SheetsExitSearch -> s.attachedSheets?.exitSearch()
+            MainEffect.LoadStorage -> dispatch(MainEvent.StorageLoaded(storageFacts()))
+            is MainEffect.Export -> {
+                val prepared = ready().core.storage.prepareExport(effect.scope, effect.format)
+                val handed = if (effect.toDownloads) graph.exportShare.saveToDownloads(prepared) else graph.exportShare.share(prepared)
+                handed.orFail(effect)?.let { dispatch(MainEvent.ExportFinished) }
+            }
+            is MainEffect.Delete -> {
+                val outcome = ready().core.storage.deleteLocalData(effect.scope, effect.includeUnuploaded)
+                dispatch(MainEvent.DeleteFinished(effect.scope, outcome !is DeleteOutcome.Refused))
+            }
+            is MainEffect.UpdateSettings -> graph.settings.update(effect.transform).orFail(effect)
+            is MainEffect.SaveOnboarding ->
+                graph.settings.update { it.copy(userId = effect.userId, recordOnOpen = effect.autoRecord, onboardingDone = true) }
+                    .orFail(effect)?.let { dispatch(MainEvent.OnboardingSaved) }
+            is MainEffect.RequestPermissions -> _requests.emit(
+                ActivityRequest.Permissions(
+                    when (effect.which) {
+                        OnboardingPermission.Nearby -> Permissions.nearby()
+                        OnboardingPermission.Location -> Permissions.location()
+                        OnboardingPermission.Notifications -> Permissions.notifications()
+                    },
+                ),
+            )
+            MainEffect.EnableBluetooth -> _requests.emit(ActivityRequest.EnableBluetooth)
+            MainEffect.TurnOnLocation -> _requests.emit(ActivityRequest.TurnOnLocation)
+            MainEffect.OpenAppSettings -> graph.permissions.openAppSettings().orFail(effect)
+            MainEffect.UploadNow -> graph.uploads.uploadNow().orFail(effect)
+            MainEffect.LoadReclaimable -> dispatch(MainEvent.ReclaimableRead(readReclaim()))
+            is MainEffect.FreeUpSpace -> {
+                val outcome = graph.storageCleanup.run(effect.cleanups)
+                outcome.failed.forEach { (c, error) -> Log.w(TAG, "$c: $error") }
+                dispatch(MainEvent.SpaceFreed(outcome, readReclaim()))
+            }
+        }
+    }
+
+    /** D-1b: a UI-state read's typed failure takes the path a thrown one took: [MainEvent.Failed] for its effect. */
+    private fun <T> UiStateResult<T>.orFail(effect: MainEffect): T? = when (this) {
+        is UiStateResult.Ok -> value
+        is UiStateResult.Err -> {
+            fail(MainTask.Effect(effect), UiStateFailure(message))
+            null
+        }
+    }
+
+    /** A platform call's typed failure takes the path a thrown one took: [MainEvent.Failed] for its effect. */
+    private fun <T> PlatformResult<T>.orFail(effect: MainEffect): T? = when (this) {
+        is PlatformResult.Ok -> value
+        is PlatformResult.Err -> {
+            fail(MainTask.Effect(effect), PlatformFailure(error))
+            null
+        }
+    }
+
+    /** R-10: the free space and what each cleanup frees, or why the core couldn't say (shown, and logged). */
+    private suspend fun readReclaim(): CleanupResult<Reclaim> = graph.storageCleanup.reclaimable().also {
+        if (it is CleanupResult.Err) Log.w(TAG, "reclaimable: ${it.error}")
+    }
+
+    /** V-6's facts: a recording the recorder restored, the stored setting and how many sessions exist. */
+    private suspend fun launchFacts(): LaunchFacts {
+        val rec = graph.recorder.state.value
+        val restored = rec.sessionId?.takeIf { rec.phase != RecorderState.Phase.Idle }
+        // an unreadable count opens as if there were none (V-6 then picks record-on-open or the first run)
+        val sessions = runCatching { ready().core.queries.allSessionsSummary().sessionCount }.getOrDefault(0)
+        return LaunchFacts(restored, graph.settings.loaded().recordOnOpen, sessions)
+    }
+
+    private suspend fun storageFacts(): StorageFacts {
+        val core = ready().core
+        // a failure is the guarded effect's (a notice with Retry), never "0 B" in silence
+        val stats = core.storage.storageStats()
+        val cache = runCatching { graph.mapCache.sizeBytes() }.getOrNull()
+        return StorageFacts(stats.databaseBytes, stats.rawFilesBytes, cache, stats.pendingCount)
+    }
+
+    // ---- what the composition and the map call: platform calls, each through [guard] ----
+
+    private fun pushedSheet(s: MainUiState) = s.attachedSheets?.let { it.stack.entries.size > 1 } == true
+    private fun sheetSearching(s: MainUiState) = s.attachedSheets?.searching == true
+
+    /** G-14: the open layers, with the sheet stack's own. */
+    fun backLayers(s: MainUiState): BackLayers = backLayers(s, pushedSheet(s), sheetSearching(s))
+
+    /** G-14: System Back closes the topmost layer (the handler is disabled when there is none). */
+    fun onBack() {
+        val s = _ui.value
+        dispatch(MainEvent.Back(pushedSheet(s), sheetSearching(s)))
+    }
+
+    /** M-7, P-6, D-4, Q-6: the map's events go to D's sheets; the settled camera also comes here (Q-3, Q-6). */
+    val mapEvents: MapEvents = object : MapEvents {
+        override fun onUserGestureStart() { guard(MainTask.Platform) { _ui.value.attachedSheets?.mapEvents?.onUserGestureStart() } }
+        override fun onCameraIdle(byUser: Boolean, viewport: Bbox, zoom: Double) {
+            dispatch(MainEvent.CameraIdle(MapCamera(viewport, zoom)))
+            guard(MainTask.Platform) { _ui.value.attachedSheets?.mapEvents?.onCameraIdle(byUser, viewport, zoom) }
+        }
+        override fun onDeviceTap(key: DeviceKey) { guard(MainTask.Platform) { _ui.value.attachedSheets?.mapEvents?.onDeviceTap(key) } }
+        override fun onEmptyTap() {
+            guard(MainTask.Platform) { _ui.value.attachedSheets?.mapEvents?.onEmptyTap() ?: _ui.value.ready?.map?.setSelection(null) }
+        }
+    }
+
+    /** What the sheets, the panel and the chrome cover, for the map's padding (M-10, D-14); per frame, so no event. */
+    fun setCover(insets: CoverInsets) { guard(MainTask.Platform) { _ui.value.ready?.map?.setCover(insets) } }
+
+    /** The Activity's launches fail here (e.g. no settings activity on the device). */
+    fun launchFailed(error: Throwable) = fail(MainTask.Launch, error)
+
+    /** An activity launch's typed failure ([PlatformResult.Err]) takes the same path as a thrown one. */
+    fun launchFailed(error: PlatformError) = fail(MainTask.Launch, PlatformFailure(error))
+
+    companion object {
+        private const val TAG = "MainViewModel"
+        private const val MAX_ROWS = 200
+
+        /** The Activity hands in the process graph, so nothing here looks it up or casts for it. */
+        fun factory(app: Application, graph: AppGraph): ViewModelProvider.Factory = viewModelFactory {
+            initializer { MainViewModel(app, graph) }
+        }
+    }
+}
+
+/** A session's label for the one-session scope in Settings ("6:05 PM"). */
+fun SessionSummary.label(): String = Format.time(startedMs)
+
+/**
+ * A platform call's typed failure ([PlatformError]) carried where the screen's logic takes a [Throwable]
+ * ([MainEvent.Failed]); a value, never thrown.
+ */
+class PlatformFailure(val error: PlatformError) : Exception(error.message)
+
+/** D-1b: a UI-state read or write that failed ([UiStateResult.Err]), carried to the reducer as [MainEvent.Failed]. */
+class UiStateFailure(message: String) : Exception(message)

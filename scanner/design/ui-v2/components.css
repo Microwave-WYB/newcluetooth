@@ -1,0 +1,606 @@
+/*
+ * Cluetooth UI v2 components. Every value comes from tokens.css. Each component is defined once;
+ * screens only place them. Section names match the gallery (#gallery) and the future Compose names.
+ */
+
+/* ---------- Base ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--t1); font-family: var(--font);
+  font-size: var(--body-size); line-height: var(--body-line);
+  -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+/* Focus rings are inset (negative offset), so no clipping parent (scrollers, the recorder, the map
+   card, the search slot) can cut them off. */
+:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: calc(-1 * var(--focus-w)); }
+.num { font-variant-numeric: tabular-nums; }
+.icon { width: var(--icon); height: var(--icon); flex: none; display: block; }
+.icon svg { width: 100%; height: 100%; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+@media (prefers-reduced-motion: reduce) { * { transition-duration: 0s !important; animation-duration: 0s !important; } }
+
+/* ---------- PhoneFrame ---------- */
+/* 412 x 915 on a desktop; the whole viewport on a phone. */
+.stage { min-height: 100%; display: grid; place-items: center; }
+.phone {
+  position: relative; overflow: hidden; container-type: size;
+  width: 100vw; height: 100vh; height: 100dvh; /* fills the window (phones, tablets); the frames below are for review */
+  background: var(--bg);
+}
+.phone.frame-phone { width: min(var(--frame-w), 100vw); height: min(var(--frame-h), 100dvh); }
+.phone.frame-tablet { width: min(var(--frame-tablet-w), 100vw); height: min(var(--frame-tablet-h), 100dvh); }
+.phone.frame-phone, .phone.frame-tablet { box-shadow: var(--shadow-raised); border-radius: var(--r-pop); }
+.stage-link { position: fixed; right: var(--gutter); bottom: var(--gutter); font-size: var(--sub-size); color: var(--blue); text-decoration: none; }
+.stage-link[hidden] { display: none; }
+
+/* ---------- FloatButton (.rb) ---------- */
+.rb {
+  width: var(--rb); height: var(--rb); flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: var(--fill1); box-shadow: var(--shadow-float); color: var(--t1);
+  transition: opacity var(--t-fast), transform var(--t-morph) var(--ease), background-color var(--t-fast);
+}
+.rb .icon { width: var(--rb-icon); height: var(--rb-icon); }
+.rb.on { background: var(--fill2); }
+.float { position: absolute; z-index: 10; }
+.float.tl { top: var(--edge); left: var(--edge); }
+.float.tr { top: var(--edge); right: var(--edge); }
+
+/* ---------- Locate: bottom left, the size of ☰, centered on the FAB's line, in the FAB's layer (below the sheets);
+   it fades in only after the user moved the map off their location ---------- */
+.locate-btn { position: absolute; z-index: 11; left: var(--edge); bottom: calc(var(--rec-lift, 0px) + var(--edge) + 12px + (var(--fab) - var(--rb)) / 2); transition: bottom var(--t-page) var(--ease), opacity var(--t-std); }
+.locate-btn.gone { opacity: 0; pointer-events: none; }
+/* LocationWarning: the same spot and size, in --warn; always shown while the location is unusable */
+.loc-warn { position: absolute; z-index: 11; left: var(--edge); bottom: calc(var(--rec-lift, 0px) + var(--edge) + 12px + (var(--fab) - var(--rb)) / 2); color: var(--warn); transition: bottom var(--t-page) var(--ease), opacity var(--t-std); }
+.loc-warn.gone { opacity: 0; pointer-events: none; }
+.loc-warn.static, .loc-pop.static { position: static; }
+.loc-pop {
+  position: absolute; z-index: 13; left: var(--edge); bottom: calc(var(--rec-lift, 0px) + var(--edge) + 12px + (var(--fab) - var(--rb)) / 2 + var(--rb) + 8px);
+  width: min(260px, calc(100% - 2 * var(--edge))); padding: var(--pop-pad); border-radius: var(--pop-r); background: var(--panel); box-shadow: var(--shadow-raised);
+  animation: pop-in var(--t-fast) var(--ease);
+}
+.loc-pop .btn { border-radius: var(--r-pill); } /* a pill; the popover radius is concentric with it (16 + 12 = 28) */
+.loc-pop p { margin: 0 0 10px; font-size: 14px; line-height: 20px; }
+.loc-pop p:last-child { margin: 0; }
+.pop-catch { position: absolute; inset: 0; z-index: 12; display: none; }
+.pop-catch.on { display: block; }
+.g-locwarn { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(6px); } }
+
+/* ---------- Search: the button, the full-screen page, and search state's bar ---------- */
+.search-box {
+  position: absolute; z-index: 45; top: var(--edge); right: var(--edge); width: var(--rb); height: var(--rb); overflow: hidden;
+  border-radius: var(--r-pill); background: var(--fill1); box-shadow: var(--shadow-float); color: var(--t1);
+  transition: width var(--t-fade) var(--ease), background-color var(--t-fade), opacity var(--t-fast), transform var(--t-std) var(--ease);
+}
+.search-box.lift { z-index: 101; } /* above the search page while it opens, is open and closes */
+.search-box.open { width: calc(100% - 2 * var(--edge)); background: var(--fill2); }
+.search-box.open:focus-within { background: var(--field); outline: var(--focus-w) solid var(--focus-color); outline-offset: calc(-1 * var(--focus-w)); }
+.search-box.no-anim, .search-box.no-anim * { transition: none !important; }
+.sbx-btn { position: absolute; left: 0; top: 0; width: var(--rb); height: var(--rb); display: grid; place-items: center; color: inherit; }
+.sbx-btn .icon { grid-area: 1 / 1; width: var(--rb-icon); height: var(--rb-icon); transition: opacity var(--t-fade) var(--ease), transform var(--t-fade) var(--ease); }
+.sbx-btn .i-b { opacity: 0; transform: rotate(-180deg) scale(0.6); }
+.search-box.open .sbx-btn .i-a { opacity: 0; transform: rotate(180deg) scale(0.6); }
+.search-box.open .sbx-btn .i-b { opacity: 1; transform: none; }
+.search-box input { position: absolute; inset: 0 var(--gutter) 0 var(--rb); border: 0; outline: 0; background: transparent; color: var(--t1); font: inherit; font-size: var(--search-size); opacity: 0; transition: opacity var(--t-fade); }
+.search-box input::placeholder { color: var(--t3); }
+.search-box input::-webkit-search-cancel-button { display: none; }
+.search-box.open input { opacity: 1; }
+.search-box.gone { opacity: 0; pointer-events: none; }
+.search-box.static { position: relative; top: auto; right: auto; }
+.search-box.static.open { width: 100%; }
+/* the search page fades in place (no slide), the background and the results together */
+.page.search-page { z-index: 100; transform: none; opacity: 0; transition: opacity var(--t-fade) var(--ease); }
+.page.search-page.in { opacity: 1; }
+.scroll.search-results { top: var(--top-zone); }
+.search-bar-slot { display: contents; }
+.search-bar {
+  position: absolute; z-index: 45; top: var(--edge); left: var(--edge); right: var(--edge); height: var(--rb);
+  display: flex; align-items: center; border-radius: var(--r-pill); background: var(--fill1); box-shadow: var(--shadow-float);
+}
+.search-bar.static { position: relative; top: auto; left: auto; right: auto; }
+.sb-text { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 10px; padding: 0 var(--gutter); text-align: left; color: var(--t1); font-size: var(--search-size); }
+.sb-text .icon { color: var(--t3); }
+.sb-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-bar .ib { margin-right: 2px; width: 40px; height: 40px; background: transparent; }
+/* search state: the bar replaces ☰ and search; the recording island sits centered right under the bar */
+.phone.searching .menu-btn, .phone.searching .search-box:not(.open):not(.lift) { display: none; }
+.phone.searching .recorder.top, .phone.searching .recorder.top.capsule { top: calc(var(--edge) + var(--rb) + 8px); }
+/* "Search this area": centered under the search bar, or under the island while recording */
+.search-area { position: absolute; z-index: 44; top: calc(var(--edge) + var(--rb) + 8px); left: 50%; transform: translateX(-50%); transition: opacity var(--t-fast); }
+.phone.recording .search-area { top: calc(var(--edge) + var(--rb) + 8px + var(--island-h) + 8px); }
+.search-area .chip { box-shadow: var(--shadow-float); }
+.search-area.gone, .phone:not(.searching) .search-area { opacity: 0; pointer-events: none; }
+.search-area.static { position: static; transform: none; }
+.text-btn { margin-top: 6px; color: var(--blue); font-weight: var(--weight-medium); padding: 6px 8px; border-radius: var(--r-item); }
+
+/* ---------- Recorder: the record FAB, the recording capsule and its panel (Scan only) ---------- */
+/* One element anchored bottom-right. idle: red FAB with a white dot. capsule: dot, time, Pause/Resume,
+   Stop. panel: grows upward; the location line and the route map appear above the capsule row. */
+.recorder {
+  position: absolute; z-index: 15; right: var(--edge); bottom: calc(var(--rec-lift, 0px) + var(--edge) + 12px);
+  width: var(--fab); height: var(--fab); border-radius: calc(var(--fab) / 2); overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  background: var(--rec); box-shadow: var(--shadow-float); cursor: pointer;
+  transition: width var(--t-morph) var(--ease), height var(--t-morph) var(--ease), border-radius var(--t-morph) var(--ease),
+    background-color var(--t-std), box-shadow var(--t-morph), bottom var(--t-page) var(--ease), top var(--t-morph) var(--ease), left var(--t-morph) var(--ease), opacity var(--t-std), scale var(--t-std) var(--ease);
+}
+/* the idle FAB sits below the sheets (above the map): a rising sheet covers it; the island stays above */
+.recorder.idle { z-index: 11; }
+.recorder::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: var(--fab-dot); height: var(--fab-dot); margin: calc(var(--fab-dot) / -2);
+  border-radius: 50%; background: var(--on-rec); transition: opacity var(--t-fast), transform var(--t-std) var(--ease);
+}
+.recorder.capsule, .recorder.panel { background: var(--panel); cursor: default; }
+.recorder.capsule::after, .recorder.panel::after { opacity: 0; transform: scale(0.3); }
+.recorder.capsule { width: var(--capsule-w, var(--recorder-capsule-w)); }
+.recorder.panel { width: calc(100% - 2 * var(--edge)); height: var(--panel-h, var(--recorder-panel-h)); border-radius: var(--rec-r, var(--rec-panel-r)); box-shadow: var(--shadow-raised); }
+.recorder.static { position: relative; right: auto; bottom: auto; }
+.rec-row { flex: none; align-self: stretch; position: relative; height: var(--fab); white-space: nowrap; opacity: 0; transition: opacity var(--t-fast); }
+/* the row's two groups. Capsule: dot + time at the left inset, Pause + Stop at the right inset. Panel: dot + time move
+   to the center; Pause + Stop stay at the inset that makes Stop concentric with the panel's corner (so they ride the
+   right edge as the panel widens). Both animate with the width (--t-morph, --ease). */
+.recorder { --rec-pad-l: var(--recorder-pad); --rec-pad-r: calc(var(--rec-panel-r-tablet) - var(--icon-btn) / 2); --rec-gap: var(--rec-gap-tablet); }
+.recorder.top { --rec-pad-l: var(--island-pad); --rec-pad-r: calc(var(--rec-panel-r) - var(--island-ib) / 2); --rec-gap: var(--rec-gap-phone); }
+.rec-open { position: absolute; top: 50%; left: var(--rec-pad-l); transform: translateY(-50%); display: flex; align-items: center; gap: 8px; cursor: pointer; transition: left var(--t-morph) var(--ease); }
+.recorder.panel .rec-open { left: calc(50% - var(--rec-group-w, 64px) / 2); }
+.rec-btns { position: absolute; top: 50%; right: var(--rec-pad-r); transform: translateY(-50%); display: flex; align-items: center; gap: var(--rec-gap); }
+.rec-time { font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+.rec-meta { flex: none; padding: 14px var(--gutter) 0; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity var(--t-fast); }
+.rec-map { flex: none; margin: 10px var(--edge) 0; height: var(--recorder-map-h); border-radius: calc(var(--rec-r, var(--rec-panel-r)) - var(--edge)); /* panel radius - inset 12: phone 10, tablet 16 */ overflow: hidden; background: var(--fill2); opacity: 0; transition: opacity var(--t-fast); cursor: pointer; }
+.recorder.capsule .rec-row, .recorder.panel .rec-row { opacity: 1; transition-delay: var(--t-fast); }
+.recorder.panel .rec-meta, .recorder.panel .rec-map { opacity: 1; transition-delay: var(--t-fast); }
+.recorder-catch { position: absolute; inset: 0; z-index: 14; display: none; }
+/* While recording the recorder is always the island at the top center, between ☰ and search; its panel grows
+   downward (the capsule row first). Starting and stopping animate the move (FLIP, in JS). */
+.recorder.top { top: calc(var(--edge) + (var(--rb) - var(--fab)) / 2); bottom: auto; right: auto; left: calc(50% - var(--fab) / 2); justify-content: flex-start; }
+.recorder.top.capsule { left: calc(50% - var(--capsule-w, var(--recorder-capsule-w)) / 2); }
+.recorder.top.panel { left: var(--edge); }
+/* collapsed, the island is as tall as ☰ and search (44 px) and centered on their row; the panel is unchanged */
+/* the control row never moves: capsule and panel share its top, height and size; on phone the row is centered and the
+   panel widens symmetrically around it, its extra content growing downward */
+.recorder.top.capsule, .recorder.top.panel { top: calc(var(--edge) + (var(--rb) - var(--island-h)) / 2); }
+.recorder.top.capsule { height: var(--island-h); border-radius: calc(var(--island-h) / 2); }
+.recorder.top .rec-row { height: var(--island-h); }
+.recorder.top .rec-row .ib { width: var(--island-ib); height: var(--island-ib); position: relative; }
+.recorder.top .rec-row .ib::after { content: ""; position: absolute; inset: calc((var(--island-ib) - var(--rb)) / 2); } /* hit area --rb */
+.recorder.top .rec-row { order: -1; }
+.recorder.top .rec-meta { padding-top: 0; }
+.recorder.top .rec-map { margin-bottom: var(--edge); }
+/* the open top panel covers the float-button row: those buttons step aside until it closes */
+.phone.rec-top-open .menu-btn, .phone.rec-top-open .search-box { opacity: 0; pointer-events: none; }
+.recorder-catch.on { display: block; }
+
+/* ---------- IconButton: round, neutral (--fill2) or record red ---------- */
+.ib { width: var(--icon-btn); height: var(--icon-btn); flex: none; border-radius: 50%; display: grid; place-items: center; transition: background-color var(--t-fast); }
+.ib .icon { width: var(--icon-btn-glyph); height: var(--icon-btn-glyph); }
+.ib.neutral { background: var(--fill2); color: var(--t1); }
+.ib.rec { background: var(--rec-red); color: var(--on-rec); }
+.icon svg .solid { fill: currentColor; stroke: none; }
+
+/* ---------- BlinkingDot ---------- */
+.rec-dot { width: var(--rec-dot); height: var(--rec-dot); border-radius: 50%; background: var(--rec); flex: none; animation: blink var(--t-blink) steps(1, end) infinite; }
+.rec-dot.paused { animation: none; background: var(--t3); }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---------- Chip ---------- */
+.chip {
+  height: var(--chip-h); flex: none; padding: 0 var(--chip-pad); border-radius: var(--r-pill); white-space: nowrap;
+  background: var(--chip-bg); font-size: 14px; color: var(--chip-fg);
+  transition: background-color var(--t-fast), color var(--t-fast);
+}
+.chip.on { background: var(--chip-on-bg); color: var(--chip-on-fg); font-weight: var(--weight-medium); }
+/* the Filter button (the Discover header's right column): the selected style and a count while filters are on;
+   the count sits inside the button's box, so the panel's rounded corner never clips it */
+.ib.neutral.filter-btn.on { background: var(--chip-on-bg); color: var(--chip-on-fg); }
+.filter-btn { position: relative; }
+.count-badge {
+  position: absolute; top: 0; right: 0; min-width: var(--count-badge);
+  height: var(--count-badge); padding: 0 4px; border-radius: var(--r-pill); display: grid; place-items: center;
+  background: var(--blue); color: var(--on-blue); font-size: 11px; font-weight: var(--weight-medium); line-height: 1;
+  font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* ---------- Filter sheet: checkbox rows with device counts, Clear at the bottom ---------- */
+.filter-item { gap: 14px; transition: opacity var(--t-fast); }
+.filter-item.zero { opacity: var(--dim); } /* a faceted count of 0: in place, dimmed, still tappable */
+.filter-seg { padding: 4px var(--gutter) 8px; }
+.check { width: var(--check-size); height: var(--check-size); flex: none; border-radius: var(--check-r); box-shadow: inset 0 0 0 2px var(--t3); display: grid; place-items: center; transition: background-color var(--t-fast), box-shadow var(--t-fast); }
+.check svg { width: 16px; height: 16px; fill: none; stroke: var(--chip-on-fg); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transition: opacity var(--t-fast); }
+.filter-item[aria-checked="true"] .check { background: var(--chip-on-bg); box-shadow: none; }
+.filter-item[aria-checked="true"] .check svg { opacity: 1; }
+.filter-foot { padding: 4px var(--gutter) 16px; }
+
+/* ---------- DeviceRow ---------- */
+.rows { display: block; }
+.row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px;
+  width: 100%; min-height: var(--row-h); padding: 8px var(--gutter); text-align: left; border-radius: var(--r-item);
+  transition: opacity var(--t-std), background-color var(--t-fast);
+}
+.row:active { background: var(--fill2); }
+.row.stale { opacity: var(--dim); }
+.row.sel { background: var(--fill2); }
+.row-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-name.none { color: var(--t3); }
+.row-sub { display: block; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-rssi { width: var(--rssi-w); text-align: right; font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+.spark { width: var(--spark-w); height: var(--spark-h); display: block; }
+.spark path { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.band-strong { color: var(--rssi-strong); }
+.band-fair { color: var(--rssi-fair); }
+.band-weak { color: var(--rssi-weak); }
+
+/* ---------- Screen: Scan ---------- */
+.scroll { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; }
+.scan-list { padding: var(--list-top) 0 calc(var(--fab) + 3 * var(--edge)); }
+
+/* ---------- TopFade ---------- */
+/* Above the scroller, below the float controls; never takes a tap. */
+.top-fade {
+  position: absolute; z-index: 5; top: 0; left: 0; right: 0; height: var(--fade-h); pointer-events: none;
+  background: linear-gradient(var(--fade-color, var(--bg)) 0, var(--fade-color, var(--bg)) var(--fade-solid), transparent 100%);
+  transition: opacity var(--t-fast);
+}
+.top-fade.short { height: var(--fade-h-short); }
+.top-fade.when-scrolled:not(.on) { opacity: 0; }
+
+/* ---------- Page (full-screen layer that slides in from the right) ---------- */
+.page { position: absolute; inset: 0; z-index: 20; background: var(--bg); transform: translateX(100%); transition: transform var(--t-page) var(--ease); }
+.page.in { transform: none; }
+.page-head { position: absolute; z-index: 10; top: var(--edge); left: var(--edge); right: var(--edge); height: var(--rb); display: flex; align-items: center; gap: 12px; }
+.page-title { font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
+.page-body { padding: calc(var(--rb) + 2 * var(--edge)) 0 var(--gutter); }
+/* History and Settings: a solid strip behind the back button and the title, the list scrolls below it */
+.page-bar { position: absolute; z-index: 10; top: 0; left: 0; right: 0; height: var(--top-zone); padding: 0 var(--edge); display: flex; align-items: center; gap: 12px; background: var(--bg); }
+.page-bar + .scroll, .scroll.below-bar { top: var(--top-zone); }
+
+/* ---------- Segmented ---------- */
+.seg { position: relative; display: flex; border-radius: var(--r-pill); background: var(--seg-bg); padding: 2px; }
+/* the selected thumb slides between the options (--t-std, --ease) */
+.seg-thumb { position: absolute; top: 2px; bottom: 2px; left: calc(2px + (100% - 4px) / var(--seg-n, 2) * var(--seg-i, 0)); width: calc((100% - 4px) / var(--seg-n, 2)); border-radius: var(--r-pill); background: var(--seg-on-bg); box-shadow: var(--seg-on-shadow); transition: left var(--t-std) var(--ease); }
+.seg button { position: relative; z-index: 1; }
+.seg button { flex: 1; height: 32px; padding: 0 16px; border-radius: var(--r-pill); font-size: 14px; color: var(--seg-fg); white-space: nowrap; transition: background-color var(--t-fast), color var(--t-fast); }
+.seg button[aria-checked="true"] { color: var(--seg-on-fg); font-weight: var(--weight-medium); } /* the thumb draws the selection */
+
+/* ---------- Discover panel ---------- */
+.cat { padding: 8px 0 6px; }
+.cat-head { display: flex; align-items: center; gap: 4px; padding: 6px var(--gutter); font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
+.cat-head .chev { color: var(--t3); font-weight: 400; }
+.cards { display: flex; gap: 10px; overflow-x: auto; padding: 6px var(--gutter) 14px; scrollbar-width: none; }
+.cards::-webkit-scrollbar { display: none; }
+
+/* ---------- ProductCard ---------- */
+.pcard {
+  width: var(--card-w); flex: none; display: flex; flex-direction: column; gap: 8px; padding: 12px; text-align: left;
+  border-radius: var(--card-r); background: var(--fill2); /* concentric with the sheet: the card row is inset --gutter */
+}
+.pcard-icon { width: var(--card-icon); height: var(--card-icon); border-radius: 50%; display: grid; place-items: center; background: var(--bg); color: var(--t1); }
+.pcard-icon.muted { color: var(--t3); }
+.pcard-name { font-weight: var(--weight-semi); line-height: 20px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 40px; }
+.pcard-status { font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- SearchField (wiki .sf) ---------- */
+.sf { display: flex; align-items: center; gap: 10px; height: var(--search-h); padding: 0 var(--gutter); border-radius: var(--r-pill); background: var(--fill2); color: var(--t3); font-size: var(--search-size); }
+.sf:focus-within { outline: var(--focus-w) solid var(--focus-color); outline-offset: calc(-1 * var(--focus-w)); background: var(--field); }
+.sf input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--t1); font: inherit; }
+.sf input::-webkit-search-cancel-button { display: none; }
+.sf input::placeholder { color: var(--t3); }
+.search-slot { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--t-std) var(--ease); }
+.search-slot.open { grid-template-rows: 1fr; }
+.search-slot > div { min-height: 0; overflow: hidden; padding: 0 var(--gutter); }
+.search-slot.open > div { padding-bottom: 8px; }
+.empty { padding: 24px var(--gutter); color: var(--t2); font-size: 14px; text-align: center; }
+
+/* ---------- Buttons ---------- */
+.btn { height: var(--btn-h); padding: 0 18px; border-radius: var(--r-pill); display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: var(--weight-medium); white-space: nowrap; transition: background-color var(--t-fast); }
+.btn.primary { background: var(--blue); color: var(--on-blue); }
+.btn.tonal { background: var(--fill2); color: var(--t1); }
+.btn.small { height: 32px; padding: 0 14px; font-size: 14px; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---------- Switch ---------- */
+.switch { position: relative; width: var(--switch-w); height: var(--switch-h); flex: none; border-radius: var(--r-pill); background: var(--fill2); box-shadow: inset 0 0 0 1px var(--div); transition: background-color var(--t-fast); }
+.switch::after { content: ""; position: absolute; top: calc((var(--switch-h) - var(--switch-knob)) / 2); left: calc((var(--switch-h) - var(--switch-knob)) / 2); width: var(--switch-knob); height: var(--switch-knob); border-radius: 50%; background: var(--fill1); transition: transform var(--t-std) var(--ease); }
+.switch[aria-checked="true"] { background: var(--blue); box-shadow: none; }
+.switch[aria-checked="true"]::after { transform: translateX(calc(var(--switch-w) - var(--switch-h))); }
+
+/* ---------- ListItem (History, Settings, Drawer) ---------- */
+.item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px var(--gutter); text-align: left; border-radius: var(--r-item); }
+button.item:active { background: var(--fill2); }
+.item-text { flex: 1; min-width: 0; }
+.item-title { display: block; }
+.item-sub { display: block; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); font-variant-numeric: tabular-nums; }
+.item-end { color: var(--t2); font-variant-numeric: tabular-nums; }
+.item .chev { color: var(--t3); }
+.sect { font-size: var(--small-size); line-height: var(--small-line); color: var(--t3); padding: 16px var(--gutter) 4px; }
+
+/* ---------- Pushed sheets (product, device): over everything; the scrim sits right below the top one ---------- */
+.scrim { position: absolute; inset: 0; z-index: 80; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity var(--t-page) var(--ease); }
+.scrim.on { opacity: 1; pointer-events: auto; }
+.stack-sheet { height: var(--discover-sheet-full); }
+.stack-sheet .sheet-body { touch-action: pan-y; }
+.stack-sheet.open:not(.full) .sheet-body { overflow-y: hidden; }
+/* every pushed sheet's header: its content, and the same close button (X) at the top right */
+.sheet-top { flex: none; position: relative; min-height: calc(var(--corner-r) + var(--head-drop) + var(--sheet-header-h) / 2 + 8px); padding-top: calc(var(--corner-btn) + var(--head-drop)); padding-right: calc(var(--corner-r) + var(--icon-btn) / 2 + 8px); touch-action: pan-x; cursor: grab; }
+/* the X: the same icon button as the view switch (.ib: --icon-btn, --icon-btn-glyph), centered where the search
+   button (--rb at --edge) is centered, so the two share one vertical column; its hit area is --rb */
+.sheet-top > .ib { position: absolute; top: calc(var(--corner-btn) + var(--head-drop)); right: var(--corner-btn); width: var(--sheet-header-h); height: var(--sheet-header-h); } /* centered on the corner arc */
+.sheet-top > .ib::after { content: ""; position: absolute; inset: calc((var(--icon-btn) - var(--rb)) / 2); }
+.sheet-kicker { display: flex; align-items: center; height: var(--sheet-header-h); padding: 0 var(--gutter); font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
+/* a sheet below the top one sits at the top sheet's height, covered */
+.sheet.sheet.open.following { transform: translateY(var(--follow-y)); }
+
+/* ---------- Sidebar: a full-height panel that pushes the map ---------- */
+.main { position: absolute; inset: 0; z-index: 0; overflow: hidden; transition: transform var(--t-std) var(--ease); }
+.phone.side-open .main { transform: translateX(var(--side-w)); }
+.main-dim { position: absolute; inset: 0; z-index: 40; background: var(--dim-strip); opacity: 0; pointer-events: none; transition: opacity var(--t-std); }
+.phone.side-open .main-dim { opacity: 1; pointer-events: auto; }
+.side {
+  position: absolute; z-index: 40; top: 0; bottom: 0; left: 0; width: var(--side-w); display: flex; flex-direction: column;
+  background: var(--panel); transform: translateX(-100%); visibility: hidden; transition: transform var(--t-std) var(--ease), visibility var(--t-std);
+}
+.phone.side-open .side { transform: none; visibility: visible; }
+.side.static { position: relative; transform: none; visibility: visible; width: 100%; height: 100%; }
+.side-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--top-zone) 8px 0; } /* phone: the first item clears the ☰ row */
+/* tablet sessions panel (radius --panel-radius 30): items inset --panel-pad 8 on top and sides, radius 30 - 8 = 22 */
+.phone.tablet .side-list { padding: var(--panel-pad) var(--panel-pad) 0; }
+.phone.tablet .side-foot { padding: var(--panel-pad); }
+.phone.tablet .side .item, .phone.tablet .side .nav { border-radius: calc(var(--panel-radius) - var(--panel-pad)); }
+.side-foot { flex: none; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); }
+.item.sel { background: var(--fill2); }
+/* MenuButton: rides the sidebar's edge (4 px in), its icon turning from ☰ into "collapse sidebar" */
+.menu-btn { position: absolute; z-index: 45; top: var(--edge); left: var(--edge); transition: left var(--t-std) var(--ease), opacity var(--t-fast); }
+.menu-btn .icon { grid-area: 1 / 1; transition: opacity var(--t-std) var(--ease), transform var(--t-std) var(--ease); }
+.menu-btn .i-b, .menu-btn .i-c { opacity: 0; transform: rotate(-90deg) scale(0.6); }
+.menu-btn.open { left: calc(var(--side-w) - var(--rb) - 4px); }
+.menu-btn.open .i-a { opacity: 0; transform: rotate(90deg) scale(0.6); }
+.menu-btn.open .i-b { opacity: 1; transform: none; }
+.menu-btn.gone { opacity: 0; pointer-events: none; }
+.menu-btn.static { position: relative; top: auto; left: auto; }
+.phone.side-open .search-box { transform: translateX(var(--side-w)); }
+.brand { padding: 2px 10px 14px; font-weight: var(--title-weight); font-size: 16px; letter-spacing: -0.01em; }
+.nav { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border-radius: var(--r-item); transition: background-color var(--t-fast); }
+.nav:active, .nav.on { background: var(--fill2); }
+.nav.on { font-weight: var(--weight-medium); }
+.nav .icon { color: var(--t2); }
+
+/* ---------- Sheet (bottom sheet: device sheet and map list sheet) ---------- */
+/* Two snap states only: .collapsed shows the peek header (--peek), .expanded the whole sheet. The
+   height is fixed (--sheet-expanded-h); content scrolls inside, so tabs or content never change it. */
+.sheet {
+  position: absolute; z-index: 81; left: 0; right: 0; bottom: 0; height: var(--sheet-expanded-h);
+  display: flex; flex-direction: column; border-radius: var(--corner-r) var(--corner-r) 0 0; background: var(--panel); box-shadow: var(--shadow-sheet);
+  transform: translateY(calc(100% + 8px)); visibility: hidden; transition: transform var(--t-page) var(--ease), visibility var(--t-page);
+}
+.sheet.open { visibility: visible; }
+.sheet.open.collapsed { transform: translateY(calc(100% - var(--peek, var(--sheet-peek)) - var(--safe-bottom))); } /* the peek, above the gesture bar */
+.sheet.open.expanded, .sheet.open.full { transform: none; }
+.sheet.open.half { transform: translateY(calc(100% - var(--discover-sheet-half))); }
+.sheet.dragging { transition: none; }
+/* collapsed at rest: the strip under the gesture bar (below the peek) is the sheet's background, no content */
+.sheet::after { content: ""; position: absolute; z-index: 3; left: 0; right: 0; top: var(--peek, var(--sheet-peek)); height: var(--safe-bottom); background: var(--panel); pointer-events: none; opacity: 0; transition: opacity var(--t-fast); }
+.sheet.open.collapsed:not(.dragging)::after { opacity: 1; }
+.sheet.static { position: relative; transform: none; visibility: visible; height: auto; border-radius: var(--corner-r); }
+.sheet .handle { cursor: grab; touch-action: none; }
+/* corner geometry: --corner-r is the top corner radius and the depth / inset of the corner buttons' centers */
+.phone, .gallery { --corner-r: var(--sheet-radius); --corner-btn: calc(var(--corner-r) - var(--sheet-header-h) / 2); --head-drop: var(--handle-zone); --content-inset: 0px; }
+/* rounded things inside a sheet are concentric with it: radius = the sheet's corner radius - their inset from its edge
+   (the sheet body's own inset, --content-inset, plus the element's) */
+.phone, .gallery { --card-r: calc(var(--corner-r) - var(--content-inset) - var(--gutter)); --hero-r: calc(var(--corner-r) - var(--content-inset) - var(--edge)); }
+.phone.tablet { --content-inset: var(--panel-pad); }
+.phone.tablet { --head-drop: 0px; }
+.phone.tablet { --safe-bottom: 0px; } /* the floating panel ends above the screen's edge */
+/* the handle floats centered at the top, between the corner buttons (never over them) */
+.handle { position: absolute; z-index: 1; top: 0; left: 50%; transform: translateX(-50%); display: grid; place-items: center; height: var(--handle-zone); width: calc(var(--handle-w) * 2); }
+.handle::before { content: ""; width: var(--handle-w); height: var(--handle-h); border-radius: var(--r-pill); background: var(--div); }
+/* SheetFade: under the header, the scrolled content fades into the sheet's background (solid gradient, no blur) */
+.sheet-fade { position: relative; z-index: 2; flex: none; height: 0; pointer-events: none; }
+.sheet-fade::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: var(--sheet-fade-h); background: linear-gradient(var(--panel), transparent); opacity: 0; transition: opacity var(--t-fast); }
+.sheet-fade.on::after { opacity: 1; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: calc(var(--gutter) + var(--safe-bottom)); touch-action: pan-y; }
+.safe-probe { position: absolute; width: 0; height: var(--safe-bottom); visibility: hidden; pointer-events: none; } /* JS reads the inset */
+
+/* ---------- DeviceSheet ---------- */
+.dev-head { flex: none; padding: 0 var(--gutter) 12px; }
+.dev-name { display: flex; align-items: baseline; gap: 8px; }
+.dev-name b { font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.dev-name b.none { color: var(--t3); }
+.dev-rssi { margin-left: 8px; font-size: var(--sub-size); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+.dev-product { display: inline-flex; align-items: center; gap: 4px; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--blue); text-decoration: none; }
+.dev-product .icon { width: 14px; height: 14px; }
+.gatt-flow { padding: 8px var(--gutter); }
+.gatt-flow .gatt-svc { padding-left: 0; padding-right: 0; }
+.gatt-note { margin: 0 0 10px; color: var(--t2); font-size: var(--sub-size); line-height: var(--sub-line); }
+/* one full-width button that turns, in place, into Cancel | I am authorized */
+.gatt-ctl { display: flex; gap: 0; transition: gap var(--t-std) var(--ease); }
+.gatt-ctl .btn { min-width: 0; overflow: hidden; }
+.gatt-go { flex: 1 1 0; }
+.gatt-cancel { flex: 0 0 0; padding: 0; opacity: 0; pointer-events: none; transition: flex-grow var(--t-std) var(--ease), opacity var(--t-std), padding var(--t-std); }
+.gatt-flow.confirm .gatt-ctl { gap: 8px; }
+.gatt-flow.confirm .gatt-cancel { flex-grow: 1; padding: 0 18px; opacity: 1; pointer-events: auto; }
+.gsteps { display: flex; flex-direction: column; }
+.gstep { display: grid; grid-template-columns: var(--gmark) 1fr auto; align-items: center; gap: 10px; min-height: 36px; font-size: 14px; animation: gstep-in var(--t-std) var(--ease); }
+.gdetail { color: var(--t2); font-size: var(--sub-size); font-variant-numeric: tabular-nums; }
+.gmark { width: var(--gmark); height: var(--gmark); border-radius: 50%; justify-self: center; }
+.gstep.done .gmark { background: var(--rssi-strong); }
+.gstep.failed .gmark { background: var(--rssi-weak); }
+.gstep.failed .gdetail { color: var(--rssi-weak); }
+.gstep.running .gmark { border: 2px solid var(--div); border-top-color: var(--blue); animation: spin var(--t-spin) linear infinite; }
+.gatt-retry { padding-top: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes gstep-in { from { opacity: 0; transform: translateY(-4px); } }
+.dev-sub { font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); font-variant-numeric: tabular-nums; }
+.chart { display: block; width: 100%; height: var(--chart-h); }
+.chart .line { fill: none; stroke: var(--t2); stroke-width: 1.6; stroke-linejoin: round; }
+.chart .tick { stroke: var(--div); stroke-dasharray: 3 4; }
+.chart text { fill: var(--t3); font-size: 11px; font-family: var(--font); }
+.chart-wrap { padding: 4px var(--gutter) 0; }
+.dev-tabs { padding: 8px var(--gutter); }
+.kv { padding: 0 var(--gutter); margin: 0; }
+.kv div { display: flex; justify-content: space-between; gap: 16px; padding: 4px 0; font-size: 14px; line-height: 22px; }
+.kv dt { color: var(--t2); }
+.kv dd { margin: 0; font-weight: var(--weight-medium); text-align: right; overflow-wrap: anywhere; }
+.sheet-sect { font-size: var(--small-size); line-height: var(--small-line); color: var(--t3); padding: 14px var(--gutter) 6px; }
+.raw { margin: 0 var(--gutter); width: calc(100% - 2 * var(--gutter)); border-collapse: separate; border-spacing: 0; border: 1px solid var(--div); border-radius: var(--r-item); font-size: 13px; line-height: 20px; table-layout: fixed; }
+.raw th, .raw td { text-align: left; padding: 6px 10px; border-top: 1px solid var(--div); vertical-align: top; }
+.raw tr:first-child > * { border-top: 0; }
+.raw th { background: var(--fill2); font-weight: var(--weight-semi); }
+.raw tr:first-child > :first-child { border-top-left-radius: 11px; }
+.raw tr:first-child > :last-child { border-top-right-radius: 11px; }
+.raw td:nth-child(3) { font-family: var(--font-code); font-size: var(--code-size); color: var(--t2); word-break: break-all; }
+.raw col.len { width: 44px; } .raw col.type { width: 56px; }
+.gatt-svc { padding: 8px var(--gutter); }
+.gatt-svc b { font-weight: var(--weight-semi); }
+.gatt-char { padding: 4px 0 4px 12px; font-size: 14px; line-height: 20px; }
+.gatt-char span { display: block; color: var(--t2); font-size: var(--sub-size); overflow-wrap: anywhere; }
+
+/* ---------- Product page ---------- */
+.hero { height: var(--hero-h); display: grid; place-items: center; background: var(--fill2); color: var(--t2); }
+.hero .icon { width: var(--hero-icon); height: var(--hero-icon); }
+.hero .icon svg { stroke-width: 1.2; }
+.prod-body { padding: 16px var(--gutter) 0; }
+.prod-name { margin: 0; font-size: var(--head-size); line-height: var(--head-line); font-weight: var(--title-weight); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.prod-desc { margin: 6px 0 0; color: var(--t2); }
+.prod-meta { margin: 2px 0 14px; font-size: var(--sub-size); line-height: var(--sub-line); color: var(--t2); font-variant-numeric: tabular-nums; }
+
+
+/* ---------- Map screen ---------- */
+.map { position: absolute; inset: 0; background: var(--fill2); }
+
+/* ---------- Main map screen ---------- */
+.disc-sheet { z-index: 12; height: var(--discover-sheet-full); }
+/* native scrolling (with momentum) only at Full; below Full a drag moves the sheet instead (JS) */
+.disc-sheet .sheet-body { touch-action: pan-y; }
+.disc-sheet:not(.full) .sheet-body { overflow-y: hidden; }
+/* view switch at the left, the segmented control (or title) centered on the sheet, the Filter button at the right */
+.disc-head { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; padding: calc(var(--corner-btn) + var(--head-drop)) var(--corner-btn) 10px; touch-action: pan-x; cursor: grab; }
+/* headers: vertical moves drag the sheet (JS); a horizontal scroller in a header would keep its own pan */
+.disc-head > :first-child { justify-self: start; }
+.disc-head > .disc-filter { justify-self: end; }
+.disc-title { font-size: var(--title-size); font-weight: var(--title-weight); letter-spacing: -0.01em; }
+
+.disc-head .seg { width: 184px; }
+/* the header row: everything is --sheet-header-h tall on one center line (the segmented control's pill ends then
+   have the round buttons' radius) */
+.disc-head .seg, .sheet-top .seg { height: var(--sheet-header-h); }
+.disc-head .seg button { height: calc(var(--sheet-header-h) - 4px); }
+.disc-head > *, .sheet-top > .ib { min-height: var(--sheet-header-h); }
+.disc-title { display: flex; align-items: center; height: var(--sheet-header-h); }
+.stack-sheet .hero { margin: 0 var(--edge); border-radius: var(--hero-r); } /* concentric with the sheet: inset --edge */
+.disc-sheet .prod-body .dev-product { font-size: var(--body-size); }
+.disc-sheet .search-slot { flex: none; }
+
+.maplibregl-ctrl-attrib { font-size: 10px; }
+
+/* ---------- Onboarding ---------- */
+.ob { position: absolute; inset: 0; display: flex; flex-direction: column; padding: calc(var(--top-zone) + 8px) var(--gutter) calc(var(--gutter) + env(safe-area-inset-bottom, 0px)); overflow-y: auto; }
+.ob-step { font-size: var(--small-size); line-height: var(--small-line); color: var(--t3); margin-bottom: 4px; }
+.ob-body { margin-top: 8px; color: var(--t2); }
+.ob-body p { margin: 0 0 12px; }
+.ob-body .item { padding-left: 0; padding-right: 0; color: var(--t1); }
+.ob-hint { font-size: var(--sub-size); color: var(--t3); margin-top: 8px !important; }
+.ob-actions { margin-top: auto; padding-top: 16px; display: flex; justify-content: space-between; }
+
+/* ---------- Gallery ---------- */
+.gallery { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.gallery h1 { font-size: var(--head-size); line-height: var(--head-line); font-weight: var(--title-weight); margin: 0 0 4px; }
+.gallery > p { color: var(--t2); margin: 0 0 16px; }
+.g-sect { margin: 28px 0 8px; font-size: var(--title-size); font-weight: var(--title-weight); }
+.g-tok { font-size: var(--small-size); color: var(--t3); font-weight: 400; margin-left: 8px; }
+.g-row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.g-cell { display: flex; flex-direction: column; gap: 8px; min-width: 120px; }
+.g-cell > small { font-size: var(--small-size); color: var(--t3); }
+.g-box { position: relative; background: var(--bg); border-radius: var(--r-item); box-shadow: inset 0 0 0 1px var(--div); padding: 12px; }
+.g-json { max-height: 320px; overflow: auto; font-family: var(--font-code); font-size: 11px; line-height: 15px; background: var(--fill2); border-radius: var(--r-item); padding: 10px; margin: 8px 0 0; }
+.g-tests { margin: 0; width: 100%; }
+.g-tests td:nth-child(3) { font-family: var(--font-code); }
+.g-links a { color: var(--blue); text-decoration: none; font-weight: var(--weight-medium); }
+.g-sw { width: 72px; height: 44px; border-radius: var(--r-item); box-shadow: inset 0 0 0 1px var(--div); }
+
+/* ================================================================================================================
+   Tablet layout (layoutMode medium / expanded, >= --bp-medium). One top row above a floating left panel: ☰ and a
+   permanent search field. The panel holds the sheet stack; ☰ swaps its content for the sessions list.
+   ================================================================================================================ */
+.phone.tablet { --corner-r: var(--panel-radius); }
+/* the top row: ☰ and the always expanded field, in the panel's columns (--panel-inset) */
+.phone.tablet .menu-btn, .phone.tablet .menu-btn.open { top: var(--edge); left: calc(var(--edge) + var(--panel-inset)); z-index: 96; }
+.phone.tablet .menu-btn .i-b { display: none; }
+.phone.tablet .menu-btn.open .i-c { opacity: 1; transform: none; } /* ☰ -> X: close the sessions list */
+.phone.tablet .search-box, .phone.tablet .search-box.open {
+  top: var(--edge); right: auto; left: calc(var(--edge) + var(--panel-inset) + var(--rb) + 8px);
+  width: calc(var(--panel-w) - 2 * var(--panel-inset) - var(--rb) - 8px); background: var(--fill2); z-index: 96;
+}
+.phone.tablet .search-box input { opacity: 1; }
+.phone.tablet .search-box .sbx-btn .i-b { display: none; }
+.phone.tablet .search-box .sbx-btn .i-a { opacity: 1; transform: none; width: var(--icon); height: var(--icon); color: var(--t3); }
+.phone.tablet .search-box:focus-within { background: var(--field); outline: var(--focus-w) solid var(--focus-color); outline-offset: calc(-1 * var(--focus-w)); }
+.phone.tablet.searching .menu-btn, .phone.tablet.searching .search-box { display: grid; }
+.phone.tablet.searching .search-box { display: block; }
+.phone.tablet .search-bar { display: none; } /* the field itself shows the query */
+.phone.tablet.side-open .search-box, .phone.tablet.side-open .main { transform: none; }
+/* the panel: every sheet of the stack, below the top row; open (full height) or collapsed (its header) */
+.phone.tablet .sheet:not(.static) {
+  left: var(--edge); right: auto; top: var(--top-zone); bottom: auto; width: var(--panel-w); height: calc(100% - var(--top-zone) - var(--edge));
+  border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transition: height var(--t-std) var(--ease), opacity var(--t-fast), visibility var(--t-fast);
+  overflow: hidden; /* the panel clips its content to its rounded shape */
+}
+.phone.tablet .disc-head { padding: var(--corner-btn) var(--corner-btn) 10px; } /* no handle zone on tablet */ /* the corner buttons concentric with the panel */
+.phone.tablet .sheet.sheet.open { transform: none; }
+.phone.tablet .sheet:not(.open) { opacity: 0; pointer-events: none; }
+/* Partial (a user pan or zoom; the header tap toggles it): every panel level keeps its top and shrinks to
+   --panel-partial-h; the content still scrolls */
+.phone.tablet.panel-partial .sheet.open:not(.static):not(.following), .phone.tablet.panel-partial .side, .phone.tablet.panel-partial .page.search-page { height: var(--panel-partial-h); }
+.phone.tablet .sheet.following { opacity: 0; visibility: hidden; pointer-events: none; } /* only the top level shows */
+.phone.tablet .handle::before { opacity: 0; }
+.phone.tablet .sheet .sheet-body { overflow-y: auto; touch-action: pan-y; padding: 0 var(--panel-pad) var(--panel-pad); }
+.phone.tablet .sheet .row, .phone.tablet .sheet .item { border-radius: calc(var(--panel-radius) - var(--panel-pad)); } /* tablet panel content */
+.phone.tablet .disc-head, .phone.tablet .sheet-top, .phone.tablet .handle { cursor: pointer; }
+/* search: typing shows the results in the panel */
+.phone.tablet .page.search-page { left: var(--edge); top: var(--top-zone); bottom: auto; height: calc(100% - var(--top-zone) - var(--edge)); transition: height var(--t-std) var(--ease), opacity var(--t-fade) var(--ease); right: auto; width: var(--panel-w); border-radius: var(--corner-r); box-shadow: var(--shadow-raised); background: var(--panel); overflow: hidden; }
+.phone.tablet .scroll.search-results { top: 0; padding: var(--panel-pad); } /* tablet results panel: the same inset and radius */
+.phone.tablet .search-page .row { border-radius: calc(var(--panel-radius) - var(--panel-pad)); }
+.phone.tablet .search-area, .phone.tablet.recording .search-area { top: var(--edge); left: calc((var(--edge) + var(--panel-w) + 100%) / 2); }
+/* ☰: the sessions list takes the panel's place (no drawer, no dim); X or Back gives the Discover stack back */
+.phone.tablet .side { top: var(--top-zone); left: var(--edge); bottom: auto; height: calc(100% - var(--top-zone) - var(--edge)); width: var(--panel-w); z-index: 99; border-radius: var(--corner-r); box-shadow: var(--shadow-raised); transform: none; opacity: 0; transition: height var(--t-std) var(--ease), opacity var(--t-fast), visibility var(--t-fast); overflow: hidden; }
+.phone.tablet.side-open .side { opacity: 1; }
+.phone.tablet .main-dim { display: none; }
+/* the recorder stays at the bottom right of the map: the FAB widens in place into the capsule (FAB height) and its
+   panel grows upward; locate / warning sit right above it and move up while the panel is open */
+.phone.tablet .recorder { right: var(--edge); bottom: calc(var(--edge) + 12px); }
+.phone.tablet .recorder.panel { width: min(var(--recorder-tablet-w), calc(100% - var(--panel-w) - 3 * var(--edge))); }
+.phone.tablet .locate-btn, .phone.tablet .loc-warn { left: auto; right: calc(var(--edge) + (var(--fab) - var(--rb)) / 2); bottom: calc(var(--edge) + 12px + var(--rec-h, var(--fab)) + 12px); }
+.phone.tablet .loc-pop { left: auto; right: var(--edge); bottom: calc(var(--edge) + 12px + var(--rec-h, var(--fab)) + 12px + var(--rb) + 8px); }
+.phone.tablet.rec-top-open .menu-btn, .phone.tablet.rec-top-open .search-box { opacity: 1; pointer-events: auto; }
+.phone.tablet { --rec-r: var(--rec-panel-r-tablet); }
+
+/* ---------- Content swaps: crossfade (the view switch) and shared axis X (segmented switches) ---------- */
+.sheet-body { position: relative; } /* swap ghosts are placed inside it, scrolling with the content */
+.swap-ghost { position: absolute; margin: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+.swap-ghost.out-fade { animation: swap-fade-out var(--t-fast) var(--ease) forwards; }
+.swap-ghost.out-left { animation: swap-out-left var(--t-std) var(--ease) forwards; }
+.swap-ghost.out-right { animation: swap-out-right var(--t-std) var(--ease) forwards; }
+.in-fade { animation: swap-fade-in var(--t-fast) var(--ease); }
+.in-right { animation: swap-in-right var(--t-std) var(--ease); }
+.in-left { animation: swap-in-left var(--t-std) var(--ease); }
+@keyframes swap-fade-out { to { opacity: 0; } }
+@keyframes swap-fade-in { from { opacity: 0; } }
+@keyframes swap-out-left { to { opacity: 0; transform: translateX(calc(-1 * var(--swap-x))); } }
+@keyframes swap-out-right { to { opacity: 0; transform: translateX(var(--swap-x)); } }
+@keyframes swap-in-right { from { opacity: 0; transform: translateX(var(--swap-x)); } }
+@keyframes swap-in-left { from { opacity: 0; transform: translateX(calc(-1 * var(--swap-x))); } }
+
+/* ---------- Tablet Partial: the cut-off content fades out, and a chevron (the drag handle's width) expands it ---------- */
+.panel-more { display: none; }
+.phone.tablet .panel-more {
+  display: block; position: absolute; z-index: 102; left: var(--edge); width: var(--panel-w); height: var(--panel-fade-h);
+  top: calc(var(--top-zone) + var(--panel-partial-h) - var(--panel-fade-h)); border-radius: 0 0 var(--corner-r) var(--corner-r);
+  background: linear-gradient(transparent, var(--panel)); pointer-events: none; opacity: 0; transition: opacity var(--t-std) var(--ease);
+}
+.phone.tablet.panel-partial.has-panel .panel-more { opacity: 1; }
+.panel-more-btn {
+  position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: var(--panel-more-w); height: var(--rb);
+  display: grid; place-items: center; color: var(--t2); pointer-events: auto;
+}
+.phone.tablet:not(.panel-partial) .panel-more-btn, .phone.tablet:not(.has-panel) .panel-more-btn { pointer-events: none; }
+.panel-more-btn svg { width: var(--handle-w); height: 8px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

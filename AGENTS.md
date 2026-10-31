@@ -17,128 +17,128 @@ The design goal is:
   - Uses mise-managed `dbmate`.
   - Local test database config lives under `db/test/`.
 - `cluetooth-core/`
-  - Owns platform-neutral observation batching and schema-v2 pending Parquet state.
+  - Owns platform-neutral observation batching, pending Parquet state (new
+    payloads are schema v3, v2 stays readable) and local `gatt/v1` object storage.
+  - Owns the on-device wiki rule matcher (`src/matcher/`, `RuleMatcher` over UniFFI).
   - Uses Rust, Polars, UUIDv7, Zstd Parquet, and UniFFI.
-- `cluetooth-android/`
+- `scanner/`
   - Owns BLE/location/UI/Firebase/WorkManager platform integration. Phase 4
-    forwards new observations to Rust, uploads Rust-prepared v2 ciphertext, and
+    forwards new observations to Rust, uploads Rust-prepared ciphertext (scan v2
+    and v3, `gatt/v1`), runs the manual GATT engine (debug trigger only), and
     retains strict pre-0.0.5 legacy pending-file upload.
-- `cluetooth-sync/`
+  - Also keeps the phone-local stores (`local/`: seen products, recordings,
+    sighting history, route) and the build-time wiki bundle exporter
+    (`tools/wiki-bundle/`, Node); see `docs/local-data.md`.
+- `data-sync/`
   - Owns the sync and ingestion pipeline.
   - Uses Python, Polars, ADBC PostgreSQL, PyNaCl, Google Cloud Storage, Typer,
     Ruff, basedpyright, pytest, and testcontainers.
 - `cluetooth-agents/`
   - Placeholder for agent/research-oriented code.
+- `infra/data/`
+  - The production data stack: `compose.yaml` (postgres, migrate, sync,
+    sync-continuous, wigle-upload; project name pinned to `newcluetooth`),
+    `.env.example`, the PostGIS image (`postgres/`) and the host-local,
+    gitignored `secrets/` mount point. Run `docker compose` from here; see
+    `docs/operations.md`.
+- `infra/fleet/`
+  - Placeholder for the planned research agent fleet.
+
+Payload contracts: `docs/payload-schema-v2.md` (identity, batching, upload
+state), `docs/payload-schema-v3.md` (scan v3 columns/footer and `gatt/v1`).
+`docs/recording-model.md`: live scanning (foreground, no session, no rows) versus
+recording (foreground service, core session, rows, upload).
 
 ## Database Model
 
-The database is defined in `db/db/migrations/`.
+The database is defined in `db/db/migrations/`; `docs/schema.md` is the prose
+description and `db/schema.sql` a generated snapshot.
 
-Current important tables and materialized views:
+There are **no per-sighting rows**. The uploaded GCS objects are the raw
+archive (`cluetooth replay` reads them back, `cluetooth rebuild` regenerates
+aggregates), and the database holds a dictionary of exact advertisements plus
+one aggregate row per sighting minute:
 
-- `blobs`
-  - Processing ledger for source blobs.
-  - `uri` is the primary key.
-  - Tracks optional uploader/app metadata plus sync success/failure state.
-  - Discovery is read-only against this table; processing stages create or update
-    rows as blobs are ingested.
-- `scans`
-  - One row per observed BLE adv.
-  - `raw` is the authoritative adv payload (`bytea`).
-  - Convenience fields include `local_name`, `tx_power`, and `is_connectable`.
-  - Location fields are `lat`, `lon`, `accuracy`, and computed PostGIS
-    `location`.
-  - There is intentionally no rich decoded adv column on `scans`.
-- `gatt_discoveries`
-  - One row per active GATT discovery result.
-  - Stores the observed device, discovery time, optional raw adv,
-    `raw_profile`, `profile_hash`, and location.
-- `gatt_attributes`
-  - Attribute rows for a GATT discovery.
-  - Keyed by `(discovery_id, attribute_id)`.
-  - Stores parent relationship, attribute kind, UUID, and raw structured data.
-- `adv_enrichments`
-  - Passive enrichment output for exact `(addr, raw)` adv identity.
-  - Keyed by `(addr, raw, enrichment_kind, enrichment_id, enrichment_revision)`.
-  - Built-in AD structure parsing is stored here as:
-    - `enrichment_kind = 'builtin'`
-    - `enrichment_id = 'ad_structures'`
-    - `enrichment_revision = '20260416210856_init'`
-- `recipe_interaction_runs`
-  - Active recipe CLI sessions against a device/adv.
-  - Stores recipe identity, target address, timing, status, and result JSON.
-- `recipe_interaction_events`
-  - Structured transcript/BLE events for a recipe interaction run.
-- `adv_observations`
-  - Materialized rollup by `blob`, `addr`, and `raw`.
-  - Includes latest local name, first/last seen, average RSSI, centroid, radius,
-    and scan count.
-- `advs`
-  - Materialized rollup by `addr` and `raw`.
-  - Represents exact producer address plus exact adv payload identity.
-  - Primary analyst-facing adv table/view.
-  - Includes query-friendly built-in fields:
-    - `adv_types`
-    - `manufacturer_ids`
-    - `service_uuids`
-    - `service_data_uuids`
-- `devices`
-  - Materialized rollup by device address.
-  - Answers where/when a MAC has been observed across payload variants.
+- `ad_structures`
+  - Every distinct AD structure once, unique on `(ad_type, data)`.
+  - Generated `local_name`, `company_id` and `uuids`, so matching rules are
+    computed once instead of per `(addr, raw)`.
 - `payloads`
-  - Materialized rollup by raw adv payload.
-  - Answers where/when a payload has been observed across addresses.
+  - Every distinct advertisement once: `sha256`, ordered `structure_ids`,
+    `zero_padding`, `tail`, and the `first_seen`/`last_seen`/`sightings` stats.
+  - No raw column; `payload_raw(id)` rebuilds the exact bytes and ingest fails
+    unless every payload round-trips.
+  - `payload_fields` is the view with `local_name`, `adv_types`,
+    `ad_data_lengths`, `manufacturer_ids`, `service_uuids`,
+    `service_data_uuids`.
+- `sighting_minutes`
+  - One row per `(minute, addr, payload_id, uploader_id, session_id)`, unique
+    with nulls not distinct, partitioned by month on `minute` (a default
+    partition catches producer clocks far off).
+  - Every column is exact under merge: `blob_counts`/`blob_ids` provenance,
+    `sightings`, first/last seen, RSSI min/max/sum/count/mean, spatial extent,
+    `tx_power`, `is_connectable`, `adv_tx_power`, `periodic_interval`, and the
+    minute's best sample (`location`, `best_rssi`, `best_accuracy`,
+    `best_score`, `best_seen`).
+  - The producer v3 PDU fields `addr_type`, `is_legacy`, `primary_phy`,
+    `secondary_phy`, `adv_sid` and `data_status` are part of the key (null for
+    legacy and v2); see `docs/schema.md` ("Ingesting scan v3 and gatt/v1") and
+    the producer contract `docs/payload-schema-v3.md`.
+  - The best sample's score coefficients are **provisional**.
+- `adv_shapes`
+  - A plain **view** over `sighting_minutes` plus `payload_fields`. Filter or
+    join a small candidate set; do not scan it whole.
+- `uploaders`, `blobs`
+  - Producer tokens and the processing ledger (`blobs` also has `id`,
+    `uploader_id`, `session_id`, `attempts`, `next_attempt_at`, and `meta`
+    with the v3 Parquet footer or the GATT device fields).
+- `gatt_discoveries`, `gatt_attributes`
+  - One row per `gatt/v1` discovery (trigger advertisement linked to
+    `payloads`, outcome, stage, error, timings, `profile_hash`, full JSON in
+    `raw`) and one row per service/characteristic/descriptor. They replaced the
+    legacy tables of the same names, which were never written.
+- `adv_enrichments`
+  - Passive enrichment per `(addr, payload_id, kind, id, revision)`; built-in
+    AD structure parsing lives in `ad_structures` instead.
+- `wigle_upload_batch_minutes`
+  - WiGLE membership by minute row. The export is one CSV row per address per
+    minute (best located row, latest non-empty name); a batch claims every row
+    of the address-minute, so nothing is uploaded twice.
+- `backfill_progress`
+  - Resumability ledger for `cluetooth backfill`.
 
 Important schema rules:
 
-- `raw` is authoritative for adv payload identity.
-- `(addr, raw)` is the stable key for exact advs.
-- `advs` should stay ergonomic for common filtering and grouping. Prefer
-  first-class typed columns there for common Bluetooth SIG keys over forcing
-  analysts to repeatedly unpack JSON.
-- Anything richer than raw payload identity belongs in:
-  - a convenience field on `scans`,
-  - `adv_enrichments`,
-  - GATT discovery tables, or
-  - later research/analysis outputs.
-- Materialized rollups are not automatically refreshed by ingest. Tests refresh
-  `adv_observations`, `advs`, `devices`, and `payloads`
-  explicitly before asserting rollup state.
+- `raw` is authoritative for adv payload identity; `sha256` is its exact
+  identity in the database.
+- `(minute, addr, payload, uploader, session)` is the stable aggregate key.
+- Anything richer than raw payload identity belongs in `adv_enrichments`,
+  GATT discovery tables, or later research/analysis outputs.
+- The previous tables are renamed, never dropped: `scans_old`, `advs_old`,
+  `adv_enrichments_old`, `wigle_upload_batch_scans_old`,
+  `projection_state_old`. Only an explicit migration the owner approves removes
+  them.
+- The GCS objects must never be deleted; see `docs/operations.md`.
 
 ## Adv Parsing
 
-Scan ingest does not populate `adv_enrichments` inside the scan insert
-transaction. Built-in low-level AD structures are inserted after each sync cycle
-by `insert_builtin_ad_structures(...)`, which runs the
-`adv_enrichments/insert_builtin_ad_structures.sql` query against committed
-`scans`.
+Scan ingest does not decode advertisements. Each raw payload is split into its
+low-level AD structures by `ble_adv_split(raw)`:
 
-`parse_ble_adv(raw)` in the init migration parses raw BLE adv bytes
-into JSON like:
+- it preserves order and duplicates;
+- it stops at a zero length or a truncated field instead of repairing;
+- the unparsed remainder becomes `zero_padding` (all zero bytes) or `tail`
+  (anything else, e.g. a truncated field);
+- Python `cluetooth_sync.ble.parse_raw` follows the same stop rule and is used
+  by the legacy adapter to extract names.
 
-```json
-[
-  { "type": 1, "data": "06" },
-  { "type": 9, "data": "..." },
-  { "type": 255, "data": "..." }
-]
-```
-
-Notes:
-
-- `parse_ble_adv(raw)` returns only a list of low-level AD structures.
-- It preserves order.
-- It preserves duplicates.
-- It does not do protocol-specific decoding.
-- It exits on zero-length or truncated AD fields rather than trying to repair
-  malformed payloads.
-- Python `cluetooth_sync.ble.parse_raw` exists for lightweight local parsing,
-  currently used by the legacy adapter to extract local names. The database
-  parser remains the canonical built-in enrichment.
+`ad_structures` stores each distinct structure once with generated
+`local_name`, `company_id` and `uuids`; `payloads` stores the ordered structure
+ids plus the remainder. Nothing protocol-specific is decoded at ingest.
 
 ## Python Sync Pipeline
 
-`cluetooth-sync/src/cluetooth_sync/pipeline/` is split by stage:
+`data-sync/src/cluetooth_sync/pipeline/` is split by stage:
 
 - `storage.py`
   - Defines the `StorageClient` protocol.
@@ -155,22 +155,45 @@ Notes:
   - Reads one encrypted blob as bytes through an explicit `StorageClient`.
 - `decrypt.py`
   - Decrypts ciphertext bytes with PyNaCl `SealedBox` and a 32-byte private key.
-- `enrich.py`
-  - Runs post-sync built-in enrichment queries.
-  - `insert_builtin_ad_structures(...)` inserts missing low-level AD structure
-    rows into `adv_enrichments`.
-- `payload_route.py` / `payload_v2.py`
-  - Strictly route legacy `0.0.1`-`0.0.4` JSONL and nested schema-v2 Parquet URIs.
-  - Validate v2 UUID/date/footer/exact schema/required values and convert binary raw
-    bytes to the existing lowercase-hex staging representation.
+- `sightings.py`
+  - The shared write path: distinct raws of a batch into a temporary `raws`
+    table, new structures into `ad_structures`, new payloads into `payloads`
+    (failing unless every payload round-trips), normalized sightings into a
+    temporary `batch` table, then the merge into `sighting_minutes` (plus
+    payload stats, except for rebuild).
+  - Also owns monthly partition creation.
+- `backfill.py`
+  - `cluetooth backfill`: batched, resumable aggregation of `scans_old` into
+    minute rows, then the `queries/backfill/verify/*.sql` checks.
+- `verify_raws.py`
+  - `cluetooth verify-raws`: the pre-migration integrity check. Samples
+    succeeded blobs, replays each object and compares its raw bytes per
+    sighting with `scans_old` (`queries/verify_raws/`), reporting mismatched
+    `(addr, scanned_at, raw)` keys and unroutable objects.
+- `replay.py`
+  - `cluetooth replay` (raw sightings of archived objects) and
+    `cluetooth rebuild` (regenerate a minute range from the archive).
+- `payload_route.py` / `payload_v2.py` / `payload_v3.py`
+  - Strictly route legacy `0.0.1`-`0.0.4` JSONL, nested schema-v2 and schema-v3
+    Parquet URIs and `gatt/v1` JSON URIs.
+  - Validate v2/v3 UUID/date/footer/exact schema/required values and convert binary raw
+    bytes to the existing lowercase-hex staging representation. v3 also returns
+    the `cluetooth.*` footer entries for `blobs.meta`.
+- `gatt_v1.py` / `gatt_ingest.py`
+  - Validate one `gatt/v1` JSON object (including `profile_hash`) and write it,
+    its attributes and the trigger payload in one transaction. Note that
+    Polars' ADBC `write_database` commits the session's transaction, so stage
+    every frame before the writes that must stay atomic.
 - `ingest.py`
   - Parses JSONL with a hand-written Polars schema.
   - Handles current scan payloads and legacy `0.0.1` through `0.0.4`
     scan blobs detected from the blob filename.
-  - Writes a temporary staging table with Polars/ADBC, inserts into `scans`,
-    and marks the blob succeeded in one transaction.
+  - Stages rows with Polars/ADBC and calls `sightings.py`, so payloads, minute
+    rows and `success = true` commit in one transaction.
   - Retries retryable deadlock/serialization SQL states, then marks the blob
     failed on final failure.
+  - ADBC cannot bind a null parameter: absent uploader/app version/session
+    values travel as `-1`/`''` sentinels and the SQL restores the null.
 - `legacy_adapter.py`
   - Converts legacy scan JSONL (`mac`, `timestamp`, base64 `raw`) into the
     current scan schema.
@@ -188,6 +211,7 @@ Current orchestration model:
 - encrypted blob bytes are the in-memory handoff between download and ingest
 - legacy routing accepts only flat `scans/` objects from producers 0.0.1-0.0.4;
   every schema-bearing or unsafe/nested legacy path is rejected
+- the CLI discovers `scans/` and `gatt/` by default (`--prefix` is repeatable)
 - local mirroring resolves destinations beneath the resolved mirror root and
   rejects traversal and existing symlink escapes
 - optional mirroring in `storage.py` can cache encrypted blobs on disk
@@ -202,9 +226,13 @@ environment variables for database URL, bucket, prefix, private key path,
 service account key, mirror dir, worker counts, queue size, polling interval,
 and max blobs.
 
-After each non-empty sync cycle, the CLI runs `insert_builtin_ad_structures(...)`
-so low-level AD structure enrichments are populated after scan transactions
-commit. This keeps raw scan ingest independent from enrichment contention.
+In continuous mode (`--poll-interval-seconds`), cycle errors back off and retry
+instead of exiting; failed blobs retry with exponential backoff
+(`blobs.attempts`, `next_attempt_at`). A heartbeat JSON file backs
+`cluetooth health`; `--list-only` inventories GCS against the ledger without
+downloads or writes. There is no projection thread and no materialized view to
+refresh. Ingest holds shared advisory lock 4381022501 and `rebuild` takes it
+exclusively. See `docs/operations.md`.
 
 ## Ingest Rules
 
@@ -236,6 +264,9 @@ Current JSONL contract:
 - RSSI value `127` is treated as unavailable and converted to null
 - SQL inserts cast `addr` to `macaddr`, `rssi`/`tx_power` to `smallint`, and
   decode `raw` from hex to `bytea`
+- per-row `local_name` is not stored: names always come from the raw
+  advertisement (there is no masking anywhere, in the database, the WiGLE
+  export or the wiki)
 
 ## Logging / Observability
 
@@ -249,7 +280,7 @@ Important current messages:
 
 ## Testing
 
-`cluetooth-sync/tests/` contains integration-style tests for ingest and pipeline
+`data-sync/tests/` contains integration-style tests for ingest and pipeline
 stages.
 
 Current test approach:
@@ -258,7 +289,9 @@ Current test approach:
 - apply migrations with mise-managed `dbmate` on PATH
 - use fixture JSONL for current and legacy scan payloads
 - verify inserted data with Polars database reads
-- refresh materialized views explicitly when tests need rollup state
+- assert on minute rows directly; there are no materialized views to refresh
+- `clean_database_url` (conftest) gives a test its own freshly migrated
+  database when it asserts whole-table state, as the backfill verification does
 
 From the root, `mise install` installs host tools in project-isolated Rust homes;
 `mise run install` syncs locked Python packages. `mise run check` serializes Rust,
@@ -267,7 +300,7 @@ prebuild the Rust encryption example via mise. Guarded Android host tasks leave
 Google Services unapplied only for exact JVM/lint selectors and exclude native
 packaging, never compilation/JVM tests/lint; success
 is not proof of APK/native/device behavior. SDK licenses/packages and all four
-Android targets/cargo-ndk use explicit setup tasks; see `cluetooth-android/README.md`.
+Android targets/cargo-ndk use explicit setup tasks; see `scanner/README.md`.
 Product config is production-associated and does not match `.debug`. Do not run
 app/device/cloud operations in default checks or read service-account secrets.
 
@@ -275,7 +308,63 @@ For the local test database use `mise run //db:testdb-up`,
 `mise run //db:testdb-wait` (one readiness check),
 `mise run //db:testdb-migrate`, and `mise run //db:testdb-down`.
 
+## Wiki
+
+`wiki/` is a **record of identified Bluetooth advertisement families**. It is not
+itself a lookup tool: the records are meant to be compiled later into a
+machine-built, queryable index, so do not hand-maintain lookup or ambiguity
+tables.
+
+- One page per **advertisement-structure / protocol family**, not per brand or
+  marketing product line. Entries whose advertisements are very similar (same
+  company field, service UUID scheme, AD-structure layout, name-token
+  convention, or vendor protocol across models) live on one page; split into
+  separate pages when the structure or protocol clearly differs, even within one
+  brand. One brand with several unrelated ad formats gets several pages; several
+  brands sharing one protocol or ODM ad format may share a page. Name the page
+  after the protocol/shape family and mention the brands in the title or intro.
+  Decide only from evidence already recorded; never invent technical claims to
+  justify a grouping.
+- Every family page keeps a consistent "How to recognize it" block (local name,
+  company field, service/service-data UUID, ordered AD shape, what it is,
+  confidence and limits) followed by the evidence. Treat it as structured data
+  for a future indexer and keep the notation identical everywhere: company
+  fields as `company field N` (decimal), 16-bit UUIDs uppercase (`FEA0`),
+  128-bit UUIDs lowercase, AD shape as `type/length` pairs in observed order
+  (`01/1,09/17,FF/7`). Add the block to older pages only as a pure restatement
+  of identifiers already in the page.
+- `wiki/README.md` is a plain list of the family pages with a short description,
+  plus the evidence-reading notes. It is not a hand-made lookup index.
+- Aggregate or cross-family pages may exist only as thin indexes linking to
+  family pages; they must not hold entry content.
+- New findings go into the matching family page; create one only if none fits.
+- Keep the existing evidence rules: candidates are not authenticated identities,
+  and no MACs, raw payloads, locations, device-level UUIDs, WiGLE data or secrets.
+
 ## Conventions
+
+Design principles for app and core code (they take precedence over the more specific rules below):
+- **Types guard the logic.** Make illegal states unrepresentable: sealed states carry exactly the data valid
+  in that state, value classes / newtypes for ids and units, exhaustive `when`/`match` with no catch-all.
+- **Side effects are explicitly defined.** Every effect is a named case of a sealed `Effect` type returned by
+  the logic; nothing in the logic calls Android, MapLibre, SQLite, the network or the clock directly.
+- **Execution is separate from logic.** Pure `(state, event) -> (state, effects)` functions decide; a thin
+  runner executes effects and feeds results back as events. Test the logic without a device.
+- **Crashes are ruled out structurally, not by tests.** In v2 production code (`src/main`, `cluetooth-core/src/v2`):
+  - Kotlin: no `!!`, `lateinit`, unchecked `as` (use `as?`), `error`/`check`/`require`/`checkNotNull`/
+    `requireNotNull`, `TODO()`, `runBlocking`, `GlobalScope`. Failures are values (sealed results), not throws.
+  - Rust: no `unwrap`/`expect`/`panic!`/`unreachable!`/`todo!`/`unimplemented!`, no slice indexing that can
+    panic (use `get`); enforced with clippy `deny` lints. Every FFI function returns `Result<_, CoreError>`, and
+    `:core-bridge` maps every binding exception (including UniFFI's panic `InternalException`) to a typed
+    `CoreException`.
+  - Fallible APIs return typed result values (for example `CoreResult<T>` = `Ok(value) | Err(CoreError)` with a
+    sealed error type), never throw: `:core-api`, `:platform-api` and module boundaries included. Callers must
+    handle the error case to compile. Exceptions exist only inside the bridge and platform runners, which
+    convert them into result values at the boundary.
+  - Every platform call (Android, MapLibre, SQLite) happens in a runner that turns any exception into a typed
+    failure event. Every top-level coroutine scope has a handler that moves its state to `Failed`.
+  - `//scanner:check` and `//cluetooth-core:check` fail on a violation; a rare justified exception needs an
+    entry with its reason in the allowlist file next to the check.
 
 - Prefer simple stage boundaries over defensive wrappers.
 - If a function interacts with GCS, pass a `StorageClient` or GCS client
@@ -287,3 +376,21 @@ For the local test database use `mise run //db:testdb-up`,
   to later stages.
 - Preserve exact raw payload bytes whenever possible; derive additional meaning
   into separate enrichment or analysis outputs.
+- App state (Kotlin/Compose, Rust core): model async lifecycles as explicit state
+  machines (sealed states such as `Loading → Ready(data) / Failed(error)`), not
+  `lateinit` or nullable-later fields, flag clusters or effect ordering. Events
+  that arrive in the wrong state are handled by the state (buffered, dropped and
+  re-read, or ignored), never by timing luck.
+- Every top-level coroutine scope has error handling that moves its state to
+  `Failed`; an exception must never reach the main thread's uncaught handler.
+- Prefer immutable data and pure functions. Hold UI and platform state as one
+  immutable value updated by a pure `(state, event) -> state` function; keep
+  mutation at the edges (Compose state holder, Android callbacks, MapLibre,
+  the SQLite transaction). Test the pure functions directly.
+- Async results enter UI state only as events through a reducer; no local mutable state updated from
+  effects (`//scanner:crash-guard`'s ui-state-guard enforces it in v2 UI code).
+- Concurrency: lock-free structured concurrency. Prefer queues and single-owner
+  actors to locks: one task or thread owns a piece of mutable state, and others
+  talk to it through messages (with a one-shot reply when they need an answer).
+  In Rust, no `Mutex`/`RwLock` around shared state; in Kotlin, no shared mutable
+  fields guarded by synchronization. Cancellation follows the caller's scope.

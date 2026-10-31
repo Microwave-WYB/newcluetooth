@@ -1,0 +1,174 @@
+[tasks.sdk-install]
+description = "Install host SDK platform35/build-tools35.0.0 only; licenses must be manually accepted first"
+run = ['sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" </dev/null', 'mise run //scanner:sdk-check']
+
+[tasks.native-sdk-install]
+description = "Explicit native-only NDK27.2.12479018 installation; no license acceptance"
+run = ['sdkmanager --sdk_root="$ANDROID_HOME" "ndk;27.2.12479018" </dev/null', 'test -f "$ANDROID_HOME/ndk/27.2.12479018/source.properties" || { echo "NDK installation incomplete; review licenses/setup manually" >&2; exit 1; }']
+
+[tasks.sdk-check]
+description = "Fail clearly if host SDK platform/build-tools are missing; no download/license acceptance"
+run = 'test -f "$ANDROID_HOME/platforms/android-35/android.jar" && test -f "$ANDROID_HOME/build-tools/35.0.0/source.properties" || { echo "Missing project Android SDK platform35/build-tools35.0.0; follow the manual license/setup steps in scanner/README.md" >&2; exit 1; }'
+
+[tasks.test]
+description = "Host JVM tests only: compile real bindings, no Firebase processing, native packaging, APK or device"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true :app:testDebugUnitTest -x :app:buildCluetoothCoreAndroid"
+
+[tasks.lint]
+description = "Host Android lint without Firebase credentials or native packaging"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true :app:lintDebug -x :app:buildCluetoothCoreAndroid"
+
+[tasks.android-test-compile]
+description = "Compile every module's instrumented test sources (no APK, device, Firebase or native build), so androidTest drift fails the check"
+depends = ["sdk-check"]
+run = [
+  # a module that gains androidTest sources must be listed here
+  'mods=$(ls -d */src/androidTest | cut -d/ -f1 | sort | tr "\n" " "); [ "$mods" = "app core-bridge map sheets " ] || { echo "androidTest sources in: $mods; list each in android-test-compile" >&2; exit 1; }',
+  "./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true :app:compileDebugAndroidTestKotlin -x :app:buildCluetoothCoreAndroid",
+  "./gradlew --no-daemon --max-workers=2 :core-bridge:compileDebugAndroidTestKotlin :map:compileDebugAndroidTestKotlin :sheets:compileDebugAndroidTestKotlin",
+]
+
+[tasks.host-guard-check]
+description = "Prove unrelated task selectors fail before execution in host-only mode"
+run = '''
+if output=$(./gradlew --no-daemon --max-workers=2 -PcluetoothHostChecks=true help 2>&1); then
+  printf '%s\n' "$output"; echo "Host guard failed: help was accepted" >&2; exit 1
+fi
+printf '%s\n' "$output"
+case "$output" in *"cluetoothHostChecks requires literal true"*) ;; *) exit 1 ;; esac
+'''
+
+[tasks.wiki-bundle-install]
+description = "Install the exporter's locked Node dependencies (yaml); no scripts run"
+dir = "tools/wiki-bundle"
+run = "npm ci --ignore-scripts --no-audit --no-fund"
+
+[tasks.wiki-bundle-test]
+description = "Unit tests of the wiki bundle exporter (Node's built-in test runner)"
+depends = ["wiki-bundle-install"]
+dir = "tools/wiki-bundle"
+run = "node --test"
+
+[tasks.wiki-bundle]
+description = "Export a Wireless Wiki checkout (WIKI_DIR, default ~/Projects/wiki-snapshot) into app/src/main/assets/wiki-bundle.json"
+depends = ["wiki-bundle-install"]
+dir = "tools/wiki-bundle"
+run = 'node export-bundle.mjs --wiki "${WIKI_DIR:-$HOME/Projects/wiki-snapshot}"'
+
+[tasks.design-export]
+description = "Regenerate design/ui-v2/tokens.json and map-style.json from tokens.css and map-style.js"
+run = "node design/ui-v2/export.mjs"
+
+[tasks.design-export-check]
+description = "Fail if the committed design/ui-v2 JSON exports are out of date"
+run = "node design/ui-v2/export.mjs --check"
+
+[tasks.crash-guard]
+description = "Fail on the constructs AGENTS.md bans from v2 production Kotlin (!!, lateinit, unchecked as, error/check/require, TODO(), runBlocking, GlobalScope; exceptions in tools/crash-guard/allowlist.txt) and on non-ephemeral Compose mutable state in v2 UI code (ui_state_guard.py; exceptions in tools/crash-guard/ui-state-allowlist.txt)"
+run = [
+  "python3 tools/crash-guard/crash_guard.py --self-test",
+  "python3 tools/crash-guard/crash_guard.py",
+  "python3 tools/crash-guard/ui_state_guard.py --self-test",
+  "python3 tools/crash-guard/ui_state_guard.py",
+]
+
+[tasks.single-renderer]
+description = "Fail on a MapSnapshotter or a second MapLibre MapView in any src/main (one map renderer at a time, SPEC R-5 removed)"
+run = ["python3 tools/single-renderer/single_renderer.py --self-test", "python3 tools/single-renderer/single_renderer.py"]
+
+[tasks.core-test]
+description = "Lane A's v2 Kotlin modules: JVM tests of :core-api, :core-fake and :core-bridge (real bindings)"
+run = "./gradlew --no-daemon --max-workers=2 :core-api:test :core-fake:test :core-bridge:testDebugUnitTest"
+
+[tasks.platform-test]
+description = "Lane B's v2 modules: JVM tests of :platform-api, :platform-fake and :platform, and the :gallery compile"
+run = "./gradlew --no-daemon --max-workers=2 :platform-api:testDebugUnitTest :platform-fake:testDebugUnitTest :platform:testDebugUnitTest :gallery:compileDebugKotlin"
+
+[tasks.map-test]
+description = "Lane E's :map: JVM tests and lint (instrumented tests run on the cluetooth-test AVD, see map/README)"
+run = "./gradlew --no-daemon --max-workers=2 :map:testDebugUnitTest :map:lintDebug"
+
+[tasks.release-dex-check]
+description = "Release-only breakage: merge the release dex (no signing, no native build), so a class compiled into two modules fails here and not at build-release"
+depends = ["sdk-check"]
+run = [
+  # the UniFFI bindings have one owner: a second module compiling them dexes them twice (1.0.0's mergeDexRelease)
+  'hits=$(grep -ln "generated/source/uniffi" */build.gradle.kts | grep -v "^core-bridge/" || true); [ -z "$hits" ] || { echo "only :core-bridge may compile the UniFFI bindings: $hits" >&2; exit 1; }',
+  "./gradlew --no-daemon --max-workers=2 :app:mergeDexRelease -x :app:buildCluetoothCoreAndroid -x :core-bridge:buildCluetoothCoreAndroid",
+]
+
+[tasks.ui-contract-test]
+description = "U0 :ui-contract JVM tests (OrderedKeys, G-9)"
+run = "./gradlew --no-daemon --max-workers=2 :ui-contract:test"
+
+[tasks.designsystem-check]
+description = "v2 :designsystem JVM tests (tokens, strings, rules, Roborazzi screenshots against src/test/screenshots) and lint"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :designsystem:testDebugUnitTest :designsystem:lintDebug"
+
+[tasks.chrome-check]
+description = "v2 :chrome JVM tests (recorder geometry, sidebar, search, settings, onboarding; Roborazzi screens) and lint"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :chrome:testDebugUnitTest :chrome:lintDebug"
+
+[tasks.designsystem-record]
+description = "Rewrite the :designsystem Roborazzi reference screenshots (review the diff before committing)"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :designsystem:testDebugUnitTest -Pcluetooth.record=true"
+
+[tasks.check]
+# one entry per line: each lane appends its own task line
+run = [
+  "mise run //scanner:host-guard-check",
+  "mise run //scanner:design-export-check",
+  "mise run //scanner:crash-guard",
+  "mise run //scanner:single-renderer",
+  "mise run //scanner:wiki-bundle-test",
+  "mise run //scanner:test",
+  "mise run //scanner:android-test-compile",
+  "mise run //scanner:core-test",
+  "mise run //scanner:ui-contract-test",
+  "mise run //scanner:platform-test",
+  "mise run //scanner:map-test",
+  "mise run //scanner:sheets-test",
+  "mise run //scanner:designsystem-check",
+  "mise run //scanner:chrome-check",
+  "mise run //scanner:lint",
+  "mise run //scanner:release-dex-check",
+]
+
+[tasks.build]
+description = "Product debug APKs (requires matching .debug Firebase client); no install or launch"
+run = "./gradlew --no-daemon --max-workers=2 :app:assembleDebug"
+
+[tasks.build-release]
+description = "Product release APKs (explicit Firebase config; optional private signing); no install or launch"
+run = "./gradlew --no-daemon --max-workers=2 :app:assembleRelease"
+
+[tasks.device-smoke]
+description = "OPT-IN ONLY: installs/launches on a device; app startup can schedule Firebase uploads"
+run = 'test "${CLUETOOTH_ALLOW_DEVICE_SMOKE:-}" = 1 || { echo "Device smoke requires CLUETOOTH_ALLOW_DEVICE_SMOKE=1 and a separately reviewed offline app/network setup" >&2; exit 1; }; ./gradlew --no-daemon --max-workers=2 :app:connectedCluetoothCoreSmokeTest'
+
+[tasks.ui-shots]
+description = "Render the v3 UI @Previews (light/dark, fake data) and write PNGs + index.html to $1 (Compose Preview Screenshot Testing needs JDK 21 for layoutlib; no device, no Firebase)"
+usage = 'arg "<out_dir>" help="Directory for the PNGs and index.html"'
+run = '''
+J21=$(mise where java@temurin-21)
+JAVA_HOME="$J21" PATH="$J21/bin:$PATH" ./gradlew --no-daemon --max-workers=2 :app:updateDebugScreenshotTest -x :app:buildCluetoothCoreAndroid
+python3 tools/ui-gallery.py app/src/screenshotTestDebug/reference "$usage_out_dir"
+'''
+
+[tasks.sheets-test]
+description = "Lane D :sheets JVM tests (no device, no Firebase)"
+depends = ["sdk-check"]
+run = "./gradlew --no-daemon --max-workers=2 :sheets:testDebugUnitTest"
+
+[tasks.sheets-device-test]
+description = "OPT-IN: :sheets instrumented gesture tests on the emulator named by ANDROID_SERIAL (emulators only)"
+depends = ["sdk-check"]
+run = '''
+case "${ANDROID_SERIAL:-}" in emulator-*) ;; *) echo "Set ANDROID_SERIAL to an emulator (e.g. emulator-5562); physical phones are refused" >&2; exit 1 ;; esac
+./gradlew --no-daemon --max-workers=2 :sheets:connectedDebugAndroidTest
+'''

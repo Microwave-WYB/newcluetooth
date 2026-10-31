@@ -1,0 +1,33 @@
+---
+qmd:
+  metadata:
+    title: "Honeywell Xenon HC base family candidate"
+    date: "2026-10-14"
+    tags: [hospital, barcode-scanning]
+    confidence: medium
+---
+
+# Honeywell Xenon HC base family candidate
+
+## Identification and use
+
+The sanitized pattern `Xenon_CCB-U…-HC_SN_<suffix>` points to a Honeywell
+Xenon healthcare communication/charging-base family. It should not be relabeled
+as the handheld scanner itself. Honeywell's healthcare scanners support barcode
+workflows such as patient identification, medication, and specimen handling.
+The [original accessory guide](https://prod-edam.honeywell.com/content/dam/honeywell-edam/sps/ppr/en-us/public/products/barcode-scanners/healthcare/1960h/documents/hon-ia-pss-xenon-ultra-1960-962-ag.pdf) lists `CCB-U00-H` and other healthcare base/charger configurations but **does not map this exact historical discovery-name template to a part number**. It also allows **charge-only mode**: neither the name nor the base's communication capability establishes that scanner data was being transferred or that charge-only mode was used. The [original 1962h data sheet](https://prod-edam.honeywell.com/content/dam/honeywell-edam/sps/ppr/en-us/public/products/barcode-scanners/general-purpose-handheld/1962h/documents/sps-ppr-Scan-Xenon-Ultra-1962H-healthcare-DTS-en.pdf) describes bedside medication/specimen barcode workflows as **product applications**, not events observed here.
+
+Separately, a read-only **first-party, unfiltered** `cluetooth` literal `Xenon_CCB-U*` prefix query found **2 exact `(addr,raw)` variants / 2 addresses / 46 scans**. Both names include the public `HC` token (not a standalone `H` model token), and the ordered `01/1,08/29` AD has a **Shortened Local Name** matching the stored `local_name` bytes, no company field and no advertised service UUID. These additional signals support an **HC base-family candidate**, not a complete base SKU, genuine Honeywell device, paired handheld, data-transfer event or hospital installation. They cannot be linked as the same devices as the historical WiGLE records, and their counts are not added to those records.
+
+The base-family lead does **not** establish a paired handheld's model
+(1962h or otherwise), its current use, barcode contents, or a hospital's
+ownership. Product documentation for the 1962h is related family context, not
+proof that an observed base was paired to that exact scanner. No scanner/base
+session or raw radio frame was captured.
+
+## Sources
+
+- [Honeywell Xenon Ultra 1962h healthcare scanner — original](https://automation.honeywell.com/us/en/products/productivity-solutions/barcode-scanners/healthcare-scanners/xenon-ultra-1962h-healthcare-scanner).
+  [Verified Wayback fallback, captured 2026-03-08 05:00:29 UTC](https://web.archive.org/web/20260308050029/https://automation.honeywell.com/us/en/products/productivity-solutions/barcode-scanners/healthcare-scanners/xenon-ultra-1962h-healthcare-scanner).
+- [Honeywell Xenon Ultra 1960/1962 accessory guide — original PDF](https://prod-edam.honeywell.com/content/dam/honeywell-edam/sps/ppr/en-us/public/products/barcode-scanners/healthcare/1960h/documents/hon-ia-pss-xenon-ultra-1960-962-ag.pdf).
+- Private research: `hospital_iot_candidates_2026-10-14.md`, Xenon HC row.

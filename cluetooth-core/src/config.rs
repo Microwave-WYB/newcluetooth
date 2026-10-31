@@ -10,8 +10,12 @@ pub const DEFAULT_PAYLOAD_MAX_AGE_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_PAYLOAD_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1_000;
 pub const MAX_INPUT_BATCH_ROWS: usize = 64;
 pub const MAX_INPUT_BATCH_ESTIMATED_BYTES: u64 = 1024 * 1024;
-pub(crate) const INPUT_FIXED_ESTIMATE_BYTES: u64 = 8 + 2 + 2 + 1 + 8 + 16;
-pub(crate) const ROW_FIXED_ESTIMATE_BYTES: u64 = 8 + 4 + 4 + 1 + 8 + 8 + 8 + 16;
+/// Schema v3 appends one tri-state boolean and seven nullable Int32 values.
+const V3_FIELDS_ESTIMATE_BYTES: u64 = 1 + 7 * 4;
+pub(crate) const INPUT_FIXED_ESTIMATE_BYTES: u64 =
+    8 + 2 + 2 + 1 + 8 + 16 + V3_FIELDS_ESTIMATE_BYTES;
+pub(crate) const ROW_FIXED_ESTIMATE_BYTES: u64 =
+    8 + 4 + 4 + 1 + 8 + 8 + 8 + 16 + V3_FIELDS_ESTIMATE_BYTES;
 /// Largest actual converted-row estimate admitted by the input estimator.
 pub(crate) const MAX_CONVERTED_BATCH_ESTIMATED_BYTES: u64 = MAX_INPUT_BATCH_ESTIMATED_BYTES
     + MAX_INPUT_BATCH_ROWS as u64 * (ROW_FIXED_ESTIMATE_BYTES - INPUT_FIXED_ESTIMATE_BYTES);
